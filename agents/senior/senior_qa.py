@@ -9,8 +9,7 @@ from typing import Any
 
 import cv2
 import numpy as np
-from crewai import Agent, Crew, Process, Task
-from langchain_openai import ChatOpenAI
+from crewai import Agent, Crew, LLM, Process, Task
 
 from shared.crewai_compat import BaseTool
 
@@ -1376,7 +1375,7 @@ class SeniorQAAgent:
         connection_info = config.get_connection_info()
         logger.info(f"Redis connection: {connection_info['redis']['url']}")
         logger.info(f"RabbitMQ connection: {connection_info['rabbitmq']['url']}")
-        self.llm = ChatOpenAI(
+        self.llm = LLM(
             model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1
         )
 

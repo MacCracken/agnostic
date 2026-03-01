@@ -6,8 +6,7 @@ import sys
 from datetime import datetime
 from typing import Any
 
-from crewai import Agent, Crew, Process, Task
-from langchain_openai import ChatOpenAI
+from crewai import Agent, Crew, LLM, Process, Task
 
 from shared.crewai_compat import BaseTool
 
@@ -215,7 +214,7 @@ class OptimizedQAManager:
     def __init__(self):
         self.redis_client = config.get_redis_client()
         self.celery_app = config.get_celery_app("qa_manager")
-        self.llm = ChatOpenAI(
+        self.llm = LLM(
             model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1
         )
 

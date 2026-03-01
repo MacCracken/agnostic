@@ -12,8 +12,9 @@ import sys
 from datetime import datetime
 from typing import Any
 
-from crewai import Agent
-from langchain.tools import BaseTool
+from crewai import Agent, LLM
+
+from shared.crewai_compat import BaseTool
 
 # Add the project root to Python path
 sys.path.append(
@@ -369,6 +370,9 @@ class QAPerformanceAgent:
         logger.info(f"RabbitMQ connection: {connection_info['rabbitmq']['url']}")
 
         self.llm_service = llm_service
+        self.llm = LLM(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1
+        )
 
         # Create the CrewAI agent
         self.agent = Agent(
@@ -383,7 +387,7 @@ class QAPerformanceAgent:
                 ResilienceValidationTool(),
                 AdvancedProfilingTool(),
             ],
-            llm=self.llm_service,
+            llm=self.llm,
             verbose=True,
         )
 

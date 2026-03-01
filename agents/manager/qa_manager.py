@@ -6,8 +6,7 @@ import sys
 from datetime import datetime
 from typing import Any
 
-from crewai import Agent, Crew, Process, Task
-from langchain_openai import ChatOpenAI
+from crewai import Agent, Crew, LLM, Process, Task
 
 from shared.crewai_compat import BaseTool
 
@@ -166,7 +165,7 @@ class QAManagerAgent:
         logger.info(f"Redis connection: {connection_info['redis']['url']}")
         logger.info(f"RabbitMQ connection: {connection_info['rabbitmq']['url']}")
         self.agent_registry = AgentRegistry()
-        self.llm = ChatOpenAI(
+        self.llm = LLM(
             model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1
         )
 

@@ -9,8 +9,7 @@ import os
 import time
 from typing import Any
 
-from langchain.schema import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+import litellm
 
 from shared.metrics import LLM_CALLS_TOTAL, LLM_CALL_DURATION
 from shared.resilience import CircuitBreaker
@@ -28,23 +27,15 @@ class LLMIntegrationService:
         self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o")
         self.temperature = temperature
         self.max_tokens = 2000
-
-        # Initialize LLM
-        try:
-            self.llm = ChatOpenAI(
-                model=self.model_name or "gpt-4o",
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=os.getenv("OPENAI_API_KEY"),
-            )
+        self._api_key = os.getenv("OPENAI_API_KEY")
+        if self._api_key:
             logger.info(f"Initialized LLM service with model: {self.model_name}")
-        except Exception as e:
-            logger.error(f"Failed to initialize LLM: {e}")
-            self.llm: ChatOpenAI | None = None
+        else:
+            logger.warning("OPENAI_API_KEY not set — LLM calls will use fallbacks")
 
     async def generate_test_scenarios(self, requirements: str) -> list[str]:
         """Generate test scenarios using LLM from requirements."""
-        if not self.llm or not _llm_circuit.can_execute():
+        if not self._api_key or not _llm_circuit.can_execute():
             return self._fallback_scenarios()
 
         start = time.monotonic()
@@ -65,17 +56,19 @@ class LLMIntegrationService:
             ["Scenario 1", "Scenario 2", "Scenario 3"]
             """
 
-            response = await self.llm.ainvoke(
-                [
-                    SystemMessage(
-                        content="You are an expert QA engineer specializing in test scenario generation."
-                    ),
-                    HumanMessage(content=prompt),
-                ]
+            response = await litellm.acompletion(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are an expert QA engineer specializing in test scenario generation."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                api_key=self._api_key,
             )
 
             # Parse JSON response
-            content = str(response.content).strip()
+            content = str(response.choices[0].message.content).strip()
             if content.startswith("```json"):
                 content = content[7:-3].strip()
 
@@ -96,7 +89,7 @@ class LLMIntegrationService:
 
     async def extract_acceptance_criteria(self, requirements: str) -> list[str]:
         """Extract acceptance criteria using LLM from requirements."""
-        if not self.llm or not _llm_circuit.can_execute():
+        if not self._api_key or not _llm_circuit.can_execute():
             return self._fallback_criteria()
 
         start = time.monotonic()
@@ -113,16 +106,18 @@ class LLMIntegrationService:
             ["Criterion 1", "Criterion 2", "Criterion 3"]
             """
 
-            response = await self.llm.ainvoke(
-                [
-                    SystemMessage(
-                        content="You are an expert QA engineer specializing in requirements analysis."
-                    ),
-                    HumanMessage(content=prompt),
-                ]
+            response = await litellm.acompletion(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are an expert QA engineer specializing in requirements analysis."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                api_key=self._api_key,
             )
 
-            content = str(response.content).strip()
+            content = str(response.choices[0].message.content).strip()
             if content.startswith("```json"):
                 content = content[7:-3].strip()
 
@@ -141,7 +136,7 @@ class LLMIntegrationService:
 
     async def identify_test_risks(self, requirements: str) -> list[str]:
         """Identify potential test risks using LLM from requirements."""
-        if not self.llm or not _llm_circuit.can_execute():
+        if not self._api_key or not _llm_circuit.can_execute():
             return self._fallback_risks()
 
         start = time.monotonic()
@@ -161,16 +156,18 @@ class LLMIntegrationService:
             ["Risk 1", "Risk 2", "Risk 3"]
             """
 
-            response = await self.llm.ainvoke(
-                [
-                    SystemMessage(
-                        content="You are an expert QA risk analyst with deep experience in testing risk identification."
-                    ),
-                    HumanMessage(content=prompt),
-                ]
+            response = await litellm.acompletion(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are an expert QA risk analyst with deep experience in testing risk identification."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                api_key=self._api_key,
             )
 
-            content = response.content.strip()
+            content = str(response.choices[0].message.content).strip()
             if content.startswith("```json"):
                 content = content[7:-3].strip()
 
@@ -191,7 +188,7 @@ class LLMIntegrationService:
         self, test_results: dict[str, Any], business_goals: str
     ) -> dict[str, Any]:
         """Perform LLM-based fuzzy verification of test results."""
-        if not self.llm or not _llm_circuit.can_execute():
+        if not self._api_key or not _llm_circuit.can_execute():
             return self._fallback_verification(test_results, business_goals)
 
         start = time.monotonic()
@@ -218,16 +215,18 @@ class LLMIntegrationService:
             }}
             """
 
-            response = await self.llm.ainvoke(
-                [
-                    SystemMessage(
-                        content="You are an expert QA analyst specializing in test result verification and business alignment."
-                    ),
-                    HumanMessage(content=prompt),
-                ]
+            response = await litellm.acompletion(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are an expert QA analyst specializing in test result verification and business alignment."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                api_key=self._api_key,
             )
 
-            content = response.content.strip()
+            content = str(response.choices[0].message.content).strip()
             if content.startswith("```json"):
                 content = content[7:-3].strip()
 
@@ -252,7 +251,7 @@ class LLMIntegrationService:
         self, scan_results: dict[str, Any]
     ) -> dict[str, Any]:
         """Analyze security findings using LLM intelligence."""
-        if not self.llm or not _llm_circuit.can_execute():
+        if not self._api_key or not _llm_circuit.can_execute():
             return self._fallback_security_analysis(scan_results)
 
         start = time.monotonic()
@@ -279,16 +278,18 @@ class LLMIntegrationService:
             }}
             """
 
-            response = await self.llm.ainvoke(
-                [
-                    SystemMessage(
-                        content="You are a cybersecurity expert specializing in vulnerability analysis and risk assessment."
-                    ),
-                    HumanMessage(content=prompt),
-                ]
+            response = await litellm.acompletion(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are a cybersecurity expert specializing in vulnerability analysis and risk assessment."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                api_key=self._api_key,
             )
 
-            content = response.content.strip()
+            content = str(response.choices[0].message.content).strip()
             if content.startswith("```json"):
                 content = content[7:-3].strip()
 
@@ -313,7 +314,7 @@ class LLMIntegrationService:
         self, performance_data: dict[str, Any]
     ) -> dict[str, Any]:
         """Generate intelligent performance profile analysis."""
-        if not self.llm or not _llm_circuit.can_execute():
+        if not self._api_key or not _llm_circuit.can_execute():
             return self._fallback_performance_analysis(performance_data)
 
         start = time.monotonic()
@@ -340,16 +341,18 @@ class LLMIntegrationService:
             }}
             """
 
-            response = await self.llm.ainvoke(
-                [
-                    SystemMessage(
-                        content="You are a performance engineering expert specializing in system optimization and capacity planning."
-                    ),
-                    HumanMessage(content=prompt),
-                ]
+            response = await litellm.acompletion(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are a performance engineering expert specializing in system optimization and capacity planning."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                api_key=self._api_key,
             )
 
-            content = response.content.strip()
+            content = str(response.choices[0].message.content).strip()
             if content.startswith("```json"):
                 content = content[7:-3].strip()
 

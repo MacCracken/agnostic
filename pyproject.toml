@@ -40,20 +40,15 @@ classifiers = [
     "Topic :: System :: Software Distribution",
     "Typing :: Typed",
 ]
-requires-python = ">=3.11,<3.15"
+requires-python = ">=3.11,<3.14"
 
 dependencies = [
-    # NOTE: crewai 0.x + langchain 0.1.x internally use pydantic's v1 compatibility shim,
-    # which is broken on Python 3.14 (ForwardRef._evaluate removed). The project's own code
-    # is fully pydantic v2 native; the shim is a transitive dep issue. Production containers
-    # use Python 3.11 (docker/Dockerfile.base) where this works correctly.
-    # Python 3.14 is NOT supported by any released crewai version: crewai 0.x uses langchain
-    # 0.1.x (pydantic.v1 shim), crewai 1.x uses chromadb which also uses pydantic.v1 — both
-    # fail on Python 3.14. Tracked in roadmap as a future upgrade once upstream fixes land.
-    "crewai>=0.11.0,<1.0.0",
-    "langchain>=0.1.0,<0.2.0",  # crewai 0.x requires langchain 0.1.x
-    "langchain-openai>=0.0.5,<0.1.0",  # crewai 0.x requires langchain-openai 0.0.x
-    "langchain-community>=0.0.38,<0.1.0",  # crewai 0.x requires langchain-community 0.0.x
+    # NOTE: crewai 1.x drops LangChain in favour of litellm for LLM routing.
+    # Production containers use Python 3.11 (docker/Dockerfile.base) which satisfies
+    # crewai 1.x's requires-python (<3.14,>=3.10). The local dev .venv runs Python 3.14
+    # where crewai 1.x cannot be installed (chromadb→pydantic.v1 broken on 3.14);
+    # see docs/development/dependency-watch.md for tracking details.
+    "crewai>=1.0.0,<2.0.0",
     "redis>=5.0.8",
     "celery>=5.4.0",
     "pytest>=8.3.2",
@@ -95,7 +90,7 @@ web = [
     "requests>=2.31.0",
 ]
 ml = [
-    "numpy>=1.26.4,<2.0.0",  # langchain 0.1.x requires numpy <2.0; remove cap when upgrading to langchain 0.2+
+    "numpy>=1.26.4",  # <2.0 cap removed — langchain dropped, no more numpy constraint
     "pandas>=2.2.2",
     "scikit-learn>=1.5.1",
     "opencv-python>=4.10.0.84",
@@ -219,7 +214,7 @@ error_summary = true
 [[tool.mypy.overrides]]
 module = [
     "crewai.*",
-    "langchain.*",
+    "litellm.*",
     "redis.*",
     "celery.*",
     "chainlit.*",

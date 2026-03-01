@@ -47,25 +47,8 @@ from pydantic import field_validator
 | | |
 |---|---|
 | **Affected dep** | `crewai`, `langchain`, `langchain-openai`, `langchain-community` |
-| **Blocker for** | Dropping pydantic.v1 warnings; numpy 2.x; active maintenance |
-| **Since** | 2026-02-22 |
-| **Status** | Planned — see roadmap |
-
-**Problem:** crewai 0.11.x uses LangChain 0.1.x which uses the `pydantic.v1` compatibility shim internally. The shim produces deprecation warnings on Python 3.12–3.13 and is fatally broken on Python 3.14. crewai 1.x dropped LangChain entirely and uses litellm + pydantic v2 natively.
-
-**Impact of upgrading to crewai 1.x:**
-- Remove `langchain`, `langchain-openai`, `langchain-community` from `pyproject.toml`
-- Update all six agent files (`agents/*/`) — crewai 1.x changed `Crew`, `Agent`, `Task` constructors
-- Update `config/universal_llm_adapter.py` (inherits `langchain.llms.base.LLM`)
-- Update `config/llm_integration.py` (`from langchain.schema import HumanMessage, SystemMessage`)
-- Update `agents/performance/qa_performance.py` (`from langchain.tools import BaseTool`)
-- Remove `numpy <2.0` cap in `ml` extras (was required by langchain 0.1.x)
-
-**Note:** crewai 1.x still requires `Python <3.14` (chromadb blocker above). This upgrade is worthwhile for API modernisation but does **not** unlock Python 3.14 by itself.
-
-**What to watch:**
-- crewai releases: https://github.com/crewAIInc/crewAI/releases
-- crewai 1.x migration guide for constructor/API changes
+| **Resolved in** | 2026-02-28 |
+| **Status** | **Resolved** — moved to Resolved section below |
 
 ---
 
@@ -94,7 +77,21 @@ from pydantic import field_validator
 
 ## Resolved
 
-*(None yet — move entries here with resolution date and PR/commit reference when fixed)*
+### crewai 1.x migration — LangChain removed
+
+| | |
+|---|---|
+| **Resolved** | 2026-02-28 |
+| **Resolved by** | Migrating all agent and config code to crewai 1.x + litellm |
+
+**Changes made:**
+- `pyproject.toml`: `crewai>=1.0.0,<2.0.0`; removed `langchain`, `langchain-openai`, `langchain-community`; removed `numpy <2.0` cap
+- `config/llm_integration.py`: replaced `ChatOpenAI` + `HumanMessage`/`SystemMessage` with `litellm.acompletion()`
+- `config/universal_llm_adapter.py`: replaced `langchain.llms.base.LLM` subclass with `crewai.LLM` factory
+- All 6 agent files: `from langchain_openai import ChatOpenAI` → `from crewai import LLM`; `ChatOpenAI(...)` → `LLM(...)`
+- `agents/performance/qa_performance.py`: `from langchain.tools import BaseTool` → `from shared.crewai_compat import BaseTool`
+
+**Note:** crewai 1.x still requires `Python <3.14`. The chromadb blocker above must resolve before Python 3.14 dev support is possible. Production Docker containers (Python 3.11) are unaffected.
 
 ---
 

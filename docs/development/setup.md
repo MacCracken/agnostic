@@ -1,154 +1,135 @@
 # Development Setup
 
-This guide provides detailed instructions for setting up a local development environment for the Agentic QA Team System.
+Detailed instructions for setting up a local development environment for the Agentic QA Team System.
 
-## Project Overview
+> **Note on Python versions:** Production containers run **Python 3.11-slim**. The local `.venv` may run a newer version; Python 3.14 cannot install the full stack due to upstream blockers — see [Dependency Watch](dependency-watch.md).
 
-Agentic QA Team System is a containerized, multi-agent QA platform powered by CrewAI. Six specialized AI agents collaborate via Redis/RabbitMQ to orchestrate intelligent testing workflows with self-healing, fuzzy verification, risk-based prioritization, and comprehensive reliability/security/performance testing. A Chainlit-based WebGUI provides human-in-the-loop interaction.
-
-All application code lives under the project root directory.
+---
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.11–3.13 (3.11 recommended; 3.14 blocked upstream)
 - Docker 20.10+ and Docker Compose
 - Git
-- 4GB+ RAM for parallel agent execution
-- OpenAI API Key (or other LLM provider)
+- 4 GB+ RAM for parallel agent execution
+- OpenAI API key (or another supported LLM provider — see [LLM Providers](#llm-providers))
+
+---
 
 ## Setup
 
-### 1. Clone and Configure
+### 1. Clone and configure
 
 ```bash
-# Clone repository
-git clone <repository-url>
-cd agnostic
-
-# Copy environment template
+git clone https://github.com/MacCracken/agnostic && cd agnostic
 cp .env.example .env
-
-# Edit .env and set your API key
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o
-PRIMARY_MODEL_PROVIDER=openai
+# Required: set OPENAI_API_KEY (and RABBITMQ_USER / RABBITMQ_PASSWORD)
 ```
 
-### 2. Install Dependencies
+### 2. Install dependencies
 
 ```bash
-# Install with all optional dependencies
-pip install -e ".[dev,test,web,ml,browser]"
+# Full install (recommended for development)
+pip install -e ".[dev,test,web,ml,browser,observability]"
 
-# Or install specific groups
-pip install -e ".[dev,test]"  # Development and testing
-pip install -e ".[web]"      # WebGUI dependencies
+# Minimal install (unit tests only — avoids chainlit/playwright wheels)
+pip install -e ".[dev,test,ml,observability]"
 ```
 
-### 3. Start Infrastructure Services
+### 3. Start infrastructure services
 
 ```bash
-# Start Redis and RabbitMQ
 docker-compose up -d redis rabbitmq
-
-# Verify services are running
-docker-compose ps
+docker-compose ps   # verify both are healthy
 ```
 
-### 4. Run Agents in Development Mode
+### 4. Run agents in development mode
 
-In separate terminal windows:
+In separate terminal windows (or use `tmux`):
 
 ```bash
-# Terminal 1: QA Manager
 python -m agents.manager.qa_manager
-
-# Terminal 2: Senior QA
 python -m agents.senior.senior_qa
-
-# Terminal 3: Junior QA
 python -m agents.junior.junior_qa
-
-# Terminal 4: QA Analyst
 python -m agents.analyst.qa_analyst
-
-# Terminal 5: Security & Compliance
 python -m agents.security_compliance.qa_security_compliance
-
-# Terminal 6: Performance & Resilience
 python -m agents.performance.qa_performance
 ```
 
-### 5. Start WebGUI
+### 5. Start the WebGUI
 
 ```bash
 python -m webgui.app
+# Access at http://localhost:8000
 ```
 
-Access the WebGUI at http://localhost:8000
+---
+
+## Docker (recommended)
+
+```bash
+# Optimised build (~30 sec rebuilds after first run)
+./scripts/build-docker.sh --base-only   # one-time base (~5 min)
+./scripts/build-docker.sh --agents-only # subsequent rebuilds
+
+docker-compose up -d
+
+# Traditional build (simpler, slower first run)
+docker-compose up --build
+
+# Rebuild a single service
+docker-compose up --build qa-manager
+
+# View logs
+docker-compose logs -f webgui
+docker-compose logs qa-manager senior-qa junior-qa qa-analyst security-compliance-agent performance-agent
+```
+
+**Access URLs (Docker):**
+- WebGUI: `http://localhost:8000`
+- RabbitMQ Management: `http://localhost:15672`
+
+---
 
 ## Testing
 
-### Running Tests
-
 ```bash
-# All tests with mocks
+# All tests with mocks (no external services needed)
 python run_tests.py --mode all --env mock
 
 # Unit tests only
 python run_tests.py --mode unit
+pytest tests/unit/ -v
 
-# Integration tests (requires Docker)
+# Integration tests (requires Docker services)
 python run_tests.py --mode integration --env docker
-
-# With coverage report
-python run_tests.py --mode coverage
-
-# Direct pytest usage
-pytest tests/ -v
-pytest tests/unit/ -m unit
 pytest tests/integration/ -m integration
+
+# Coverage report
+python run_tests.py --mode coverage
 ```
 
-### Test Structure
+**Test structure:**
+- `tests/unit/` — fast, no external dependencies
+- `tests/integration/` — require Redis + RabbitMQ
 
-- `tests/unit/` - Unit tests for individual components
-- `tests/integration/` - Integration tests for agent communication
+---
 
 ## Code Quality
 
-### Linting and Formatting
-
 ```bash
-# Lint code
-ruff check agents/ config/ shared/ webgui/
+ruff check agents/ config/ shared/ webgui/   # lint
+ruff format agents/ config/ shared/ webgui/  # format
+mypy agents/ config/ shared/                 # type-check
+bandit -r agents/ config/ shared/            # security scan
 
-# Format code
-ruff format agents/ config/ shared/ webgui/
-
-# Alternative: Use Black
-black agents/ config/ shared/ webgui/
-
-# Type checking
-mypy agents/ config/ shared/
-
-# Security scan
-bandit -r agents/ config/ shared/
-```
-
-### Pre-commit Hooks
-
-```bash
-# Install hooks
-pre-commit install
-
-# Run all checks on all files
+pre-commit install        # install git hooks (run once)
 pre-commit run --all-files
 ```
 
-## Architecture
+---
 
-### 6-Agent System
+## Architecture
 
 ```
 QA Manager (Orchestrator)          ──┐
@@ -159,54 +140,106 @@ Security & Compliance Agent         ─┤
 Performance & Resilience Agent      ─┘
 ```
 
-### Agent Roles
+### Agent roles and tools
 
-1. **QA Manager** (`agents/manager/qa_manager.py`) - Test planning, delegation, fuzzy verification
-2. **Senior QA Engineer** (`agents/senior/senior_qa.py`) - Complex scenarios, self-healing, model-based testing
-3. **Junior QA Worker** (`agents/junior/junior_qa.py`) - Regression testing, data generation, visual testing
-4. **QA Analyst** (`agents/analyst/qa_analyst.py`) - Reporting, security assessment, performance profiling
-5. **Security & Compliance Agent** (`agents/security_compliance/qa_security_compliance.py`) - OWASP testing, GDPR/PCI DSS validation
-6. **Performance & Resilience Agent** (`agents/performance/qa_performance.py`) - Load testing, monitoring, resilience checks
+| Agent | File | Tools |
+|-------|------|-------|
+| **QA Manager** | `agents/manager/qa_manager.py` | `TestPlanDecompositionTool`, `FuzzyVerificationTool` |
+| **Senior QA** | `agents/senior/senior_qa.py` | `SelfHealingTool`, `ModelBasedTestingTool`, `EdgeCaseAnalysisTool`, `AITestGenerationTool`, `CodeAnalysisTestGeneratorTool`, `AutonomousTestDataGeneratorTool` |
+| **Junior QA** | `agents/junior/junior_qa.py` | `RegressionTestingTool`, `SyntheticDataGeneratorTool`, `TestExecutionOptimizerTool`, `FlakyTestDetectionTool`, `VisualRegressionTool`, `UXUsabilityTestingTool`, `LocalizationTestingTool`, `MobileAppTestingTool`, `DesktopAppTestingTool`, `CrossPlatformTestingTool` |
+| **QA Analyst** | `agents/analyst/qa_analyst.py` | `DataOrganizationReportingTool`, `SecurityAssessmentTool`, `PerformanceProfilingTool`, `TestTraceabilityTool`, `DefectPredictionTool`, `QualityTrendAnalysisTool`, `RiskScoringTool`, `ReleaseReadinessTool` |
+| **Security & Compliance** | `agents/security_compliance/qa_security_compliance.py` | `ComprehensiveSecurityAssessmentTool`, `GDPRComplianceTool`, `PCIDSSComplianceTool`, `SOC2ComplianceTool`, `ISO27001ComplianceTool`, `HIPAAComplianceTool` |
+| **Performance & Resilience** | `agents/performance/qa_performance.py` | `PerformanceMonitoringTool`, `LoadTestingTool`, `ResilienceValidationTool`, `AdvancedProfilingTool` |
 
-### Key Modules
+### Key modules
 
-- `config/model_manager.py` - Multi-provider LLM manager with fallback chains
-- `config/universal_llm_adapter.py` - Bridge between model_manager and CrewAI
-- `config/models.json` - Provider configuration
-- `config/llm_integration.py` - LLM service for intelligent tools
-- `advanced_testing/self_healing_fuzzy_verification.py` - CV-based element detection
-- `advanced_testing/risk_prioritization_exploratory.py` - ML-driven risk scoring
-- `webgui/` - Chainlit-based WebGUI with monitoring and reporting
+| Module | Purpose |
+|--------|---------|
+| `config/agent_registry.py` | Config-driven `AgentRegistry` + `AgentDefinition`; reads `team_config.json` |
+| `config/model_manager.py` | Multi-provider LLM manager (OpenAI, Anthropic, Google, Ollama, LM Studio) with fallback chains |
+| `config/universal_llm_adapter.py` | Returns `crewai.LLM` instances for agent constructors |
+| `config/models.json` | Provider routing strategy, retries, timeouts |
+| `config/llm_integration.py` | Direct LLM calls via litellm for tool implementations (scenario gen, fuzzy verification, etc.) |
+| `config/environment.py` | `Config` class — env vars, Redis client factory, Celery app factory |
+| `config/team_config_loader.py` | Lean / Standard / Large team preset loading |
+| `advanced_testing/self_healing_fuzzy_verification.py` | CV-based selector detection, semantic repair, fuzzy matching |
+| `advanced_testing/risk_prioritization_exploratory.py` | ML-driven risk scoring, code-change analysis, exploratory test generation |
+| `shared/metrics.py` | Prometheus metrics with no-op fallback; `get_metrics_text()` |
+| `shared/logging_config.py` | Structured logging — JSON via structlog or stdlib text |
+| `shared/resilience.py` | `CircuitBreaker`, `retry_async` decorator, `GracefulShutdown` |
+| `shared/crewai_compat.py` | `crewai.tools.BaseTool` import with fallback stub |
+| `shared/data_generation_service.py` | Synthetic test data generation |
+| `webgui/api.py` | FastAPI REST router — auth, tasks, dashboard, sessions, reports, agents, A2A |
+| `webgui/app.py` | Chainlit app — chat interface + security headers middleware |
+| `webgui/realtime.py` | WebSocket / Redis Pub/Sub infrastructure |
+| `webgui/exports.py` | PDF / JSON / CSV report generation |
+| `webgui/auth.py` | JWT + API key auth, OAuth2 (Google/GitHub/Azure AD), RBAC |
+
+---
 
 ## Technology Stack
 
-- **Agent framework:** CrewAI >=0.11.0,<1.0.0 + LangChain >=0.1.0,<0.2.0
-- **LLM providers:** OpenAI, Anthropic, Google Gemini, Ollama, LM Studio
-- **Web UI:** Chainlit >=1.1.304,<2.0.0 + FastAPI >=0.115.0
-- **Messaging:** Redis >=5.0.8 + Celery >=5.4.0 + RabbitMQ
-- **Browser automation:** Playwright >=1.45.0
-- **ML/CV:** scikit-learn >=1.5.1, OpenCV >=4.10.0
-- **Testing:** pytest >=8.3.2
+| Layer | Library | Version |
+|-------|---------|---------|
+| Agent framework | crewai | `>=1.0.0,<2.0.0` |
+| LLM routing | litellm | (via crewai) |
+| Web UI | Chainlit + FastAPI | `>=1.1.304,<2.0.0` / `>=0.115.0` |
+| Messaging | Redis + Celery + RabbitMQ | `>=5.0.8` / `>=5.4.0` |
+| Browser automation | Playwright | `>=1.45.0` |
+| ML / CV | scikit-learn, OpenCV, NumPy, Pandas | `>=1.5.1` / `>=4.10.0` |
+| Testing | pytest | `>=8.3.2` |
+
+> LangChain was removed on 2026-02-28. See [Dependency Watch](dependency-watch.md) for upstream blockers.
+
+### LLM Providers
+
+crewAI 1.x uses **litellm** internally, giving access to 100+ providers with a single model-string API:
+
+| Provider | Model string example |
+|----------|---------------------|
+| OpenAI | `gpt-4o`, `gpt-4o-mini` |
+| Anthropic | `anthropic/claude-opus-4-5` |
+| Google Gemini | `gemini/gemini-2.0-flash` |
+| Ollama (local) | `ollama/llama3.3` |
+| LM Studio (local) | `openai/local-model` (OpenAI-compatible API) |
+| Azure OpenAI | `azure/your-deployment-name` |
+| AGNOS OS Gateway | configure `AGNOS_LLM_GATEWAY_URL` (see [ADR-021](../adr/021-agnosticos-integration.md)) |
+
+Set `PRIMARY_MODEL_PROVIDER` and `OPENAI_MODEL` (or equivalent) in `.env`. Fallback chains are configured in `config/models.json`.
+
+---
 
 ## Environment Variables
 
-### Required
+See `.env.example` for the full list with comments. Key variables:
 
-```bash
-OPENAI_API_KEY=your_key_here
-PRIMARY_MODEL_PROVIDER=openai
-```
-
-### Infrastructure (for local development)
+### Connection
 
 ```bash
 REDIS_HOST=localhost
 REDIS_PORT=6379
+REDIS_DB=0
+REDIS_PASSWORD=          # blank for local dev
 RABBITMQ_HOST=localhost
 RABBITMQ_PORT=5672
+RABBITMQ_USER=qa_user
+RABBITMQ_PASSWORD=change_me_strong_password
+RABBITMQ_VHOST=/
 ```
 
-### Feature Flags
+### LLM
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o
+PRIMARY_MODEL_PROVIDER=openai
+FALLBACK_MODEL_PROVIDERS=anthropic,ollama
+# Optional Anthropic / Google keys
+ANTHROPIC_API_KEY=
+GOOGLE_API_KEY=
+```
+
+### Feature flags
 
 ```bash
 ENABLE_SELF_HEALING=true
@@ -215,56 +248,56 @@ ENABLE_RISK_BASED_PRIORITIZATION=true
 ENABLE_CONTEXT_AWARE_TESTING=true
 ```
 
-## Adding New Agents
-
-1. Create directory under `agents/`
-2. Implement agent class using CrewAI; extend `BaseTool` for custom tools
-3. Add a Dockerfile (follow existing pattern: Python 3.11-slim, PYTHONPATH=/app)
-4. Add service to `docker-compose.yml`
-5. Add Kubernetes manifest in `k8s/manifests/` or update Helm chart template
-6. Add scenario + routing in `agents/manager/qa_manager.py`
-7. Integrate with WebGUI in `webgui/app.py`
-
-## Common Development Tasks
-
-### Restart a Single Agent
+### WebGUI / auth
 
 ```bash
-# In Docker
-docker-compose restart qa-manager
-
-# Or rebuild and restart
-docker-compose up --build -d qa-manager
+WEBGUI_SECRET_KEY=change_me_in_production
+ENVIRONMENT=development          # set to "production" to enforce secret key
+OAUTH2_GOOGLE_CLIENT_ID=
+OAUTH2_GOOGLE_CLIENT_SECRET=
+WEBSOCKET_ENABLED=true
+REDIS_PUBSUB_CHANNEL=webgui_updates
+REPORT_EXPORT_PATH=/app/reports
+AGNOSTIC_API_KEY=               # static API key for M2M auth
+CORS_ALLOWED_ORIGINS=http://localhost:18789,http://localhost:3001
 ```
-
-### Add Custom Test Data
-
-```bash
-# Place files in shared/data directory
-mkdir -p shared/data
-cp my_test_data.csv shared/data/
-```
-
-### Configure New LLM Provider
-
-Edit `config/models.json`:
-
-```json
-{
-  "providers": {
-    "anthropic": {
-      "api_base": "https://api.anthropic.com",
-      "models": ["claude-3-opus-20240229"],
-      "auth": {"api_key": "${ANTHROPIC_API_KEY}"}
-    }
-  }
-}
-```
-
-## Troubleshooting
-
-For common troubleshooting steps (port conflicts, agent issues, LLM errors, Redis/build issues), see the [Quick Start Guide troubleshooting section](../getting-started/quick-start.md#-troubleshooting).
 
 ---
 
-For more details, see the [Contributing Guidelines](contributing.md).
+## Adding New Agents
+
+The **Plugin Architecture** ([ADR-013](../adr/013-plugin-architecture.md)) means adding a new agent requires **no code changes** to the manager or WebGUI — only 5 steps:
+
+1. **Create `agents/<name>/`** — implement an agent class using `crewai.Agent`; extend `BaseTool` (from `shared.crewai_compat`) for custom tools.
+2. **Add a Dockerfile** — follow the existing pattern (`FROM python:3.11-slim`, `PYTHONPATH=/app`, copy only the agent directory).
+3. **Register in `config/team_config.json`** — add an entry with `role`, `celery_task`, `celery_queue`, and `redis_prefix` fields. `AgentRegistry` picks it up automatically.
+4. **Add service to `docker-compose.yml`** — extend the existing agent service pattern.
+5. **Add K8s manifest** — add to `k8s/manifests/` or extend the Helm chart.
+
+The `AgentRegistry` in `config/agent_registry.py` routes tasks via `registry.route_task()` and the WebGUI welcome message regenerates dynamically from `registry.get_agents_for_team()`.
+
+---
+
+## Common Tasks
+
+```bash
+# Restart a single container
+docker-compose restart qa-manager
+docker-compose up --build -d qa-manager
+
+# Add custom LLM provider (edit config/models.json)
+# Add test data
+mkdir -p shared/data && cp my_data.csv shared/data/
+```
+
+---
+
+## Troubleshooting
+
+See [Quick Start — Troubleshooting](../getting-started/quick-start.md#troubleshooting) for port conflicts, agent startup failures, Redis/RabbitMQ issues, and LLM API errors.
+
+See [Dependency Watch](dependency-watch.md) for known Python version and dependency blockers.
+
+---
+
+*Related: [Contributing](contributing.md) · [Manual Testing](manual-testing.md) · [Agent Docs](../agents/index.md) · [API Reference](../api/webgui.md)*

@@ -60,7 +60,7 @@ Performance & Resilience Agent      ─┘
 | [Agent Docs](docs/agents/index.md) | Agent architecture details |
 | [Contributing](docs/development/contributing.md) | Contribution guidelines |
 | [Changelog](docs/project/changelog.md) | Version history |
-| [Roadmap](docs/project/roadmap.md) | Future plans |
+| [Roadmap](docs/development/roadmap.md) | Upcoming work (pending items only) |
 
 ### Additional Resources
 
@@ -68,6 +68,7 @@ Performance & Resilience Agent      ─┘
 - [API Documentation](docs/api/) - Agent, WebGUI, LLM APIs
 - [Security Assessment](docs/security/assessment.md) - Security findings
 - [Docker Build](docker/README.md) - Build optimization
+- [Dependency Watch](docs/development/dependency-watch.md) - Upstream blockers & compatibility tracking
 - [Helm Chart](k8s/helm/agentic-qa/README.md) - K8s deployment
 
 ## Deployment Options
@@ -122,14 +123,14 @@ result = await manager.orchestrate_qa_session({
 
 ## Technology Stack
 
-- **Agents**: CrewAI 0.11+ (crewai package)
+- **Agents**: CrewAI 1.x + litellm (LangChain removed)
 - **LLMs**: OpenAI, Anthropic, Google Gemini, Ollama, LM Studio
 - **Web UI**: Chainlit 1.1+ / 2.x compatible + FastAPI
 - **Messaging**: Redis 5.0+ + RabbitMQ + Celery
 - **Automation**: Playwright 1.45+
 - **ML/CV**: scikit-learn, OpenCV, NumPy, Pandas
 
-**Python**: 3.11-3.13 (compatible)
+**Python**: 3.11–3.13 (production); 3.14 not yet supported (see [Dependency Watch](docs/development/dependency-watch.md))
 
 ## YEOMAN Integration
 
@@ -174,4 +175,4 @@ MIT License - see [LICENSE](LICENSE) file.
 
 ---
 
-*Last Updated: 2026-02-22* | [Documentation](docs/README.md) | [Changelog](docs/project/changelog.md)
+*Last Updated: 2026-02-28* | [Documentation](docs/README.md) | [Changelog](docs/project/changelog.md) | [Roadmap](docs/development/roadmap.md)
