@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Path traversal fix** (`webgui/api.py`): `GET /reports/{id}/download` now resolves `file_path` with `Path.resolve()` and asserts `is_relative_to(_REPORTS_DIR)` before serving. Paths outside `/app/reports` return HTTP 403.
+- **Session ID sanitization** (`webgui/exports.py`): Session IDs are stripped of non-alphanumeric characters via `re.sub` before use in generated filenames, preventing directory traversal in the report generation path.
+- **Constant-time API key comparison** (`webgui/api.py`): Static `AGNOSTIC_API_KEY` comparison changed from `==` to `hmac.compare_digest()` to prevent timing side-channel attacks.
+- **Required RabbitMQ credentials** (`docker-compose.yml`, `.env.example`): `guest:guest` fallback defaults removed. `RABBITMQ_USER` and `RABBITMQ_PASSWORD` must be explicitly set (`:?` syntax causes Docker Compose to fail clearly if unset). `.env.example` updated with non-default placeholder values.
+- **Security headers middleware** (`webgui/app.py`): `SecurityHeadersMiddleware` added — sets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 1; mode=block`, `Referrer-Policy: strict-origin-when-cross-origin` on every response.
+- **Input validation hardening** (`webgui/api.py`): `TaskSubmitRequest` now enforces `min_length`/`max_length` on all text fields (title: 200, description: 5000, goals/constraints: 500) and uses `Literal["critical","high","medium","low"]` for priority — invalid values return HTTP 422.
+
+### Added
+- **Manual testing guide** (`docs/development/manual-testing.md`): Comprehensive smoke, integration, and end-to-end test sweep covering startup validation, all API surfaces, security controls, A2A protocol, and YEOMAN MCP bridge verification. ~45 individual test steps with exact `curl` commands, expected outputs, and pass/fail criteria.
+
+### Fixed
+- **`.env.example`**: Added missing `ENVIRONMENT` variable (used in `webgui/auth.py` production mode check). Added inline comments explaining RabbitMQ credential requirements.
+
+### Tests
+- **`tests/unit/test_webgui_api.py`**: Added `TestReportDownloadSecurity` (4 tests: valid path served, path traversal blocked, dotdot traversal blocked, missing file 404) and `TestSecurityHeaders` (security header assertions on real app).
+- **`tests/unit/test_webgui_tasks.py`**: Added 10 new validation tests (empty title, oversized title/description, invalid priority enum, API-level 422 responses).
+- **`tests/unit/test_webgui_exports.py`**: Added `TestGenerateFileSanitization` (path traversal in session_id neutralized, normal IDs preserved).
+- All 69 tests in the affected suites pass.
+
 ### Changed
 - **`pyproject.toml` dependency comment**: Corrected the note on `crewai` and Python 3.14. crewai 1.x (latest 1.9.3) also requires `Python <3.14` because chromadb (a crewai dependency) uses `pydantic.v1.BaseSettings`, which is broken on Python 3.14. Python 3.14 support is blocked upstream; production containers use Python 3.11. Roadmap updated to remove the incorrect claim that a crewai 1.x upgrade would unblock Python 3.14.
 

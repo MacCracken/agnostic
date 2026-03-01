@@ -13,15 +13,17 @@ import hmac
 import json
 import logging
 import os
+import re
 import sys
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Add config path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -48,9 +50,9 @@ async def get_current_user(
     """
     # 1. Check X-API-Key header
     if x_api_key is not None:
-        # Static env-var key (simple deployments)
+        # Static env-var key (simple deployments) — constant-time compare prevents timing attacks
         static_key = os.getenv("AGNOSTIC_API_KEY")
-        if static_key and x_api_key == static_key:
+        if static_key and hmac.compare_digest(x_api_key, static_key):
             return {
                 "user_id": "api-key-user",
                 "email": "api@agnostic",
@@ -125,15 +127,23 @@ class SessionCompareRequest(BaseModel):
     session2_id: str
 
 
+_VALID_AGENTS = {
+    "security-compliance", "performance", "junior-qa", "qa-analyst",
+    "senior-qa", "qa-manager",
+}
+
+
 class TaskSubmitRequest(BaseModel):
-    title: str
-    description: str
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(..., min_length=1, max_length=5000)
     target_url: str | None = None
-    priority: str = "high"           # critical | high | medium | low
-    standards: list[str] = []        # ["OWASP", "GDPR", ...]
-    agents: list[str] = []           # [] = all; or ["security-compliance", "performance"]
-    business_goals: str = "Ensure quality and functionality"
-    constraints: str = "Standard testing environment"
+    priority: Literal["critical", "high", "medium", "low"] = "high"
+    standards: list[str] = Field(default_factory=list)   # ["OWASP", "GDPR", ...]
+    agents: list[str] = Field(default_factory=list)      # [] = all; or subset of _VALID_AGENTS
+    business_goals: str = Field(
+        default="Ensure quality and functionality", max_length=500
+    )
+    constraints: str = Field(default="Standard testing environment", max_length=500)
     callback_url: str | None = None   # POST here on completion
     callback_secret: str | None = None  # HMAC-SHA256 signing secret
 
@@ -660,6 +670,9 @@ async def generate_report(
     }
 
 
+_REPORTS_DIR = Path("/app/reports").resolve()
+
+
 @api_router.get("/reports/{report_id}/download")
 async def download_report(
     report_id: str,
@@ -677,9 +690,18 @@ async def download_report(
     if not file_path:
         raise HTTPException(status_code=404, detail="Report file not found")
 
+    # Prevent path traversal: ensure file is inside the reports directory
+    resolved = Path(file_path).resolve()
+    if not resolved.is_relative_to(_REPORTS_DIR):
+        logger.warning("Path traversal attempt blocked for report %s: %s", report_id, file_path)
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="Report file not found on disk")
+
     return FileResponse(
-        path=file_path,
-        filename=os.path.basename(file_path),
+        path=str(resolved),
+        filename=resolved.name,
         media_type="application/octet-stream",
     )
 

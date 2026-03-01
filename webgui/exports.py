@@ -6,6 +6,7 @@ Generates PDF, JSON, and CSV reports with charts and comprehensive data analysis
 import json
 import logging
 import os
+import re
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -611,7 +612,9 @@ class ReportGenerator:
     ) -> tuple[str, int]:
         """Generate file in specified format"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{request.report_type.value}_{request.session_id}_{timestamp}.{format.value}"
+        # Sanitize session_id to prevent path traversal characters in the filename
+        safe_session_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", request.session_id)[:64]
+        filename = f"{request.report_type.value}_{safe_session_id}_{timestamp}.{format.value}"
         file_path = self.reports_dir / filename
 
         try:

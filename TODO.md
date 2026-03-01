@@ -1,15 +1,30 @@
-# TODO — REST API Improvements for YEOMAN MCP Integration
+# TODO — Agnostic QA Platform
 
-This file tracks API changes needed to support programmatic integration with
-[SecureYeoman](https://github.com/MacCracken/secureyeoman) via MCP tools.
+## YEOMAN MCP Integration (REST API) — All Implemented ✅
 
-The current REST API (`webgui/api.py`) is well-structured but optimised for the
-Chainlit web UI. The items below add machine-to-machine capabilities so that
-YEOMAN agents can drive the full QA pipeline over HTTP without the chat interface.
+All 8 original priorities for the YEOMAN MCP bridge are complete.
+See `docs/project/changelog.md` for details. Reference below preserved for history.
 
 ---
 
-## Priority 1 — Task Submission Endpoint ✅ Implemented
+## Upcoming Work (see roadmap for full detail)
+
+### Near-term
+- [ ] WebSocket real-time updates (`/ws/realtime`) — infrastructure exists (`webgui/realtime.py`), not yet wired to API
+- [ ] Scheduled report generation — APScheduler or Celery Beat integration
+- [ ] CrewAI 1.x + litellm migration (drop langchain 0.1.x dependency)
+- [ ] Grafana dashboard JSON + Prometheus `ServiceMonitor` CRD
+
+### Medium-term
+- [ ] PostgreSQL/SQLite test result persistence (replace Redis-only storage)
+- [ ] Multi-tenant WebGUI (team-scoped keyspaces, per-team RabbitMQ vhosts)
+- [ ] GitOps/ArgoCD integration + Sealed Secrets
+
+---
+
+## REST API YEOMAN Integration History
+
+### Priority 1 — Task Submission Endpoint ✅ Implemented
 
 The most critical missing piece. Currently, QA task submission only happens via
 the Chainlit `@cl.on_message` handler inside `webgui/app.py`. There is no REST

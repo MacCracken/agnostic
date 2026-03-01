@@ -102,3 +102,37 @@ class TestReportGeneration:
         )
         data = await report_gen._collect_session_data("s1")
         assert data["session_id"] == "s1"
+
+
+class TestGenerateFileSanitization:
+    """Verify session_id sanitization prevents path traversal in generated filenames."""
+
+    @pytest.mark.asyncio
+    async def test_path_traversal_in_session_id_is_neutralized(self, report_gen):
+        """../../etc/passwd as session_id must not escape reports_dir."""
+        content = {"summary": "safe"}
+        req = ReportRequest(
+            session_id="../../etc/passwd",
+            report_type=ReportType.EXECUTIVE_SUMMARY,
+            format=ReportFormat.JSON,
+        )
+        file_path_str, _ = await report_gen._generate_file(content, ReportFormat.JSON, req)
+        generated = Path(file_path_str)
+        # File must stay within reports dir
+        assert generated.resolve().is_relative_to(report_gen.reports_dir.resolve())
+        # Path separators must not be present in the session_id portion
+        assert ".." not in generated.name
+        assert "/" not in generated.name
+
+    @pytest.mark.asyncio
+    async def test_normal_session_id_preserved(self, report_gen):
+        """Normal session IDs like session_20260101_abc should be untouched."""
+        content = {"summary": "ok"}
+        req = ReportRequest(
+            session_id="session_20260101_abc123",
+            report_type=ReportType.EXECUTIVE_SUMMARY,
+            format=ReportFormat.JSON,
+        )
+        file_path_str, _ = await report_gen._generate_file(content, ReportFormat.JSON, req)
+        generated = Path(file_path_str)
+        assert "session_20260101_abc123" in generated.name

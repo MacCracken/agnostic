@@ -111,6 +111,37 @@ class TestTaskSubmitRequest:
         with pytest.raises(Exception):
             TaskSubmitRequest(title="Only title")
 
+    # --- Input validation (added with security hardening) ---
+
+    def test_title_empty_rejected(self):
+        with pytest.raises(Exception):
+            TaskSubmitRequest(title="", description="D")
+
+    def test_title_too_long_rejected(self):
+        with pytest.raises(Exception):
+            TaskSubmitRequest(title="x" * 201, description="D")
+
+    def test_description_too_long_rejected(self):
+        with pytest.raises(Exception):
+            TaskSubmitRequest(title="T", description="d" * 5001)
+
+    def test_priority_invalid_rejected(self):
+        with pytest.raises(Exception):
+            TaskSubmitRequest(title="T", description="D", priority="urgent")
+
+    def test_priority_valid_values(self):
+        for p in ("critical", "high", "medium", "low"):
+            req = TaskSubmitRequest(title="T", description="D", priority=p)
+            assert req.priority == p
+
+    def test_business_goals_too_long_rejected(self):
+        with pytest.raises(Exception):
+            TaskSubmitRequest(title="T", description="D", business_goals="x" * 501)
+
+    def test_constraints_too_long_rejected(self):
+        with pytest.raises(Exception):
+            TaskSubmitRequest(title="T", description="D", constraints="x" * 501)
+
 
 class TestTaskStatusResponse:
     def test_serialization(self):
@@ -208,6 +239,27 @@ class TestSubmitTask:
 
     def test_submit_missing_fields(self, authed_client):
         resp = authed_client.post("/api/tasks", json={"title": "T"})
+        assert resp.status_code == 422
+
+    def test_submit_invalid_priority_rejected(self, authed_client):
+        resp = authed_client.post(
+            "/api/tasks",
+            json={"title": "T", "description": "D", "priority": "urgent"},
+        )
+        assert resp.status_code == 422
+
+    def test_submit_title_too_long_rejected(self, authed_client):
+        resp = authed_client.post(
+            "/api/tasks",
+            json={"title": "x" * 201, "description": "D"},
+        )
+        assert resp.status_code == 422
+
+    def test_submit_description_too_long_rejected(self, authed_client):
+        resp = authed_client.post(
+            "/api/tasks",
+            json={"title": "T", "description": "d" * 5001},
+        )
         assert resp.status_code == 422
 
 

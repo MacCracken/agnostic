@@ -2,6 +2,7 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -300,3 +301,118 @@ class TestHealthCheckEndpoint:
         # stale agent, infra ok → degraded
         agent_statuses = list(data["agents"].values())
         assert "stale" in agent_statuses
+
+
+# ---------------------------------------------------------------------------
+# Security: path traversal in report download
+# ---------------------------------------------------------------------------
+
+class TestReportDownloadSecurity:
+    """Verify path traversal is blocked in GET /api/reports/{id}/download."""
+
+    def _make_redis_with_meta(self, file_path: str):
+        mock_redis = Mock()
+        mock_redis.get.return_value = json.dumps({"file_path": file_path}).encode()
+        return mock_redis
+
+    def test_path_within_reports_dir_ok(self, authed_client, tmp_path):
+        """A file inside /app/reports should be served."""
+        import webgui.api as api_mod
+
+        report_file = tmp_path / "report.json"
+        report_file.write_text("{}")
+
+        original_dir = api_mod._REPORTS_DIR
+        api_mod._REPORTS_DIR = tmp_path.resolve()
+        try:
+            with patch("config.environment.config") as mock_cfg:
+                mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
+                    str(report_file)
+                )
+                resp = authed_client.get("/api/reports/report-abc/download")
+            assert resp.status_code == 200
+        finally:
+            api_mod._REPORTS_DIR = original_dir
+
+    def test_path_traversal_blocked(self, authed_client, tmp_path):
+        """A file outside /app/reports must return 403."""
+        import webgui.api as api_mod
+
+        # Reports dir is tmp_path; file is one level above (outside)
+        malicious_path = str(tmp_path.parent / "etc" / "passwd")
+
+        original_dir = api_mod._REPORTS_DIR
+        api_mod._REPORTS_DIR = tmp_path.resolve()
+        try:
+            with patch("config.environment.config") as mock_cfg:
+                mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
+                    malicious_path
+                )
+                resp = authed_client.get("/api/reports/evil-id/download")
+            assert resp.status_code == 403
+        finally:
+            api_mod._REPORTS_DIR = original_dir
+
+    def test_dotdot_traversal_blocked(self, authed_client, tmp_path):
+        """../../etc/passwd style path must be blocked."""
+        import webgui.api as api_mod
+
+        traversal = str(tmp_path / ".." / ".." / "etc" / "passwd")
+
+        original_dir = api_mod._REPORTS_DIR
+        api_mod._REPORTS_DIR = tmp_path.resolve()
+        try:
+            with patch("config.environment.config") as mock_cfg:
+                mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
+                    traversal
+                )
+                resp = authed_client.get("/api/reports/dotdot/download")
+            assert resp.status_code == 403
+        finally:
+            api_mod._REPORTS_DIR = original_dir
+
+    def test_missing_file_returns_404(self, authed_client, tmp_path):
+        """Non-existent file within reports dir returns 404, not 500."""
+        import webgui.api as api_mod
+
+        nonexistent = str(tmp_path / "missing_report.json")
+        original_dir = api_mod._REPORTS_DIR
+        api_mod._REPORTS_DIR = tmp_path.resolve()
+        try:
+            with patch("config.environment.config") as mock_cfg:
+                mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
+                    nonexistent
+                )
+                resp = authed_client.get("/api/reports/gone/download")
+            assert resp.status_code == 404
+        finally:
+            api_mod._REPORTS_DIR = original_dir
+
+
+# ---------------------------------------------------------------------------
+# Security: security headers middleware
+# ---------------------------------------------------------------------------
+
+class TestSecurityHeaders:
+    """Verify OWASP security headers are present on API responses."""
+
+    def test_security_headers_on_health(self):
+        try:
+            from webgui.app import app as real_app
+        except ImportError:
+            pytest.skip("webgui.app not importable")
+
+        with patch("webgui.app.config") as mock_cfg, \
+             patch("webgui.app.socket") as mock_sock, \
+             patch("webgui.app._agent_registry") as mock_reg:
+            mock_cfg.get_redis_client.return_value = Mock(ping=Mock(return_value=True))
+            mock_sock.create_connection.return_value = Mock()
+            mock_reg.get_agents_for_team.return_value = []
+
+            client = TestClient(real_app)
+            resp = client.get("/health")
+
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+        assert resp.headers.get("X-Frame-Options") == "DENY"
+        assert resp.headers.get("X-XSS-Protection") == "1; mode=block"
+        assert resp.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"

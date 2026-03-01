@@ -23,8 +23,8 @@ services:
       - "5672:5672"
       - "15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER must be set in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env}
     networks:
       - qa-network
     volumes:
@@ -45,7 +45,7 @@ services:
       dockerfile: agents/manager/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       - AGENT_ROLE=manager
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     depends_on:
@@ -78,7 +78,7 @@ services:
       dockerfile: agents/senior/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       - AGENT_ROLE=senior
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     depends_on:
@@ -118,7 +118,7 @@ services:
       dockerfile: agents/junior/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       - AGENT_ROLE=junior
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     depends_on:
@@ -158,7 +158,7 @@ services:
       dockerfile: agents/analyst/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       - AGENT_ROLE=analyst
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     depends_on:
@@ -197,7 +197,7 @@ services:
       dockerfile: agents/security_compliance/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       - AGENT_ROLE=security_compliance
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     depends_on:
@@ -230,7 +230,7 @@ services:
       dockerfile: agents/performance/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       - AGENT_ROLE=performance
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     depends_on:
@@ -265,7 +265,7 @@ services:
       - "8000:8000"
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       - WEBGUI_HOST=0.0.0.0
       - WEBGUI_PORT=8000
       - OPENAI_API_KEY=${OPENAI_API_KEY}

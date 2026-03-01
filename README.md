@@ -14,7 +14,10 @@ A containerized, multi-agent QA platform powered by CrewAI. Six specialized AI a
 # 1. Clone and setup
 git clone https://github.com/MacCracken/agnostic && cd agnostic
 cp .env.example .env
-# Edit .env: set OPENAI_API_KEY
+# Edit .env — required:
+#   OPENAI_API_KEY=sk-...
+#   RABBITMQ_USER=qa_user
+#   RABBITMQ_PASSWORD=your_strong_password
 
 # 2. Launch (Docker)
 docker compose up --build -d
@@ -53,6 +56,7 @@ Performance & Resilience Agent      ─┘
 | [Docker Deployment](docs/deployment/docker-compose.md) | Local & production Docker setup |
 | [Kubernetes Deployment](docs/deployment/kubernetes.md) | Production K8s with Helm |
 | [Development Setup](docs/development/setup.md) | Local development guide |
+| [Manual Testing Guide](docs/development/manual-testing.md) | Smoke, integration & E2E test sweep |
 | [Agent Docs](docs/agents/index.md) | Agent architecture details |
 | [Contributing](docs/development/contributing.md) | Contribution guidelines |
 | [Changelog](docs/project/changelog.md) | Version history |

@@ -82,3 +82,17 @@ POST /api/tasks/full         → agents=[] (all agents)
 **Negative / trade-offs:**
 - `asyncio.create_task` tasks are lost on process restart. Acceptable for a development-phase implementation; production deployments should consider persisting the task queue (see roadmap item: Test Result Persistence).
 - Static `AGNOSTIC_API_KEY` provides no per-client audit trail. Teams needing audit logs should use Redis-backed keys.
+
+## Amendment: Input validation & security hardening (2026-02-28)
+
+`TaskSubmitRequest` now enforces:
+
+| Field | Constraint |
+|-------|-----------|
+| `title` | `min_length=1`, `max_length=200` |
+| `description` | `min_length=1`, `max_length=5000` |
+| `priority` | `Literal["critical","high","medium","low"]` — invalid values → HTTP 422 |
+| `business_goals` | `max_length=500` |
+| `constraints` | `max_length=500` |
+
+Static `AGNOSTIC_API_KEY` comparison changed from `==` to `hmac.compare_digest()` (constant-time) to prevent timing side-channel attacks.
