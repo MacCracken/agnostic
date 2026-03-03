@@ -36,6 +36,8 @@ class Dashboard {
         this.ws.onopen = () => {
             console.log('WebSocket connected');
             this.updateConnectionStatus('connected');
+            // Subscribe to active sessions for real-time updates
+            this.subscribeToActiveSessions();
         };
         
         this.ws.onmessage = (event) => {
@@ -196,6 +198,18 @@ class Dashboard {
         const statusElement = document.getElementById('connection-status');
         statusElement.className = `connection-status ${status}`;
         statusElement.textContent = status.toUpperCase();
+    }
+
+    subscribeToActiveSessions() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        
+        // Subscribe to all active sessions for real-time updates
+        this.sessions.forEach(session => {
+            this.ws.send(JSON.stringify({
+                type: 'subscribe_session',
+                session_id: session.session_id
+            }));
+        });
     }
 
     showNotification(data) {

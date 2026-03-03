@@ -717,7 +717,11 @@ class AuthManager:
     def _verify_password(self, password: str, password_hash: str) -> bool:
         """Verify password against hash"""
         try:
-            # Using hashlib for demo - in production use bcrypt or argon2
+            import bcrypt
+            return bcrypt.checkpw(password.encode(), password_hash.encode())
+        except ImportError:
+            # Fallback for environments without bcrypt - less secure
+            logger.warning("bcrypt not available, using SHA256 (not recommended for production)")
             password_hash_check = hashlib.sha256(password.encode()).hexdigest()
             return password_hash_check == password_hash
         except Exception as e:
@@ -726,7 +730,13 @@ class AuthManager:
 
     def _hash_password(self, password: str) -> str:
         """Hash password"""
-        return hashlib.sha256(password.encode()).hexdigest()
+        try:
+            import bcrypt
+            return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        except ImportError:
+            # Fallback for environments without bcrypt - less secure
+            logger.warning("bcrypt not available, using SHA256 (not recommended for production)")
+            return hashlib.sha256(password.encode()).hexdigest()
 
     def _is_token_blacklisted(self, token: str) -> bool:
         """Check if token is blacklisted"""

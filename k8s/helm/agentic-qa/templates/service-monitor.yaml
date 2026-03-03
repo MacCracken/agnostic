@@ -1,0 +1,47 @@
+{{- if .Values.metrics.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "agentic-qa.fullname" . }}-webgui
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "agentic-qa.labels" . | nindent 4 }}
+    app: webgui
+    release: {{ .Values.metrics.prometheus | default "prometheus" }}
+spec:
+  selector:
+    matchLabels:
+      app: webgui
+      component: frontend
+  endpoints:
+  - port: http
+    path: /api/metrics
+    interval: {{ .Values.metrics.scrapeInterval | default "30s" }}
+    scheme: http
+    tlsConfig:
+      insecureSkipVerify: false
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.namespace.name }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "agentic-qa.fullname" . }}-agents
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "agentic-qa.labels" . | nindent 4 }}
+    release: {{ .Values.metrics.prometheus | default "prometheus" }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "agentic-qa.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+  - port: http
+    path: /api/metrics
+    interval: {{ .Values.metrics.scrapeInterval | default "30s" }}
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.namespace.name }}
+{{- end }}

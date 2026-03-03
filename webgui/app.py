@@ -802,8 +802,68 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 from webgui.api import api_router  # noqa: E402
+from webgui.realtime import realtime_manager, websocket_handler  # noqa: E402
 
 app.include_router(api_router)
+
+
+# ---------------------------------------------------------------------------
+# WebSocket Real-Time Dashboard
+# ---------------------------------------------------------------------------
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize realtime manager on startup."""
+    await realtime_manager.initialize()
+    logger.info("Realtime manager initialized")
+
+    from webgui.scheduled_reports import scheduled_report_manager
+
+    await scheduled_report_manager.initialize()
+    logger.info("Scheduled reports initialized")
+
+    if os.getenv("DATABASE_ENABLED", "false").lower() == "true":
+        try:
+            from shared.database.models import init_db
+            await init_db()
+            logger.info("Database initialized")
+        except Exception as e:
+            logger.warning(f"Database initialization failed: {e}")
+
+    if os.getenv("AGNOS_AGENT_REGISTRATION_ENABLED", "false").lower() == "true":
+        try:
+            from config.agnos_agent_registration import agent_registry_client
+            await agent_registry_client.register_all_agents()
+            logger.info("Registered agents with agnosticos")
+        except Exception as e:
+            logger.warning(f"Agent registration failed: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup realtime manager on shutdown."""
+    await realtime_manager.cleanup()
+    logger.info("Realtime manager cleaned up")
+
+    from webgui.scheduled_reports import scheduled_report_manager
+
+    await scheduled_report_manager.shutdown()
+    logger.info("Scheduled reports shutdown")
+
+    if os.getenv("AGNOS_AGENT_REGISTRATION_ENABLED", "false").lower() == "true":
+        try:
+            from config.agnos_agent_registration import agent_registry_client
+            await agent_registry_client.deregister_all_agents()
+            logger.info("Deregistered agents from agnosticos")
+        except Exception as e:
+            logger.warning(f"Agent deregistration failed: {e}")
+
+
+@app.websocket("/ws/realtime")
+async def websocket_endpoint(websocket):
+    """WebSocket endpoint for real-time dashboard updates."""
+    user_id = "anonymous"
+    await websocket_handler.handle_websocket(websocket, user_id)
 
 
 # ---------------------------------------------------------------------------

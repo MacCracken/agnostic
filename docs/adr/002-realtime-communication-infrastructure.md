@@ -99,3 +99,18 @@ Key features:
 - Message filtering and routing based on user permissions
 - Connection pooling for WebSocket management
 - Graceful degradation to polling when WebSocket unavailable
+
+## Implementation Update (2026-03-02)
+
+The WebSocket Real-Time Dashboard has been fully implemented:
+
+- **WebSocket endpoint wired**: `/ws/realtime` now connected in `webgui/app.py`
+- **Realtime manager initialized on startup**: `on_event("startup")` initializes Redis pub/sub
+- **Agent task notifications**: Subscribes to all agent task channels (`manager:tasks`, `senior:tasks`, etc.)
+- **Dashboard integration**: `dashboard.js` auto-subscribes to active sessions on connect
+- **Channel routing**: Agent task notifications broadcast to relevant session subscribers
+
+Files modified:
+- `webgui/app.py` - Added startup/shutdown events and WebSocket endpoint
+- `webgui/realtime.py` - Added agent task channel subscriptions
+- `webgui/static/js/dashboard.js` - Added session subscription on connect

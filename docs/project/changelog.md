@@ -9,7 +9,18 @@ Versions use **YYYY.M.D** (calendar versioning).
 
 ## [Unreleased]
 
-*(No pending changes — see [Roadmap](../development/roadmap.md) for upcoming work.)*
+### Added
+
+- **WebSocket Real-Time Dashboard** — `/ws/realtime` endpoint fully wired in `webgui/app.py`; initializes Redis pub/sub on startup, subscribes to agent task channels (`manager:tasks`, `senior:tasks`, etc.) for real-time task progress; dashboard.js auto-subscribes to active sessions on connect (`webgui/realtime.py`, `webgui/static/js/dashboard.js`)
+- **Prometheus ServiceMonitor** — `ServiceMonitor` and `PodMonitor` CRDs for Prometheus scraping of `/api/metrics` endpoint; configurable via `metrics.enabled` in Helm values (`k8s/helm/agentic-qa/templates/service-monitor.yaml`)
+- **Scheduled Report Generation** — APScheduler integration for automated daily/weekly reports; `POST /api/reports/scheduled`, `GET /api/reports/scheduled`, `DELETE /api/reports/scheduled/{job_id}` endpoints; configurable via `SCHEDULED_REPORTS_ENABLED`, `SCHEDULED_REPORT_DAILY_TIME`, `SCHEDULED_REPORT_WEEKLY_DAY`, `SCHEDULED_REPORT_WEEKLY_TIME` env vars (`webgui/scheduled_reports.py`, `webgui/api.py`, `pyproject.toml`)
+- **GitOps/ArgoCD Integration** — ArgoCD `ApplicationSet` for multi-environment promotion; External Secrets Operator for Vault-backed secret rotation; Kustomize overlays for dev/staging/prod (`k8s/argocd/applicationset.yaml`, `k8s/argocd/external-secrets.yaml`, `k8s/overlays/`)
+- **Test Result Persistence (PostgreSQL)** — SQLAlchemy async models for test sessions, results, metrics, and reports; REST endpoints for CRUD operations; quality trends API; configurable via `DATABASE_ENABLED`, `POSTGRES_*` env vars (`shared/database/models.py`, `shared/database/repository.py`, `webgui/api.py`, `pyproject.toml`)
+- **Multi-Tenant WebGUI** — Tenant models (`Tenant`, `TenantUser`, `TenantAPIKey`) for tenant isolation; tenant middleware for X-Tenant-ID header; admin endpoints for tenant provisioning; tenant-scoped Redis keyspaces; configurable via `MULTI_TENANT_ENABLED` env var (`shared/database/tenants.py`, `webgui/api.py`)
+- **AGNOS OS Phase 2 - Agent HUD Registration** — AgentRegistryClient for registering Agnostic QA agents with agnosticos Agent HUD; registration on startup, deregistration on shutdown; REST endpoints for status and manual registration; configurable via `AGNOS_AGENT_REGISTRATION_ENABLED`, `AGNOS_AGENT_REGISTRY_URL` env vars (`config/agnos_agent_registration.py`, `webgui/api.py`, `docs/adr/022-agnosticos-agent-hud.md`)
+- **YEOMAN MCP Bridge WebSocket Support** — WebSocket task subscription via `subscribe_task` message; task status updates published to Redis `task:{id}` channel on status changes; enables MCP bridge to receive push notifications instead of polling (`webgui/realtime.py`, `webgui/api.py`)
+- **Structured Result Schemas for YEOMAN** — Typed dataclasses for security, performance, and test execution results with `to_yeoman_action()` method for programmatic actions (auto-create issues, block PRs); `GET /results/structured/{session_id}` endpoint (`shared/yeoman_schemas.py`, `webgui/api.py`)
+- **Unit tests for WebSocket realtime** (`tests/unit/test_webgui_realtime.py`) — 12 tests covering EventType, WebSocketMessage, RealtimeManager, WebSocketHandler, and channel configuration
 
 ---
 

@@ -1030,7 +1030,7 @@ class FlakyTestDetectionTool(BaseTool):
             if timestamp_str:
                 try:
                     timestamps.append(datetime.fromisoformat(timestamp_str))
-                except:
+                except (ValueError, TypeError):
                     continue
 
         if len(timestamps) < 3:

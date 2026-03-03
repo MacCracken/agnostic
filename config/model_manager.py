@@ -600,7 +600,7 @@ class ModelManager:
             config_path = os.path.join(os.getcwd(), self.config_file)
             with open(config_path) as f:
                 config = json.load(f)
-        except:
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
             config = {}
 
         # Check for agent-specific model configuration

@@ -1,0 +1,36 @@
+# Staging environment overlay
+# Apply with: kubectl apply -k k8s/overlays/staging
+
+namespace: agentic-qa-staging
+
+replicas:
+  qaManager: 2
+  seniorQa: 2
+  juniorQa: 2
+  qaAnalyst: 2
+  securityCompliance: 2
+  performance: 2
+  webgui: 2
+
+image:
+  tag: staging
+
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "1"
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+
+networkPolicy:
+  enabled: true
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

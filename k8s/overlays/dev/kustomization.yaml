@@ -1,0 +1,33 @@
+# Development environment overlay
+# Apply with: kubectl apply -k k8s/overlays/dev
+
+namespace: agentic-qa-dev
+
+replicas:
+  qaManager: 1
+  seniorQa: 1
+  juniorQa: 1
+  qaAnalyst: 1
+  securityCompliance: 1
+  performance: 1
+  webgui: 1
+
+image:
+  tag: dev
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+autoscaling:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false

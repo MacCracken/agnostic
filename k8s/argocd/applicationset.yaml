@@ -1,0 +1,60 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: agentic-qa
+  namespace: argocd
+spec:
+  generators:
+  - matrix:
+      generators:
+      - clusters:
+          selector:
+            matchLabels:
+              environment: agentic-qa
+      - git:
+          repoURL: https://github.com/MacCracken/agnostic
+          revision: HEAD
+          directories:
+          - path: k8s/helm/agentic-qa
+          - path: k8s/manifests
+          - path: k8s/overlays/dev
+          - path: k8s/overlays/staging
+          - path: k8s/overlays/prod
+  template:
+    metadata:
+      name: '{{path.basename}}'
+      namespace: argocd
+      labels:
+        app: agentic-qa
+        environment: '{{metadata.labels.environment}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/MacCracken/agnostic
+        targetRevision: HEAD
+        path: '{{path}}'
+        helm:
+          valueFiles:
+          - values-{{metadata.labels.environment}}.yaml
+          parameters:
+          - name: image.tag
+            value: '{{metadata.labels.version | default("latest")}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{metadata.labels.namespace | default("agentic-qa")}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+          allowEmpty: false
+        syncOptions:
+        - CreateNamespace=true
+        - PrunePropagationPolicy=foreground
+        - PruneLast=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

@@ -44,7 +44,7 @@ class Config:
         self.environment = os.getenv("ENVIRONMENT", "development")
 
     def get_redis_client(self, **kwargs) -> redis.Redis:
-        """Create a Redis client with environment configuration."""
+        """Create a Redis client with environment configuration and connection pooling."""
         # Parse URL if provided, otherwise use individual settings
         if "url" in kwargs or self.redis_url:
             redis_url = kwargs.get("url", self.redis_url)
@@ -56,6 +56,12 @@ class Config:
                 "db": parsed.path.lstrip("/") if parsed.path else self.redis_db,
                 "password": parsed.password or self.redis_password,
                 "decode_responses": True,
+                "connection_pool": redis.ConnectionPool(
+                    max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "50")),
+                    retry_on_timeout=True,
+                    socket_keepalive=True,
+                    socket_connect_timeout=5,
+                ),
                 **kwargs,
             }
         else:
@@ -65,6 +71,12 @@ class Config:
                 "db": self.redis_db,
                 "password": self.redis_password,
                 "decode_responses": True,
+                "connection_pool": redis.ConnectionPool(
+                    max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "50")),
+                    retry_on_timeout=True,
+                    socket_keepalive=True,
+                    socket_connect_timeout=5,
+                ),
                 **kwargs,
             }
 

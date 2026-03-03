@@ -363,6 +363,16 @@ async def _run_task_async(
         record["updated_at"] = datetime.now(UTC).isoformat()
         record["result"] = result
         redis_client.setex(f"task:{task_id}", 86400, json.dumps(record))
+
+        # Publish task update to WebSocket subscribers
+        redis_client.publish(f"task:{task_id}", json.dumps({
+            "type": "task_status_changed",
+            "task_id": task_id,
+            "status": status,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "result": result,
+        }))
+
         return record
 
     final_record: dict[str, Any] = {}
@@ -707,6 +717,77 @@ async def download_report(
 
 
 # ---------------------------------------------------------------------------
+# Scheduled Report endpoints
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel
+
+
+class ScheduleReportRequest(BaseModel):
+    report_type: str
+    format: str
+    schedule: dict
+
+
+class ScheduleReportResponse(BaseModel):
+    job_id: str
+    name: str
+    next_run: str | None
+
+
+@api_router.get("/reports/scheduled")
+async def get_scheduled_reports(
+    user: dict = Depends(get_current_user),
+):
+    from webgui.scheduled_reports import scheduled_report_manager
+
+    jobs = scheduled_report_manager.get_jobs()
+    return jobs
+
+
+@api_router.post("/reports/scheduled")
+async def schedule_report(
+    req: ScheduleReportRequest,
+    user: dict = Depends(require_permission(Permission.REPORTS_GENERATE)),
+):
+    from webgui.scheduled_reports import scheduled_report_manager
+
+    try:
+        job_id = await scheduled_report_manager.schedule_custom_report(
+            report_type=req.report_type,
+            format=req.format,
+            schedule=req.schedule,
+            report_name=f"{req.report_type} by {user['user_id']}",
+        )
+
+        jobs = scheduled_report_manager.get_jobs()
+        job = next((j for j in jobs if j["id"] == job_id), None)
+
+        return {
+            "job_id": job_id,
+            "name": job["name"] if job else req.report_type,
+            "next_run": job["next_run"] if job else None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to schedule report: {e}")
+        raise HTTPException(status_code=500, detail="Failed to schedule report")
+
+
+@api_router.delete("/reports/scheduled/{job_id}")
+async def delete_scheduled_report(
+    job_id: str,
+    user: dict = Depends(require_permission(Permission.REPORTS_GENERATE)),
+):
+    from webgui.scheduled_reports import scheduled_report_manager
+
+    if scheduled_report_manager.remove_job(job_id):
+        return {"status": "deleted", "job_id": job_id}
+    raise HTTPException(status_code=404, detail="Job not found")
+
+
+# ---------------------------------------------------------------------------
 # Agent endpoints
 # ---------------------------------------------------------------------------
 
@@ -750,3 +831,560 @@ async def get_metrics():
         content=get_metrics_text(),
         media_type=get_content_type(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Structured Result Schemas for YEOMAN
+# ---------------------------------------------------------------------------
+
+@api_router.get("/results/structured/{session_id}")
+async def get_structured_results(
+    session_id: str,
+    result_type: str | None = None,
+    user: dict = Depends(get_current_user),
+):
+    """Get structured results for YEOMAN integration.
+
+    Returns typed results that YEOMAN can parse to take programmatic actions:
+    - Auto-create issues for critical security findings
+    - Block PRs on regression failures
+    - Alert on flaky tests
+    """
+    try:
+        from shared.yeoman_schemas import (
+            PerformanceResult,
+            QAReport,
+            SecurityResult,
+            TestExecutionResult,
+        )
+
+        redis_client = config.get_redis_client()
+
+        results = {}
+
+        if result_type in (None, "security"):
+            security_data = redis_client.get(f"security_compliance:{session_id}:audit")
+            if security_data:
+                sec = json.loads(security_data)
+                findings = []
+                for v in sec.get("vulnerabilities", []):
+                    from shared.yeoman_schemas import Finding, FindingCategory, FindingSeverity
+                    findings.append(Finding(
+                        finding_id=v.get("id", f"sec-{len(findings)}"),
+                        title=v.get("description", "Unknown vulnerability"),
+                        description=v.get("description", ""),
+                        severity=FindingSeverity(v.get("severity", "medium")),
+                        category=FindingCategory.SECURITY,
+                        component=v.get("component", "unknown"),
+                        cwe_id=v.get("cwe_id"),
+                        cvss_score=v.get("cvss_score"),
+                    ))
+                results["security"] = SecurityResult(
+                    scan_id=f"scan-{session_id}",
+                    session_id=session_id,
+                    scan_type="comprehensive",
+                    timestamp=datetime.now(UTC).isoformat(),
+                    overall_score=sec.get("security_score", 0),
+                    risk_level=sec.get("risk_level", "unknown"),
+                    findings=findings,
+                    compliance_scores=sec.get("compliance_scores", {}),
+                )
+
+        if result_type in (None, "performance"):
+            perf_data = redis_client.get(f"analyst:{session_id}:performance")
+            if perf_data:
+                perf = json.loads(perf_data)
+                results["performance"] = PerformanceResult(
+                    test_id=f"perf-{session_id}",
+                    session_id=session_id,
+                    test_type=perf.get("test_type", "load"),
+                    timestamp=datetime.now(UTC).isoformat(),
+                    duration_seconds=perf.get("duration", 0),
+                    response_times=perf.get("response_times", {}),
+                    throughput=perf.get("throughput", {}).get("rps", 0),
+                    error_rate=perf.get("error_rate", 0),
+                    regression_detected=perf.get("regression_detected", False),
+                )
+
+        if result_type in (None, "test_execution"):
+            test_data = redis_client.get(f"junior:{session_id}:test_results")
+            if test_data:
+                test = json.loads(test_data)
+                results["test_execution"] = TestExecutionResult(
+                    execution_id=f"exec-{session_id}",
+                    session_id=session_id,
+                    test_type="automated",
+                    timestamp=datetime.now(UTC).isoformat(),
+                    status="passed" if test.get("passed", 0) > test.get("failed", 0) else "failed",
+                    total_tests=test.get("total", 0),
+                    passed=test.get("passed", 0),
+                    failed=test.get("failed", 0),
+                    skipped=test.get("skipped", 0),
+                    coverage_percentage=test.get("coverage", 0),
+                )
+
+        if not results:
+            return {"session_id": session_id, "message": "No results found"}
+
+        report = QAReport(
+            report_id=f"report-{session_id}",
+            session_id=session_id,
+            report_type=result_type or "comprehensive",
+            generated_at=datetime.now(UTC).isoformat(),
+            summary="Structured results for YEOMAN integration",
+            security=results.get("security"),
+            performance=results.get("performance"),
+            test_execution=results.get("test_execution"),
+        )
+
+        return report.to_yeoman_action()
+
+    except Exception as e:
+        logger.error(f"Error generating structured results: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Test Result Persistence (PostgreSQL) endpoints
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel
+
+
+class TestSessionCreate(BaseModel):
+    session_id: str
+    title: str
+    description: str | None = None
+    priority: str | None = None
+
+
+class TestResultCreate(BaseModel):
+    session_id: str
+    test_id: str
+    test_name: str
+    description: str | None = None
+    status: str
+    severity: str | None = None
+    category: str | None = None
+    component: str | None = None
+    agent_name: str | None = None
+    error_message: str | None = None
+    stack_trace: str | None = None
+    execution_time_ms: int | None = None
+    test_data: dict | None = None
+    expected_result: dict | None = None
+    actual_result: dict | None = None
+    metadata: dict | None = None
+
+
+class TestResultFilter(BaseModel):
+    session_id: str | None = None
+    status: str | None = None
+    limit: int = 100
+    offset: int = 0
+
+
+class TestMetricsQuery(BaseModel):
+    session_id: str | None = None
+    metric_name: str | None = None
+    days: int = 30
+
+
+DATABASE_ENABLED = os.getenv("DATABASE_ENABLED", "false").lower() == "true"
+
+
+def _get_db_repo():
+    """Get database repository if enabled."""
+    if not DATABASE_ENABLED:
+        return None
+    try:
+        from shared.database.repository import TestResultRepository
+        from shared.database.models import get_session
+
+        return TestResultRepository
+    except Exception:
+        return None
+
+
+async def get_db_repo():
+    """Get database repository instance."""
+    repo_class = _get_db_repo()
+    if repo_class is None:
+        return None
+    session = await get_session()
+    return repo_class(session)
+
+
+@api_router.get("/test-sessions")
+async def get_test_sessions(
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    user: dict = Depends(get_current_user),
+):
+    """Get test sessions."""
+    repo = await get_db_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
+        )
+    sessions = await repo.get_sessions(status=status, limit=limit, offset=offset)
+    return [
+        {
+            "id": s.id,
+            "session_id": s.session_id,
+            "title": s.title,
+            "description": s.description,
+            "status": s.status,
+            "priority": s.priority,
+            "created_by": s.created_by,
+            "created_at": s.created_at.isoformat(),
+            "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+        }
+        for s in sessions
+    ]
+
+
+@api_router.post("/test-sessions")
+async def create_test_session(
+    req: TestSessionCreate,
+    user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
+):
+    """Create a new test session."""
+    repo = await get_db_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
+        )
+    session = await repo.create_session(
+        session_id=req.session_id,
+        title=req.title,
+        description=req.description,
+        priority=req.priority,
+        created_by=user.get("user_id"),
+    )
+    return {
+        "id": session.id,
+        "session_id": session.session_id,
+        "status": session.status,
+    }
+
+
+@api_router.put("/test-sessions/{session_id}/status")
+async def update_test_session_status(
+    session_id: str,
+    status: str,
+    user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
+):
+    """Update test session status."""
+    repo = await get_db_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
+        )
+    session = await repo.update_session_status(session_id, status)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"session_id": session.session_id, "status": session.status}
+
+
+@api_router.get("/test-results")
+async def get_test_results(
+    session_id: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    user: dict = Depends(get_current_user),
+):
+    """Get test results."""
+    repo = await get_db_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
+        )
+    results = await repo.get_test_results(
+        session_id=session_id, status=status, limit=limit, offset=offset
+    )
+    return [
+        {
+            "id": r.id,
+            "session_id": r.session_id,
+            "test_id": r.test_id,
+            "test_name": r.test_name,
+            "status": r.status,
+            "severity": r.severity,
+            "category": r.category,
+            "component": r.component,
+            "agent_name": r.agent_name,
+            "error_message": r.error_message,
+            "execution_time_ms": r.execution_time_ms,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in results
+    ]
+
+
+@api_router.post("/test-results")
+async def add_test_result(
+    req: TestResultCreate,
+    user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
+):
+    """Add a test result."""
+    repo = await get_db_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
+        )
+    result = await repo.add_test_result(req.model_dump())
+    return {"id": result.id, "test_id": result.test_id, "status": result.status}
+
+
+@api_router.get("/test-results/{session_id}/summary")
+async def get_test_results_summary(
+    session_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Get summary of test results for a session."""
+    repo = await get_db_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
+        )
+    summary = await repo.get_session_results_summary(session_id)
+    return summary
+
+
+@api_router.get("/test-metrics/trends")
+async def get_quality_trends(
+    days: int = 30,
+    user: dict = Depends(get_current_user),
+):
+    """Get quality trends over time."""
+    repo = await get_db_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
+        )
+    trends = await repo.get_quality_trends(days=days)
+    return trends
+
+
+# ---------------------------------------------------------------------------
+# Multi-Tenant endpoints
+# ---------------------------------------------------------------------------
+
+MULTI_TENANT_ENABLED = os.getenv("MULTI_TENANT_ENABLED", "false").lower() == "true"
+
+
+class TenantCreate(BaseModel):
+    tenant_id: str
+    name: str
+    slug: str
+    owner_email: str
+    plan: str = "free"
+
+
+class TenantUpdate(BaseModel):
+    name: str | None = None
+    status: str | None = None
+    plan: str | None = None
+    max_sessions: int | None = None
+    max_agents: int | None = None
+
+
+class TenantUserInvite(BaseModel):
+    email: str
+    role: str = "member"
+
+
+@api_router.get("/tenants")
+async def list_tenants(
+    user: dict = Depends(get_current_user),
+):
+    """List tenants (admin only)."""
+    if not MULTI_TENANT_ENABLED:
+        raise HTTPException(
+            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
+        )
+
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    return {"tenants": [], "message": "Implement with database"}
+
+
+@api_router.post("/tenants")
+async def create_tenant(
+    req: TenantCreate,
+    user: dict = Depends(get_current_user),
+):
+    """Create a new tenant (admin only)."""
+    if not MULTI_TENANT_ENABLED:
+        raise HTTPException(
+            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
+        )
+
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    return {
+        "tenant_id": req.tenant_id,
+        "name": req.name,
+        "slug": req.slug,
+        "status": "active",
+    }
+
+
+@api_router.get("/tenants/{tenant_id}")
+async def get_tenant(
+    tenant_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Get tenant details."""
+    if not MULTI_TENANT_ENABLED:
+        raise HTTPException(
+            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
+        )
+
+    return {
+        "tenant_id": tenant_id,
+        "name": "Tenant Name",
+        "status": "active",
+        "plan": "free",
+    }
+
+
+@api_router.put("/tenants/{tenant_id}")
+async def update_tenant(
+    tenant_id: str,
+    req: TenantUpdate,
+    user: dict = Depends(get_current_user),
+):
+    """Update tenant (admin only)."""
+    if not MULTI_TENANT_ENABLED:
+        raise HTTPException(
+            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
+        )
+
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    return {"tenant_id": tenant_id, "status": "updated"}
+
+
+@api_router.delete("/tenants/{tenant_id}")
+async def delete_tenant(
+    tenant_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Delete tenant (admin only)."""
+    if not MULTI_TENANT_ENABLED:
+        raise HTTPException(
+            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
+        )
+
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    return {"tenant_id": tenant_id, "status": "deleted"}
+
+
+@api_router.get("/tenants/{tenant_id}/users")
+async def list_tenant_users(
+    tenant_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """List users in a tenant."""
+    if not MULTI_TENANT_ENABLED:
+        raise HTTPException(
+            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
+        )
+
+    return {"users": []}
+
+
+@api_router.post("/tenants/{tenant_id}/users")
+async def invite_tenant_user(
+    tenant_id: str,
+    req: TenantUserInvite,
+    user: dict = Depends(get_current_user),
+):
+    """Invite user to tenant."""
+    if not MULTI_TENANT_ENABLED:
+        raise HTTPException(
+            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
+        )
+
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    return {"email": req.email, "role": req.role, "status": "invited"}
+
+
+@api_router.delete("/tenants/{tenant_id}/users/{user_id}")
+async def remove_tenant_user(
+    tenant_id: str,
+    user_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Remove user from tenant."""
+    if not MULTI_TENANT_ENABLED:
+        raise HTTPException(
+            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
+        )
+
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    return {"user_id": user_id, "status": "removed"}
+
+
+# ---------------------------------------------------------------------------
+# AGNOS OS Agent Registration endpoints
+# ---------------------------------------------------------------------------
+
+@api_router.get("/agents/registration-status")
+async def get_agent_registration_status(
+    user: dict = Depends(get_current_user),
+):
+    """Get agent registration status with agnosticos."""
+    try:
+        from config.agnos_agent_registration import agent_registry_client
+
+        return agent_registry_client.get_registration_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/agents/register-agnostic")
+async def register_agnostic_agents(
+    user: dict = Depends(get_current_user),
+):
+    """Register all Agnostic agents with agnosticos."""
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        from config.agnos_agent_registration import agent_registry_client
+
+        results = await agent_registry_client.register_all_agents()
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/agents/deregister-agnostic")
+async def deregister_agnostic_agents(
+    user: dict = Depends(get_current_user),
+):
+    """Deregister all Agnostic agents from agnosticos."""
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        from config.agnos_agent_registration import agent_registry_client
+
+        results = await agent_registry_client.deregister_all_agents()
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

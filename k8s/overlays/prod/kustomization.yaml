@@ -1,0 +1,39 @@
+# Production environment overlay
+# Apply with: kubectl apply -k k8s/overlays/prod
+
+namespace: agentic-qa-prod
+
+replicas:
+  qaManager: 3
+  seniorQa: 3
+  juniorQa: 3
+  qaAnalyst: 3
+  securityCompliance: 3
+  performance: 3
+  webgui: 3
+
+image:
+  tag: latest
+
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "1"
+  limits:
+    memory: "2Gi"
+    cpu: "2"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+
+networkPolicy:
+  enabled: true
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+resourceQuota:
+  enabled: true

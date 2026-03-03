@@ -29,6 +29,7 @@ class EventType(Enum):
     NOTIFICATION = "notification"
     AGENT_STATUS_CHANGED = "agent_status_changed"
     RESOURCE_UPDATE = "resource_update"
+    TASK_STATUS_CHANGED = "task_status_changed"
 
 
 @dataclass
@@ -68,6 +69,17 @@ class RealtimeManager:
                 "webgui:notifications",
                 "webgui:resource_updates",
             ]
+
+            # Also subscribe to agent task notifications for real-time task updates
+            agent_channels = [
+                "manager:tasks",
+                "senior:tasks",
+                "junior:tasks",
+                "analyst:tasks",
+                "security:tasks",
+                "performance:tasks",
+            ]
+            channels.extend(agent_channels)
 
             self.pubsub.subscribe(*channels)
             logger.info(f"Subscribed to {len(channels)} channels")
@@ -141,7 +153,19 @@ class RealtimeManager:
         if self.pubsub:
             self.pubsub.subscribe(channel)
 
-        logger.info(f"Connection {connection_id} subscribed to session {session_id}")
+    async def subscribe_to_task(self, connection_id: str, task_id: str):
+        """Subscribe connection to specific task updates (for MCP bridge polling replacement)"""
+        if connection_id not in self.connection_subscriptions:
+            self.connection_subscriptions[connection_id] = set()
+
+        channel = f"task:{task_id}"
+        self.connection_subscriptions[connection_id].add(channel)
+
+        # Subscribe to task status changes in Redis
+        if self.pubsub:
+            self.pubsub.subscribe(channel)
+
+        logger.info(f"Connection {connection_id} subscribed to task {task_id}")
 
     async def unsubscribe_from_session(self, connection_id: str, session_id: str):
         """Unsubscribe connection from specific session updates"""
@@ -234,6 +258,17 @@ class RealtimeManager:
                     if channel in subscriptions:
                         target_connections.append(conn_id)
 
+            elif channel.startswith("manager:tasks") or channel.endswith(":tasks"):
+                # Agent task notifications - broadcast to connections subscribed to the session
+                session_id = data.get("session_id")
+                if session_id:
+                    session_channel = f"webgui:session:{session_id}"
+                    for conn_id, subscriptions in self.connection_subscriptions.items():
+                        if session_channel in subscriptions:
+                            target_connections.append(conn_id)
+                    # Also notify all connected clients about task activity
+                    target_connections.extend(list(self.connection_subscriptions.keys()))
+
             elif channel == "webgui:notifications":
                 # Global notifications - send to all connections
                 target_connections = list(self.connection_subscriptions.keys())
@@ -246,6 +281,13 @@ class RealtimeManager:
                     for conn_id, subscriptions in self.connection_subscriptions.items():
                         if session_channel in subscriptions:
                             target_connections.append(conn_id)
+
+            elif channel.startswith("task:"):
+                # Task-specific updates (for MCP bridge WebSocket support)
+                task_id = channel.split(":")[-1]
+                for conn_id, subscriptions in self.connection_subscriptions.items():
+                    if channel in subscriptions:
+                        target_connections.append(conn_id)
 
             # Send to target connections
             for connection_id in target_connections:
@@ -336,6 +378,20 @@ class WebSocketHandler:
             if session_id:
                 await self.realtime_manager.unsubscribe_from_session(
                     connection_id, session_id
+                )
+
+        elif message_type == "subscribe_task":
+            # Subscribe to task updates (for MCP bridge polling replacement)
+            task_id = data.get("task_id")
+            if task_id:
+                await self.realtime_manager.subscribe_to_task(connection_id, task_id)
+                await self.realtime_manager.send_to_connection(
+                    connection_id,
+                    WebSocketMessage(
+                        type=EventType.NOTIFICATION,
+                        timestamp=datetime.now().isoformat(),
+                        data={"message": f"Subscribed to task {task_id}"},
+                    ),
                 )
 
         elif message_type == "ping":
