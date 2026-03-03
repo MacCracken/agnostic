@@ -3,6 +3,8 @@ import logging
 import os
 import socket
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -765,25 +767,6 @@ async def on_chat_end() -> dict[str, Any]:
         logger.info(f"Ending session: {session_id}")
 
 
-# FastAPI application with health check and REST API
-app = FastAPI()
-
-# ---------------------------------------------------------------------------
-# P7 — CORS middleware
-# ---------------------------------------------------------------------------
-_cors_origins_raw = os.getenv(
-    "CORS_ALLOWED_ORIGINS",
-    "http://localhost:18789,http://localhost:3001",
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in _cors_origins_raw.split(",")],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 # ---------------------------------------------------------------------------
 # Security headers middleware
 # ---------------------------------------------------------------------------
@@ -810,21 +793,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-app.add_middleware(SecurityHeadersMiddleware)
-
 from webgui.api import api_router  # noqa: E402
 from webgui.realtime import realtime_manager, websocket_handler  # noqa: E402
 
-app.include_router(api_router)
-
-
 # ---------------------------------------------------------------------------
-# WebSocket Real-Time Dashboard
+# Lifespan — startup / shutdown
 # ---------------------------------------------------------------------------
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize realtime manager on startup."""
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Manage application startup and shutdown."""
+    # --- startup ---
     await realtime_manager.initialize()
     logger.info("Realtime manager initialized")
 
@@ -849,14 +828,11 @@ async def startup_event():
         except Exception as e:
             logger.warning(f"Agent registration failed: {e}")
 
+    yield
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup realtime manager on shutdown."""
+    # --- shutdown ---
     await realtime_manager.cleanup()
     logger.info("Realtime manager cleaned up")
-
-    from webgui.scheduled_reports import scheduled_report_manager
 
     await scheduled_report_manager.shutdown()
     logger.info("Scheduled reports shutdown")
@@ -868,6 +844,29 @@ async def shutdown_event():
             logger.info("Deregistered agents from agnosticos")
         except Exception as e:
             logger.warning(f"Agent deregistration failed: {e}")
+
+
+# FastAPI application with health check and REST API
+app = FastAPI(lifespan=lifespan)
+
+# ---------------------------------------------------------------------------
+# P7 — CORS middleware
+# ---------------------------------------------------------------------------
+_cors_origins_raw = os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:18789,http://localhost:3001",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _cors_origins_raw.split(",")],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+app.include_router(api_router)
 
 
 @app.websocket("/ws/realtime")

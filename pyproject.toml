@@ -81,9 +81,9 @@ test = [
     "pytest-xdist>=3.6.1",
 ]
 web = [
-    "chainlit>=1.1.304,<2.0.0",  # chainlit 2.x requires Python <3.14
-    "fastapi>=0.115.0",
-    "uvicorn>=0.32.0",
+    "chainlit>=2.0.0,<3.0.0",
+    "fastapi>=0.116.1",
+    "uvicorn>=0.35.0",
     "websockets>=13.0",
     "PyJWT[crypto]>=2.8.0",
     "reportlab>=4.0",

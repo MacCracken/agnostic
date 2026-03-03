@@ -57,25 +57,28 @@ from pydantic import field_validator
 | | |
 |---|---|
 | **Affected dep** | `chainlit`, `fastapi` |
-| **Blocker for** | Installing `web` extras with `pip install -e .[web]` |
-| **Since** | 2026-02-22 |
-| **Status** | Unresolved |
-
-**Problem:** `pyproject.toml` specifies `chainlit>=1.1.304,<2.0.0` and `fastapi>=0.115.0`. All chainlit 1.x releases require `fastapi<0.113`, making these constraints mutually exclusive. `pip install -e .[dev,test,web,ml,...]` fails with `ResolutionImpossible`.
-
-**Workaround:** Install without the `web` extra for development (`pip install -e .[dev,test,ml,observability]`). The WebGUI tests mock FastAPI/Chainlit, so the test suite passes without them installed.
-
-**Fix options:**
-1. Upgrade to `chainlit>=2.0.0` (drops the fastapi<0.113 restriction) — requires testing for breaking changes in the Chainlit UI
-2. Pin `fastapi<0.113` (downgrade) — loses newer FastAPI features used in `webgui/api.py`
-
-**What to watch:**
-- chainlit 2.x releases and changelog: https://github.com/Chainlit/chainlit/releases
-- Confirm chainlit 2.x still supports Python 3.11 (production target)
+| **Resolved in** | 2026-03-03 |
+| **Status** | **Resolved** — moved to Resolved section below |
 
 ---
 
 ## Resolved
+
+### chainlit 2.x upgrade — FastAPI conflict resolved
+
+| | |
+|---|---|
+| **Resolved** | 2026-03-03 |
+| **Resolved by** | Upgrading to chainlit 2.x (`>=2.0.0,<3.0.0`) which drops the `fastapi<0.113` restriction |
+
+**Changes made:**
+- `pyproject.toml`: `chainlit>=2.0.0,<3.0.0` (was `>=1.1.304,<2.0.0`); `fastapi>=0.116.1` (was `>=0.115.0`); `uvicorn>=0.35.0` (was `>=0.32.0`)
+- `webgui/Dockerfile`: `CHAINLIT_SERVER_ROOT` renamed to `CHAINLIT_ROOT_PATH` (2.x canonical name)
+- `webgui/app.py`: migrated deprecated `@app.on_event("startup"/"shutdown")` to `lifespan` async context manager (required by starlette >=0.47 pulled in by chainlit 2.x)
+
+**Note:** Chainlit APIs used by this project (`@cl.on_chat_start`, `@cl.on_message`, `@cl.on_chat_end`, `cl.Message`, `cl.user_session`) are fully compatible with chainlit 2.x and required no code changes. Chainlit 2.x supports Python `>=3.10,<4.0.0`.
+
+---
 
 ### crewai 1.x migration — LangChain removed
 

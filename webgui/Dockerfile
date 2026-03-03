@@ -9,7 +9,7 @@ COPY --chown=appuser:appuser config/ ./config/
 # Set environment variables
 ENV CHAINLIT_HOST=0.0.0.0
 ENV CHAINLIT_PORT=8000
-ENV CHAINLIT_SERVER_ROOT=/
+ENV CHAINLIT_ROOT_PATH=/
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
