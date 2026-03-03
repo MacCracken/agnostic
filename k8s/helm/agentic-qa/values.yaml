@@ -27,10 +27,10 @@ namespace:
 # Secrets configuration (base64 encoded values)
 secrets:
   openaiApiKey: ""  # Set via --set secrets.openaiApiKey=$(echo -n "your-key" | base64)
-  rabbitmqPassword: "Z3Vlc3Q="  # "guest" in base64
+  rabbitmqPassword: ""  # Set via --set secrets.rabbitmqPassword=$(echo -n "your-password" | base64)
   # Plain text password used in RABBITMQ_URL construction at template render time.
   # Must match the base64-decoded value of rabbitmqPassword above.
-  rabbitmqPasswordPlain: "guest"
+  rabbitmqPasswordPlain: ""  # Set via --set secrets.rabbitmqPasswordPlain=your-password
 
 # Infrastructure services
 redis:
@@ -59,7 +59,7 @@ rabbitmq:
     repository: rabbitmq
     tag: "3-management-alpine"
   auth:
-    username: guest
+    username: ""  # Set via --set rabbitmq.auth.username=your-user
   service:
     amqpPort: 5672
     managementPort: 15672
@@ -183,7 +183,7 @@ env:
   REDIS_DB: "0"
   RABBITMQ_HOST: "rabbitmq-service"
   RABBITMQ_PORT: "5672"
-  RABBITMQ_USER: "guest"
+  RABBITMQ_USER: ""  # Set via --set env.RABBITMQ_USER=your-user
   RABBITMQ_VHOST: "/"
   WEBGUI_HOST: "0.0.0.0"
   WEBGUI_PORT: "8000"

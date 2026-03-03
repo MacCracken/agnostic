@@ -9,7 +9,7 @@ data:
   REDIS_DB: "0"
   RABBITMQ_HOST: "rabbitmq-service"
   RABBITMQ_PORT: "5672"
-  RABBITMQ_USER: "guest"
+  RABBITMQ_USER: ""  # Set to actual username before deploying
   RABBITMQ_VHOST: "/"
   WEBGUI_HOST: "0.0.0.0"
   WEBGUI_PORT: "8000"
@@ -30,5 +30,5 @@ type: Opaque
 data:
   # Base64 encoded values - these should be replaced with actual encoded values
   openai-api-key: ""  # echo -n "your-openai-key" | base64
-  rabbitmq-password: Z3Vlc3Q=  # "guest" in base64
+  rabbitmq-password: ""  # Set via: echo -n "your-password" | base64
   redis-password: ""

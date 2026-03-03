@@ -187,7 +187,7 @@ env:
   REDIS_DB: "0"
   RABBITMQ_HOST: "rabbitmq-service"
   RABBITMQ_PORT: "5672"
-  RABBITMQ_USER: "guest"
+  RABBITMQ_USER: ""  # REQUIRED: set via --set env.RABBITMQ_USER=your-user
   RABBITMQ_VHOST: "/"
   WEBGUI_HOST: "0.0.0.0"
   WEBGUI_PORT: "8000"

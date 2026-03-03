@@ -154,7 +154,7 @@ def get_database_url() -> str:
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     user = os.getenv("POSTGRES_USER", "postgres")
-    password = os.getenv("POSTGRES_PASSWORD", "postgres")
+    password = os.getenv("POSTGRES_PASSWORD", "")
     database = os.getenv("POSTGRES_DB", "agnostic")
 
     return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"

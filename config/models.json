@@ -71,7 +71,7 @@
       "provider_type": "agnos_gateway",
       "name": "AGNOS LLM Gateway",
       "base_url": "${AGNOS_LLM_GATEWAY_URL:-http://localhost:8088}/v1",
-      "api_key": "${AGNOS_LLM_GATEWAY_API_KEY:-agnos-local}",
+      "api_key": "${AGNOS_LLM_GATEWAY_API_KEY}",
       "model": "${AGNOS_LLM_GATEWAY_MODEL:-default}",
       "temperature": 0.1,
       "max_tokens": 4000,

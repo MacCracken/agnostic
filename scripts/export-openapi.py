@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Minimal env setup so imports don't crash
 os.environ.setdefault("ENVIRONMENT", "development")
-os.environ.setdefault("WEBGUI_SECRET_KEY", "export-script-placeholder")
+os.environ.setdefault("WEBGUI_SECRET_KEY", os.urandom(32).hex())
 
 try:
     from webgui.app import app  # FastAPI application instance

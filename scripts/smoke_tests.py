@@ -45,8 +45,8 @@ def test_rabbitmq_connection() -> bool:
     """Test RabbitMQ connection."""
     try:
         import pika
-        rmq_user = os.getenv("RABBITMQ_USER", "guest")
-        rmq_pass = os.getenv("RABBITMQ_PASSWORD", "guest")
+        rmq_user = os.getenv("RABBITMQ_USER", "")
+        rmq_pass = os.getenv("RABBITMQ_PASSWORD", "")
         connection = pika.BlockingConnection(
             pika.ConnectionParameters(
                 host='localhost',

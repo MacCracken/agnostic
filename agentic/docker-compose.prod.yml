@@ -68,7 +68,7 @@ services:
       - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-admin123}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}
       RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-qa-system}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
@@ -89,7 +89,7 @@ services:
     container_name: qa-manager
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://admin:admin123@rabbitmq:5672/qa-system
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672/${RABBITMQ_VHOST:-qa-system}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - ENVIRONMENT=production
@@ -118,7 +118,7 @@ services:
     container_name: qa-performance
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://admin:admin123@rabbitmq:5672/qa-system
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672/${RABBITMQ_VHOST:-qa-system}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - ENVIRONMENT=production
@@ -147,7 +147,7 @@ services:
     container_name: qa-security-compliance
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://admin:admin123@rabbitmq:5672/qa-system
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672/${RABBITMQ_VHOST:-qa-system}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - ENVIRONMENT=production
@@ -176,7 +176,7 @@ services:
     container_name: qa-resilience
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://admin:admin123@rabbitmq:5672/qa-system
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672/${RABBITMQ_VHOST:-qa-system}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - ENVIRONMENT=production
@@ -205,7 +205,7 @@ services:
     container_name: qa-user-experience
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://admin:admin123@rabbitmq:5672/qa-system
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672/${RABBITMQ_VHOST:-qa-system}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - ENVIRONMENT=production
@@ -234,7 +234,7 @@ services:
     container_name: qa-senior
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://admin:admin123@rabbitmq:5672/qa-system
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672/${RABBITMQ_VHOST:-qa-system}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - ENVIRONMENT=production
@@ -263,7 +263,7 @@ services:
     container_name: qa-junior
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://admin:admin123@rabbitmq:5672/qa-system
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672/${RABBITMQ_VHOST:-qa-system}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - ENVIRONMENT=production
@@ -293,7 +293,7 @@ services:
     container_name: qa-webgui
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://admin:admin123@rabbitmq:5672/qa-system
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672/${RABBITMQ_VHOST:-qa-system}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - ENVIRONMENT=production

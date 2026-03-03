@@ -20,8 +20,8 @@ services:
       - "5673:5672"   # Different AMQP port
       - "15673:15672" # Different management port
     environment:
-      RABBITMQ_DEFAULT_USER: test
-      RABBITMQ_DEFAULT_PASS: test
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_TEST_USER:?RABBITMQ_TEST_USER must be set}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_TEST_PASSWORD:?RABBITMQ_TEST_PASSWORD must be set}
       RABBITMQ_DEFAULT_VHOST: test
     volumes:
       - rabbitmq-test-data:/var/lib/rabbitmq
@@ -38,12 +38,12 @@ services:
       - "5433:5432"  # Different port
     environment:
       POSTGRES_DB: qa_test
-      POSTGRES_USER: test
-      POSTGRES_PASSWORD: test
+      POSTGRES_USER: ${POSTGRES_TEST_USER:?POSTGRES_TEST_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_TEST_PASSWORD:?POSTGRES_TEST_PASSWORD must be set}
     volumes:
       - postgres-test-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_TEST_USER:-test}"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -29,7 +29,7 @@ echo -n "your-openai-api-key" | base64
 # Create secrets with your encoded values
 kubectl create secret generic qa-secrets \
   --from-literal=openai-api-key=YOUR_ENCODED_OPENAI_KEY \
-  --from-literal=rabbitmq-password=Z3Vlc3Q= \
+  --from-literal=rabbitmq-password=$(echo -n "your-rabbitmq-password" | base64) \
   -n agentic-qa
 ```
 
