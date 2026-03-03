@@ -75,6 +75,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
+# Run as non-root user
+USER appuser
+
 # Metadata
 LABEL maintainer="Agentic QA Team"
 LABEL description="Base image for all QA agent containers"

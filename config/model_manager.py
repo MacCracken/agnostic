@@ -22,6 +22,19 @@ class BaseModelProvider(ABC):
         self.model = config.get("model", "")
         self.temperature = config.get("temperature", 0.1)
         self.max_tokens = config.get("max_tokens", 4000)
+        self._session: aiohttp.ClientSession | None = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create a shared aiohttp session for connection pooling."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        """Close the shared aiohttp session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     @abstractmethod
     async def chat_completion(
@@ -61,28 +74,28 @@ class OpenAIProvider(BaseModelProvider):
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, headers=self.headers, json=payload
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        return {
-                            "success": True,
-                            "content": result["choices"][0]["message"]["content"],
-                            "usage": result.get("usage", {}),
-                            "model": result["model"],
-                        }
-                    else:
-                        error_text = await response.text()
-                        logger.error(
-                            f"OpenAI API error: {response.status} - {error_text}"
-                        )
-                        return {
-                            "success": False,
-                            "error": f"OpenAI API error: {response.status}",
-                            "details": error_text,
-                        }
+            session = await self._get_session()
+            async with session.post(
+                url, headers=self.headers, json=payload
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return {
+                        "success": True,
+                        "content": result["choices"][0]["message"]["content"],
+                        "usage": result.get("usage", {}),
+                        "model": result["model"],
+                    }
+                else:
+                    error_text = await response.text()
+                    logger.error(
+                        f"OpenAI API error: {response.status} - {error_text}"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"OpenAI API error: {response.status}",
+                        "details": error_text,
+                    }
         except Exception as e:
             logger.error(f"OpenAI connection error: {e}")
             return {"success": False, "error": "Connection error", "details": str(e)}
@@ -137,28 +150,28 @@ class AnthropicProvider(BaseModelProvider):
             payload["system"] = system_message
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, headers=self.headers, json=payload
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        return {
-                            "success": True,
-                            "content": result["content"][0]["text"],
-                            "usage": result.get("usage", {}),
-                            "model": result["model"],
-                        }
-                    else:
-                        error_text = await response.text()
-                        logger.error(
-                            f"Anthropic API error: {response.status} - {error_text}"
-                        )
-                        return {
-                            "success": False,
-                            "error": f"Anthropic API error: {response.status}",
-                            "details": error_text,
-                        }
+            session = await self._get_session()
+            async with session.post(
+                url, headers=self.headers, json=payload
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return {
+                        "success": True,
+                        "content": result["content"][0]["text"],
+                        "usage": result.get("usage", {}),
+                        "model": result["model"],
+                    }
+                else:
+                    error_text = await response.text()
+                    logger.error(
+                        f"Anthropic API error: {response.status} - {error_text}"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Anthropic API error: {response.status}",
+                        "details": error_text,
+                    }
         except Exception as e:
             logger.error(f"Anthropic connection error: {e}")
             return {"success": False, "error": "Connection error", "details": str(e)}
@@ -221,50 +234,24 @@ class LocalLLMProvider(BaseModelProvider):
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, headers=self.headers, json=payload
-                ) as response:
-                    if response.status == 200:
-                        if self.stream:
-                            # Handle streaming response
-                            content = ""
-                            async for line in response.content:
-                                if line:
-                                    try:
-                                        data = json.loads(line.decode().strip())
-                                        if (
-                                            "message" in data
-                                            and "content" in data["message"]
-                                        ):
-                                            content += data["message"]["content"]
-                                    except json.JSONDecodeError:
-                                        continue
-
-                            return {
-                                "success": True,
-                                "content": content,
-                                "usage": {},
-                                "model": self.model,
-                            }
-                        else:
-                            result = await response.json()
-                            return {
-                                "success": True,
-                                "content": result["message"]["content"],
-                                "usage": result.get("usage", {}),
-                                "model": self.model,
-                            }
-                    else:
-                        error_text = await response.text()
-                        logger.error(
-                            f"Ollama API error: {response.status} - {error_text}"
-                        )
-                        return {
-                            "success": False,
-                            "error": f"Ollama API error: {response.status}",
-                            "details": error_text,
-                        }
+            session = await self._get_session()
+            async with session.post(
+                url, headers=self.headers, json=payload
+            ) as response:
+                if response.status == 200:
+                    return await self._parse_streaming_response(
+                        response, format="ollama"
+                    )
+                else:
+                    error_text = await response.text()
+                    logger.error(
+                        f"Ollama API error: {response.status} - {error_text}"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Ollama API error: {response.status}",
+                        "details": error_text,
+                    }
         except Exception as e:
             logger.error(f"Ollama connection error: {e}")
             return {"success": False, "error": "Connection error", "details": str(e)}
@@ -284,58 +271,24 @@ class LocalLLMProvider(BaseModelProvider):
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, headers=self.headers, json=payload
-                ) as response:
-                    if response.status == 200:
-                        if self.stream:
-                            # Handle streaming response
-                            content = ""
-                            async for line in response.content:
-                                if line:
-                                    line_str = line.decode().strip()
-                                    if line_str.startswith(
-                                        "data: "
-                                    ) and not line_str.endswith("[DONE]"):
-                                        try:
-                                            data = json.loads(line_str[6:])
-                                            if (
-                                                "choices" in data
-                                                and len(data["choices"]) > 0
-                                            ):
-                                                delta = data["choices"][0].get(
-                                                    "delta", {}
-                                                )
-                                                if "content" in delta:
-                                                    content += delta["content"]
-                                        except json.JSONDecodeError:
-                                            continue
-
-                            return {
-                                "success": True,
-                                "content": content,
-                                "usage": {},
-                                "model": self.model,
-                            }
-                        else:
-                            result = await response.json()
-                            return {
-                                "success": True,
-                                "content": result["choices"][0]["message"]["content"],
-                                "usage": result.get("usage", {}),
-                                "model": result["model"],
-                            }
-                    else:
-                        error_text = await response.text()
-                        logger.error(
-                            f"LM Studio API error: {response.status} - {error_text}"
-                        )
-                        return {
-                            "success": False,
-                            "error": f"LM Studio API error: {response.status}",
-                            "details": error_text,
-                        }
+            session = await self._get_session()
+            async with session.post(
+                url, headers=self.headers, json=payload
+            ) as response:
+                if response.status == 200:
+                    return await self._parse_streaming_response(
+                        response, format="openai"
+                    )
+                else:
+                    error_text = await response.text()
+                    logger.error(
+                        f"LM Studio API error: {response.status} - {error_text}"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"LM Studio API error: {response.status}",
+                        "details": error_text,
+                    }
         except Exception as e:
             logger.error(f"LM Studio connection error: {e}")
             return {"success": False, "error": "Connection error", "details": str(e)}
@@ -355,39 +308,94 @@ class LocalLLMProvider(BaseModelProvider):
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, headers=self.headers, json=payload
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        # Try to extract content from common response formats
-                        if "choices" in result and len(result["choices"]) > 0:
-                            content = result["choices"][0]["message"]["content"]
-                        elif "content" in result:
-                            content = result["content"]
-                        else:
-                            content = str(result)
-
-                        return {
-                            "success": True,
-                            "content": content,
-                            "usage": result.get("usage", {}),
-                            "model": self.model,
-                        }
-                    else:
-                        error_text = await response.text()
-                        logger.error(
-                            f"Custom LLM API error: {response.status} - {error_text}"
-                        )
-                        return {
-                            "success": False,
-                            "error": f"Custom LLM API error: {response.status}",
-                            "details": error_text,
-                        }
+            session = await self._get_session()
+            async with session.post(
+                url, headers=self.headers, json=payload
+            ) as response:
+                if response.status == 200:
+                    return await self._parse_streaming_response(
+                        response, format="custom"
+                    )
+                else:
+                    error_text = await response.text()
+                    logger.error(
+                        f"Custom LLM API error: {response.status} - {error_text}"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Custom LLM API error: {response.status}",
+                        "details": error_text,
+                    }
         except Exception as e:
             logger.error(f"Custom LLM connection error: {e}")
             return {"success": False, "error": "Connection error", "details": str(e)}
+
+    async def _parse_streaming_response(
+        self, response: aiohttp.ClientResponse, format: str = "openai"
+    ) -> dict[str, Any]:
+        """Parse a streaming or non-streaming response in ollama, openai, or custom format."""
+        if self.stream:
+            content = ""
+            async for line in response.content:
+                if not line:
+                    continue
+                if format == "ollama":
+                    try:
+                        data = json.loads(line.decode().strip())
+                        if "message" in data and "content" in data["message"]:
+                            content += data["message"]["content"]
+                    except json.JSONDecodeError:
+                        continue
+                else:
+                    # openai-compatible SSE format (LM Studio, custom)
+                    line_str = line.decode().strip()
+                    if line_str.startswith("data: ") and not line_str.endswith("[DONE]"):
+                        try:
+                            data = json.loads(line_str[6:])
+                            if "choices" in data and len(data["choices"]) > 0:
+                                delta = data["choices"][0].get("delta", {})
+                                if "content" in delta:
+                                    content += delta["content"]
+                        except json.JSONDecodeError:
+                            continue
+            return {
+                "success": True,
+                "content": content,
+                "usage": {},
+                "model": self.model,
+            }
+
+        # Non-streaming response
+        result = await response.json()
+        if format == "ollama":
+            return {
+                "success": True,
+                "content": result["message"]["content"],
+                "usage": result.get("usage", {}),
+                "model": self.model,
+            }
+        elif format == "custom":
+            # Try common response formats
+            if "choices" in result and len(result["choices"]) > 0:
+                content = result["choices"][0]["message"]["content"]
+            elif "content" in result:
+                content = result["content"]
+            else:
+                content = str(result)
+            return {
+                "success": True,
+                "content": content,
+                "usage": result.get("usage", {}),
+                "model": self.model,
+            }
+        else:
+            # openai-compatible
+            return {
+                "success": True,
+                "content": result["choices"][0]["message"]["content"],
+                "usage": result.get("usage", {}),
+                "model": result.get("model", self.model),
+            }
 
     async def test_connection(self) -> bool:
         """Test local LLM connection"""
@@ -409,13 +417,16 @@ class GoogleProvider(BaseModelProvider):
             "base_url", "https://generativelanguage.googleapis.com/v1"
         )
         self.api_key = config.get("api_key", "")
-        self.headers = {"Content-Type": "application/json"}
+        self.headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
 
     async def chat_completion(
         self, messages: list[dict[str, str]], **kwargs
     ) -> dict[str, Any]:
         """Google Gemini chat completion"""
-        url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"{self.base_url}/models/{self.model}:generateContent"
 
         # Convert messages to Gemini format
         contents = []
@@ -433,38 +444,38 @@ class GoogleProvider(BaseModelProvider):
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, headers=self.headers, json=payload
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        if "candidates" in result and len(result["candidates"]) > 0:
-                            content = result["candidates"][0]["content"]["parts"][0][
-                                "text"
-                            ]
-                            return {
-                                "success": True,
-                                "content": content,
-                                "usage": result.get("usageMetadata", {}),
-                                "model": self.model,
-                            }
-                        else:
-                            return {
-                                "success": False,
-                                "error": "No content in response",
-                                "details": str(result),
-                            }
+            session = await self._get_session()
+            async with session.post(
+                url, headers=self.headers, json=payload
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if "candidates" in result and len(result["candidates"]) > 0:
+                        content = result["candidates"][0]["content"]["parts"][0][
+                            "text"
+                        ]
+                        return {
+                            "success": True,
+                            "content": content,
+                            "usage": result.get("usageMetadata", {}),
+                            "model": self.model,
+                        }
                     else:
-                        error_text = await response.text()
-                        logger.error(
-                            f"Google API error: {response.status} - {error_text}"
-                        )
                         return {
                             "success": False,
-                            "error": f"Google API error: {response.status}",
-                            "details": error_text,
+                            "error": "No content in response",
+                            "details": str(result),
                         }
+                else:
+                    error_text = await response.text()
+                    logger.error(
+                        f"Google API error: {response.status} - {error_text}"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Google API error: {response.status}",
+                        "details": error_text,
+                    }
         except Exception as e:
             logger.error(f"Google connection error: {e}")
             return {"success": False, "error": "Connection error", "details": str(e)}
@@ -488,6 +499,7 @@ class ModelManager:
         self.providers: dict[str, BaseModelProvider] = {}
         self.primary_provider: str | None = None
         self.fallback_providers: list[str] = []
+        self._raw_config: dict[str, Any] = {}
         self.load_config()
 
     def load_config(self) -> dict[str, Any]:
@@ -511,6 +523,7 @@ class ModelManager:
                 self.primary_provider = config.get("primary_provider")
                 self.fallback_providers = config.get("fallback_providers", [])
 
+                self._raw_config = config
                 logger.info(f"Loaded {len(self.providers)} model providers")
                 logger.info(f"Primary provider: {self.primary_provider}")
                 return config
@@ -595,13 +608,8 @@ class ModelManager:
                 "details": f"Provider '{target_provider}' not found or not enabled",
             }
 
-        # Load config to check for agent-specific settings
-        try:
-            config_path = os.path.join(os.getcwd(), self.config_file)
-            with open(config_path) as f:
-                config = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            config = {}
+        # Use cached config for agent-specific settings
+        config = self._raw_config
 
         # Check for agent-specific model configuration
         agent_role = kwargs.get("agent_role")

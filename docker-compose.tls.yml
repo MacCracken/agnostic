@@ -34,8 +34,8 @@ services:
       - "15672:15672"
       - "15673:15673"
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
     networks:
       - qa-network
     volumes:
@@ -59,7 +59,7 @@ services:
     environment:
       - REDIS_URL=rediss://redis:6380/0
       - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://guest:guest@rabbitmq:5673/
+      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
       - RABBITMQ_CA_CERT=/certs/ca.pem
       - AGENT_ROLE=manager
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -95,7 +95,7 @@ services:
     environment:
       - REDIS_URL=rediss://redis:6380/0
       - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://guest:guest@rabbitmq:5673/
+      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
       - RABBITMQ_CA_CERT=/certs/ca.pem
       - AGENT_ROLE=senior
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -132,7 +132,7 @@ services:
     environment:
       - REDIS_URL=rediss://redis:6380/0
       - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://guest:guest@rabbitmq:5673/
+      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
       - RABBITMQ_CA_CERT=/certs/ca.pem
       - AGENT_ROLE=junior
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -169,7 +169,7 @@ services:
     environment:
       - REDIS_URL=rediss://redis:6380/0
       - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://guest:guest@rabbitmq:5673/
+      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
       - RABBITMQ_CA_CERT=/certs/ca.pem
       - AGENT_ROLE=analyst
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -205,7 +205,7 @@ services:
     environment:
       - REDIS_URL=rediss://redis:6380/0
       - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://guest:guest@rabbitmq:5673/
+      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
       - RABBITMQ_CA_CERT=/certs/ca.pem
       - AGENT_ROLE=security_compliance
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -241,7 +241,7 @@ services:
     environment:
       - REDIS_URL=rediss://redis:6380/0
       - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://guest:guest@rabbitmq:5673/
+      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
       - RABBITMQ_CA_CERT=/certs/ca.pem
       - AGENT_ROLE=performance
       - OPENAI_API_KEY=${OPENAI_API_KEY}

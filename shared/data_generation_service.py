@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import random  # nosec B311 - used for test data generation, not security
@@ -51,7 +52,7 @@ class UnifiedDataGenerator:
             generated_data.append(data_item)
 
         # Store in Redis for reuse
-        cache_key = f"test_data:{data_type}:{hash(str(config))}"
+        cache_key = f"test_data:{data_type}:{hashlib.sha256(str(config).encode()).hexdigest()[:16]}"
         self.redis_client.setex(
             cache_key, 3600, json.dumps(generated_data)
         )  # Cache for 1 hour

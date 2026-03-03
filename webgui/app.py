@@ -796,6 +796,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; font-src 'self'; connect-src 'self' wss: ws:; "
+            "frame-ancestors 'none'"
+        )
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=63072000; includeSubDomains; preload"
+        )
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=()"
+        )
         return response
 
 
@@ -862,7 +873,20 @@ async def shutdown_event():
 @app.websocket("/ws/realtime")
 async def websocket_endpoint(websocket):
     """WebSocket endpoint for real-time dashboard updates."""
-    user_id = "anonymous"
+    from webgui.auth import auth_manager
+
+    # Authenticate via token query param
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=1008, reason="Missing authentication token")
+        return
+
+    payload = await auth_manager.verify_token(token)
+    if not payload:
+        await websocket.close(code=1008, reason="Invalid or expired token")
+        return
+
+    user_id = payload.get("user_id", "anonymous")
     await websocket_handler.handle_websocket(websocket, user_id)
 
 

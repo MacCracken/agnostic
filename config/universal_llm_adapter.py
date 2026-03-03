@@ -7,18 +7,12 @@ configured from the project model manager or environment variables.
 
 import logging
 import os
-import sys
 from typing import Any
-
-from pydantic import Field
-
-# Add config path for imports
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "config"))
 
 try:
     from model_manager import model_manager
 except ImportError:
-    print("Warning: model_manager not available, using fallback")
+    logging.getLogger(__name__).warning("model_manager not available, using fallback")
     model_manager = None
 
 try:

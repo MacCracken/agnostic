@@ -19,6 +19,10 @@ class Config:
 
     def load_environment(self) -> None:
         """Load environment variables with defaults."""
+        # Application Configuration (loaded first — used by validation below)
+        self.log_level = os.getenv("LOG_LEVEL", "INFO")
+        self.environment = os.getenv("ENVIRONMENT", "development")
+
         # Redis Configuration
         self.redis_host = os.getenv("REDIS_HOST", "redis")
         self.redis_port = int(os.getenv("REDIS_PORT", "6379"))
@@ -31,17 +35,21 @@ class Config:
         # RabbitMQ Configuration
         self.rabbitmq_host = os.getenv("RABBITMQ_HOST", "rabbitmq")
         self.rabbitmq_port = int(os.getenv("RABBITMQ_PORT", "5672"))
-        self.rabbitmq_user = os.getenv("RABBITMQ_USER", "guest")
-        self.rabbitmq_password = os.getenv("RABBITMQ_PASSWORD", "guest")
+        self.rabbitmq_user = os.getenv("RABBITMQ_USER")
+        self.rabbitmq_password = os.getenv("RABBITMQ_PASSWORD")
         self.rabbitmq_vhost = os.getenv("RABBITMQ_VHOST", "/")
+
+        # Validate RabbitMQ credentials in production
+        if self.environment == "production" and (
+            not self.rabbitmq_user or not self.rabbitmq_password
+        ):
+            raise ValueError(
+                "RABBITMQ_USER and RABBITMQ_PASSWORD must be set in production"
+            )
         self.rabbitmq_url = os.getenv(
             "RABBITMQ_URL",
             f"amqp://{self.rabbitmq_user}:{self.rabbitmq_password}@{self.rabbitmq_host}:{self.rabbitmq_port}{self.rabbitmq_vhost}",
         )
-
-        # Application Configuration
-        self.log_level = os.getenv("LOG_LEVEL", "INFO")
-        self.environment = os.getenv("ENVIRONMENT", "development")
 
     def get_redis_client(self, **kwargs) -> redis.Redis:
         """Create a Redis client with environment configuration and connection pooling."""

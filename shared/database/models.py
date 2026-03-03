@@ -3,15 +3,16 @@ Database models for test result persistence.
 Uses SQLAlchemy with async support for PostgreSQL.
 """
 
+import asyncio
 import os
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
     JSON,
     DateTime,
-    Enum as SQLEnum,
+    Float,
     Index,
     Integer,
     String,
@@ -21,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-class TestStatus(str, Enum):
+class TestStatus(StrEnum):
     PASSED = "passed"
     FAILED = "failed"
     SKIPPED = "skipped"
@@ -29,7 +30,7 @@ class TestStatus(str, Enum):
     RUNNING = "running"
 
 
-class TestResultSeverity(str, Enum):
+class TestResultSeverity(StrEnum):
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -51,12 +52,12 @@ class TestSession(Base):
     priority: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(UTC)
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -90,7 +91,7 @@ class TestResult(Base):
     actual_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(UTC)
     )
 
     __table_args__ = (
@@ -107,10 +108,10 @@ class TestMetrics(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     session_id: Mapped[str] = mapped_column(String(100), index=True)
     metric_name: Mapped[str] = mapped_column(String(100))
-    metric_value: Mapped[float] = mapped_column(Integer)
+    metric_value: Mapped[float] = mapped_column(Float)
     metric_unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(UTC)
     )
 
     __table_args__ = (
@@ -134,7 +135,7 @@ class TestReport(Base):
     pass_rate: Mapped[float] = mapped_column(default=0.0)
     generated_by: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(UTC)
     )
 
     __table_args__ = (
@@ -145,6 +146,7 @@ class TestReport(Base):
 
 _engine = None
 _session_factory = None
+_init_lock = asyncio.Lock()
 
 
 def get_database_url() -> str:
@@ -162,17 +164,28 @@ async def init_db():
     """Initialize database connection and create tables."""
     global _engine, _session_factory
 
-    database_url = get_database_url()
-    _engine = create_async_engine(database_url, echo=False, pool_pre_ping=True)
+    async with _init_lock:
+        if _session_factory is not None:
+            return  # Already initialized by another coroutine
 
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        database_url = get_database_url()
+        _engine = create_async_engine(
+            database_url,
+            echo=False,
+            pool_pre_ping=True,
+            pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
+            max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "10")),
+            pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "3600")),
+        )
 
-    from sqlalchemy.orm import sessionmaker
+        async with _engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
-    _session_factory = sessionmaker(
-        _engine, class_=AsyncSession, expire_on_commit=False
-    )
+        from sqlalchemy.orm import sessionmaker
+
+        _session_factory = sessionmaker(
+            _engine, class_=AsyncSession, expire_on_commit=False
+        )
 
 
 async def get_session() -> AsyncSession:

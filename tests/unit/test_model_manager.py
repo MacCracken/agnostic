@@ -481,6 +481,7 @@ class TestModelManagerChatCompletion:
             mgr.providers = {provider_name: mock_provider}
             mgr.primary_provider = provider_name
             mgr.fallback_providers = []
+            mgr._raw_config = {}
 
         return mgr, mock_provider
 

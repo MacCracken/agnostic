@@ -719,11 +719,11 @@ class AuthManager:
         try:
             import bcrypt
             return bcrypt.checkpw(password.encode(), password_hash.encode())
-        except ImportError:
-            # Fallback for environments without bcrypt - less secure
-            logger.warning("bcrypt not available, using SHA256 (not recommended for production)")
-            password_hash_check = hashlib.sha256(password.encode()).hexdigest()
-            return password_hash_check == password_hash
+        except ImportError as err:
+            raise RuntimeError(
+                "bcrypt is required for password verification. "
+                "Install it with: pip install bcrypt"
+            ) from err
         except Exception as e:
             logger.error(f"Error verifying password: {e}")
             return False
@@ -733,10 +733,11 @@ class AuthManager:
         try:
             import bcrypt
             return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        except ImportError:
-            # Fallback for environments without bcrypt - less secure
-            logger.warning("bcrypt not available, using SHA256 (not recommended for production)")
-            return hashlib.sha256(password.encode()).hexdigest()
+        except ImportError as err:
+            raise RuntimeError(
+                "bcrypt is required for password hashing. "
+                "Install it with: pip install bcrypt"
+            ) from err
 
     def _is_token_blacklisted(self, token: str) -> bool:
         """Check if token is blacklisted"""

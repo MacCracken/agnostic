@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -53,6 +54,7 @@ class RealtimeManager:
         self.connection_subscriptions: dict[
             str, set[str]
         ] = {}  # connection_id -> set of channels
+        self.websockets: dict[str, Any] = {}  # connection_id -> websocket
         self.pubsub = None
         self.background_tasks = set()
 
@@ -101,8 +103,6 @@ class RealtimeManager:
         self.connection_subscriptions[connection_id] = set()
 
         # Store websocket reference
-        if not hasattr(self, "websockets"):
-            self.websockets = {}
         self.websockets[connection_id] = websocket
 
         logger.info(f"Added connection {connection_id} for user {user_id}")
@@ -136,8 +136,7 @@ class RealtimeManager:
             del self.connection_subscriptions[connection_id]
 
         # Clean up websocket reference
-        if hasattr(self, "websockets") and connection_id in self.websockets:
-            del self.websockets[connection_id]
+        self.websockets.pop(connection_id, None)
 
         logger.info(f"Removed connection {connection_id} for user {user_id}")
 
@@ -186,7 +185,7 @@ class RealtimeManager:
     async def send_to_connection(self, connection_id: str, message: WebSocketMessage):
         """Send message to specific connection"""
         try:
-            if hasattr(self, "websockets") and connection_id in self.websockets:
+            if connection_id in self.websockets:
                 websocket = self.websockets[connection_id]
                 await websocket.send_json(
                     {
@@ -284,7 +283,6 @@ class RealtimeManager:
 
             elif channel.startswith("task:"):
                 # Task-specific updates (for MCP bridge WebSocket support)
-                task_id = channel.split(":")[-1]
                 for conn_id, subscriptions in self.connection_subscriptions.items():
                     if channel in subscriptions:
                         target_connections.append(conn_id)
@@ -323,8 +321,7 @@ class RealtimeManager:
         # Clear connections
         self.active_connections.clear()
         self.connection_subscriptions.clear()
-        if hasattr(self, "websockets"):
-            self.websockets.clear()
+        self.websockets.clear()
 
 
 class WebSocketHandler:
@@ -335,7 +332,7 @@ class WebSocketHandler:
 
     async def handle_websocket(self, websocket, user_id: str):
         """Handle WebSocket connection lifecycle"""
-        connection_id = f"{user_id}_{datetime.now().timestamp()}"
+        connection_id = f"{user_id}_{uuid.uuid4().hex}"
 
         try:
             # Accept connection
