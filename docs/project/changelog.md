@@ -13,6 +13,12 @@ Versions use **YYYY.M.D** (calendar versioning).
 
 - **Webhook callback retry with exponential backoff** — `_fire_webhook` retries up to 3 times with 1s/2s/4s delays on failure; configurable via `WEBHOOK_MAX_RETRIES` env var; failed deliveries logged with attempt count (`webgui/api.py`)
 - **Configurable YEOMAN action thresholds** — coverage, error rate, and performance degradation thresholds extracted from hardcoded values to env vars: `YEOMAN_COVERAGE_THRESHOLD`, `YEOMAN_ERROR_RATE_THRESHOLD`, `YEOMAN_PERF_DEGRADATION_FACTOR` (`shared/yeoman_schemas.py`)
+- **Tenant-scoped Redis key isolation** — `submit_task`, `get_task`, and `_run_task_async` use `tenant_manager.task_key()` for tenant-prefixed Redis keys when `MULTI_TENANT_ENABLED=true`; backward-compatible (plain keys when disabled) (`webgui/api.py`, `shared/database/tenants.py`)
+- **Tenant-scoped API key validation** — `get_current_user` checks tenant API keys via `tenant_manager.validate_tenant_api_key()` with SHA-256 hash lookup and last-used tracking (`webgui/api.py`)
+- **Per-tenant rate limiting** — sliding-window rate limiter in `submit_task` returns HTTP 429 when tenant exceeds `TENANT_DEFAULT_RATE_LIMIT` per minute; uses Redis INCR with 60s TTL (`webgui/api.py`, `shared/database/tenants.py`)
+- **Tenant manager unit tests** — 13 new tests for `task_key`, `session_key`, `check_rate_limit`, and `validate_tenant_api_key` (52 total tenant tests) (`tests/unit/test_tenant.py`)
+- **Tenant data isolation tests** — 12 tests verifying cross-tenant leakage prevention: key isolation, endpoint-level task visibility, rate limit independence, API key scoping, quota boundaries (`tests/unit/test_tenant_isolation.py`)
+- **Tenant provisioning documentation** — provisioning workflow, API key issuance, isolation model, rate limiting, lifecycle states, backward compatibility (`docs/api/tenant-provisioning.md`)
 
 ---
 

@@ -172,6 +172,166 @@ class TestTenantManager:
 
         assert mgr.is_within_trial(tenant) is False
 
+    # -- task_key / session_key --
+
+    def test_task_key_disabled(self):
+        """task_key returns plain key when disabled."""
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        mgr.enabled = False
+        assert mgr.task_key("acme", "abc-123") == "task:abc-123"
+
+    def test_task_key_enabled(self):
+        """task_key returns tenant-scoped key when enabled."""
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        mgr.enabled = True
+        assert mgr.task_key("acme", "abc-123") == "tenant:acme:task:abc-123"
+
+    def test_session_key_disabled(self):
+        """session_key returns plain key when disabled."""
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        mgr.enabled = False
+        assert mgr.session_key("acme", "sess-1") == "session:sess-1"
+
+    def test_session_key_enabled(self):
+        """session_key returns tenant-scoped key when enabled."""
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        mgr.enabled = True
+        assert mgr.session_key("acme", "sess-1") == "tenant:acme:session:sess-1"
+
+    # -- check_rate_limit --
+
+    def test_check_rate_limit_allowed(self):
+        """check_rate_limit returns True when under limit."""
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        mgr.default_rate_limit = 100
+
+        redis = MagicMock()
+        redis.incr.return_value = 1
+
+        assert mgr.check_rate_limit(redis, "acme") is True
+        redis.expire.assert_called_once()
+
+    def test_check_rate_limit_exceeded(self):
+        """check_rate_limit returns False when over limit."""
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        mgr.default_rate_limit = 100
+
+        redis = MagicMock()
+        redis.incr.return_value = 101
+
+        assert mgr.check_rate_limit(redis, "acme") is False
+
+    def test_check_rate_limit_custom_limit(self):
+        """check_rate_limit respects custom rate_limit parameter."""
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+
+        redis = MagicMock()
+        redis.incr.return_value = 6
+
+        assert mgr.check_rate_limit(redis, "acme", rate_limit=5) is False
+        assert mgr.check_rate_limit(redis, "acme", rate_limit=10) is True
+
+    def test_check_rate_limit_sets_expiry_on_first_request(self):
+        """check_rate_limit sets 60s TTL on first request in window."""
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        redis = MagicMock()
+        redis.incr.return_value = 1
+
+        mgr.check_rate_limit(redis, "acme")
+        redis.expire.assert_called_once()
+        assert redis.expire.call_args[0][1] == 60
+
+    def test_check_rate_limit_no_expiry_on_subsequent(self):
+        """check_rate_limit does not reset TTL on subsequent requests."""
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        redis = MagicMock()
+        redis.incr.return_value = 5
+
+        mgr.check_rate_limit(redis, "acme")
+        redis.expire.assert_not_called()
+
+    # -- validate_tenant_api_key --
+
+    def test_validate_tenant_api_key_valid(self):
+        """validate_tenant_api_key returns user dict for valid key."""
+        import hashlib
+        import json
+
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        redis = MagicMock()
+
+        api_key = "test-api-key-12345"
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        stored = json.dumps({
+            "tenant_id": "acme",
+            "role": "admin",
+            "permissions": ["read", "write"],
+        })
+        redis.get.return_value = stored
+
+        result = mgr.validate_tenant_api_key(redis, api_key)
+
+        assert result is not None
+        assert result["tenant_id"] == "acme"
+        assert result["role"] == "admin"
+        assert result["user_id"] == "tenant-api-acme"
+        assert result["email"] == "api@acme"
+        assert "read" in result["permissions"]
+        redis.get.assert_called_once_with(f"tenant_api_key:{key_hash}")
+
+    def test_validate_tenant_api_key_invalid(self):
+        """validate_tenant_api_key returns None for unknown key."""
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        redis = MagicMock()
+        redis.get.return_value = None
+
+        result = mgr.validate_tenant_api_key(redis, "bad-key")
+        assert result is None
+
+    def test_validate_tenant_api_key_updates_last_used(self):
+        """validate_tenant_api_key updates last_used_at in Redis."""
+        import hashlib
+        import json
+
+        from shared.database.tenants import TenantManager
+
+        mgr = TenantManager()
+        redis = MagicMock()
+
+        api_key = "key-for-timestamp-test"
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        stored = json.dumps({"tenant_id": "acme"})
+        redis.get.return_value = stored
+
+        mgr.validate_tenant_api_key(redis, api_key)
+
+        redis.set.assert_called_once()
+        call_args = redis.set.call_args
+        updated = json.loads(call_args[0][1])
+        assert "last_used_at" in updated
+
 
 # ---------------------------------------------------------------------------
 # Tenant model tests

@@ -69,6 +69,15 @@ async def get_current_user(
             key_data = redis_client.get(f"api_key:{key_hash}")
             if key_data:
                 return json.loads(key_data)
+
+            # Tenant-scoped API keys
+            from shared.database.tenants import tenant_manager
+
+            if tenant_manager.enabled:
+                tenant_user = tenant_manager.validate_tenant_api_key(redis_client, x_api_key)
+                if tenant_user:
+                    return tenant_user
+
         except Exception as e:
             logger.warning(f"Redis API key lookup failed: {e}")
 
@@ -311,7 +320,18 @@ async def submit_task(
     }
 
     redis_client = config.get_redis_client()
-    redis_client.setex(f"task:{task_id}", 86400, json.dumps(task_record))
+
+    # Tenant-scoped Redis key when multi-tenant is enabled
+    from shared.database.tenants import tenant_manager
+
+    tenant_id = user.get("tenant_id", tenant_manager.default_tenant_id)
+    task_redis_key = tenant_manager.task_key(tenant_id, task_id)
+
+    # Rate limit check for tenant
+    if tenant_manager.enabled and not tenant_manager.check_rate_limit(redis_client, tenant_id):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    redis_client.setex(task_redis_key, 86400, json.dumps(task_record))
 
     # Fire-and-forget async execution
     asyncio.create_task(
@@ -322,6 +342,7 @@ async def submit_task(
             redis_client=redis_client,
             callback_url=req.callback_url,
             callback_secret=req.callback_secret,
+            tenant_id=tenant_id,
         )
     )
 
@@ -332,9 +353,12 @@ async def submit_task(
 async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     """Poll task status by task_id."""
     from config.environment import config
+    from shared.database.tenants import tenant_manager
 
     redis_client = config.get_redis_client()
-    data = redis_client.get(f"task:{task_id}")
+    tenant_id = user.get("tenant_id", tenant_manager.default_tenant_id)
+    task_redis_key = tenant_manager.task_key(tenant_id, task_id)
+    data = redis_client.get(task_redis_key)
     if not data:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -349,11 +373,15 @@ async def _run_task_async(
     redis_client: Any,
     callback_url: str | None,
     callback_secret: str | None,
+    tenant_id: str = "default",
 ) -> None:
     """Run a QA task asynchronously, updating Redis through status transitions."""
+    from shared.database.tenants import tenant_manager
+
+    task_redis_key = tenant_manager.task_key(tenant_id, task_id)
 
     def _update_task(status: str, result: dict | None = None) -> dict[str, Any]:
-        raw = redis_client.get(f"task:{task_id}")
+        raw = redis_client.get(task_redis_key)
         record: dict[str, Any] = json.loads(raw) if raw else {
             "task_id": task_id,
             "session_id": session_id,
@@ -362,7 +390,7 @@ async def _run_task_async(
         record["status"] = status
         record["updated_at"] = datetime.now(UTC).isoformat()
         record["result"] = result
-        redis_client.setex(f"task:{task_id}", 86400, json.dumps(record))
+        redis_client.setex(task_redis_key, 86400, json.dumps(record))
 
         # Publish task update to WebSocket subscribers
         redis_client.publish(f"task:{task_id}", json.dumps({

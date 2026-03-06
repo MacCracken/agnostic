@@ -30,6 +30,7 @@ Welcome to the Agentic QA Team System documentation. This directory contains com
 ### API Documentation
 - [Agent APIs](api/agents.md)
 - [WebGUI APIs](api/webgui.md)
+- [Tenant Provisioning](api/tenant-provisioning.md)
 - [LLM Integration](api/llm_integration.md)
 
 ### Architecture Decision Records

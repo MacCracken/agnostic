@@ -11,15 +11,15 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 ### Multi-Tenant Hardening
 **Priority:** High
 
-Tenant CRUD endpoints are wired to `TenantRepository` with real database operations. Remaining work is tenant isolation in the runtime layer.
+Tenant CRUD endpoints are wired to `TenantRepository` with real database operations. Runtime tenant isolation is implemented for task submit/get and API key validation.
 
 - [x] Wire `TenantRepository` into tenant API endpoints
-- [x] Unit tests for `TenantManager`, `TenantRepository`, and endpoints (66 tests)
-- [ ] Integrate tenant isolation into session/task management (Redis key prefixing is defined but unused)
-- [ ] Tenant-scoped API key validation
-- [ ] Integration tests for tenant data isolation (leakage prevention)
-- [ ] Rate limiting per tenant
-- [ ] Document tenant provisioning workflow
+- [x] Unit tests for `TenantManager`, `TenantRepository`, and endpoints (52 tests)
+- [x] Integrate tenant isolation into session/task management (tenant-scoped Redis keys in submit_task, get_task, _run_task_async)
+- [x] Tenant-scoped API key validation (wired into `get_current_user`)
+- [x] Rate limiting per tenant (sliding-window check in submit_task, 429 response)
+- [x] Tenant data isolation tests — 12 tests covering key isolation, endpoint cross-tenant leakage, rate limit independence, API key scoping, quota isolation (`tests/unit/test_tenant_isolation.py`)
+- [x] Tenant provisioning documentation (`docs/api/tenant-provisioning.md`)
 
 ---
 

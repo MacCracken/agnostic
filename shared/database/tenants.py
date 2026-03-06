@@ -118,6 +118,7 @@ class TenantManager:
     def __init__(self):
         self.enabled = os.getenv("MULTI_TENANT_ENABLED", "false").lower() == "true"
         self.default_tenant_id = os.getenv("DEFAULT_TENANT_ID", "default")
+        self.default_rate_limit = int(os.getenv("TENANT_DEFAULT_RATE_LIMIT", "100"))
 
     def get_tenant_id(self, request) -> str:
         """Extract tenant ID from request."""
@@ -142,6 +143,18 @@ class TenantManager:
         """Get Redis key prefix for tenant."""
         return f"tenant:{tenant_id}"
 
+    def task_key(self, tenant_id: str, task_id: str) -> str:
+        """Redis key for a task, scoped to tenant when enabled."""
+        if self.enabled:
+            return f"tenant:{tenant_id}:task:{task_id}"
+        return f"task:{task_id}"
+
+    def session_key(self, tenant_id: str, session_id: str) -> str:
+        """Redis key for session data, scoped to tenant when enabled."""
+        if self.enabled:
+            return f"tenant:{tenant_id}:session:{session_id}"
+        return f"session:{session_id}"
+
     def check_quota(self, tenant: Tenant, resource: str, current: int) -> bool:
         """Check if tenant has quota for a resource."""
         quotas = {
@@ -157,6 +170,50 @@ class TenantManager:
         if tenant.status == TenantStatus.TRIAL and tenant.trial_ends_at:
             return datetime.now(timezone.utc) < tenant.trial_ends_at
         return False
+
+    def check_rate_limit(self, redis_client, tenant_id: str, rate_limit: int | None = None) -> bool:
+        """Check and increment rate limit counter for a tenant.
+
+        Uses a sliding window: one Redis key per minute, expires after 60s.
+        Returns True if request is allowed, False if rate-limited.
+        """
+        limit = rate_limit or self.default_rate_limit
+        now = datetime.now(timezone.utc)
+        window_key = f"tenant:{tenant_id}:rate:{now.strftime('%Y%m%d%H%M')}"
+
+        current = redis_client.incr(window_key)
+        if current == 1:
+            redis_client.expire(window_key, 60)
+
+        return current <= limit
+
+    def validate_tenant_api_key(self, redis_client, api_key: str) -> dict[str, Any] | None:
+        """Validate a tenant-scoped API key.
+
+        Looks up key hash in Redis under tenant_api_key:{hash}.
+        Returns user dict with tenant_id if valid, None otherwise.
+        """
+        import hashlib
+
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        key_data = redis_client.get(f"tenant_api_key:{key_hash}")
+        if not key_data:
+            return None
+
+        import json
+        data = json.loads(key_data)
+
+        # Update last_used timestamp
+        data["last_used_at"] = datetime.now(timezone.utc).isoformat()
+        redis_client.set(f"tenant_api_key:{key_hash}", json.dumps(data))
+
+        return {
+            "user_id": f"tenant-api-{data.get('tenant_id', 'unknown')}",
+            "email": f"api@{data.get('tenant_id', 'unknown')}",
+            "role": data.get("role", "api_user"),
+            "tenant_id": data.get("tenant_id"),
+            "permissions": data.get("permissions", []),
+        }
 
 
 tenant_manager = TenantManager()
