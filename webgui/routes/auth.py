@@ -1,0 +1,160 @@
+"""Auth endpoints — login, logout, token refresh, API key management."""
+
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
+
+from webgui.auth import Permission, auth_manager
+from webgui.routes.dependencies import get_current_user, require_permission
+
+router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Request models
+# ---------------------------------------------------------------------------
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    access_token: str
+
+
+class ApiKeyCreateRequest(BaseModel):
+    description: str = ""
+    role: str = "api_user"
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/auth/login")
+async def login(req: LoginRequest):
+    user = await auth_manager.authenticate_user(email=req.email, password=req.password)
+    if user is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    tokens = await auth_manager.create_tokens(user)
+    return {
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "token_type": tokens.token_type,
+        "expires_in": tokens.expires_in,
+    }
+
+
+@router.post("/auth/refresh")
+async def refresh(req: RefreshRequest):
+    tokens = await auth_manager.refresh_tokens(req.refresh_token)
+    if tokens is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=401, detail="Invalid or expired refresh token"
+        )
+    return {
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "token_type": tokens.token_type,
+        "expires_in": tokens.expires_in,
+    }
+
+
+@router.post("/auth/logout")
+async def logout(req: LogoutRequest, user: dict = Depends(get_current_user)):
+    from fastapi import HTTPException
+
+    success = await auth_manager.logout(user["user_id"], req.access_token)
+    if not success:
+        raise HTTPException(status_code=500, detail="Logout failed")
+    return {"status": "logged_out"}
+
+
+@router.get("/auth/me")
+async def auth_me(user: dict = Depends(get_current_user)):
+    return {
+        "user_id": user.get("user_id"),
+        "email": user.get("email"),
+        "role": user.get("role"),
+        "permissions": user.get("permissions", []),
+    }
+
+
+# ---------------------------------------------------------------------------
+# API key management endpoints (require SYSTEM_CONFIGURE permission)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/auth/api-keys")
+async def create_api_key(
+    req: ApiKeyCreateRequest,
+    user: dict = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
+):
+    """Create a new API key. Returns the raw key once — store it safely."""
+    from config.environment import config
+    from webgui.auth import create_api_key as _create_api_key
+
+    redis_client = config.get_redis_client()
+    raw_key, key_id, key_meta = _create_api_key(
+        redis_client=redis_client,
+        description=req.description,
+        role=req.role,
+        created_by=user.get("user_id", "unknown"),
+    )
+    return {
+        "key_id": key_id,
+        "api_key": raw_key,
+        "description": req.description,
+        "role": req.role,
+        "created_at": key_meta["created_at"],
+        "note": "Store this key safely — it will not be shown again.",
+    }
+
+
+@router.get("/auth/api-keys")
+async def list_api_keys(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
+):
+    """List API key IDs and metadata (never raw keys)."""
+    from config.environment import config
+    from webgui.auth import list_api_keys as _list_api_keys
+
+    redis_client = config.get_redis_client()
+    keys = _list_api_keys(redis_client)
+    total = len(keys)
+    return {
+        "items": keys[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.delete("/auth/api-keys/{key_id}")
+async def delete_api_key(
+    key_id: str,
+    user: dict = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
+):
+    """Revoke an API key by its ID (first 8 chars of sha256 hash)."""
+    from config.environment import config
+    from webgui.auth import revoke_api_key as _revoke_api_key
+
+    redis_client = config.get_redis_client()
+    deleted = _revoke_api_key(redis_client, key_id)
+    if not deleted:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="API key not found")
+    return {"status": "revoked", "key_id": key_id}

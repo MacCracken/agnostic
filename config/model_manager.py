@@ -55,6 +55,7 @@ class OpenAIProvider(BaseModelProvider):
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config)
         self.base_url = config.get("base_url", "https://api.openai.com/v1")
+        self.is_gateway = config.get("provider_type") == "agnos_gateway"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -73,10 +74,16 @@ class OpenAIProvider(BaseModelProvider):
             "max_tokens": kwargs.get("max_tokens", self.max_tokens),
         }
 
+        # Propagate agent-id header for AGNOS gateway per-agent token accounting
+        headers = dict(self.headers)
+        agent_role = kwargs.get("agent_role")
+        if self.is_gateway and agent_role:
+            headers["x-agent-id"] = agent_role
+
         try:
             session = await self._get_session()
             async with session.post(
-                url, headers=self.headers, json=payload
+                url, headers=headers, json=payload
             ) as response:
                 if response.status == 200:
                     result = await response.json()
@@ -504,6 +511,14 @@ class ModelManager:
                 with open(config_path) as f:
                     config = json.load(f)
 
+                # Auto-enable AGNOS gateway when env var is set
+                gateway_enabled = os.getenv(
+                    "AGNOS_LLM_GATEWAY_ENABLED", ""
+                ).lower() in ("true", "1", "yes")
+                if gateway_enabled and "agnos_gateway" in config.get("providers", {}):
+                    config["providers"]["agnos_gateway"]["enabled"] = True
+                    logger.info("AGNOS LLM Gateway auto-enabled via AGNOS_LLM_GATEWAY_ENABLED")
+
                 # Initialize providers
                 for provider_name, provider_config in config.get(
                     "providers", {}
@@ -695,6 +710,27 @@ class ModelManager:
     def get_available_providers(self) -> list[str]:
         """Get list of available provider names"""
         return list(self.providers.keys())
+
+    async def gateway_health(self) -> dict[str, Any]:
+        """Check AGNOS LLM Gateway health, if enabled."""
+        if "agnos_gateway" not in self.providers:
+            return {"enabled": False}
+
+        provider = self.providers["agnos_gateway"]
+        # The gateway exposes /health on the base URL (without /v1 suffix)
+        base = provider.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        health_url = f"{base}/health"
+
+        try:
+            session = await provider._get_session()
+            async with session.get(health_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                healthy = resp.status == 200
+                body = await resp.json() if healthy else {}
+                return {"enabled": True, "healthy": healthy, "detail": body}
+        except Exception as e:
+            return {"enabled": True, "healthy": False, "error": str(e)}
 
     def get_provider_info(self, provider_name: str) -> dict[str, Any] | None:
         """Get information about a specific provider"""

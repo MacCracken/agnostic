@@ -348,13 +348,13 @@ class TestReportDownloadSecurity:
 
     def test_path_within_reports_dir_ok(self, authed_client, tmp_path):
         """A file inside /app/reports should be served."""
-        import webgui.api as api_mod
+        import webgui.routes.reports as reports_mod
 
         report_file = tmp_path / "report.json"
         report_file.write_text("{}")
 
-        original_dir = api_mod._REPORTS_DIR
-        api_mod._REPORTS_DIR = tmp_path.resolve()
+        original_dir = reports_mod._REPORTS_DIR
+        reports_mod._REPORTS_DIR = tmp_path.resolve()
         try:
             with patch("config.environment.config") as mock_cfg:
                 mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
@@ -363,17 +363,17 @@ class TestReportDownloadSecurity:
                 resp = authed_client.get("/api/reports/report-abc/download")
             assert resp.status_code == 200
         finally:
-            api_mod._REPORTS_DIR = original_dir
+            reports_mod._REPORTS_DIR = original_dir
 
     def test_path_traversal_blocked(self, authed_client, tmp_path):
         """A file outside /app/reports must return 403."""
-        import webgui.api as api_mod
+        import webgui.routes.reports as reports_mod
 
         # Reports dir is tmp_path; file is one level above (outside)
         malicious_path = str(tmp_path.parent / "etc" / "passwd")
 
-        original_dir = api_mod._REPORTS_DIR
-        api_mod._REPORTS_DIR = tmp_path.resolve()
+        original_dir = reports_mod._REPORTS_DIR
+        reports_mod._REPORTS_DIR = tmp_path.resolve()
         try:
             with patch("config.environment.config") as mock_cfg:
                 mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
@@ -382,16 +382,16 @@ class TestReportDownloadSecurity:
                 resp = authed_client.get("/api/reports/evil-id/download")
             assert resp.status_code == 403
         finally:
-            api_mod._REPORTS_DIR = original_dir
+            reports_mod._REPORTS_DIR = original_dir
 
     def test_dotdot_traversal_blocked(self, authed_client, tmp_path):
         """../../etc/passwd style path must be blocked."""
-        import webgui.api as api_mod
+        import webgui.routes.reports as reports_mod
 
         traversal = str(tmp_path / ".." / ".." / "etc" / "passwd")
 
-        original_dir = api_mod._REPORTS_DIR
-        api_mod._REPORTS_DIR = tmp_path.resolve()
+        original_dir = reports_mod._REPORTS_DIR
+        reports_mod._REPORTS_DIR = tmp_path.resolve()
         try:
             with patch("config.environment.config") as mock_cfg:
                 mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
@@ -400,15 +400,15 @@ class TestReportDownloadSecurity:
                 resp = authed_client.get("/api/reports/dotdot/download")
             assert resp.status_code == 403
         finally:
-            api_mod._REPORTS_DIR = original_dir
+            reports_mod._REPORTS_DIR = original_dir
 
     def test_missing_file_returns_404(self, authed_client, tmp_path):
         """Non-existent file within reports dir returns 404, not 500."""
-        import webgui.api as api_mod
+        import webgui.routes.reports as reports_mod
 
         nonexistent = str(tmp_path / "missing_report.json")
-        original_dir = api_mod._REPORTS_DIR
-        api_mod._REPORTS_DIR = tmp_path.resolve()
+        original_dir = reports_mod._REPORTS_DIR
+        reports_mod._REPORTS_DIR = tmp_path.resolve()
         try:
             with patch("config.environment.config") as mock_cfg:
                 mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
@@ -417,7 +417,7 @@ class TestReportDownloadSecurity:
                 resp = authed_client.get("/api/reports/gone/download")
             assert resp.status_code == 404
         finally:
-            api_mod._REPORTS_DIR = original_dir
+            reports_mod._REPORTS_DIR = original_dir
 
 
 # ---------------------------------------------------------------------------

@@ -587,13 +587,13 @@ class TestTenantEndpoints:
 
     def test_list_tenants_disabled(self, admin_client):
         """Returns 503 when multi-tenancy disabled."""
-        with patch("webgui.api.MULTI_TENANT_ENABLED", False):
+        with patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", False):
             resp = admin_client.get("/api/tenants")
             assert resp.status_code == 503
 
     def test_create_tenant_disabled(self, admin_client):
         """Returns 503 when multi-tenancy disabled."""
-        with patch("webgui.api.MULTI_TENANT_ENABLED", False):
+        with patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", False):
             resp = admin_client.post(
                 "/api/tenants",
                 json={
@@ -607,15 +607,15 @@ class TestTenantEndpoints:
 
     def test_get_tenant_disabled(self, admin_client):
         """Returns 503 when multi-tenancy disabled."""
-        with patch("webgui.api.MULTI_TENANT_ENABLED", False):
+        with patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", False):
             resp = admin_client.get("/api/tenants/t1")
             assert resp.status_code == 503
 
     def test_list_tenants_requires_admin(self, viewer_client):
         """Returns 403 for non-admin users."""
         with (
-            patch("webgui.api.MULTI_TENANT_ENABLED", True),
-            patch("webgui.api.DATABASE_ENABLED", True),
+            patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
+            patch("webgui.routes.dependencies.DATABASE_ENABLED", True),
         ):
             resp = viewer_client.get("/api/tenants")
             assert resp.status_code == 403
@@ -626,9 +626,9 @@ class TestTenantEndpoints:
         mock_repo.get_tenant.return_value = None
 
         with (
-            patch("webgui.api.MULTI_TENANT_ENABLED", True),
-            patch("webgui.api.DATABASE_ENABLED", True),
-            patch("webgui.api.get_tenant_repo", return_value=mock_repo),
+            patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
+            patch("webgui.routes.dependencies.DATABASE_ENABLED", True),
+            patch("webgui.routes.tenants.get_tenant_repo", return_value=mock_repo),
         ):
             resp = admin_client.get("/api/tenants/nonexistent")
             assert resp.status_code == 404
@@ -639,9 +639,9 @@ class TestTenantEndpoints:
         mock_repo.delete_tenant.return_value = False
 
         with (
-            patch("webgui.api.MULTI_TENANT_ENABLED", True),
-            patch("webgui.api.DATABASE_ENABLED", True),
-            patch("webgui.api.get_tenant_repo", return_value=mock_repo),
+            patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
+            patch("webgui.routes.dependencies.DATABASE_ENABLED", True),
+            patch("webgui.routes.tenants.get_tenant_repo", return_value=mock_repo),
         ):
             resp = admin_client.delete("/api/tenants/nonexistent")
             assert resp.status_code == 404
@@ -652,9 +652,9 @@ class TestTenantEndpoints:
         mock_repo.update_tenant.return_value = None
 
         with (
-            patch("webgui.api.MULTI_TENANT_ENABLED", True),
-            patch("webgui.api.DATABASE_ENABLED", True),
-            patch("webgui.api.get_tenant_repo", return_value=mock_repo),
+            patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
+            patch("webgui.routes.dependencies.DATABASE_ENABLED", True),
+            patch("webgui.routes.tenants.get_tenant_repo", return_value=mock_repo),
         ):
             resp = admin_client.put("/api/tenants/nonexistent", json={"name": "New"})
             assert resp.status_code == 404
@@ -665,9 +665,9 @@ class TestTenantEndpoints:
         mock_repo.remove_user.return_value = False
 
         with (
-            patch("webgui.api.MULTI_TENANT_ENABLED", True),
-            patch("webgui.api.DATABASE_ENABLED", True),
-            patch("webgui.api.get_tenant_repo", return_value=mock_repo),
+            patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
+            patch("webgui.routes.dependencies.DATABASE_ENABLED", True),
+            patch("webgui.routes.tenants.get_tenant_repo", return_value=mock_repo),
         ):
             resp = admin_client.delete("/api/tenants/t1/users/nonexistent")
             assert resp.status_code == 404
@@ -675,8 +675,8 @@ class TestTenantEndpoints:
     def test_database_disabled_returns_503(self, admin_client):
         """Returns 503 when database not enabled even if tenant is."""
         with (
-            patch("webgui.api.MULTI_TENANT_ENABLED", True),
-            patch("webgui.api.DATABASE_ENABLED", False),
+            patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
+            patch("webgui.routes.dependencies.DATABASE_ENABLED", False),
         ):
             resp = admin_client.get("/api/tenants")
             assert resp.status_code == 503

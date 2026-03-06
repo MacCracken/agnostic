@@ -68,12 +68,16 @@ class TestConnectionInfo:
 
     def test_redis_url_format(self):
         env = {"REDIS_HOST": "myhost", "REDIS_PORT": "6379", "REDIS_DB": "0"}
-        with patch.dict(os.environ, env, clear=False):
+        remove = {k: "" for k in ("REDIS_URL",) if k in os.environ}
+        with patch.dict(os.environ, {**env, **remove}, clear=False):
+            os.environ.pop("REDIS_URL", None)
             cfg = Config()
         assert "myhost" in cfg.redis_url
 
     def test_rabbitmq_url_format(self):
         env = {"RABBITMQ_HOST": "rabbithost", "RABBITMQ_PORT": "5672"}
-        with patch.dict(os.environ, env, clear=False):
+        remove = {k: "" for k in ("RABBITMQ_URL",) if k in os.environ}
+        with patch.dict(os.environ, {**env, **remove}, clear=False):
+            os.environ.pop("RABBITMQ_URL", None)
             cfg = Config()
         assert "rabbithost" in cfg.rabbitmq_url

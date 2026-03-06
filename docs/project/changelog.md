@@ -11,6 +11,18 @@ Versions use **YYYY.M.D** (calendar versioning).
 
 ### Added
 
+- **Route module decomposition** — `webgui/api.py` split from 1868-line monolith into 10 focused route modules under `webgui/routes/` (auth, tasks, reports, tenants, agents, dashboard, sessions, persistence, integration, dependencies); backward-compatible re-exports preserve all existing test patch targets
+- **Auth package decomposition** — `AuthManager` split into composed sub-managers: `TokenManager` (JWT create/verify/refresh/logout), `OAuthProviderFactory` (local/Google/GitHub/Azure AD), `PermissionValidator` (RBAC + resource access), `api_keys` module, `models` module; `webgui/auth/` package with `__init__.py` re-exporting identical public API
+- **YEOMAN MCP tools (6 new)** — `agnostic_session_diff`, `agnostic_structured_results`, `agnostic_quality_trends`, `agnostic_security_findings`, `agnostic_qa_orchestrate`, `agnostic_quality_dashboard` registered in `agnostic-tools.ts` + `manifest.ts` (16 total)
+- **LLM Gateway consolidation** — `ModelManager.load_config()` auto-enables `agnos_gateway` provider when `AGNOS_LLM_GATEWAY_ENABLED=true`; `OpenAIProvider` propagates `x-agent-id` header for per-agent token accounting via AGNOS gateway; `ModelManager.gateway_health()` checks gateway `/health` endpoint; `GET /api/dashboard/llm-gateway` endpoint exposes gateway status (`config/model_manager.py`, `webgui/routes/dashboard.py`)
+- **REST API Proxy tools (9 new)** — `AgnosticApiClient` adapter implements `CoreApiClient` interface wrapping `agnosticGet`/`agnosticPost`; 9 high-value endpoints registered via `registerApiProxyTool()` factory: `agnostic_proxy_sessions`, `agnostic_proxy_session_search`, `agnostic_proxy_task_list`, `agnostic_proxy_agent_detail`, `agnostic_proxy_agent_registration`, `agnostic_proxy_dashboard_overview`, `agnostic_proxy_llm_gateway`, `agnostic_proxy_reports`, `agnostic_proxy_alerts` (`agnostic-tools.ts`, `manifest.ts`; 25 total agnostic tools)
+
+### Fixed
+
+- **`test_redis_url_format` / `test_rabbitmq_url_format` failures** — tests now clear `REDIS_URL`/`RABBITMQ_URL` env vars before asserting component-based URL construction, fixing the `os.getenv("REDIS_URL")` precedence issue (`tests/unit/test_config_environment.py`)
+
+### Added (continued)
+
 - **WebSocket Real-Time Dashboard** — `/ws/realtime` endpoint fully wired in `webgui/app.py`; initializes Redis pub/sub on startup, subscribes to agent task channels (`manager:tasks`, `senior:tasks`, etc.) for real-time task progress; dashboard.js auto-subscribes to active sessions on connect (`webgui/realtime.py`, `webgui/static/js/dashboard.js`)
 - **Prometheus ServiceMonitor** — `ServiceMonitor` and `PodMonitor` CRDs for Prometheus scraping of `/api/metrics` endpoint; configurable via `metrics.enabled` in Helm values (`k8s/helm/agentic-qa/templates/service-monitor.yaml`)
 - **Scheduled Report Generation** — APScheduler integration for automated daily/weekly reports; `POST /api/reports/scheduled`, `GET /api/reports/scheduled`, `DELETE /api/reports/scheduled/{job_id}` endpoints; configurable via `SCHEDULED_REPORTS_ENABLED`, `SCHEDULED_REPORT_DAILY_TIME`, `SCHEDULED_REPORT_WEEKLY_DAY`, `SCHEDULED_REPORT_WEEKLY_TIME` env vars (`webgui/scheduled_reports.py`, `webgui/api.py`, `pyproject.toml`)
@@ -182,7 +194,7 @@ Versions use **YYYY.M.D** (calendar versioning).
 - `tests/unit/test_webgui_exports.py`: `TestGenerateFileSanitization` (path traversal in session ID neutralised, normal IDs preserved)
 - `tests/unit/test_model_manager.py`: 41 tests for AGNOS OS provider, gateway routing, env-var guards
 - `tests/k8s/`: YAML structural validation for all Kubernetes manifests and Helm values
-- **494 unit tests + 19 E2E tests passing**
+- **451 unit tests + 19 E2E tests passing**
 
 ---
 
