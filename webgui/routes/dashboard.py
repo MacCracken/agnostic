@@ -160,7 +160,8 @@ async def list_alerts(
             except (json.JSONDecodeError, AttributeError):
                 continue
         return {"items": alerts, "total": len(alerts), "limit": limit}
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to fetch alerts from Redis stream: %s", exc)
         return {"items": [], "total": 0, "limit": limit}
 
 

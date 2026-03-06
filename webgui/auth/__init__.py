@@ -59,7 +59,33 @@ class AuthManager:
                 "WEBGUI_SECRET_KEY must be set in production. "
                 'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))"'
             )
-        self.secret_key = secret_key or secrets.token_urlsafe(32)
+        if not secret_key:
+            # In development, persist the auto-generated key so tokens
+            # survive app restarts within the same environment.
+            _dev_key_path = os.path.join(
+                os.getenv("HOME", "/tmp"), ".agnostic_dev_secret_key"
+            )
+            try:
+                with open(_dev_key_path) as f:
+                    secret_key = f.read().strip()
+                if not secret_key:
+                    raise ValueError("empty key file")
+            except (FileNotFoundError, ValueError):
+                secret_key = secrets.token_urlsafe(32)
+                try:
+                    with open(_dev_key_path, "w") as f:
+                        f.write(secret_key)
+                    os.chmod(_dev_key_path, 0o600)
+                    logger.info(
+                        "Generated and persisted dev secret key to %s",
+                        _dev_key_path,
+                    )
+                except OSError:
+                    logger.warning(
+                        "Could not persist dev secret key — tokens will "
+                        "be invalidated on restart"
+                    )
+        self.secret_key = secret_key
 
         # Role permissions mapping (shared across sub-managers)
         self.role_permissions = dict(ROLE_PERMISSIONS)

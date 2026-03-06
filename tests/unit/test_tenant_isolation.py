@@ -139,7 +139,7 @@ class TestTaskEndpointIsolation:
                 "/api/tasks",
                 json={"title": "Test A", "description": "From tenant A"},
             )
-            assert resp_a.status_code == 200
+            assert resp_a.status_code == 201
             task_id = resp_a.json()["task_id"]
 
             # Tenant A can read it

@@ -956,6 +956,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         logger.warning(f"AGNOS audit forwarder shutdown failed: {e}")
 
+    # Close AGNOS token budget client
+    try:
+        from config.agnos_token_budget import agnos_token_budget
+
+        await agnos_token_budget.close()
+        logger.info("AGNOS token budget client closed")
+    except Exception as e:
+        logger.warning(f"AGNOS token budget client shutdown failed: {e}")
+
     # Close alert manager HTTP client
     try:
         from shared.alerts import alert_manager

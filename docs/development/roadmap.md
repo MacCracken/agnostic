@@ -61,13 +61,13 @@ Issues identified during the 2026-03-06 comprehensive code audit. Items marked ~
 |------|----------|----------|--------|
 | ~~SSRF DNS rebinding protection~~ | `webgui/routes/dependencies.py` | P0 | Done |
 | ~~Timing attack on refresh token comparison~~ | `webgui/auth/token_manager.py:110` | P0 | Done |
-| Azure AD issuer verification disabled (`verify_iss: False`) | `webgui/auth/oauth_provider.py:250` | P0 | Pending |
-| MD5 used for user ID generation (use SHA-256 or UUID) | `webgui/auth/oauth_provider.py:309` | P2 | Pending |
-| Ephemeral JWT secret in dev mode (lost on restart) | `webgui/auth/__init__.py:55-62` | P2 | Pending |
-| No input validation on `task_id` path parameter | `webgui/routes/tasks.py:305` | P2 | Pending |
+| ~~Azure AD issuer verification disabled (`verify_iss: False`)~~ | `webgui/auth/oauth_provider.py:250` | P0 | Done — tenant-specific issuer + JWKS |
+| ~~MD5 used for user ID generation (use SHA-256 or UUID)~~ | `webgui/auth/oauth_provider.py:309` | P2 | Done — SHA-256 |
+| ~~Ephemeral JWT secret in dev mode (lost on restart)~~ | `webgui/auth/__init__.py:55-62` | P2 | Done — persisted to `~/.agnostic_dev_secret_key` |
+| ~~No input validation on `task_id` path parameter~~ | `webgui/routes/tasks.py:305` | P2 | Done — regex validation |
 | Unauthenticated `/metrics` endpoint (Prometheus) | `webgui/routes/dashboard.py:172` | P3 | Pending |
 | Missing refresh token rotation (old tokens remain valid) | `webgui/auth/token_manager.py:88-121` | P2 | Pending |
-| No rate limiting on `/auth/login` | `webgui/routes/auth.py` | P2 | Pending |
+| ~~No rate limiting on `/auth/login`~~ | `webgui/routes/auth.py` | P2 | Done — Redis-based per-email rate limit |
 | WebSocket message size not validated before JSON parse | `webgui/realtime.py:378` | P3 | Pending |
 
 ### Memory & Resource Management
@@ -78,11 +78,11 @@ Issues identified during the 2026-03-06 comprehensive code audit. Items marked ~
 | ~~Unbounded audit buffer when event loop unavailable~~ | `shared/agnos_audit.py:44` | P0 | Done — hard cap 10K + warning |
 | ~~Missing shutdown cleanup (dashboard bridge, YEOMAN, alerts, audit, model manager)~~ | `webgui/app.py:923` | P1 | Done |
 | ~~Proactive cooldown eviction in AlertManager~~ | `shared/alerts.py:90` | P1 | Done — every 100 entries + hard cap |
-| Stale WebSocket connections (no idle timeout) | `webgui/realtime.py:125-131` | P1 | Pending |
-| Background task accumulation on Redis listener error | `webgui/realtime.py:345-372` | P1 | Pending |
+| ~~Stale WebSocket connections (no idle timeout)~~ | `webgui/realtime.py:125-131` | P1 | Done — idle pruning with `time.monotonic()` |
+| ~~Background task accumulation on Redis listener error~~ | `webgui/realtime.py:345-372` | P1 | Done — internal retry loop |
 | Unclosed aiohttp sessions in model providers | `config/model_manager.py:27-36` | P1 | Pending (close() added, needs wiring) |
 | Unbounded `active_sessions` dict in AgenticQAGUI | `webgui/app.py:38-52` | P2 | Pending |
-| Per-call httpx client creation in token budget | `config/agnos_token_budget.py:81+` | P2 | Pending |
+| ~~Per-call httpx client creation in token budget~~ | `config/agnos_token_budget.py:81+` | P2 | Done — shared client + close() |
 
 ### Performance
 
@@ -91,23 +91,23 @@ Issues identified during the 2026-03-06 comprehensive code audit. Items marked ~
 | ~~Synchronous Redis calls blocking event loop~~ | `webgui/routes/tasks.py:147-175` | P0 | Done — `run_in_executor` |
 | ~~`redis.keys()` blocking server-wide scan~~ | `webgui/dashboard.py:119,175` | P0 | Done — `scan_iter()` |
 | ~~Redundant double-fetch in `get_resource_metrics()`~~ | `webgui/dashboard.py:228-246` | P1 | Done — fetch once |
-| Race condition on global webhook HTTP client | `webgui/routes/tasks.py:72-82` | P1 | Pending — needs `asyncio.Lock` |
+| ~~Race condition on global webhook HTTP client~~ | `webgui/routes/tasks.py:72-82` | P1 | Done — `asyncio.Lock` |
 | Per-request Redis client creation | `webgui/routes/tasks.py:260` | P1 | Pending — singleton via `Depends()` |
 | N+1 HTTP pattern in AGNOS memory client | `shared/agnos_memory.py:155-163` | P2 | Pending |
-| Missing aiohttp `TCPConnector` pool config | `config/model_manager.py:27-31` | P2 | Pending |
-| Webhook retry without jitter (thundering herd) | `webgui/routes/tasks.py:115-121` | P3 | Pending |
+| ~~Missing aiohttp `TCPConnector` pool config~~ | `config/model_manager.py:27-31` | P2 | Done — limit=20, limit_per_host=10, DNS cache |
+| ~~Webhook retry without jitter (thundering herd)~~ | `webgui/routes/tasks.py:115-121` | P3 | Done — jittered exponential backoff |
 
 ### Code Quality & API Consistency
 
 | Item | Location | Priority | Status |
 |------|----------|----------|--------|
-| PostgreSQL missing from docker-compose.yml | `docker-compose.yml` | P1 | Pending |
+| ~~PostgreSQL missing from docker-compose.yml~~ | `docker-compose.yml` | P1 | Done — postgres:16-alpine + webgui DATABASE_URL |
 | Inconsistent API response wrapper formats | `webgui/routes/` | P2 | Pending |
-| Missing `status_code=201` on POST/PUT endpoints | `webgui/routes/persistence.py` | P2 | Pending |
-| Silent exception swallowing (bare `except Exception: pass`) | `dashboard.py:163`, `tasks.py:404` | P2 | Pending |
+| ~~Missing `status_code=201` on POST/PUT endpoints~~ | `webgui/routes/persistence.py` | P2 | Done — POST endpoints return 201 |
+| ~~Silent exception swallowing (bare `except Exception: pass`)~~ | `dashboard.py:163`, `tasks.py:404` | P2 | Done — added warning logs |
 | Missing `response_model` on dashboard endpoints | `webgui/routes/dashboard.py` | P3 | Pending |
 | Inconsistent pagination defaults across routes | `webgui/routes/` | P3 | Pending |
-| Duplicate .env.example entries for AGNOS LLM Gateway | `.env.example:122-125, 204-207` | P3 | Pending |
+| ~~Duplicate .env.example entries for AGNOS LLM Gateway~~ | `.env.example:122-125, 204-207` | P3 | Done — removed duplicate block |
 | A2A protocol undocumented (5+ message types) | `webgui/routes/tasks.py:371-425` | P2 | Pending |
 
 ### Integration (YEOMAN / AGNOS)
@@ -118,7 +118,7 @@ Issues identified during the 2026-03-06 comprehensive code audit. Items marked ~
 | Missing YEOMAN/AGNOS health in `/health` endpoint | `webgui/app.py:1001` | P2 | Pending |
 | No batch A2A operations (N round-trips) | `shared/yeoman_a2a_client.py` | P3 | Pending |
 | Unidirectional dashboard bridge (push only) | `shared/agnos_dashboard_bridge.py` | P3 | Pending |
-| A2A endpoints not behind YEOMAN_A2A_ENABLED feature gate | `webgui/routes/tasks.py:371` | P2 | Pending |
+| ~~A2A endpoints not behind YEOMAN_A2A_ENABLED feature gate~~ | `webgui/routes/tasks.py:371` | P2 | Done — 503 when disabled |
 | `a2a:status_query` response format undefined (no schema) | `webgui/routes/tasks.py:404` | P3 | Pending |
 
 ---

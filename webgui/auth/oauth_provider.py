@@ -233,21 +233,28 @@ class OAuthProviderFactory:
                 return None
 
             azure_client_id = os.getenv("OAUTH2_AZURE_CLIENT_ID")
+            azure_tenant_id = os.getenv("OAUTH2_AZURE_TENANT_ID", "common")
             if not azure_client_id:
                 logger.error("OAUTH2_AZURE_CLIENT_ID not configured")
                 return None
 
             jwks_client = PyJWKClient(
-                "https://login.microsoftonline.com/common/discovery/v2.0/keys"
+                f"https://login.microsoftonline.com/{azure_tenant_id}/discovery/v2.0/keys"
             )
             signing_key = jwks_client.get_signing_key_from_jwt(id_token)
+
+            # Build issuer allowlist for the configured tenant
+            azure_issuers = [
+                f"https://login.microsoftonline.com/{azure_tenant_id}/v2.0",
+                f"https://sts.windows.net/{azure_tenant_id}/",
+            ]
 
             payload = jwt.decode(
                 id_token,
                 signing_key.key,
                 algorithms=["RS256"],
                 audience=azure_client_id,
-                options={"verify_iss": False},  # issuer varies by tenant
+                issuer=azure_issuers,
             )
 
             email = payload.get("preferred_username") or payload.get("email")
@@ -306,7 +313,7 @@ class OAuthProviderFactory:
                 )
 
             # Create new user
-            user_id = f"user_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hashlib.md5(email.encode()).hexdigest()[:8]}"
+            user_id = f"user_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hashlib.sha256(email.encode()).hexdigest()[:8]}"
 
             default_role = UserRole.VIEWER
 

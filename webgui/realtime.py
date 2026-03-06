@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,6 +30,10 @@ logger = logging.getLogger(__name__)
 STREAM_MAX_LEN = int(os.getenv("REALTIME_STREAM_MAX_LEN", "1000"))
 # Maximum number of messages to replay on reconnection
 STREAM_REPLAY_LIMIT = int(os.getenv("REALTIME_STREAM_REPLAY_LIMIT", "100"))
+# Idle timeout for WebSocket connections (seconds)
+_CONNECTION_IDLE_TIMEOUT = int(os.getenv("REALTIME_IDLE_TIMEOUT_SECONDS", "600"))
+# Interval for stale connection pruning (seconds)
+_PRUNE_INTERVAL = 60
 
 
 class EventType(Enum):
@@ -129,6 +134,7 @@ class RealtimeManager:
             str, set[str]
         ] = {}  # connection_id -> set of channels
         self.websockets: dict[str, Any] = {}  # connection_id -> websocket
+        self._last_activity: dict[str, float] = {}  # connection_id -> monotonic time
         self.pubsub = None
         self.background_tasks = set()
         self.message_buffer = MessageBuffer(self.redis_client)
@@ -166,6 +172,11 @@ class RealtimeManager:
             self.background_tasks.add(task)
             task.add_done_callback(self.background_tasks.discard)
 
+            # Start stale connection pruning
+            prune_task = asyncio.create_task(self._prune_stale_connections())
+            self.background_tasks.add(prune_task)
+            prune_task.add_done_callback(self.background_tasks.discard)
+
         except Exception as e:
             logger.error(f"Failed to initialize pub/sub: {e}")
 
@@ -177,8 +188,9 @@ class RealtimeManager:
         self.active_connections[user_id].add(connection_id)
         self.connection_subscriptions[connection_id] = set()
 
-        # Store websocket reference
+        # Store websocket reference and activity timestamp
         self.websockets[connection_id] = websocket
+        self._last_activity[connection_id] = time.monotonic()
 
         logger.info(f"Added connection {connection_id} for user {user_id}")
 
@@ -210,8 +222,9 @@ class RealtimeManager:
         if connection_id in self.connection_subscriptions:
             del self.connection_subscriptions[connection_id]
 
-        # Clean up websocket reference
+        # Clean up websocket reference and activity tracking
         self.websockets.pop(connection_id, None)
+        self._last_activity.pop(connection_id, None)
 
         logger.info(f"Removed connection {connection_id} for user {user_id}")
 
@@ -261,6 +274,7 @@ class RealtimeManager:
         """Send message to specific connection"""
         try:
             if connection_id in self.websockets:
+                self._last_activity[connection_id] = time.monotonic()
                 websocket = self.websockets[connection_id]
                 await websocket.send_json(
                     {
@@ -346,15 +360,15 @@ class RealtimeManager:
         """Background task to listen to Redis pub/sub messages.
 
         Uses run_in_executor to avoid blocking the event loop with
-        the synchronous redis-py get_message call.
+        the synchronous redis-py get_message call.  Restarts
+        automatically on error without leaking task references.
         """
         logger.info("Starting Redis pub/sub listener")
         loop = asyncio.get_running_loop()
 
-        try:
-            while True:
+        while True:
+            try:
                 if self.pubsub:
-                    # Run blocking get_message in a thread to avoid starving the event loop
                     message = await loop.run_in_executor(
                         None, lambda: self.pubsub.get_message(timeout=0.5)
                     )
@@ -362,14 +376,38 @@ class RealtimeManager:
                         await self._handle_redis_message(message)
                 else:
                     await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Redis listener error: {e}")
+                await asyncio.sleep(5)
 
-        except Exception as e:
-            logger.error(f"Redis listener error: {e}")
-            # Restart listener
-            await asyncio.sleep(5)
-            task = asyncio.create_task(self._redis_listener())
-            self.background_tasks.add(task)
-            task.add_done_callback(self.background_tasks.discard)
+    async def _prune_stale_connections(self):
+        """Periodically remove WebSocket connections that have been idle."""
+        while True:
+            try:
+                await asyncio.sleep(_PRUNE_INTERVAL)
+                now = time.monotonic()
+                stale = [
+                    cid
+                    for cid, last in self._last_activity.items()
+                    if now - last > _CONNECTION_IDLE_TIMEOUT
+                ]
+                for cid in stale:
+                    logger.info(f"Pruning stale WebSocket connection: {cid}")
+                    ws = self.websockets.get(cid)
+                    if ws:
+                        try:
+                            await ws.close(code=1000, reason="Idle timeout")
+                        except Exception:
+                            pass
+                    await self.remove_connection(cid)
+                if stale:
+                    logger.info(f"Pruned {len(stale)} stale WebSocket connections")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Connection pruning error: {e}")
 
     async def _handle_redis_message(self, redis_message):
         """Handle incoming Redis pub/sub message and buffer to stream"""

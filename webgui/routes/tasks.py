@@ -6,6 +6,8 @@ import hmac
 import json
 import logging
 import os
+import random
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -15,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from shared.audit import AuditAction, audit_log
 from webgui.routes.dependencies import (
+    YEOMAN_A2A_ENABLED,
     _normalize_agent_name,
     _validate_callback_url,
     get_current_user,
@@ -67,18 +70,22 @@ class A2AMessage(BaseModel):
 # Webhook helpers
 # ---------------------------------------------------------------------------
 
-WEBHOOK_MAX_RETRIES = int(os.getenv("WEBHOOK_MAX_RETRIES", "3"))
+WEBHOOK_MAX_RETRIES = min(int(os.getenv("WEBHOOK_MAX_RETRIES", "3")), 10)
 
 _webhook_http_client: Any = None
+_webhook_client_lock = asyncio.Lock()
+
+_TASK_ID_RE = re.compile(r"^[a-zA-Z0-9\-]{1,100}$")
 
 
 async def _get_webhook_client() -> Any:
     """Return a shared httpx.AsyncClient for webhook delivery."""
     global _webhook_http_client
-    if _webhook_http_client is None or _webhook_http_client.is_closed:
-        import httpx
+    async with _webhook_client_lock:
+        if _webhook_http_client is None or _webhook_http_client.is_closed:
+            import httpx
 
-        _webhook_http_client = httpx.AsyncClient(timeout=10)
+            _webhook_http_client = httpx.AsyncClient(timeout=10)
     return _webhook_http_client
 
 
@@ -113,7 +120,7 @@ async def _fire_webhook(
         except Exception as e:
             last_error = e
             if attempt < WEBHOOK_MAX_RETRIES - 1:
-                delay = 2**attempt  # 1s, 2s, 4s, ...
+                delay = (2**attempt) * (0.8 + 0.4 * random.random())  # jittered backoff
                 logger.warning(
                     f"Webhook delivery to {callback_url} failed (attempt {attempt + 1}/{WEBHOOK_MAX_RETRIES}): {e}. "
                     f"Retrying in {delay}s"
@@ -218,7 +225,7 @@ async def _run_task_async(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/tasks", response_model=TaskStatusResponse)
+@router.post("/tasks", response_model=TaskStatusResponse, status_code=201)
 async def submit_task(
     req: TaskSubmitRequest,
     user: dict = Depends(get_current_user),
@@ -310,6 +317,9 @@ async def submit_task(
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
 async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     """Poll task status by task_id."""
+    if not _TASK_ID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Invalid task ID format")
+
     from config.environment import config
     from shared.database.tenants import tenant_manager
 
@@ -380,6 +390,11 @@ async def receive_a2a_message(
     user: dict = Depends(get_current_user),
 ):
     """Receive an A2A protocol message from a YEOMAN peer."""
+    if not YEOMAN_A2A_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="A2A protocol not enabled. Set YEOMAN_A2A_ENABLED=true",
+        )
     if msg.type == "a2a:delegate":
         payload = msg.payload
         task_req = TaskSubmitRequest(
@@ -404,7 +419,7 @@ async def receive_a2a_message(
             task_id = msg.payload.get("task_id", msg.id)
             yeoman_a2a_client.cache_result(task_id, msg.payload)
         except ImportError:
-            pass
+            logger.debug("yeoman_a2a_client not available — result not cached")
         return {"accepted": True, "message_id": msg.id, "type": "result_cached"}
 
     if msg.type == "a2a:status_query":
@@ -414,8 +429,8 @@ async def receive_a2a_message(
             from webgui.dashboard import dashboard_manager
 
             status_data = await dashboard_manager.export_dashboard_data()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to export dashboard data for status_query: %s", exc)
         return {
             "accepted": True,
             "message_id": msg.id,
@@ -434,6 +449,11 @@ async def receive_a2a_message(
 @router.get("/v1/a2a/capabilities")
 async def a2a_capabilities():
     """Advertise what this Agnostic instance can do as an A2A peer."""
+    if not YEOMAN_A2A_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="A2A protocol not enabled. Set YEOMAN_A2A_ENABLED=true",
+        )
     return {
         "capabilities": [
             {

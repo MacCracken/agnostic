@@ -27,7 +27,13 @@ class BaseModelProvider(ABC):
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create a shared aiohttp session for connection pooling."""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            connector = aiohttp.TCPConnector(
+                limit=20,
+                limit_per_host=10,
+                ttl_dns_cache=300,
+                enable_cleanup_closed=True,
+            )
+            self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 
     async def close(self) -> None:

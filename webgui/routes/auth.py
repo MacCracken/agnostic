@@ -1,12 +1,21 @@
 """Auth endpoints — login, logout, token refresh, API key management."""
 
-from fastapi import APIRouter, Depends, Query
+import logging
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from webgui.auth import Permission, auth_manager
 from webgui.routes.dependencies import get_current_user, require_permission
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# Login rate limiting — max attempts per email per window
+_LOGIN_MAX_ATTEMPTS = int(os.getenv("LOGIN_RATE_LIMIT_MAX", "10"))
+_LOGIN_WINDOW_SECONDS = int(os.getenv("LOGIN_RATE_LIMIT_WINDOW", "300"))
 
 
 # ---------------------------------------------------------------------------
@@ -39,10 +48,28 @@ class ApiKeyCreateRequest(BaseModel):
 
 @router.post("/auth/login")
 async def login(req: LoginRequest):
+    # Rate limit login attempts per email
+    try:
+        from config.environment import config
+
+        redis_client = config.get_redis_client()
+        rate_key = f"login_attempts:{req.email}"
+        attempts = redis_client.incr(rate_key)
+        if attempts == 1:
+            redis_client.expire(rate_key, _LOGIN_WINDOW_SECONDS)
+        if attempts > _LOGIN_MAX_ATTEMPTS:
+            logger.warning("Login rate limit exceeded for %s", req.email)
+            raise HTTPException(
+                status_code=429,
+                detail="Too many login attempts. Try again later.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # Allow login if Redis is unavailable
+
     user = await auth_manager.authenticate_user(email=req.email, password=req.password)
     if user is None:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=401, detail="Invalid credentials")
     tokens = await auth_manager.create_tokens(user)
     return {
@@ -57,8 +84,6 @@ async def login(req: LoginRequest):
 async def refresh(req: RefreshRequest):
     tokens = await auth_manager.refresh_tokens(req.refresh_token)
     if tokens is None:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=401, detail="Invalid or expired refresh token"
         )
@@ -72,8 +97,6 @@ async def refresh(req: RefreshRequest):
 
 @router.post("/auth/logout")
 async def logout(req: LogoutRequest, user: dict = Depends(get_current_user)):
-    from fastapi import HTTPException
-
     success = await auth_manager.logout(user["user_id"], req.access_token)
     if not success:
         raise HTTPException(status_code=500, detail="Logout failed")
@@ -95,7 +118,7 @@ async def auth_me(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/auth/api-keys")
+@router.post("/auth/api-keys", status_code=201)
 async def create_api_key(
     req: ApiKeyCreateRequest,
     user: dict = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
@@ -154,7 +177,5 @@ async def delete_api_key(
     redis_client = config.get_redis_client()
     deleted = _revoke_api_key(redis_client, key_id)
     if not deleted:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=404, detail="API key not found")
     return {"status": "revoked", "key_id": key_id}

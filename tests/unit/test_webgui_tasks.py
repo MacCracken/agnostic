@@ -187,7 +187,7 @@ class TestSubmitTask:
             "/api/tasks",
             json={"title": "My Test", "description": "Run all checks"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 201
         data = resp.json()
         assert data["status"] == "pending"
         assert "task_id" in data
@@ -558,7 +558,7 @@ class TestAgentSpecificEndpoints:
             "/api/tasks/security",
             json={"title": "T", "description": "D"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 201
 
     @patch("config.environment.config")
     @patch("webgui.api.asyncio")
@@ -572,7 +572,7 @@ class TestAgentSpecificEndpoints:
             "/api/tasks/performance",
             json={"title": "T", "description": "D"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 201
 
     @patch("config.environment.config")
     @patch("webgui.api.asyncio")
@@ -586,7 +586,7 @@ class TestAgentSpecificEndpoints:
             "/api/tasks/regression",
             json={"title": "T", "description": "D"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 201
 
     @patch("config.environment.config")
     @patch("webgui.api.asyncio")
@@ -600,13 +600,14 @@ class TestAgentSpecificEndpoints:
             "/api/tasks/full",
             json={"title": "T", "description": "D"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 201
 
 
 # ---------------------------------------------------------------------------
 # A2A protocol endpoints (P8)
 # ---------------------------------------------------------------------------
 
+@patch("webgui.routes.tasks.YEOMAN_A2A_ENABLED", True)
 class TestA2AEndpoints:
     """Tests for POST /api/v1/a2a/receive and GET /api/v1/a2a/capabilities."""
 

@@ -189,6 +189,7 @@ def require_permission(permission: Permission):
 
 DATABASE_ENABLED = os.getenv("DATABASE_ENABLED", "false").lower() == "true"
 MULTI_TENANT_ENABLED = os.getenv("MULTI_TENANT_ENABLED", "false").lower() == "true"
+YEOMAN_A2A_ENABLED = os.getenv("YEOMAN_A2A_ENABLED", "false").lower() == "true"
 
 
 # ---------------------------------------------------------------------------

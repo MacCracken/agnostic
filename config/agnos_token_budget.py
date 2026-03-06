@@ -47,6 +47,7 @@ class AgnosTokenBudgetClient:
         ).rstrip("/")
         self.api_key = os.getenv("AGNOS_TOKEN_BUDGET_API_KEY", "")
         self.pool = os.getenv("AGNOS_TOKEN_BUDGET_POOL", "agnostic-qa")
+        self._client: httpx.AsyncClient | None = None if _HTTPX_AVAILABLE else None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -60,6 +61,18 @@ class AgnosTokenBudgetClient:
 
     def _pool_url(self, path: str) -> str:
         return f"{self.base_url}/api/v1/budget/pools/{self.pool}{path}"
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Return (and lazily create) a shared httpx client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=_TIMEOUT)
+        return self._client
+
+    async def close(self) -> None:
+        """Close the shared httpx client."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -78,17 +91,17 @@ class AgnosTokenBudgetClient:
             return True
 
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.get(
-                    self._pool_url("/check"),
-                    params={"agent": agent_id, "tokens": estimated_tokens},
-                    headers=self._headers(),
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                if _budget_circuit:
-                    _budget_circuit.record_success()
-                return bool(data.get("allowed", True))
+            client = self._get_client()
+            resp = await client.get(
+                self._pool_url("/check"),
+                params={"agent": agent_id, "tokens": estimated_tokens},
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if _budget_circuit:
+                _budget_circuit.record_success()
+            return bool(data.get("allowed", True))
         except Exception as exc:
             if _budget_circuit:
                 _budget_circuit.record_failure()
@@ -107,17 +120,17 @@ class AgnosTokenBudgetClient:
             return None
 
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(
-                    self._pool_url("/reserve"),
-                    json={"agent": agent_id, "tokens": tokens},
-                    headers=self._headers(),
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                if _budget_circuit:
-                    _budget_circuit.record_success()
-                return data.get("reservation_id")
+            client = self._get_client()
+            resp = await client.post(
+                self._pool_url("/reserve"),
+                json={"agent": agent_id, "tokens": tokens},
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if _budget_circuit:
+                _budget_circuit.record_success()
+            return data.get("reservation_id")
         except Exception as exc:
             if _budget_circuit:
                 _budget_circuit.record_failure()
@@ -137,20 +150,20 @@ class AgnosTokenBudgetClient:
             return False
 
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(
-                    self._pool_url("/usage"),
-                    json={
-                        "reservation_id": reservation_id,
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                    },
-                    headers=self._headers(),
-                )
-                resp.raise_for_status()
-                if _budget_circuit:
-                    _budget_circuit.record_success()
-                return True
+            client = self._get_client()
+            resp = await client.post(
+                self._pool_url("/usage"),
+                json={
+                    "reservation_id": reservation_id,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                },
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            if _budget_circuit:
+                _budget_circuit.record_success()
+            return True
         except Exception as exc:
             if _budget_circuit:
                 _budget_circuit.record_failure()
@@ -165,17 +178,17 @@ class AgnosTokenBudgetClient:
             return None
 
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.get(
-                    self._pool_url("/remaining"),
-                    params={"agent": agent_id},
-                    headers=self._headers(),
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                if _budget_circuit:
-                    _budget_circuit.record_success()
-                return int(data.get("remaining", 0))
+            client = self._get_client()
+            resp = await client.get(
+                self._pool_url("/remaining"),
+                params={"agent": agent_id},
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if _budget_circuit:
+                _budget_circuit.record_success()
+            return int(data.get("remaining", 0))
         except Exception as exc:
             if _budget_circuit:
                 _budget_circuit.record_failure()
@@ -190,15 +203,15 @@ class AgnosTokenBudgetClient:
             return False
 
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.delete(
-                    self._pool_url(f"/reserve/{reservation_id}"),
-                    headers=self._headers(),
-                )
-                resp.raise_for_status()
-                if _budget_circuit:
-                    _budget_circuit.record_success()
-                return True
+            client = self._get_client()
+            resp = await client.delete(
+                self._pool_url(f"/reserve/{reservation_id}"),
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            if _budget_circuit:
+                _budget_circuit.record_success()
+            return True
         except Exception as exc:
             if _budget_circuit:
                 _budget_circuit.record_failure()

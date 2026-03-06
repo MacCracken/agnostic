@@ -17,6 +17,33 @@ services:
           cpus: '0.25'
     restart: unless-stopped
 
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agnostic}
+      POSTGRES_USER: ${POSTGRES_USER:-agnostic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    networks:
+      - qa-network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agnostic}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   rabbitmq:
     image: rabbitmq:3-management-alpine
     ports:
@@ -269,8 +296,11 @@ services:
       - WEBGUI_HOST=0.0.0.0
       - WEBGUI_PORT=8000
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-agnostic}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agnostic}
+      - DATABASE_ENABLED=${DATABASE_ENABLED:-false}
     depends_on:
       - redis
+      - postgres
       - qa-manager
       - senior-qa
       - junior-qa
@@ -311,3 +341,4 @@ networks:
 volumes:
   redis_data:
   rabbitmq_data:
+  postgres_data:

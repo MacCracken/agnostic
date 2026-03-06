@@ -88,7 +88,7 @@ async def get_test_sessions(
     ]
 
 
-@router.post("/test-sessions")
+@router.post("/test-sessions", status_code=201)
 async def create_test_session(
     req: TestSessionCreate,
     user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
@@ -172,7 +172,7 @@ async def get_test_results(
     ]
 
 
-@router.post("/test-results")
+@router.post("/test-results", status_code=201)
 async def add_test_result(
     req: TestResultCreate,
     user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
