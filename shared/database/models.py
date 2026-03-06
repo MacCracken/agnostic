@@ -89,7 +89,9 @@ class TestResult(Base):
     test_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     expected_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     actual_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    extra_metadata: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSON, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC)
     )

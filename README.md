@@ -163,7 +163,7 @@ AGNOSTIC_API_KEY=your-api-key      # preferred (P2 implemented)
 | `agnostic_task_status` | Poll task status |
 | `agnostic_delegate_a2a` | Delegate via A2A protocol (requires P8) |
 
-See [`TODO.md`](TODO.md) for the full API improvement backlog (P1–P8).
+See the [Roadmap](docs/development/roadmap.md) for pending work and the [Changelog](docs/project/changelog.md) for completed work.
 
 ## Contributing
 

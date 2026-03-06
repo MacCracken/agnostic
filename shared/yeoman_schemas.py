@@ -30,6 +30,8 @@ class FindingCategory(str, Enum):
 
 
 class TestStatus(str, Enum):
+    __test__ = False  # prevent pytest collection
+
     PASSED = "passed"
     FAILED = "failed"
     SKIPPED = "skipped"
@@ -165,6 +167,7 @@ class PerformanceResult:
 @dataclass
 class TestExecutionResult:
     """Structured test execution results for YEOMAN integration."""
+    __test__ = False  # prevent pytest collection
     execution_id: str
     session_id: str
     test_type: str

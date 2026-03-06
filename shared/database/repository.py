@@ -77,7 +77,7 @@ class TestResultRepository:
             test_data=result_data.get("test_data"),
             expected_result=result_data.get("expected_result"),
             actual_result=result_data.get("actual_result"),
-            metadata=result_data.get("metadata"),
+            extra_metadata=result_data.get("metadata"),
         )
         self.session.add(result)
         await self.session.commit()
