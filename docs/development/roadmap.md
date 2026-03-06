@@ -26,6 +26,30 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 
 ---
 
+## SecureYeoman Integration
+
+### MCP Tool Gaps
+**Priority:** High — aligns with near-term MCP item above.
+
+SecureYeoman's MCP manifest (`packages/mcp/src/tools/manifest.ts`) is the sole source for AI-visible tools. The three missing tools noted in near-term (`agnostic_session_diff`, `agnostic_structured_results`, `agnostic_quality_trends`) should be registered there after implementation. Additional candidates:
+
+- [ ] **QA orchestration tools** — Expose `qa-manager` task creation and agent dispatch via MCP so SecureYeoman personalities can trigger QA runs conversationally
+- [ ] **Security scan results** — Surface `senior-qa` security findings as structured MCP tool output for SecureYeoman's DLP/compliance pipeline
+- [ ] **Quality trend dashboard data** — Feed agent quality metrics into SecureYeoman's observability (OpenTelemetry integration, Phase 139)
+
+### Docker Base Image Migration
+**Priority:** Medium — depends on agnosticos Alpha release (Q2 2026).
+
+- [ ] **Migrate per-agent Dockerfiles to agnosticos base** — Current setup uses individual Dockerfiles per agent service. Once AGNOS ships Alpha, switch to `FROM agnos:latest` for the hardened Rust runtime, sandboxed execution, and audit-chain integration. The `agent-runtime` binary in agnosticos provides resource quotas and IPC backpressure that replaces custom container resource limits.
+- [ ] **LLM Gateway consolidation** — Agnostic's `universal_llm_adapter.py` and agnosticos's `llm-gateway` (OpenAI-compatible on :8088) overlap. Evaluate routing agent LLM calls through the gateway instead of direct provider calls, gaining request-level audit logging and model routing.
+
+### REST API Proxy
+**Priority:** Low — `webgui/api.py` has 85+ endpoints.
+
+- [ ] **`registerApiProxyTool()` wiring** — SecureYeoman's `tool-utils.ts` has a factory for proxying GET/POST endpoints as MCP tools. Once `api.py` is split into route modules (near-term item), register high-value endpoints (session management, test results, agent status) as proxy tools for zero-code MCP integration.
+
+---
+
 ## Long-term / Blocked
 
 No long-term items remaining. See [Dependency Watch](dependency-watch.md) for upstream blockers.
