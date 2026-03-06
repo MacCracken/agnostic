@@ -14,13 +14,6 @@ No near-term items remaining. See [Recently Completed](#recently-completed) and 
 
 ## Medium-term
 
-### WebSocket Reconnection & Missed Message Recovery
-**Priority:** Medium — **Complete**
-
-- [x] Message buffering for disconnected subscribers — Redis Streams (`MessageBuffer` class, `XADD`/`XRANGE`)
-- [x] Client-side reconnection with last-seen message ID — `last_message_id` in subscribe messages, `replay_missed_messages()`
-- [x] Update ADR-023 — reconnection section added with configuration and protocol docs
-
 ### Scheduled Report Delivery
 **Priority:** Medium — **Partially complete**
 
