@@ -29,7 +29,8 @@ async def get_sessions(
         limit=limit,
         offset=offset,
     )
-    return [asdict(s) for s in sessions]
+    items = [asdict(s) for s in sessions]
+    return {"items": items, "total": len(items), "limit": limit, "offset": offset}
 
 
 @router.get("/sessions/search")
@@ -41,7 +42,8 @@ async def search_sessions(
     from webgui.history import history_manager
 
     results = await history_manager.search_sessions(query=q, limit=limit)
-    return [asdict(s) for s in results]
+    items = [asdict(s) for s in results]
+    return {"items": items, "total": len(items), "limit": limit}
 
 
 @router.get("/sessions/{session_id}")

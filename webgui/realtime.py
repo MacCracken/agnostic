@@ -34,6 +34,8 @@ STREAM_REPLAY_LIMIT = int(os.getenv("REALTIME_STREAM_REPLAY_LIMIT", "100"))
 _CONNECTION_IDLE_TIMEOUT = int(os.getenv("REALTIME_IDLE_TIMEOUT_SECONDS", "600"))
 # Interval for stale connection pruning (seconds)
 _PRUNE_INTERVAL = 60
+# Maximum WebSocket message size (bytes) before JSON parse
+_MAX_WS_MESSAGE_SIZE = int(os.getenv("REALTIME_MAX_MESSAGE_SIZE", "65536"))
 
 
 class EventType(Enum):
@@ -539,7 +541,14 @@ class WebSocketHandler:
             # Handle messages
             while True:
                 try:
-                    data = await websocket.receive_json()
+                    raw = await websocket.receive_text()
+                    if len(raw) > _MAX_WS_MESSAGE_SIZE:
+                        logger.warning(
+                            "WebSocket message too large (%d bytes), dropping",
+                            len(raw),
+                        )
+                        continue
+                    data = json.loads(raw)
                     await self._handle_client_message(connection_id, data)
 
                 except Exception as e:

@@ -65,10 +65,17 @@ class YeomanA2AClient:
         try:
             from shared.resilience import CircuitBreaker
 
+            def _on_breaker_change(name: str, old: str, new: str) -> None:
+                if new == "closed":
+                    logger.info("YEOMAN A2A circuit breaker recovered (was %s)", old)
+                elif new == "open":
+                    logger.warning("YEOMAN A2A circuit breaker tripped OPEN")
+
             self._breaker: Any = CircuitBreaker(
                 name="yeoman_a2a",
                 failure_threshold=5,
                 recovery_timeout=60.0,
+                on_state_change=_on_breaker_change,
             )
         except ImportError:
             self._breaker = None
@@ -229,6 +236,38 @@ class YeomanA2AClient:
         """Send an ``a2a:heartbeat`` to YEOMAN. Returns *True* on success."""
         result = await self.send_message("a2a:heartbeat", {"status": "healthy"})
         return result is not None
+
+    async def delegate_batch(
+        self,
+        tasks: list[dict[str, Any]],
+    ) -> list[str | None]:
+        """Delegate multiple tasks in a single A2A message.
+
+        Each entry in *tasks* should have ``description`` and optionally
+        ``task_type`` and ``params``.  Returns a list of task IDs (or ``None``
+        for any that failed).
+        """
+        result = await self.send_message(
+            "a2a:delegate_batch", {"tasks": tasks}
+        )
+        if result is None:
+            return [None] * len(tasks)
+        return result.get("task_ids", [None] * len(tasks))  # type: ignore[return-value]
+
+    async def query_batch_status(
+        self, task_ids: list[str]
+    ) -> dict[str, dict[str, Any] | None]:
+        """Query status for multiple tasks in a single round-trip.
+
+        Returns a mapping of ``task_id`` → status dict (or ``None`` if the
+        task was not found on the YEOMAN side).
+        """
+        result = await self.send_message(
+            "a2a:status_query_batch", {"task_ids": task_ids}
+        )
+        if result is None:
+            return {tid: None for tid in task_ids}
+        return result.get("statuses", {})  # type: ignore[return-value]
 
     async def send_result(self, task_id: str, result: dict[str, Any]) -> bool:
         """Send an ``a2a:result`` back to YEOMAN with completed QA results."""

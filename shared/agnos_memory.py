@@ -147,6 +147,29 @@ class AgnosMemoryClient:
             logger.debug("AGNOS memory delete failed: %s", exc)
             return False
 
+    async def retrieve_batch(
+        self, agent_id: str, keys: list[str], namespace: str = "default"
+    ) -> list[Any]:
+        """Retrieve multiple keys in a single request (avoids N+1)."""
+        if not self._can_execute() or not keys:
+            return []
+        try:
+            client = self._get_client()
+            response = await client.post(
+                f"/api/v1/memory/{agent_id}/{namespace}/batch",
+                json={"keys": keys},
+            )
+            response.raise_for_status()
+            self._record_success()
+            return response.json().get("values", [])
+        except Exception:
+            # Fallback to sequential retrieval if batch endpoint unavailable
+            results = []
+            for key in keys:
+                val = await self.retrieve(agent_id, key, namespace=namespace)
+                results.append(val)
+            return results
+
     async def store_pattern(self, agent_id: str, pattern: dict) -> bool:
         """Store a test pattern (convenience for 'patterns' namespace)."""
         key = pattern.get("name", f"pattern_{id(pattern)}")
@@ -155,12 +178,8 @@ class AgnosMemoryClient:
     async def get_patterns(self, agent_id: str) -> list[dict]:
         """Retrieve all stored test patterns."""
         keys = await self.list_keys(agent_id, namespace="patterns")
-        patterns = []
-        for key in keys:
-            val = await self.retrieve(agent_id, key, namespace="patterns")
-            if isinstance(val, dict):
-                patterns.append(val)
-        return patterns
+        values = await self.retrieve_batch(agent_id, keys, namespace="patterns")
+        return [v for v in values if isinstance(v, dict)]
 
     async def store_risk_model(self, agent_id: str, model: dict) -> bool:
         """Store a risk model (convenience for 'risk_models' namespace)."""
@@ -170,12 +189,8 @@ class AgnosMemoryClient:
     async def get_risk_models(self, agent_id: str) -> list[dict]:
         """Retrieve all stored risk models."""
         keys = await self.list_keys(agent_id, namespace="risk_models")
-        models = []
-        for key in keys:
-            val = await self.retrieve(agent_id, key, namespace="risk_models")
-            if isinstance(val, dict):
-                models.append(val)
-        return models
+        values = await self.retrieve_batch(agent_id, keys, namespace="risk_models")
+        return [v for v in values if isinstance(v, dict)]
 
     async def close(self) -> None:
         if self._client and not self._client.is_closed:

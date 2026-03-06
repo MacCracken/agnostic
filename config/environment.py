@@ -15,6 +15,7 @@ class Config:
     """Configuration class for managing environment variables and connections."""
 
     def __init__(self) -> None:
+        self._redis_client: redis.Redis | None = None
         self.load_environment()
 
     def load_environment(self) -> None:
@@ -52,8 +53,22 @@ class Config:
         )
 
     def get_redis_client(self, **kwargs) -> redis.Redis:
-        """Create a Redis client with environment configuration and connection pooling."""
-        # Parse URL if provided, otherwise use individual settings
+        """Return a cached Redis client with connection pooling.
+
+        The first call creates the client; subsequent calls return the same
+        instance.  Pass explicit **kwargs to force a new (non-cached) client.
+        """
+        # If caller passes custom kwargs, create a one-off client
+        if kwargs:
+            return self._create_redis_client(**kwargs)
+
+        # Return cached singleton
+        if self._redis_client is None:
+            self._redis_client = self._create_redis_client()
+        return self._redis_client
+
+    def _create_redis_client(self, **kwargs) -> redis.Redis:
+        """Create a new Redis client with environment configuration."""
         if "url" in kwargs or self.redis_url:
             redis_url = kwargs.get("url", self.redis_url)
             parsed = urlparse(redis_url)
@@ -88,9 +103,7 @@ class Config:
                 **kwargs,
             }
 
-        # Remove URL from kwargs if present
         redis_kwargs.pop("url", None)
-
         return redis.Redis(**redis_kwargs)
 
     def get_celery_app(self, app_name: str, **kwargs) -> Celery:

@@ -2,16 +2,35 @@
 
 import json
 import logging
+import os
 from dataclasses import asdict
+from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from webgui.routes.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+
+
+class ItemListResponse(BaseModel):
+    items: list[dict[str, Any]]
+    total: int
+
+
+class AlertListResponse(BaseModel):
+    items: list[dict[str, Any]]
+    total: int
+    limit: int
 
 
 # ---------------------------------------------------------------------------
@@ -27,20 +46,22 @@ async def get_dashboard(user: dict = Depends(get_current_user)):
     return data
 
 
-@router.get("/dashboard/sessions")
+@router.get("/dashboard/sessions", response_model=ItemListResponse)
 async def get_dashboard_sessions(user: dict = Depends(get_current_user)):
     from webgui.dashboard import dashboard_manager
 
     sessions = await dashboard_manager.get_active_sessions()
-    return [asdict(s) for s in sessions]
+    items = [asdict(s) for s in sessions]
+    return {"items": items, "total": len(items)}
 
 
-@router.get("/dashboard/agents")
+@router.get("/dashboard/agents", response_model=ItemListResponse)
 async def get_dashboard_agents(user: dict = Depends(get_current_user)):
     from webgui.dashboard import dashboard_manager
 
     agents = await dashboard_manager.get_agent_status()
-    return [asdict(a) for a in agents]
+    items = [asdict(a) for a in agents]
+    return {"items": items, "total": len(items)}
 
 
 @router.get("/dashboard/metrics")
@@ -136,7 +157,7 @@ async def get_unified_dashboard(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/alerts")
+@router.get("/alerts", response_model=AlertListResponse)
 async def list_alerts(
     limit: int = Query(50, ge=1, le=200),
     severity: str | None = Query(None),
@@ -166,12 +187,25 @@ async def list_alerts(
 
 
 # ---------------------------------------------------------------------------
-# Metrics endpoint (unauthenticated — for Prometheus scraping)
+# Metrics endpoint — optionally secured via METRICS_AUTH_TOKEN
 # ---------------------------------------------------------------------------
+
+_METRICS_TOKEN = os.getenv("METRICS_AUTH_TOKEN", "")
 
 
 @router.get("/metrics")
-async def get_metrics():
+async def get_metrics(
+    authorization: str | None = Header(default=None),
+):
+    """Prometheus scrape endpoint. Set METRICS_AUTH_TOKEN to require a Bearer token."""
+    if _METRICS_TOKEN and (
+        not authorization
+        or not authorization.removeprefix("Bearer ").strip() == _METRICS_TOKEN
+    ):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=401, detail="Invalid metrics token")
+
     from shared.metrics import get_content_type, get_metrics_text
 
     return JSONResponse(

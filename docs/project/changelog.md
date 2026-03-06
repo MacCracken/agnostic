@@ -7,6 +7,69 @@ Versions use **YYYY.M.D** (calendar versioning).
 
 ---
 
+## [2026.3.6]
+
+### Security
+
+- **Optional `/metrics` authentication** — `METRICS_AUTH_TOKEN` env var enables Bearer token auth on the Prometheus scrape endpoint; open by default for backward compatibility (`webgui/routes/dashboard.py`)
+- **WebSocket message size validation** — `receive_json()` replaced with `receive_text()` + 64 KB size check before `json.loads()`; oversized messages are dropped with a warning (`webgui/realtime.py`)
+- **SSRF DNS rebinding prevention** — `_validate_callback_url()` now resolves domain names via `socket.getaddrinfo()` and validates all resolved IPs against blocked networks, preventing DNS rebinding attacks that bypass hostname-based checks (`webgui/routes/dependencies.py`)
+- **Timing-safe refresh token comparison** — replaced `!=` with `hmac.compare_digest()` in `TokenManager.refresh_tokens()` to prevent timing side-channel attacks (`webgui/auth/token_manager.py`)
+- **Azure AD issuer verification** — replaced `verify_iss: False` with tenant-specific issuer URL and JWKS endpoint using `OAUTH2_AZURE_TENANT_ID`; prevents token forgery from other Azure tenants (`webgui/auth/oauth_provider.py`)
+- **SHA-256 user ID generation** — replaced `hashlib.md5` with `hashlib.sha256` for OAuth user ID generation (`webgui/auth/oauth_provider.py`)
+- **Dev JWT secret persistence** — auto-generated dev secret key now persisted to `~/.agnostic_dev_secret_key` (mode 0600) so tokens survive app restarts (`webgui/auth/__init__.py`)
+- **Task ID input validation** — `GET /api/tasks/{task_id}` validates task_id against `^[a-zA-Z0-9\-]{1,100}$` regex; returns 400 on invalid format (`webgui/routes/tasks.py`)
+- **Login rate limiting** — `POST /auth/login` rate-limited per email via Redis INCR with sliding window; configurable via `LOGIN_RATE_LIMIT_MAX` (default 10) and `LOGIN_RATE_LIMIT_WINDOW` (default 300s); returns 429 on excess; open-by-default if Redis unavailable (`webgui/routes/auth.py`)
+- **Refresh token rotation** — used refresh tokens are deleted from Redis before issuing new ones, preventing replay of old refresh tokens (`webgui/auth/token_manager.py`)
+
+### Fixed
+
+- **Unbounded YEOMAN result cache** — `_results_cache` changed from plain dict to `OrderedDict` with LRU eviction (max 500 entries) (`shared/yeoman_a2a_client.py`)
+- **Unbounded audit buffer** — `queue_event()` enforces 10K hard cap, dropping oldest events with warning log when exceeded (`shared/agnos_audit.py`)
+- **Missing shutdown cleanup** — app lifespan now closes `agnos_dashboard_bridge`, `yeoman_a2a_client`, `agnos_audit_forwarder`, `alert_manager`, `model_manager`, and `agnos_token_budget` on shutdown (`webgui/app.py`)
+- **Alert cooldown memory growth** — proactive eviction every 100 entries + hard cap enforcement in `AlertManager` (`shared/alerts.py`)
+- **Stale WebSocket connections** — idle connection pruning via `time.monotonic()` tracking with configurable `_CONNECTION_IDLE_TIMEOUT` (default 5 min) (`webgui/realtime.py`)
+- **Background task accumulation** — Redis listener `_redis_listener()` rewritten with internal retry loop instead of spawning new tasks on error (`webgui/realtime.py`)
+- **Synchronous Redis blocking event loop** — `_run_task_async()` wraps sync Redis calls in `loop.run_in_executor()` (`webgui/routes/tasks.py`)
+- **`redis.keys()` replaced with `scan_iter()`** — dashboard `get_sessions()` and `get_agents()` use non-blocking `scan_iter()` instead of `keys()` (`webgui/dashboard.py`)
+- **Redundant double-fetch in dashboard** — `get_resource_metrics()` fetches sessions and agents once each instead of twice (`webgui/dashboard.py`)
+- **Webhook client race condition** — `_get_webhook_client()` protected with `asyncio.Lock` to prevent duplicate client creation under concurrent requests (`webgui/routes/tasks.py`)
+- **Webhook thundering herd** — retry backoff now includes jitter: `(2^attempt) * (0.8 + 0.4 * random())` (`webgui/routes/tasks.py`)
+- **Per-call httpx client in token budget** — `AgnosTokenBudgetClient` now uses a shared `httpx.AsyncClient` with lazy init and `close()` method (`config/agnos_token_budget.py`)
+- **Silent exception swallowing** — bare `except Exception: pass` blocks in dashboard alerts and A2A status_query replaced with `logger.warning()` calls (`webgui/routes/dashboard.py`, `webgui/routes/tasks.py`)
+- **Per-request Redis client creation** — `Config.get_redis_client()` now returns a cached singleton instead of creating a new `Redis` instance and `ConnectionPool` on every call (`config/environment.py`)
+- **Unbounded active_sessions** — `AgenticQAGUI.active_sessions` capped at 1000 entries with oldest-session eviction (`webgui/app.py`)
+- **N+1 HTTP in AGNOS memory client** — added `retrieve_batch()` method with fallback to sequential retrieval; `get_patterns()` and `get_risk_models()` use batch retrieval (`shared/agnos_memory.py`)
+- **Circuit breaker recovery notifications** — YEOMAN A2A and AGNOS dashboard bridge circuit breakers now log state transitions via `on_state_change` callbacks (`shared/yeoman_a2a_client.py`, `shared/agnos_dashboard_bridge.py`)
+
+### Changed
+
+- **POST endpoints return 201** — `POST /api/tasks`, `POST /api/test-sessions`, `POST /api/test-results`, `POST /api/auth/api-keys` now return HTTP 201 Created instead of 200 (`webgui/routes/tasks.py`, `webgui/routes/persistence.py`, `webgui/routes/auth.py`)
+- **A2A endpoints gated by feature flag** — `POST /api/v1/a2a/receive` and `GET /api/v1/a2a/capabilities` return 503 when `YEOMAN_A2A_ENABLED=false` (default); prevents accidental exposure of A2A protocol (`webgui/routes/tasks.py`)
+- **aiohttp connection pooling** — `BaseModelProvider._get_session()` now creates `TCPConnector(limit=20, limit_per_host=10, ttl_dns_cache=300)` instead of default unlimited connector (`config/model_manager.py`)
+- **PostgreSQL in docker-compose** — added `postgres:16-alpine` service with health check, `postgres_data` volume, and `DATABASE_URL` env var wired to webgui service (`docker-compose.yml`)
+- **Duplicate .env.example cleanup** — removed duplicate AGNOS LLM Gateway block (lines 200–207); added `OAUTH2_AZURE_TENANT_ID`, `LOGIN_RATE_LIMIT_MAX`, `LOGIN_RATE_LIMIT_WINDOW` (`.env.example`)
+- **Auth route cleanup** — removed inline `from fastapi import HTTPException` in favour of top-level import (`webgui/routes/auth.py`)
+- **Consistent API response wrappers** — list endpoints in sessions, dashboard, and persistence routes now return `{items, total, limit, offset}` instead of raw lists (`webgui/routes/sessions.py`, `webgui/routes/dashboard.py`, `webgui/routes/persistence.py`)
+- **YEOMAN/AGNOS health in `/health`** — health endpoint now reports YEOMAN A2A and AGNOS dashboard bridge circuit breaker state (`webgui/app.py`)
+- **A2A protocol documentation** — full reference for all 5 message types, envelope format, capabilities, configuration, and client usage (`docs/api/a2a-protocol.md`)
+- **aiohttp TCPConnector pool config** — `enable_cleanup_closed` removed (deprecated in Python 3.14); kept `limit`, `limit_per_host`, `ttl_dns_cache` (`config/model_manager.py`)
+- **Dashboard `response_model` declarations** — added `ItemListResponse` and `AlertListResponse` Pydantic models to `/dashboard/sessions`, `/dashboard/agents`, and `/alerts` endpoints (`webgui/routes/dashboard.py`)
+- **Consistent pagination in persistence routes** — `GET /test-sessions` and `GET /test-results` now use `Query(50, ge=1, le=200)` for limit validation, matching other routes (`webgui/routes/persistence.py`)
+- **Batch A2A operations** — added `delegate_batch()` and `query_batch_status()` to `YeomanA2AClient` for single-round-trip multi-task delegation and status queries (`shared/yeoman_a2a_client.py`)
+- **Bidirectional dashboard bridge** — added `pull_fleet_status()` and `pull_peer_metrics()` pull methods to `AgnosDashboardBridge`, enabling bidirectional data flow with AGNOS dashboard (`shared/agnos_dashboard_bridge.py`)
+- **`a2a:status_query` response schema** — added `A2AStatusResponse` Pydantic model formalizing the response shape for status query messages (`webgui/routes/tasks.py`)
+
+### Tests
+
+- 2 new SSRF tests: `test_blocks_dns_rebinding_to_private`, `test_blocks_unresolvable_hostname` (`tests/unit/test_webgui_api.py`)
+- A2A tests patched with `@patch("webgui.routes.tasks.YEOMAN_A2A_ENABLED", True)` for feature gate compatibility (`tests/unit/test_webgui_tasks.py`)
+- Task submission tests updated for 201 status codes (`tests/unit/test_webgui_tasks.py`, `tests/unit/test_tenant_isolation.py`)
+- Dashboard tests updated for `scan_iter()` mocking (`tests/unit/test_dashboard.py`)
+- **674 unit tests passing** (7 skipped) + 19 E2E tests
+
+---
+
 ## [2026.3.5]
 
 ### Added
@@ -222,6 +285,7 @@ Versions use **YYYY.M.D** (calendar versioning).
 
 ---
 
+[2026.3.6]: https://github.com/MacCracken/agnostic/compare/2026.3.5...2026.3.6
 [2026.3.5]: https://github.com/MacCracken/agnostic/compare/2026.2.28...2026.3.5
 [2026.2.28]: https://github.com/MacCracken/agnostic/compare/2026.2.16...2026.2.28
 [2026.2.16]: https://github.com/MacCracken/agnostic/releases/tag/2026.2.16

@@ -31,7 +31,6 @@ class BaseModelProvider(ABC):
                 limit=20,
                 limit_per_host=10,
                 ttl_dns_cache=300,
-                enable_cleanup_closed=True,
             )
             self._session = aiohttp.ClientSession(connector=connector)
         return self._session

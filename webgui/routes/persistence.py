@@ -61,8 +61,8 @@ class TestMetricsQuery(BaseModel):
 @router.get("/test-sessions")
 async def get_test_sessions(
     status: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
 ):
     """Get test sessions."""
@@ -72,7 +72,7 @@ async def get_test_sessions(
             status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
         )
     sessions = await repo.get_sessions(status=status, limit=limit, offset=offset)
-    return [
+    items = [
         {
             "id": s.id,
             "session_id": s.session_id,
@@ -86,6 +86,7 @@ async def get_test_sessions(
         }
         for s in sessions
     ]
+    return {"items": items, "total": len(items), "limit": limit, "offset": offset}
 
 
 @router.post("/test-sessions", status_code=201)
@@ -140,8 +141,8 @@ async def update_test_session_status(
 async def get_test_results(
     session_id: str | None = None,
     status: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
 ):
     """Get test results."""
@@ -153,7 +154,7 @@ async def get_test_results(
     results = await repo.get_test_results(
         session_id=session_id, status=status, limit=limit, offset=offset
     )
-    return [
+    items = [
         {
             "id": r.id,
             "session_id": r.session_id,
@@ -170,6 +171,7 @@ async def get_test_results(
         }
         for r in results
     ]
+    return {"items": items, "total": len(items), "limit": limit, "offset": offset}
 
 
 @router.post("/test-results", status_code=201)

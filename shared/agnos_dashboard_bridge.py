@@ -63,10 +63,17 @@ class AgnosDashboardBridge:
         try:
             from shared.resilience import CircuitBreaker
 
+            def _on_breaker_change(name: str, old: str, new: str) -> None:
+                if new == "closed":
+                    logger.info("Dashboard bridge circuit breaker recovered (was %s)", old)
+                elif new == "open":
+                    logger.warning("Dashboard bridge circuit breaker tripped OPEN")
+
             self._circuit_breaker: Any = CircuitBreaker(
                 name="agnos-dashboard-bridge",
                 failure_threshold=5,
                 recovery_timeout=60.0,
+                on_state_change=_on_breaker_change,
             )
         except ImportError:
             self._circuit_breaker = None
@@ -224,6 +231,60 @@ class AgnosDashboardBridge:
             dashboard_data.get("metrics", {})
         )
         return agents_ok and sessions_ok and metrics_ok
+
+    # ------------------------------------------------------------------
+    # Pull methods (bidirectional)
+    # ------------------------------------------------------------------
+
+    async def pull_fleet_status(self) -> dict[str, Any] | None:
+        """Pull fleet-wide agent status from the AGNOS dashboard.
+
+        Returns the parsed JSON on success, or ``None`` on failure.
+        """
+        if not self.enabled:
+            return None
+        if self._circuit_breaker and not self._circuit_breaker.can_execute():
+            return None
+        try:
+            client = self._get_client()
+            response = await client.get(
+                "/api/v1/dashboard/fleet/status",
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            if self._circuit_breaker:
+                self._circuit_breaker.record_success()
+            return response.json()  # type: ignore[no-any-return]
+        except Exception:
+            if self._circuit_breaker:
+                self._circuit_breaker.record_failure()
+            logger.warning("Dashboard bridge pull failed", exc_info=True)
+            return None
+
+    async def pull_peer_metrics(self, provider: str = "secureyeoman") -> dict[str, Any] | None:
+        """Pull metrics for a specific peer from the AGNOS dashboard.
+
+        Returns the parsed JSON on success, or ``None`` on failure.
+        """
+        if not self.enabled:
+            return None
+        if self._circuit_breaker and not self._circuit_breaker.can_execute():
+            return None
+        try:
+            client = self._get_client()
+            response = await client.get(
+                f"/api/v1/dashboard/providers/{provider}/metrics",
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            if self._circuit_breaker:
+                self._circuit_breaker.record_success()
+            return response.json()  # type: ignore[no-any-return]
+        except Exception:
+            if self._circuit_breaker:
+                self._circuit_breaker.record_failure()
+            logger.warning("Dashboard bridge pull for %s failed", provider, exc_info=True)
+            return None
 
     # ------------------------------------------------------------------
     # Periodic background push

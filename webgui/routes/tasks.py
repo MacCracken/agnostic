@@ -66,6 +66,15 @@ class A2AMessage(BaseModel):
     timestamp: int  # Unix milliseconds
 
 
+class A2AStatusResponse(BaseModel):
+    """Schema for ``a2a:status_query`` responses."""
+
+    accepted: bool
+    message_id: str
+    type: Literal["status_response"]
+    data: dict[str, Any]
+
+
 # ---------------------------------------------------------------------------
 # Webhook helpers
 # ---------------------------------------------------------------------------

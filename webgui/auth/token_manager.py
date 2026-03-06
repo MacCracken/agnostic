@@ -117,6 +117,10 @@ class TokenManager:
             if not user or not user.is_active:
                 return None
 
+            # Delete the used refresh token BEFORE issuing new ones
+            # (rotation — old token can never be replayed)
+            self.redis_client.delete(refresh_key)
+
             return await self.create_tokens(user)
 
         except Exception as e:

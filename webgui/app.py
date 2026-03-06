@@ -34,10 +34,26 @@ logger = logging.getLogger(__name__)
 sys.path.append("/app")
 
 
+_MAX_ACTIVE_SESSIONS = 1000
+
+
 class AgenticQAGUI:
     def __init__(self) -> None:
         self.redis_client = config.get_redis_client()
-        self.active_sessions = {}
+        self.active_sessions: dict[str, dict[str, Any]] = {}
+
+    def _evict_old_sessions(self) -> None:
+        """Remove oldest sessions when exceeding the cap."""
+        if len(self.active_sessions) <= _MAX_ACTIVE_SESSIONS:
+            return
+        # Sort by created_at and keep the newest
+        sorted_ids = sorted(
+            self.active_sessions,
+            key=lambda k: self.active_sessions[k].get("created_at", ""),
+        )
+        to_remove = len(self.active_sessions) - _MAX_ACTIVE_SESSIONS
+        for sid in sorted_ids[:to_remove]:
+            del self.active_sessions[sid]
 
     async def start_new_session(self) -> str:
         """Start a new testing session"""
@@ -49,6 +65,7 @@ class AgenticQAGUI:
             "test_plan": None,
             "results": None,
         }
+        self._evict_old_sessions()
         return session_id
 
     async def submit_requirements(
@@ -1122,6 +1139,36 @@ async def health_check() -> dict[str, Any]:
         for agent_name in agent_names:
             if agent_name not in status_details["agents"]:
                 status_details["agents"][agent_name] = "offline"
+
+    # 4. YEOMAN A2A health (if enabled)
+    try:
+        from shared.yeoman_a2a_client import yeoman_a2a_client
+
+        if yeoman_a2a_client.enabled:
+            breaker = getattr(yeoman_a2a_client, "_breaker", None)
+            if breaker:
+                status_details["yeoman"] = breaker.state.value
+            else:
+                status_details["yeoman"] = "enabled"
+        else:
+            status_details["yeoman"] = "disabled"
+    except ImportError:
+        status_details["yeoman"] = "unavailable"
+
+    # 5. AGNOS dashboard bridge health (if enabled)
+    try:
+        from shared.agnos_dashboard_bridge import agnos_dashboard_bridge
+
+        if agnos_dashboard_bridge.enabled:
+            breaker = getattr(agnos_dashboard_bridge, "_circuit_breaker", None)
+            if breaker:
+                status_details["agnos_bridge"] = breaker.state.value
+            else:
+                status_details["agnos_bridge"] = "enabled"
+        else:
+            status_details["agnos_bridge"] = "disabled"
+    except ImportError:
+        status_details["agnos_bridge"] = "unavailable"
 
     # Determine overall status
     infra_ok = status_details["redis"] == "ok" and status_details["rabbitmq"] == "ok"
