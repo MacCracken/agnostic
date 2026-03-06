@@ -11,7 +11,7 @@ from typing import Any
 
 import litellm
 
-from shared.metrics import LLM_CALLS_TOTAL, LLM_CALL_DURATION
+from shared.metrics import LLM_CALLS_TOTAL, LLM_CALL_DURATION, LLM_TOKENS_PROMPT, LLM_TOKENS_COMPLETION
 from shared.resilience import CircuitBreaker
 
 logger = logging.getLogger(__name__)
@@ -22,11 +22,12 @@ _llm_circuit = CircuitBreaker(name="llm_api", failure_threshold=5, recovery_time
 class LLMIntegrationService:
     """Service for integrating with various LLM providers for tool implementations."""
 
-    def __init__(self, model_name: str | None = None, temperature: float = 0.3):
+    def __init__(self, model_name: str | None = None, temperature: float = 0.3, agent_name: str = "unknown"):
         """Initialize LLM service with specified model."""
         self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o")
         self.temperature = temperature
         self.max_tokens = 2000
+        self._agent_name = agent_name
         self._api_key = os.getenv("OPENAI_API_KEY")
         if self._api_key:
             logger.info(f"Initialized LLM service with model: {self.model_name}")
@@ -75,6 +76,9 @@ class LLMIntegrationService:
             scenarios = json.loads(content)
             _llm_circuit.record_success()
             LLM_CALLS_TOTAL.labels(method="generate_test_scenarios", status="success").inc()
+            if hasattr(response, "usage") and response.usage:
+                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="generate_test_scenarios").inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="generate_test_scenarios").inc(response.usage.completion_tokens or 0)
             return (
                 scenarios if isinstance(scenarios, list) else self._fallback_scenarios()
             )
@@ -124,6 +128,9 @@ class LLMIntegrationService:
             criteria = json.loads(content)
             _llm_circuit.record_success()
             LLM_CALLS_TOTAL.labels(method="extract_acceptance_criteria", status="success").inc()
+            if hasattr(response, "usage") and response.usage:
+                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="extract_acceptance_criteria").inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="extract_acceptance_criteria").inc(response.usage.completion_tokens or 0)
             return criteria if isinstance(criteria, list) else self._fallback_criteria()
 
         except Exception as e:
@@ -174,6 +181,9 @@ class LLMIntegrationService:
             risks = json.loads(content)
             _llm_circuit.record_success()
             LLM_CALLS_TOTAL.labels(method="identify_test_risks", status="success").inc()
+            if hasattr(response, "usage") and response.usage:
+                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="identify_test_risks").inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="identify_test_risks").inc(response.usage.completion_tokens or 0)
             return risks if isinstance(risks, list) else self._fallback_risks()
 
         except Exception as e:
@@ -233,6 +243,9 @@ class LLMIntegrationService:
             verification = json.loads(content)
             _llm_circuit.record_success()
             LLM_CALLS_TOTAL.labels(method="perform_fuzzy_verification", status="success").inc()
+            if hasattr(response, "usage") and response.usage:
+                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="perform_fuzzy_verification").inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="perform_fuzzy_verification").inc(response.usage.completion_tokens or 0)
             return (
                 verification
                 if isinstance(verification, dict)
@@ -296,6 +309,9 @@ class LLMIntegrationService:
             analysis = json.loads(content)
             _llm_circuit.record_success()
             LLM_CALLS_TOTAL.labels(method="analyze_security_findings", status="success").inc()
+            if hasattr(response, "usage") and response.usage:
+                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="analyze_security_findings").inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="analyze_security_findings").inc(response.usage.completion_tokens or 0)
             return (
                 analysis
                 if isinstance(analysis, dict)
@@ -359,6 +375,9 @@ class LLMIntegrationService:
             profile = json.loads(content)
             _llm_circuit.record_success()
             LLM_CALLS_TOTAL.labels(method="generate_performance_profile", status="success").inc()
+            if hasattr(response, "usage") and response.usage:
+                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="generate_performance_profile").inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="generate_performance_profile").inc(response.usage.completion_tokens or 0)
             return (
                 profile
                 if isinstance(profile, dict)

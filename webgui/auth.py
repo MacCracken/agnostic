@@ -21,6 +21,7 @@ from jwt import PyJWKClient
 # Add config path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.environment import config
+from shared.audit import AuditAction, audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -151,23 +152,33 @@ class AuthManager:
     ) -> User | None:
         """Authenticate user with various providers"""
         try:
+            user: User | None = None
             if provider == AuthProvider.LOCAL:
-                return await self._authenticate_local(email, password or "")
+                user = await self._authenticate_local(email, password or "")
             elif provider == AuthProvider.GOOGLE:
-                return await self._authenticate_google(auth_code, id_token)
+                user = await self._authenticate_google(auth_code, id_token)
             elif provider == AuthProvider.GITHUB:
-                return await self._authenticate_github(auth_code)
+                user = await self._authenticate_github(auth_code)
             elif provider == AuthProvider.AZURE_AD:
-                return await self._authenticate_azure_ad(auth_code, id_token)
+                user = await self._authenticate_azure_ad(auth_code, id_token)
             elif provider == AuthProvider.SAML:
                 logger.warning("SAML authentication is not yet implemented")
+                audit_log(AuditAction.AUTH_LOGIN_FAILURE, actor=email, outcome="failure", resource_type="auth", detail={"provider": provider.value, "reason": "unsupported"})
                 return None
             else:
                 logger.error(f"Unsupported auth provider: {provider}")
+                audit_log(AuditAction.AUTH_LOGIN_FAILURE, actor=email, outcome="failure", resource_type="auth", detail={"provider": str(provider), "reason": "unsupported"})
                 return None
+
+            if user:
+                audit_log(AuditAction.AUTH_LOGIN_SUCCESS, actor=user.user_id, resource_type="auth", detail={"provider": provider.value})
+            else:
+                audit_log(AuditAction.AUTH_LOGIN_FAILURE, actor=email, outcome="failure", resource_type="auth", detail={"provider": provider.value})
+            return user
 
         except Exception as e:
             logger.error(f"Authentication error for {email}: {e}")
+            audit_log(AuditAction.AUTH_LOGIN_FAILURE, actor=email, outcome="failure", resource_type="auth", detail={"provider": provider.value, "error": str(e)})
             return None
 
     async def _authenticate_local(self, email: str, password: str) -> User | None:

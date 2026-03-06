@@ -87,6 +87,18 @@ LLM_CALL_DURATION = _histogram(
     ("method",),
 )
 
+# LLM token usage
+LLM_TOKENS_PROMPT = _counter(
+    "qa_llm_tokens_prompt_total",
+    "Total prompt tokens consumed by LLM calls",
+    ("agent", "method"),
+)
+LLM_TOKENS_COMPLETION = _counter(
+    "qa_llm_tokens_completion_total",
+    "Total completion tokens consumed by LLM calls",
+    ("agent", "method"),
+)
+
 # HTTP request metrics
 HTTP_REQUESTS_TOTAL = _counter(
     "qa_http_requests_total",

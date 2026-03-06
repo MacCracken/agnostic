@@ -64,12 +64,13 @@ Performance & Resilience Agent      ─┘
 
 ### Additional Resources
 
-- [Architecture Decision Records](docs/adr/) - System design decisions
-- [API Documentation](docs/api/) - Agent, WebGUI, LLM APIs
-- [Security Assessment](docs/security/assessment.md) - Security findings
-- [Docker Build](docker/README.md) - Build optimization
-- [Dependency Watch](docs/development/dependency-watch.md) - Upstream blockers & compatibility tracking
-- [Helm Chart](k8s/helm/agentic-qa/README.md) - K8s deployment
+- [Architecture Decision Records](docs/adr/) — 27 ADRs documenting system design decisions
+- [API Documentation](docs/api/) — Agent, WebGUI, LLM APIs
+- [Tenant Provisioning](docs/api/tenant-provisioning.md) — Multi-tenant setup and isolation
+- [Security Assessment](docs/security/assessment.md) — Security findings
+- [Docker Build](docker/README.md) — Build optimization
+- [Dependency Watch](docs/development/dependency-watch.md) — Upstream blockers & compatibility tracking
+- [Helm Chart](k8s/helm/agentic-qa/README.md) — K8s deployment
 
 ## Deployment Options
 
@@ -119,7 +120,13 @@ result = await manager.orchestrate_qa_session({
 - **Predictive Quality Analytics**: ML-driven defect prediction, quality trend analysis, risk scoring, and release readiness assessment
 - **AI-Enhanced Test Generation**: Autonomous test case generation from requirements and code analysis using LLM
 - **Performance Profiling**: Load testing with bottleneck identification
-- **Real-time Dashboard**: Live monitoring via Chainlit WebGUI
+- **Real-time Dashboard**: Live monitoring via Chainlit WebGUI with WebSocket missed-message recovery
+- **Multi-Tenant Isolation**: Tenant-scoped Redis keys, API keys, rate limiting, and scheduled reports
+- **Test Result Persistence**: PostgreSQL-backed storage for sessions, results, metrics, and reports with quality trends API
+- **Structured Audit Logging**: JSON audit trail for auth, task, report, tenant, and system events
+- **Agent & LLM Metrics Dashboard**: Per-agent task counts, success rates, and LLM token usage via Prometheus
+- **Scheduled Report Delivery**: Automated reports via webhook (HMAC-signed), Slack, and email with retry logic
+- **A2A Protocol**: Agent-to-agent delegation for YEOMAN orchestration
 
 ## Technology Stack
 
@@ -127,10 +134,15 @@ result = await manager.orchestrate_qa_session({
 - **LLMs**: OpenAI, Anthropic, Google Gemini, Ollama, LM Studio
 - **Web UI**: Chainlit 1.1+ / 2.x compatible + FastAPI
 - **Messaging**: Redis 5.0+ + RabbitMQ + Celery
+- **Database**: PostgreSQL (optional, async via SQLAlchemy + asyncpg) + Alembic migrations
+- **Scheduling**: APScheduler with Redis or PostgreSQL job store
 - **Automation**: Playwright 1.45+
+- **Observability**: Prometheus metrics, structured JSON logging, audit logging
 - **ML/CV**: scikit-learn, OpenCV, NumPy, Pandas
 
 **Python**: 3.11–3.13 (production); 3.14 not yet supported (see [Dependency Watch](docs/development/dependency-watch.md))
+
+**Tests**: 465 unit + 19 E2E (CI via GitHub Actions)
 
 ## YEOMAN Integration
 
@@ -175,4 +187,4 @@ MIT License - see [LICENSE](LICENSE) file.
 
 ---
 
-*Last Updated: 2026-02-28* | [Documentation](docs/README.md) | [Changelog](docs/project/changelog.md) | [Roadmap](docs/development/roadmap.md)
+*Last Updated: 2026-03-05* | [Documentation](docs/README.md) | [Changelog](docs/project/changelog.md) | [Roadmap](docs/development/roadmap.md)

@@ -28,6 +28,16 @@ class TestNoOpMetrics:
         LLM_CALLS_TOTAL.labels(method="test", status="success").inc()
         LLM_CALL_DURATION.labels(method="test").observe(0.5)
 
+    def test_llm_tokens_prompt_counter_exists(self):
+        from shared.metrics import LLM_TOKENS_PROMPT
+
+        LLM_TOKENS_PROMPT.labels(agent="test", method="test").inc(100)
+
+    def test_llm_tokens_completion_counter_exists(self):
+        from shared.metrics import LLM_TOKENS_COMPLETION
+
+        LLM_TOKENS_COMPLETION.labels(agent="test", method="test").inc(50)
+
     def test_circuit_breaker_gauge(self):
         from shared.metrics import CIRCUIT_BREAKER_STATE
 

@@ -119,6 +119,37 @@ class TestDashboardEndpoints:
             assert resp.status_code == 200
 
 
+class TestAgentMetricsDashboard:
+    @patch("shared.agent_metrics.get_agent_metrics")
+    def test_agent_dashboard_returns_agents(self, mock_get, authed_client):
+        mock_get.return_value = [
+            {"agent": "qa-manager", "tasks_total": 5, "tasks_success": 4,
+             "tasks_failed": 1, "success_rate": 0.8, "prompt_tokens": 100,
+             "completion_tokens": 50, "active": 1.0},
+        ]
+        resp = authed_client.get("/api/dashboard/agent-metrics")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "agents" in data
+        assert isinstance(data["agents"], list)
+        assert data["agents"][0]["agent"] == "qa-manager"
+
+    @patch("shared.agent_metrics.get_llm_metrics")
+    def test_llm_dashboard_returns_metrics(self, mock_get, authed_client):
+        mock_get.return_value = {
+            "total_calls": 10,
+            "total_errors": 2,
+            "error_rate": 0.1667,
+            "by_method": {"generate_test_scenarios": {"calls": 8, "errors": 2}},
+        }
+        resp = authed_client.get("/api/dashboard/llm")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "llm" in data
+        assert data["llm"]["total_calls"] == 10
+        assert "by_method" in data["llm"]
+
+
 class TestAgentEndpoints:
     @patch("webgui.agent_monitor.agent_monitor")
     def test_agents_list(self, mock_monitor, authed_client):

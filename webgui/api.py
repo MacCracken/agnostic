@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 # Add config path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from shared.audit import AuditAction, audit_log
 from webgui.auth import Permission, auth_manager
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ async def get_current_user(
         # Static env-var key (simple deployments) — constant-time compare prevents timing attacks
         static_key = os.getenv("AGNOSTIC_API_KEY")
         if static_key and hmac.compare_digest(x_api_key, static_key):
+            audit_log(AuditAction.AUTH_API_KEY_USED, actor="api-key-user", resource_type="auth", detail={"method": "static"})
             return {
                 "user_id": "api-key-user",
                 "email": "api@agnostic",
@@ -68,7 +70,9 @@ async def get_current_user(
             key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
             key_data = redis_client.get(f"api_key:{key_hash}")
             if key_data:
-                return json.loads(key_data)
+                parsed = json.loads(key_data)
+                audit_log(AuditAction.AUTH_API_KEY_USED, actor=parsed.get("key_id", key_hash[:8]), resource_type="auth", detail={"method": "redis"})
+                return parsed
 
             # Tenant-scoped API keys
             from shared.database.tenants import tenant_manager
@@ -329,6 +333,7 @@ async def submit_task(
 
     # Rate limit check for tenant
     if tenant_manager.enabled and not tenant_manager.check_rate_limit(redis_client, tenant_id):
+        audit_log(AuditAction.RATE_LIMIT_EXCEEDED, actor=user.get("user_id"), tenant_id=tenant_id)
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     redis_client.setex(task_redis_key, 86400, json.dumps(task_record))
@@ -345,6 +350,8 @@ async def submit_task(
             tenant_id=tenant_id,
         )
     )
+
+    audit_log(AuditAction.TASK_SUBMITTED, actor=user.get("user_id"), resource_type="task", resource_id=task_id)
 
     return TaskStatusResponse(**task_record)
 
@@ -625,6 +632,20 @@ async def get_dashboard_metrics(user: dict = Depends(get_current_user)):
     return asdict(metrics)
 
 
+@api_router.get("/dashboard/agent-metrics")
+async def get_agent_dashboard(user: dict = Depends(get_current_user)):
+    """Per-agent metrics: task counts, success rates, LLM token usage."""
+    from shared.agent_metrics import get_agent_metrics
+    return {"agents": get_agent_metrics()}
+
+
+@api_router.get("/dashboard/llm")
+async def get_llm_dashboard(user: dict = Depends(get_current_user)):
+    """Aggregated LLM usage metrics: call counts, error rates, by method."""
+    from shared.agent_metrics import get_llm_metrics
+    return {"llm": get_llm_metrics()}
+
+
 # ---------------------------------------------------------------------------
 # Session endpoints
 # ---------------------------------------------------------------------------
@@ -719,6 +740,7 @@ async def generate_report(
         format=report_format,
     )
     metadata = await report_generator.generate_report(report_req, user["user_id"])
+    audit_log(AuditAction.REPORT_GENERATED, actor=user.get("user_id"), resource_type="report", resource_id=metadata.report_id)
     return {
         "report_id": metadata.report_id,
         "generated_at": metadata.generated_at.isoformat(),
@@ -757,6 +779,8 @@ async def download_report(
 
     if not resolved.exists():
         raise HTTPException(status_code=404, detail="Report file not found on disk")
+
+    audit_log(AuditAction.REPORT_DOWNLOADED, actor=user.get("user_id"), resource_type="report", resource_id=report_id)
 
     return FileResponse(
         path=str(resolved),
@@ -810,6 +834,8 @@ async def schedule_report(
             tenant_id=user.get("tenant_id"),
         )
 
+        audit_log(AuditAction.REPORT_SCHEDULED, actor=user.get("user_id"), resource_type="report", resource_id=job_id)
+
         jobs = scheduled_report_manager.get_jobs()
         job = next((j for j in jobs if j["id"] == job_id), None)
 
@@ -833,6 +859,7 @@ async def delete_scheduled_report(
     from webgui.scheduled_reports import scheduled_report_manager
 
     if scheduled_report_manager.remove_job(job_id):
+        audit_log(AuditAction.REPORT_SCHEDULE_REMOVED, actor=user.get("user_id"), resource_type="report", resource_id=job_id)
         return {"status": "deleted", "job_id": job_id}
     raise HTTPException(status_code=404, detail="Job not found")
 

@@ -137,6 +137,7 @@ addopts = [
 markers = [
     "unit: marks tests as unit tests (fast, no external dependencies)",
     "integration: marks tests as integration tests (require external services)",
+    "e2e: End-to-end tests requiring Docker Compose services",
     "slow: marks tests as slow running",
     "redis: marks tests that require Redis",
     "rabbitmq: marks tests that require RabbitMQ",

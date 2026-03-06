@@ -7,10 +7,23 @@ Versions use **YYYY.M.D** (calendar versioning).
 
 ---
 
-## [Unreleased]
+## [2026.3.5]
 
 ### Added
 
+- **WebSocket Real-Time Dashboard** — `/ws/realtime` endpoint fully wired in `webgui/app.py`; initializes Redis pub/sub on startup, subscribes to agent task channels (`manager:tasks`, `senior:tasks`, etc.) for real-time task progress; dashboard.js auto-subscribes to active sessions on connect (`webgui/realtime.py`, `webgui/static/js/dashboard.js`)
+- **Prometheus ServiceMonitor** — `ServiceMonitor` and `PodMonitor` CRDs for Prometheus scraping of `/api/metrics` endpoint; configurable via `metrics.enabled` in Helm values (`k8s/helm/agentic-qa/templates/service-monitor.yaml`)
+- **Scheduled Report Generation** — APScheduler integration for automated daily/weekly reports; `POST /api/reports/scheduled`, `GET /api/reports/scheduled`, `DELETE /api/reports/scheduled/{job_id}` endpoints; configurable via `SCHEDULED_REPORTS_ENABLED`, `SCHEDULED_REPORT_DAILY_TIME`, `SCHEDULED_REPORT_WEEKLY_DAY`, `SCHEDULED_REPORT_WEEKLY_TIME` env vars (`webgui/scheduled_reports.py`, `webgui/api.py`, `pyproject.toml`)
+- **GitOps/ArgoCD Integration** — ArgoCD `ApplicationSet` for multi-environment promotion; External Secrets Operator for Vault-backed secret rotation; Kustomize overlays for dev/staging/prod (`k8s/argocd/applicationset.yaml`, `k8s/argocd/external-secrets.yaml`, `k8s/overlays/`)
+- **Test Result Persistence (PostgreSQL)** — SQLAlchemy async models for test sessions, results, metrics, and reports; REST endpoints for CRUD operations; quality trends API; configurable via `DATABASE_ENABLED`, `POSTGRES_*` env vars (`shared/database/models.py`, `shared/database/repository.py`, `webgui/api.py`, `pyproject.toml`)
+- **Multi-Tenant WebGUI** — Tenant models (`Tenant`, `TenantUser`, `TenantAPIKey`) with `TenantRepository` for database CRUD; admin endpoints for tenant provisioning (create, update, soft-delete, user management); tenant-scoped Redis keyspaces; configurable via `MULTI_TENANT_ENABLED` env var (`shared/database/tenants.py`, `shared/database/tenant_repository.py`, `webgui/api.py`)
+- **AGNOS OS Phase 2 - Agent HUD Registration** — AgentRegistryClient for registering Agnostic QA agents with agnosticos Agent HUD; registration on startup, deregistration on shutdown; REST endpoints for status and manual registration; configurable via `AGNOS_AGENT_REGISTRATION_ENABLED`, `AGNOS_AGENT_REGISTRY_URL` env vars (`config/agnos_agent_registration.py`, `webgui/api.py`, `docs/adr/022-agnosticos-agent-hud.md`)
+- **YEOMAN MCP Bridge WebSocket Support** — WebSocket task subscription via `subscribe_task` message; task status updates published to Redis `task:{id}` channel on status changes; enables MCP bridge to receive push notifications instead of polling (`webgui/realtime.py`, `webgui/api.py`)
+- **Structured Result Schemas for YEOMAN** — Typed dataclasses for security, performance, and test execution results with `to_yeoman_action()` method for programmatic actions (auto-create issues, block PRs); `GET /results/structured/{session_id}` endpoint (`shared/yeoman_schemas.py`, `webgui/api.py`)
+- **Alembic database migrations** — async PostgreSQL migration support; initial migration covering all 7 tables (test_sessions, test_results, test_metrics, test_reports, tenants, tenant_users, tenant_api_keys); `alembic/env.py` configured for `asyncpg` (`alembic/`)
+- **Scheduled reports unit tests** (`tests/unit/test_scheduled_reports.py`) — 27 tests covering init, enabled/disabled behavior, job scheduling, triggers, day mapping, error handling
+- **Multi-tenant unit tests** (`tests/unit/test_tenant.py`) — 39 tests covering TenantManager, TenantRepository CRUD, endpoint guards, auth, 404 handling
+- **Unit tests for WebSocket realtime** (`tests/unit/test_webgui_realtime.py`) — 15 tests covering EventType, WebSocketMessage, RealtimeManager, WebSocketHandler, and channel configuration
 - **Webhook callback retry with exponential backoff** — `_fire_webhook` retries up to 3 times with 1s/2s/4s delays on failure; configurable via `WEBHOOK_MAX_RETRIES` env var; failed deliveries logged with attempt count (`webgui/api.py`)
 - **Configurable YEOMAN action thresholds** — coverage, error rate, and performance degradation thresholds extracted from hardcoded values to env vars: `YEOMAN_COVERAGE_THRESHOLD`, `YEOMAN_ERROR_RATE_THRESHOLD`, `YEOMAN_PERF_DEGRADATION_FACTOR` (`shared/yeoman_schemas.py`)
 - **Tenant-scoped Redis key isolation** — `submit_task`, `get_task`, and `_run_task_async` use `tenant_manager.task_key()` for tenant-prefixed Redis keys when `MULTI_TENANT_ENABLED=true`; backward-compatible (plain keys when disabled) (`webgui/api.py`, `shared/database/tenants.py`)
@@ -31,26 +44,14 @@ Versions use **YYYY.M.D** (calendar versioning).
 - **Email delivery unit tests** — 7 tests covering enable/disable, SMTP send, retry logic, HTML body content, multi-channel dispatch (`tests/unit/test_report_delivery.py`)
 - **Job store selection unit tests** — 5 tests covering Redis default, explicit Redis, database fallback when DB disabled, SQLAlchemy selection, sync URL conversion (`tests/unit/test_scheduled_reports.py`)
 - **ADR-026** — Scheduled report enhancements: email delivery and persistent job store (`docs/adr/026-scheduled-report-enhancements.md`)
-
----
-
-## [2026.3.5]
-
-### Added
-
-- **WebSocket Real-Time Dashboard** — `/ws/realtime` endpoint fully wired in `webgui/app.py`; initializes Redis pub/sub on startup, subscribes to agent task channels (`manager:tasks`, `senior:tasks`, etc.) for real-time task progress; dashboard.js auto-subscribes to active sessions on connect (`webgui/realtime.py`, `webgui/static/js/dashboard.js`)
-- **Prometheus ServiceMonitor** — `ServiceMonitor` and `PodMonitor` CRDs for Prometheus scraping of `/api/metrics` endpoint; configurable via `metrics.enabled` in Helm values (`k8s/helm/agentic-qa/templates/service-monitor.yaml`)
-- **Scheduled Report Generation** — APScheduler integration for automated daily/weekly reports; `POST /api/reports/scheduled`, `GET /api/reports/scheduled`, `DELETE /api/reports/scheduled/{job_id}` endpoints; configurable via `SCHEDULED_REPORTS_ENABLED`, `SCHEDULED_REPORT_DAILY_TIME`, `SCHEDULED_REPORT_WEEKLY_DAY`, `SCHEDULED_REPORT_WEEKLY_TIME` env vars (`webgui/scheduled_reports.py`, `webgui/api.py`, `pyproject.toml`)
-- **GitOps/ArgoCD Integration** — ArgoCD `ApplicationSet` for multi-environment promotion; External Secrets Operator for Vault-backed secret rotation; Kustomize overlays for dev/staging/prod (`k8s/argocd/applicationset.yaml`, `k8s/argocd/external-secrets.yaml`, `k8s/overlays/`)
-- **Test Result Persistence (PostgreSQL)** — SQLAlchemy async models for test sessions, results, metrics, and reports; REST endpoints for CRUD operations; quality trends API; configurable via `DATABASE_ENABLED`, `POSTGRES_*` env vars (`shared/database/models.py`, `shared/database/repository.py`, `webgui/api.py`, `pyproject.toml`)
-- **Multi-Tenant WebGUI** — Tenant models (`Tenant`, `TenantUser`, `TenantAPIKey`) with `TenantRepository` for database CRUD; admin endpoints for tenant provisioning (create, update, soft-delete, user management); tenant-scoped Redis keyspaces; configurable via `MULTI_TENANT_ENABLED` env var (`shared/database/tenants.py`, `shared/database/tenant_repository.py`, `webgui/api.py`)
-- **AGNOS OS Phase 2 - Agent HUD Registration** — AgentRegistryClient for registering Agnostic QA agents with agnosticos Agent HUD; registration on startup, deregistration on shutdown; REST endpoints for status and manual registration; configurable via `AGNOS_AGENT_REGISTRATION_ENABLED`, `AGNOS_AGENT_REGISTRY_URL` env vars (`config/agnos_agent_registration.py`, `webgui/api.py`, `docs/adr/022-agnosticos-agent-hud.md`)
-- **YEOMAN MCP Bridge WebSocket Support** — WebSocket task subscription via `subscribe_task` message; task status updates published to Redis `task:{id}` channel on status changes; enables MCP bridge to receive push notifications instead of polling (`webgui/realtime.py`, `webgui/api.py`)
-- **Structured Result Schemas for YEOMAN** — Typed dataclasses for security, performance, and test execution results with `to_yeoman_action()` method for programmatic actions (auto-create issues, block PRs); `GET /results/structured/{session_id}` endpoint (`shared/yeoman_schemas.py`, `webgui/api.py`)
-- **Alembic database migrations** — async PostgreSQL migration support; initial migration covering all 7 tables (test_sessions, test_results, test_metrics, test_reports, tenants, tenant_users, tenant_api_keys); `alembic/env.py` configured for `asyncpg` (`alembic/`)
-- **Scheduled reports unit tests** (`tests/unit/test_scheduled_reports.py`) — 27 tests covering init, enabled/disabled behavior, job scheduling, triggers, day mapping, error handling
-- **Multi-tenant unit tests** (`tests/unit/test_tenant.py`) — 39 tests covering TenantManager, TenantRepository CRUD, endpoint guards, auth, 404 handling
-- **Unit tests for WebSocket realtime** (`tests/unit/test_webgui_realtime.py`) — 15 tests covering EventType, WebSocketMessage, RealtimeManager, WebSocketHandler, and channel configuration
+- **Structured audit logging** — `shared/audit.py` with `AuditAction` enum (22 actions covering auth, task, report, tenant, system events) and `audit_log()` function; emits JSON to dedicated `audit` logger; wired into `webgui/api.py` (task submit, rate limit, report generate/download/schedule) and `webgui/auth.py` (login success/failure); configurable via `AUDIT_LOG_ENABLED`, `AUDIT_LOG_LEVEL` env vars (`shared/audit.py`, `webgui/api.py`, `webgui/auth.py`)
+- **Agent metrics dashboard** — `shared/agent_metrics.py` with `get_agent_metrics()` (per-agent task counts, success rates, LLM token usage) and `get_llm_metrics()` (call counts, error rates, by-method breakdown); reads in-process Prometheus metrics; `GET /api/dashboard/agent-metrics` and `GET /api/dashboard/llm` endpoints (`shared/agent_metrics.py`, `webgui/api.py`)
+- **LLM token usage metrics** — `LLM_TOKENS_PROMPT` and `LLM_TOKENS_COMPLETION` Prometheus counters with `(agent, method)` labels; instrumented in all 6 `LLMIntegrationService` methods via `response.usage`; `agent_name` parameter added to constructor (`shared/metrics.py`, `config/llm_integration.py`)
+- **E2E test suite** — `tests/e2e/test_smoke.py` (14 tests: health, A2A, Prometheus, auth, task submit/poll, sessions, reports, agents, security headers, path traversal) and `tests/e2e/test_task_lifecycle.py` (5 tests: full lifecycle, 404, validation, A2A delegate); `scripts/run-e2e.sh` harness with auto-start; `pytest.mark.e2e` marker registered (`tests/e2e/`, `scripts/run-e2e.sh`, `pyproject.toml`)
+- **E2E CI job** — `e2e-tests` job in GitHub Actions; builds full Docker stack, waits for health, runs `pytest tests/e2e/ -v -m e2e` (`.github/workflows/ci-cd.yml`)
+- **Audit logging unit tests** — 10 tests covering JSON emission, enable/disable, field completeness, failure outcomes, enum validation, handler setup idempotency (`tests/unit/test_audit.py`)
+- **Agent metrics unit tests** — 10 tests covering agent list, structure, success rate calculation, zero defaults, LLM metrics structure, Prometheus fallback (`tests/unit/test_agent_metrics.py`)
+- **ADR-027** — Audit logging and agent metrics dashboard (`docs/adr/027-audit-logging-agent-metrics.md`)
 
 ### Fixed
 
@@ -150,7 +151,7 @@ Versions use **YYYY.M.D** (calendar versioning).
 - `tests/unit/test_webgui_exports.py`: `TestGenerateFileSanitization` (path traversal in session ID neutralised, normal IDs preserved)
 - `tests/unit/test_model_manager.py`: 41 tests for AGNOS OS provider, gateway routing, env-var guards
 - `tests/k8s/`: YAML structural validation for all Kubernetes manifests and Helm values
-- **179 tests passing** across all unit suites
+- **465 unit tests + 19 E2E tests passing**
 
 ---
 
@@ -178,7 +179,6 @@ Versions use **YYYY.M.D** (calendar versioning).
 
 ---
 
-[Unreleased]: https://github.com/MacCracken/agnostic/compare/2026.3.5...HEAD
 [2026.3.5]: https://github.com/MacCracken/agnostic/compare/2026.2.28...2026.3.5
 [2026.2.28]: https://github.com/MacCracken/agnostic/compare/2026.2.16...2026.2.28
 [2026.2.16]: https://github.com/MacCracken/agnostic/releases/tag/2026.2.16
