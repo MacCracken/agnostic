@@ -123,3 +123,113 @@ class TestSuccessRateCalculation:
             mgr = next(r for r in results if r["agent"] == "qa-manager")
             assert mgr["tasks_total"] == 10
             assert mgr["success_rate"] == 0.8
+
+
+class TestHelpers:
+    """Tests for _get_counter_value, _get_gauge_value, _iter_samples."""
+
+    def test_get_counter_value_matching(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shared.agent_metrics import _get_counter_value
+
+        sample = SimpleNamespace(labels={"agent": "qa-manager", "status": "success"}, value=42)
+        metric = MagicMock()
+        inner = MagicMock()
+        inner.samples = [sample]
+        metric.collect.return_value = [inner]
+        assert _get_counter_value(metric, {"agent": "qa-manager", "status": "success"}) == 42
+
+    def test_get_counter_value_no_match(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shared.agent_metrics import _get_counter_value
+
+        sample = SimpleNamespace(labels={"agent": "other"}, value=10)
+        metric = MagicMock()
+        inner = MagicMock()
+        inner.samples = [sample]
+        metric.collect.return_value = [inner]
+        assert _get_counter_value(metric, {"agent": "qa-manager"}) == 0
+
+    def test_get_counter_value_exception(self):
+        from unittest.mock import MagicMock
+
+        from shared.agent_metrics import _get_counter_value
+
+        metric = MagicMock()
+        metric.collect.side_effect = Exception("broken")
+        assert _get_counter_value(metric, {}) == 0
+
+    def test_get_gauge_value(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shared.agent_metrics import _get_gauge_value
+
+        sample = SimpleNamespace(labels={"agent": "qa-manager"}, value=3.14)
+        metric = MagicMock()
+        inner = MagicMock()
+        inner.samples = [sample]
+        metric.collect.return_value = [inner]
+        assert _get_gauge_value(metric, {"agent": "qa-manager"}) == 3.14
+
+    def test_get_gauge_value_default(self):
+        from unittest.mock import MagicMock
+
+        from shared.agent_metrics import _get_gauge_value
+
+        metric = MagicMock()
+        inner = MagicMock()
+        inner.samples = []
+        metric.collect.return_value = [inner]
+        assert _get_gauge_value(metric, {"agent": "missing"}) == 0.0
+
+    def test_iter_samples_exception(self):
+        from unittest.mock import MagicMock
+
+        from shared.agent_metrics import _iter_samples
+
+        metric = MagicMock()
+        metric.collect.side_effect = Exception("broken")
+        assert list(_iter_samples(metric)) == []
+
+    def test_iter_samples_yields(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shared.agent_metrics import _iter_samples
+
+        s1 = SimpleNamespace(labels={}, value=1)
+        s2 = SimpleNamespace(labels={}, value=2)
+        metric = MagicMock()
+        inner = MagicMock()
+        inner.samples = [s1, s2]
+        metric.collect.return_value = [inner]
+        assert list(_iter_samples(metric)) == [s1, s2]
+
+
+class TestGetLlmMetricsWithData:
+    def test_with_samples(self):
+        from types import SimpleNamespace
+
+        from shared.agent_metrics import get_llm_metrics
+
+        samples = [
+            SimpleNamespace(labels={"method": "generate", "status": "success"}, value=100),
+            SimpleNamespace(labels={"method": "generate", "status": "error"}, value=5),
+            SimpleNamespace(labels={"method": "analyze", "status": "success"}, value=50),
+        ]
+
+        def mock_iter(metric):
+            yield from samples
+
+        with patch("shared.agent_metrics._iter_samples", side_effect=mock_iter):
+            result = get_llm_metrics()
+        assert result["total_calls"] == 150
+        assert result["total_errors"] == 5
+        assert result["error_rate"] == pytest.approx(5 / 155, abs=0.001)
+        assert "generate" in result["by_method"]
+        assert result["by_method"]["generate"]["calls"] == 100

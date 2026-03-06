@@ -15,7 +15,7 @@ from fastapi import APIRouter
 # Add config path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from webgui.routes import (  # noqa: E402
+from webgui.routes import (
     agents,
     auth,
     dashboard,
@@ -47,6 +47,7 @@ api_router.include_router(tenants.router)
 # Backward-compatible re-exports (used by tests and app.py)
 # ---------------------------------------------------------------------------
 
+from webgui.auth import auth_manager  # noqa: E402, F401
 from webgui.routes.dependencies import (  # noqa: E402, F401
     DATABASE_ENABLED,
     MULTI_TENANT_ENABLED,
@@ -61,4 +62,3 @@ from webgui.routes.tasks import (  # noqa: E402, F401
     TaskStatusResponse,
     TaskSubmitRequest,
 )
-from webgui.auth import auth_manager  # noqa: E402, F401

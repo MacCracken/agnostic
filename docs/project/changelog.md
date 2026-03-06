@@ -77,7 +77,12 @@ Versions use **YYYY.M.D** (calendar versioning).
 - **Tenant isolation enforcement** — `_check_tenant_access()` guard added to `GET /tenants/{id}`, `PUT /tenants/{id}`, `DELETE /tenants/{id}`, `GET /tenants/{id}/users`; users can only access their own tenant; super_admin bypasses (`webgui/api.py`)
 - **Agent name normalization** — `_normalize_agent_name()` converts underscores to hyphens, fixing YEOMAN snake_case→kebab-case mismatch that caused silent agent filtering failures (`webgui/api.py`)
 
-- **Unit tests for 7 previously untested modules** — 136 new tests: `shared/rate_limit.py` (18 tests), `shared/crewai_compat.py` (4 tests), `shared/data_generation_service.py` (30 tests), `webgui/app.py` (12 tests), `webgui/agent_monitor.py` (15 tests), `webgui/dashboard.py` (15 tests), `webgui/history.py` (20 tests); total unit tests: 587 (`tests/unit/test_rate_limit.py`, `tests/unit/test_crewai_compat.py`, `tests/unit/test_data_generation.py`, `tests/unit/test_webgui_app.py`, `tests/unit/test_agent_monitor.py`, `tests/unit/test_dashboard.py`, `tests/unit/test_history.py`)
+- **Unit tests for 7 previously untested modules** — 136 new tests: `shared/rate_limit.py` (18 tests), `shared/crewai_compat.py` (4 tests), `shared/data_generation_service.py` (30 tests), `webgui/app.py` (12 tests), `webgui/agent_monitor.py` (15 tests), `webgui/dashboard.py` (15 tests), `webgui/history.py` (20 tests) (`tests/unit/test_rate_limit.py`, `tests/unit/test_crewai_compat.py`, `tests/unit/test_data_generation.py`, `tests/unit/test_webgui_app.py`, `tests/unit/test_agent_monitor.py`, `tests/unit/test_dashboard.py`, `tests/unit/test_history.py`)
+- **Auth token manager unit tests** — 21 tests covering JWT creation/verification/refresh, token blacklisting, logout, bcrypt password hashing (`tests/unit/test_token_manager.py`)
+- **Permission validator unit tests** — 16 tests covering RBAC role permissions, resource access (session owner/team/org/super admin), user management access (`tests/unit/test_permission_validator.py`)
+- **Team config loader unit tests** — 22 tests covering config loading (valid/invalid/missing JSON), team presets, agent routing, workflow config, dynamic scaling (`tests/unit/test_team_config.py`)
+- **Agent metrics helper tests** — 8 new tests covering `_get_counter_value`, `_get_gauge_value`, `_iter_samples`, LLM metrics with data (`tests/unit/test_agent_metrics.py`)
+- **Report exports unit tests** — 16 tests covering enums, dataclasses, `_collect_session_data` (info/plan/verification/agents/timeline), `_calculate_session_metrics` (scores/duration/agents) (`tests/unit/test_exports.py`); total unit tests: 672
 
 ### Fixed
 

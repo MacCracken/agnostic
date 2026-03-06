@@ -26,23 +26,19 @@ from webgui.auth.token_manager import TokenManager
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    # Models
-    "UserRole",
-    "Permission",
+    "AuthManager",
     "AuthProvider",
-    "User",
     "AuthToken",
-    # Sub-managers
-    "TokenManager",
     "OAuthProviderFactory",
+    "Permission",
     "PermissionValidator",
-    # API key helpers
+    "TokenManager",
+    "User",
+    "UserRole",
+    "auth_manager",
     "create_api_key",
     "list_api_keys",
     "revoke_api_key",
-    # Composed manager + singleton
-    "AuthManager",
-    "auth_manager",
 ]
 
 

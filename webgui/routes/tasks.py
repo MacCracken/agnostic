@@ -1,6 +1,8 @@
 """Task submission endpoints + webhook delivery + A2A protocol."""
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -64,9 +66,6 @@ class A2AMessage(BaseModel):
 # ---------------------------------------------------------------------------
 # Webhook helpers
 # ---------------------------------------------------------------------------
-
-import hashlib
-import hmac
 
 WEBHOOK_MAX_RETRIES = int(os.getenv("WEBHOOK_MAX_RETRIES", "3"))
 
