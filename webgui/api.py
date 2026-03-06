@@ -277,6 +277,8 @@ async def create_api_key(
 
 @api_router.get("/auth/api-keys")
 async def list_api_keys(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     user: dict = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
 ):
     """List API key IDs and metadata (never raw keys)."""
@@ -285,7 +287,13 @@ async def list_api_keys(
 
     redis_client = config.get_redis_client()
     keys = _list_api_keys(redis_client)
-    return {"api_keys": keys}
+    total = len(keys)
+    return {
+        "items": keys[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @api_router.delete("/auth/api-keys/{key_id}")
@@ -761,7 +769,11 @@ async def compare_sessions(
 
 
 @api_router.get("/reports")
-async def list_reports(user: dict = Depends(get_current_user)):
+async def list_reports(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(get_current_user),
+):
     from config.environment import config
 
     redis_client = config.get_redis_client()
@@ -772,7 +784,13 @@ async def list_reports(user: dict = Depends(get_current_user)):
         data = redis_client.get(key)
         if data:
             reports.append(json.loads(data))
-    return reports
+    total = len(reports)
+    return {
+        "items": reports[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @api_router.post("/reports/generate")
@@ -876,12 +894,20 @@ class ScheduleReportResponse(BaseModel):
 
 @api_router.get("/reports/scheduled")
 async def get_scheduled_reports(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
 ):
     from webgui.scheduled_reports import scheduled_report_manager
 
     jobs = scheduled_report_manager.get_jobs()
-    return jobs
+    total = len(jobs)
+    return {
+        "items": jobs[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @api_router.post("/reports/scheduled")
@@ -946,11 +972,22 @@ async def delete_scheduled_report(
 
 
 @api_router.get("/agents")
-async def get_agents(user: dict = Depends(get_current_user)):
+async def get_agents(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(get_current_user),
+):
     from webgui.agent_monitor import agent_monitor
 
     statuses = await agent_monitor.get_all_agent_status()
-    return [asdict(s) for s in statuses]
+    items = [asdict(s) for s in statuses]
+    total = len(items)
+    return {
+        "items": items[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @api_router.get("/agents/queues")
@@ -1390,6 +1427,8 @@ def _require_tenant_enabled():
 
 @api_router.get("/tenants")
 async def list_tenants(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
 ):
     """List tenants (admin only)."""
@@ -1403,20 +1442,25 @@ async def list_tenants(
         raise HTTPException(status_code=503, detail="Tenant database unavailable")
 
     tenants = await repo.list_tenants()
+    items = [
+        {
+            "tenant_id": t.tenant_id,
+            "name": t.name,
+            "slug": t.slug,
+            "status": t.status,
+            "plan": t.plan,
+            "owner_email": t.owner_email,
+            "is_active": t.is_active,
+            "created_at": t.created_at.isoformat(),
+        }
+        for t in tenants
+    ]
+    total = len(items)
     return {
-        "tenants": [
-            {
-                "tenant_id": t.tenant_id,
-                "name": t.name,
-                "slug": t.slug,
-                "status": t.status,
-                "plan": t.plan,
-                "owner_email": t.owner_email,
-                "is_active": t.is_active,
-                "created_at": t.created_at.isoformat(),
-            }
-            for t in tenants
-        ]
+        "items": items[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }
 
 
@@ -1535,6 +1579,8 @@ async def delete_tenant(
 @api_router.get("/tenants/{tenant_id}/users")
 async def list_tenant_users(
     tenant_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
 ):
     """List users in a tenant."""
@@ -1545,18 +1591,23 @@ async def list_tenant_users(
         raise HTTPException(status_code=503, detail="Tenant database unavailable")
 
     users = await repo.list_users(tenant_id)
+    items = [
+        {
+            "user_id": u.user_id,
+            "email": u.email,
+            "role": u.role,
+            "is_owner": u.is_owner,
+            "is_admin": u.is_admin,
+            "created_at": u.created_at.isoformat(),
+        }
+        for u in users
+    ]
+    total = len(items)
     return {
-        "users": [
-            {
-                "user_id": u.user_id,
-                "email": u.email,
-                "role": u.role,
-                "is_owner": u.is_owner,
-                "is_admin": u.is_admin,
-                "created_at": u.created_at.isoformat(),
-            }
-            for u in users
-        ]
+        "items": items[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }
 
 

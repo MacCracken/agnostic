@@ -44,6 +44,9 @@ class CircuitBreaker:
     name: str
     failure_threshold: int = 5
     recovery_timeout: float = 60.0
+    on_state_change: Callable[[str, str, str], None] | None = field(
+        default=None, repr=False
+    )
 
     _failure_count: int = field(default=0, init=False, repr=False)
     _last_failure_time: float = field(default=0.0, init=False, repr=False)
@@ -66,21 +69,27 @@ class CircuitBreaker:
     def record_success(self) -> None:
         """Record a successful call — resets the breaker to CLOSED."""
         if self._state is not CircuitState.CLOSED:
+            old = self._state.value
             logger.info("Circuit breaker '%s' recovered → CLOSED", self.name)
+            self._state = CircuitState.CLOSED
+            if self.on_state_change:
+                self.on_state_change(self.name, old, "closed")
         self._failure_count = 0
-        self._state = CircuitState.CLOSED
 
     def record_failure(self) -> None:
         """Record a failed call — may trip the breaker to OPEN."""
         self._failure_count += 1
         self._last_failure_time = time.monotonic()
         if self._failure_count >= self.failure_threshold:
+            old = self._state.value
             self._state = CircuitState.OPEN
             logger.warning(
                 "Circuit breaker '%s' tripped → OPEN (failures=%d)",
                 self.name,
                 self._failure_count,
             )
+            if self.on_state_change:
+                self.on_state_change(self.name, old, "open")
 
 
 # ------------------------------------------------------------------

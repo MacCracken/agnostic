@@ -25,9 +25,9 @@ No near-term items remaining. See the [Changelog](../project/changelog.md).
 **Priority:** Medium
 
 - [ ] Test result diffing — compare sessions to detect regressions across runs
-- [ ] Notification system — real-time alerts on agent failures, circuit breaker trips, degraded health (beyond scheduled reports)
-- [ ] API pagination — list endpoints currently return unbounded results
-- [ ] OpenAPI client SDK generation — auto-generate Python/TypeScript clients from FastAPI schema
+- [x] Notification system — `AlertManager` with webhook/Slack/email delivery, cooldown throttling; `HealthMonitor` background task polls health state and fires alerts on transitions (degraded, unhealthy, agent offline/stale); circuit breaker `on_state_change` callback; configurable via `ALERTS_ENABLED`, `ALERT_POLL_INTERVAL_SECONDS`, `ALERT_COOLDOWN_SECONDS`
+- [x] API pagination — all list endpoints return `{items, total, limit, offset}` with `limit`/`offset` query params; paginated: reports, scheduled reports, agents, tenants, tenant users, API keys
+- [x] OpenAPI client SDK generation — `scripts/generate-sdk.sh` fetches OpenAPI schema (live or offline) and generates Python (`openapi-python-client`) and TypeScript (`openapi-generator-cli`) client SDKs
 
 ---
 
@@ -51,4 +51,4 @@ No long-term items remaining. See [Dependency Watch](dependency-watch.md) for up
 
 ---
 
-*Last Updated: 2026-03-05 · Test count: 457 (unit) + 19 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-05 · Test count: 471 (unit) + 19 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

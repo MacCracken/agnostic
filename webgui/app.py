@@ -913,9 +913,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.warning(f"Agent registration failed: {e}")
 
+    # Start health monitor for alerts
+    from shared.alerts import health_monitor
+
+    await health_monitor.start()
+
     yield
 
     # --- shutdown ---
+    await health_monitor.stop()
+    logger.info("Health monitor stopped")
     await realtime_manager.cleanup()
     logger.info("Realtime manager cleaned up")
 
