@@ -9,6 +9,7 @@ Provides APScheduler-based periodic report generation for:
 Report delivery channels:
 - Webhook (HTTP POST with optional HMAC-SHA256 signature)
 - Slack (incoming webhook URL)
+- Email (SMTP with TLS support)
 
 Configured via environment variables:
 - SCHEDULED_REPORTS_ENABLED: Enable/disable scheduled reports (default: false)
@@ -18,6 +19,14 @@ Configured via environment variables:
 - REPORT_WEBHOOK_URL: Webhook URL for report delivery notifications
 - REPORT_WEBHOOK_SECRET: HMAC-SHA256 secret for webhook signatures
 - REPORT_SLACK_WEBHOOK_URL: Slack incoming webhook URL for report notifications
+- REPORT_EMAIL_ENABLED: Enable email delivery (default: false)
+- SMTP_HOST: SMTP server hostname
+- SMTP_PORT: SMTP server port (default: 587)
+- SMTP_USERNAME: SMTP authentication username
+- SMTP_PASSWORD: SMTP authentication password
+- SMTP_USE_TLS: Use TLS for SMTP (default: true)
+- SMTP_FROM: Sender email address
+- REPORT_EMAIL_RECIPIENTS: Comma-separated list of recipient email addresses
 """
 
 import asyncio
@@ -27,8 +36,11 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import Any
 
+import aiosmtplib
 import httpx
 from apscheduler.executors.asyncio import AsyncIOExecutor
 from apscheduler.jobstores.redis import RedisJobStore
@@ -41,17 +53,25 @@ logger = logging.getLogger(__name__)
 
 
 class ReportDeliveryService:
-    """Delivers report notifications via webhook and Slack."""
+    """Delivers report notifications via webhook, Slack, and email."""
 
     def __init__(self):
         self.webhook_url = os.getenv("REPORT_WEBHOOK_URL")
         self.webhook_secret = os.getenv("REPORT_WEBHOOK_SECRET")
         self.slack_webhook_url = os.getenv("REPORT_SLACK_WEBHOOK_URL")
         self.max_retries = int(os.getenv("REPORT_DELIVERY_MAX_RETRIES", "3"))
+        self.email_enabled = os.getenv("REPORT_EMAIL_ENABLED", "false").lower() == "true"
+        self.smtp_host = os.getenv("SMTP_HOST", "")
+        self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        self.smtp_username = os.getenv("SMTP_USERNAME", "")
+        self.smtp_password = os.getenv("SMTP_PASSWORD", "")
+        self.smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+        self.smtp_from = os.getenv("SMTP_FROM", "")
+        self.email_recipients = [r.strip() for r in os.getenv("REPORT_EMAIL_RECIPIENTS", "").split(",") if r.strip()]
 
     @property
     def has_delivery_channels(self) -> bool:
-        return bool(self.webhook_url or self.slack_webhook_url)
+        return bool(self.webhook_url or self.slack_webhook_url or (self.email_enabled and self.email_recipients))
 
     async def deliver(self, report_result: dict[str, Any], job_name: str) -> dict[str, Any]:
         """Deliver report notification to all configured channels.
@@ -65,6 +85,9 @@ class ReportDeliveryService:
 
         if self.slack_webhook_url:
             results["slack"] = await self._deliver_slack(report_result, job_name)
+
+        if self.email_enabled and self.email_recipients:
+            results["email"] = await self._deliver_email(report_result, job_name)
 
         return results
 
@@ -135,6 +158,50 @@ class ReportDeliveryService:
         logger.error(f"Slack delivery failed after {self.max_retries} attempts: {last_error}")
         return f"failed: {last_error}"
 
+    async def _deliver_email(self, report_result: dict[str, Any], job_name: str) -> str:
+        """Send report notification via SMTP email."""
+        report_id = report_result.get("report_id", "unknown")
+        status = report_result.get("status", "unknown")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"Scheduled Report: {job_name} - {status}"
+        msg["From"] = self.smtp_from
+        msg["To"] = ", ".join(self.email_recipients)
+
+        html_body = (
+            "<html><body>"
+            f"<h2>Scheduled Report: {job_name}</h2>"
+            f"<p><strong>Status:</strong> {status}</p>"
+            f"<p><strong>Report ID:</strong> {report_id}</p>"
+            f"<p><strong>Generated:</strong> {timestamp}</p>"
+            "</body></html>"
+        )
+        msg.attach(MIMEText(html_body, "html"))
+
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                smtp = aiosmtplib.SMTP(
+                    hostname=self.smtp_host,
+                    port=self.smtp_port,
+                    use_tls=self.smtp_use_tls,
+                )
+                await smtp.connect()
+                if self.smtp_username and self.smtp_password:
+                    await smtp.login(self.smtp_username, self.smtp_password)
+                await smtp.send_message(msg)
+                await smtp.quit()
+                logger.info(f"Email notification delivered for {job_name}")
+                return "delivered"
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2**attempt)
+
+        logger.error(f"Email delivery failed after {self.max_retries} attempts: {last_error}")
+        return f"failed: {last_error}"
+
 
 class ScheduledReportManager:
     """Manages scheduled report generation jobs."""
@@ -147,6 +214,38 @@ class ScheduledReportManager:
         self.weekly_time = os.getenv("SCHEDULED_REPORT_WEEKLY_TIME", "09:00")
         self.delivery = ReportDeliveryService()
 
+    def _create_jobstore(self) -> dict:
+        """Create job store -- database-backed if configured, Redis otherwise."""
+        store_type = os.getenv("SCHEDULER_JOBSTORE", "redis")
+        db_enabled = os.getenv("DATABASE_ENABLED", "false").lower() == "true"
+
+        if store_type == "database" and db_enabled:
+            from shared.database.models import get_database_url
+
+            # APScheduler's SQLAlchemyJobStore needs a sync URL
+            sync_url = get_database_url().replace(
+                "postgresql+asyncpg://", "postgresql+psycopg2://"
+            )
+            from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+
+            logger.info("Using database-backed job store")
+            return {
+                "default": SQLAlchemyJobStore(
+                    url=sync_url,
+                    tablename="apscheduler_jobs",
+                )
+            }
+
+        logger.info("Using Redis job store")
+        return {
+            "default": RedisJobStore(
+                host=os.getenv("REDIS_HOST", "localhost"),
+                port=int(os.getenv("REDIS_PORT", "6379")),
+                db=int(os.getenv("REDIS_SCHEDULER_DB", "1")),
+                prefix="scheduled_reports",
+            )
+        }
+
     async def initialize(self) -> None:
         """Initialize the APScheduler."""
         if not self.enabled:
@@ -154,14 +253,7 @@ class ScheduledReportManager:
             return
 
         try:
-            jobstores = {
-                "default": RedisJobStore(
-                    host=os.getenv("REDIS_HOST", "localhost"),
-                    port=int(os.getenv("REDIS_PORT", "6379")),
-                    db=int(os.getenv("REDIS_SCHEDULER_DB", "1")),
-                    prefix="scheduled_reports",
-                )
-            }
+            jobstores = self._create_jobstore()
 
             executors = {
                 "default": AsyncIOExecutor(),

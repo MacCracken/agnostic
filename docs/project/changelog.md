@@ -25,6 +25,12 @@ Versions use **YYYY.M.D** (calendar versioning).
 - **Client reconnection with last_message_id** — `subscribe_session` and `subscribe_task` messages accept optional `last_message_id` field; server replays missed messages (up to `REALTIME_STREAM_REPLAY_LIMIT`) before resuming live updates; backward-compatible with clients that don't send it (`webgui/realtime.py`)
 - **Report delivery unit tests** — 13 tests covering webhook delivery, HMAC signatures, retry logic, Slack formatting, multi-channel dispatch, tenant-scoped job IDs (`tests/unit/test_report_delivery.py`)
 - **Message buffer unit tests** — 15 tests covering Redis Streams XADD/XRANGE, replay mechanics, reconnection protocol, publish buffering (`tests/unit/test_message_buffer.py`)
+- **Email delivery channel for scheduled reports** — `ReportDeliveryService._deliver_email()` sends HTML reports via SMTP using `aiosmtplib`; supports TLS/STARTTLS, authentication, multiple recipients; exponential backoff retry matching webhook/Slack pattern; configurable via `REPORT_EMAIL_ENABLED`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_FROM`, `REPORT_EMAIL_RECIPIENTS` env vars (`webgui/scheduled_reports.py`)
+- **Persistent database job store for APScheduler** — `ScheduledReportManager._create_jobstore()` selects between Redis (default) and SQLAlchemy job store; database store uses APScheduler's built-in `SQLAlchemyJobStore` with sync `psycopg2` driver; selected via `SCHEDULER_JOBSTORE=database` when `DATABASE_ENABLED=true`; falls back to Redis when database unavailable (`webgui/scheduled_reports.py`)
+- **Alembic migration for APScheduler jobs table** — `apscheduler_jobs` table (id, next_run_time, job_state) matching APScheduler's expected schema (`alembic/versions/a1b2c3d4e5f6_apscheduler_jobs_table.py`)
+- **Email delivery unit tests** — 7 tests covering enable/disable, SMTP send, retry logic, HTML body content, multi-channel dispatch (`tests/unit/test_report_delivery.py`)
+- **Job store selection unit tests** — 5 tests covering Redis default, explicit Redis, database fallback when DB disabled, SQLAlchemy selection, sync URL conversion (`tests/unit/test_scheduled_reports.py`)
+- **ADR-026** — Scheduled report enhancements: email delivery and persistent job store (`docs/adr/026-scheduled-report-enhancements.md`)
 
 ---
 

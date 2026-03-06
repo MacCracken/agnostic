@@ -347,3 +347,105 @@ class TestDayMapping:
 
         trigger = self._get_weekly_trigger(mgr, mock_scheduler)
         assert trigger is not None
+
+
+class TestJobStoreSelection:
+    """Tests for _create_jobstore method."""
+
+    def test_default_uses_redis(self, monkeypatch):
+        """No SCHEDULER_JOBSTORE set -> Redis."""
+        monkeypatch.delenv("SCHEDULER_JOBSTORE", raising=False)
+        monkeypatch.delenv("DATABASE_ENABLED", raising=False)
+
+        from webgui.scheduled_reports import ScheduledReportManager
+
+        mgr = ScheduledReportManager()
+
+        with patch("webgui.scheduled_reports.RedisJobStore") as mock_redis:
+            mock_redis.return_value = MagicMock()
+            result = mgr._create_jobstore()
+
+        assert "default" in result
+        mock_redis.assert_called_once()
+
+    def test_explicit_redis(self, monkeypatch):
+        """SCHEDULER_JOBSTORE=redis -> Redis."""
+        monkeypatch.setenv("SCHEDULER_JOBSTORE", "redis")
+        monkeypatch.delenv("DATABASE_ENABLED", raising=False)
+
+        from webgui.scheduled_reports import ScheduledReportManager
+
+        mgr = ScheduledReportManager()
+
+        with patch("webgui.scheduled_reports.RedisJobStore") as mock_redis:
+            mock_redis.return_value = MagicMock()
+            result = mgr._create_jobstore()
+
+        assert "default" in result
+        mock_redis.assert_called_once()
+
+    def test_database_requires_db_enabled(self, monkeypatch):
+        """SCHEDULER_JOBSTORE=database but DATABASE_ENABLED=false -> Redis fallback."""
+        monkeypatch.setenv("SCHEDULER_JOBSTORE", "database")
+        monkeypatch.setenv("DATABASE_ENABLED", "false")
+
+        from webgui.scheduled_reports import ScheduledReportManager
+
+        mgr = ScheduledReportManager()
+
+        with patch("webgui.scheduled_reports.RedisJobStore") as mock_redis:
+            mock_redis.return_value = MagicMock()
+            result = mgr._create_jobstore()
+
+        assert "default" in result
+        mock_redis.assert_called_once()
+
+    def test_database_with_db_enabled(self, monkeypatch):
+        """SCHEDULER_JOBSTORE=database + DATABASE_ENABLED=true -> SQLAlchemyJobStore."""
+        monkeypatch.setenv("SCHEDULER_JOBSTORE", "database")
+        monkeypatch.setenv("DATABASE_ENABLED", "true")
+
+        from webgui.scheduled_reports import ScheduledReportManager
+
+        mgr = ScheduledReportManager()
+
+        with (
+            patch(
+                "shared.database.models.get_database_url",
+                return_value="postgresql+asyncpg://user:pass@localhost/testdb",
+            ),
+            patch(
+                "apscheduler.jobstores.sqlalchemy.SQLAlchemyJobStore"
+            ) as mock_sqla,
+        ):
+            mock_sqla.return_value = MagicMock()
+            result = mgr._create_jobstore()
+
+        assert "default" in result
+        mock_sqla.assert_called_once()
+
+    def test_database_store_uses_sync_url(self, monkeypatch):
+        """Verify asyncpg URL is converted to psycopg2."""
+        monkeypatch.setenv("SCHEDULER_JOBSTORE", "database")
+        monkeypatch.setenv("DATABASE_ENABLED", "true")
+
+        from webgui.scheduled_reports import ScheduledReportManager
+
+        mgr = ScheduledReportManager()
+
+        with (
+            patch(
+                "shared.database.models.get_database_url",
+                return_value="postgresql+asyncpg://user:pass@localhost/testdb",
+            ),
+            patch(
+                "apscheduler.jobstores.sqlalchemy.SQLAlchemyJobStore"
+            ) as mock_sqla,
+        ):
+            mock_sqla.return_value = MagicMock()
+            mgr._create_jobstore()
+
+        mock_sqla.assert_called_once_with(
+            url="postgresql+psycopg2://user:pass@localhost/testdb",
+            tablename="apscheduler_jobs",
+        )

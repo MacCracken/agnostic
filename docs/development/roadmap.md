@@ -14,24 +14,11 @@ No near-term items remaining. See [Recently Completed](#recently-completed) and 
 
 ## Medium-term
 
-### Scheduled Report Delivery
-**Priority:** Medium — **Partially complete**
-
-- [x] Report delivery channels — webhook (HMAC-signed) + Slack incoming webhook (`ReportDeliveryService`)
-- [x] Tenant-scoped scheduled reports — `tenant_id` parameter on `schedule_custom_report()`
-- [ ] Persistent job store migration — currently uses Redis; database-backed store would survive Redis flushes
-- [ ] Email delivery channel — SMTP-based report delivery (webhook + Slack are done)
+No medium-term items remaining. See [Recently Completed](#recently-completed) and the [Changelog](../project/changelog.md).
 
 ---
 
 ## Long-term / Blocked
-
-### Python 3.14 Support
-**Priority:** Low (blocked upstream)
-
-The local dev environment uses Python 3.14, which cannot install crewai 1.x because `chromadb` uses `pydantic.v1.BaseSettings` (removed in Python 3.14). Production Docker containers run Python 3.11 and are unaffected.
-
-Unblocked when chromadb migrates to `pydantic-settings`. See [Dependency Watch](dependency-watch.md).
 
 ### Full E2E Test Suite
 **Priority:** Low
@@ -48,6 +35,11 @@ Manual testing guide exists (`docs/development/manual-testing.md`) but automated
 
 | Item | Date |
 |------|------|
+| Email delivery channel — SMTP via aiosmtplib, TLS, multi-recipient | 2026-03-28 |
+| Persistent database job store — SQLAlchemy backend for APScheduler | 2026-03-28 |
+| Alembic migration for `apscheduler_jobs` table | 2026-03-28 |
+| ADR-026 — Scheduled report enhancements | 2026-03-28 |
+| Scheduled Report Delivery — all items complete | 2026-03-28 |
 | WebSocket reconnection — Redis Streams message buffering + replay | 2026-03-05 |
 | Report delivery — webhook (HMAC) + Slack + tenant-scoped reports | 2026-03-05 |
 | ADR-023 updated with reconnection protocol | 2026-03-05 |
@@ -83,4 +75,4 @@ Manual testing guide exists (`docs/development/manual-testing.md`) but automated
 
 ---
 
-*Last Updated: 2026-03-05 · Test count: 409 · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-28 · Test count: 421 · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

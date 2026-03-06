@@ -1,4 +1,4 @@
-"""Tests for scheduled report delivery channels (webhook + Slack)."""
+"""Tests for scheduled report delivery channels (webhook + Slack + email)."""
 
 import hashlib
 import hmac
@@ -281,3 +281,183 @@ class TestScheduledReportDeliveryIntegration:
             )
 
         assert "tenant_" not in job_id
+
+
+class TestEmailDelivery:
+    """Tests for email delivery channel."""
+
+    def test_email_not_enabled_by_default(self):
+        """Email delivery is disabled by default."""
+        with patch.dict(os.environ, {}, clear=True):
+            from webgui.scheduled_reports import ReportDeliveryService
+
+            svc = ReportDeliveryService()
+            assert svc.email_enabled is False
+            assert svc.has_delivery_channels is False
+
+    def test_email_enabled_with_recipients(self):
+        """has_delivery_channels True when email enabled with recipients."""
+        from webgui.scheduled_reports import ReportDeliveryService
+
+        svc = ReportDeliveryService()
+        svc.email_enabled = True
+        svc.email_recipients = ["test@example.com"]
+        svc.webhook_url = None
+        svc.slack_webhook_url = None
+        assert svc.has_delivery_channels is True
+
+    @pytest.mark.asyncio
+    async def test_deliver_email_success(self):
+        """Email delivers successfully on first attempt."""
+        from webgui.scheduled_reports import ReportDeliveryService
+
+        svc = ReportDeliveryService()
+        svc.email_enabled = True
+        svc.smtp_host = "smtp.example.com"
+        svc.smtp_port = 587
+        svc.smtp_from = "reports@example.com"
+        svc.email_recipients = ["user@example.com", "admin@example.com"]
+        svc.smtp_username = "user"
+        svc.smtp_password = "pass"
+        svc.smtp_use_tls = True
+        svc.max_retries = 1
+
+        with patch("webgui.scheduled_reports.aiosmtplib.SMTP") as mock_smtp_cls:
+            mock_smtp = AsyncMock()
+            mock_smtp_cls.return_value = mock_smtp
+
+            result = await svc._deliver_email(
+                {"status": "success", "report_id": "rpt-1"}, "Daily Report"
+            )
+
+            assert result == "delivered"
+            mock_smtp.connect.assert_called_once()
+            mock_smtp.login.assert_called_once_with("user", "pass")
+            mock_smtp.send_message.assert_called_once()
+            mock_smtp.quit.assert_called_once()
+
+            # Verify from/to/subject
+            sent_msg = mock_smtp.send_message.call_args[0][0]
+            assert sent_msg["From"] == "reports@example.com"
+            assert "user@example.com" in sent_msg["To"]
+            assert "admin@example.com" in sent_msg["To"]
+            assert "Daily Report" in sent_msg["Subject"]
+            assert "success" in sent_msg["Subject"]
+
+    @pytest.mark.asyncio
+    async def test_deliver_email_retry_on_failure(self):
+        """Email retries with exponential backoff then succeeds."""
+        from webgui.scheduled_reports import ReportDeliveryService
+
+        svc = ReportDeliveryService()
+        svc.email_enabled = True
+        svc.smtp_host = "smtp.example.com"
+        svc.smtp_port = 587
+        svc.smtp_from = "reports@example.com"
+        svc.email_recipients = ["user@example.com"]
+        svc.smtp_username = ""
+        svc.smtp_password = ""
+        svc.smtp_use_tls = True
+        svc.max_retries = 3
+
+        with patch("webgui.scheduled_reports.aiosmtplib.SMTP") as mock_smtp_cls:
+            mock_smtp_fail = AsyncMock()
+            mock_smtp_fail.connect = AsyncMock(side_effect=Exception("connection refused"))
+
+            mock_smtp_ok = AsyncMock()
+            mock_smtp_ok.connect = AsyncMock()
+            mock_smtp_ok.send_message = AsyncMock()
+            mock_smtp_ok.quit = AsyncMock()
+
+            mock_smtp_cls.side_effect = [mock_smtp_fail, mock_smtp_ok]
+
+            with patch("webgui.scheduled_reports.asyncio.sleep", new_callable=AsyncMock):
+                result = await svc._deliver_email(
+                    {"status": "success", "report_id": "rpt-1"}, "Test"
+                )
+
+            assert result == "delivered"
+
+    @pytest.mark.asyncio
+    async def test_deliver_email_all_retries_exhausted(self):
+        """Email returns failed after all retries exhausted."""
+        from webgui.scheduled_reports import ReportDeliveryService
+
+        svc = ReportDeliveryService()
+        svc.email_enabled = True
+        svc.smtp_host = "smtp.example.com"
+        svc.smtp_port = 587
+        svc.smtp_from = "reports@example.com"
+        svc.email_recipients = ["user@example.com"]
+        svc.smtp_username = ""
+        svc.smtp_password = ""
+        svc.smtp_use_tls = True
+        svc.max_retries = 2
+
+        with patch("webgui.scheduled_reports.aiosmtplib.SMTP") as mock_smtp_cls:
+            mock_smtp = AsyncMock()
+            mock_smtp.connect = AsyncMock(side_effect=Exception("connection refused"))
+            mock_smtp_cls.return_value = mock_smtp
+
+            with patch("webgui.scheduled_reports.asyncio.sleep", new_callable=AsyncMock):
+                result = await svc._deliver_email(
+                    {"status": "success", "report_id": "rpt-1"}, "Test"
+                )
+
+            assert result.startswith("failed:")
+
+    @pytest.mark.asyncio
+    async def test_deliver_email_html_body_contains_report_info(self):
+        """Email HTML body includes job_name, report_id, and status."""
+        from webgui.scheduled_reports import ReportDeliveryService
+
+        svc = ReportDeliveryService()
+        svc.email_enabled = True
+        svc.smtp_host = "smtp.example.com"
+        svc.smtp_port = 587
+        svc.smtp_from = "reports@example.com"
+        svc.email_recipients = ["user@example.com"]
+        svc.smtp_username = ""
+        svc.smtp_password = ""
+        svc.smtp_use_tls = True
+        svc.max_retries = 1
+
+        with patch("webgui.scheduled_reports.aiosmtplib.SMTP") as mock_smtp_cls:
+            mock_smtp = AsyncMock()
+            mock_smtp_cls.return_value = mock_smtp
+
+            await svc._deliver_email(
+                {"status": "success", "report_id": "rpt-42"}, "Weekly Compliance"
+            )
+
+            sent_msg = mock_smtp.send_message.call_args[0][0]
+            # Extract HTML payload from the MIMEMultipart message
+            html_part = sent_msg.get_payload()[0].get_payload()
+            assert "Weekly Compliance" in html_part
+            assert "rpt-42" in html_part
+            assert "success" in html_part
+
+    @pytest.mark.asyncio
+    async def test_deliver_includes_email_channel(self):
+        """deliver() sends to all three channels when all configured."""
+        from webgui.scheduled_reports import ReportDeliveryService
+
+        svc = ReportDeliveryService()
+        svc.webhook_url = "https://example.com/hook"
+        svc.slack_webhook_url = "https://hooks.slack.com/test"
+        svc.email_enabled = True
+        svc.email_recipients = ["user@example.com"]
+        svc._deliver_webhook = AsyncMock(return_value="delivered")
+        svc._deliver_slack = AsyncMock(return_value="delivered")
+        svc._deliver_email = AsyncMock(return_value="delivered")
+
+        results = await svc.deliver(
+            {"status": "success", "report_id": "rpt-1"}, "Test"
+        )
+
+        assert results["webhook"] == "delivered"
+        assert results["slack"] == "delivered"
+        assert results["email"] == "delivered"
+        svc._deliver_webhook.assert_called_once()
+        svc._deliver_slack.assert_called_once()
+        svc._deliver_email.assert_called_once()
