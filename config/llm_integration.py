@@ -18,6 +18,12 @@ from shared.metrics import (
     LLM_TOKENS_PROMPT,
 )
 from shared.resilience import CircuitBreaker
+from shared.telemetry import trace_llm_call
+
+try:
+    from config.agnos_token_budget import agnos_token_budget
+except ImportError:
+    agnos_token_budget = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -61,39 +67,75 @@ class LLMIntegrationService:
         if not self._api_key or not _llm_circuit.can_execute():
             return fallback
 
-        start = time.monotonic()
-        try:
-            response = await litellm.acompletion(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=self._api_key,
+        # --- AGNOS token budget: check & reserve -------------------------
+        reservation_id: str | None = None
+        if agnos_token_budget and agnos_token_budget.enabled:
+            budget_ok = await agnos_token_budget.check_budget(
+                self._agent_name, self.max_tokens
+            )
+            if not budget_ok:
+                logger.warning(
+                    "AGNOS token budget exhausted for agent=%s — returning fallback",
+                    self._agent_name,
+                )
+                return fallback
+            reservation_id = await agnos_token_budget.reserve_tokens(
+                self._agent_name, self.max_tokens
             )
 
-            content = str(response.choices[0].message.content).strip()
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
+        start = time.monotonic()
+        try:
+            with trace_llm_call(
+                method_name, model=self.model_name, agent=self._agent_name
+            ) as span:
+                response = await litellm.acompletion(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    api_key=self._api_key,
+                )
 
-            parsed = json.loads(content)
-            _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(method=method_name, status="success").inc()
-            if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(
-                    agent=self._agent_name, method=method_name
-                ).inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(
-                    agent=self._agent_name, method=method_name
-                ).inc(response.usage.completion_tokens or 0)
-            return parsed if isinstance(parsed, expected_type) else fallback
+                content = str(response.choices[0].message.content).strip()
+                if content.startswith("```json"):
+                    content = content[7:-3].strip()
+
+                parsed = json.loads(content)
+                _llm_circuit.record_success()
+                LLM_CALLS_TOTAL.labels(method=method_name, status="success").inc()
+
+                prompt_tokens = 0
+                completion_tokens = 0
+                if hasattr(response, "usage") and response.usage:
+                    prompt_tokens = response.usage.prompt_tokens or 0
+                    completion_tokens = response.usage.completion_tokens or 0
+                    LLM_TOKENS_PROMPT.labels(
+                        agent=self._agent_name, method=method_name
+                    ).inc(prompt_tokens)
+                    LLM_TOKENS_COMPLETION.labels(
+                        agent=self._agent_name, method=method_name
+                    ).inc(completion_tokens)
+                    span.set_attribute("llm.tokens.prompt", prompt_tokens)
+                    span.set_attribute("llm.tokens.completion", completion_tokens)
+
+                # --- AGNOS token budget: report actual usage -----------------
+                if reservation_id and agnos_token_budget:
+                    await agnos_token_budget.report_usage(
+                        reservation_id, prompt_tokens, completion_tokens
+                    )
+
+                return parsed if isinstance(parsed, expected_type) else fallback
 
         except Exception as e:
             _llm_circuit.record_failure()
             LLM_CALLS_TOTAL.labels(method=method_name, status="error").inc()
             logger.error(f"LLM {method_name} failed: {e}")
+            # --- AGNOS token budget: release unused reservation ----------
+            if reservation_id and agnos_token_budget:
+                await agnos_token_budget.release_reservation(reservation_id)
             return fallback
         finally:
             LLM_CALL_DURATION.labels(method=method_name).observe(

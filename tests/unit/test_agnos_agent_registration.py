@@ -355,9 +355,10 @@ class TestAgentRegistryClientBulkOperations:
 
         results = await client.register_all_agents()
 
-        assert len(results) == len(AGNOSTIC_AGENTS)
+        # Results include all agents + "capabilities" key
         for key in AGNOSTIC_AGENTS:
             assert results[key]["status"] == "registered"
+        assert "capabilities" in results
 
     @pytest.mark.asyncio
     async def test_deregister_all_agents(self, client):
@@ -376,7 +377,8 @@ class TestAgentRegistryClientBulkOperations:
 
         results = await client.deregister_all_agents()
 
-        assert len(results) == len(AGNOSTIC_AGENTS)
+        for key in AGNOSTIC_AGENTS:
+            assert results[key]["status"] == "deregistered"
 
     @pytest.mark.asyncio
     async def test_deregister_skips_unregistered(self, client):

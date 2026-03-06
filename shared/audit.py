@@ -113,6 +113,14 @@ def audit_log(
 
     _audit_logger.log(AUDIT_LOG_LEVEL, json.dumps(event, default=str))
 
+    # Forward to AGNOS cryptographic audit chain (fire-and-forget)
+    try:
+        from shared.agnos_audit import agnos_audit_forwarder
+
+        agnos_audit_forwarder.queue_event(event)
+    except Exception:
+        pass  # Never block local audit logging
+
 
 def configure_audit_logging() -> None:
     """Set up the dedicated audit logger with a stream handler.
