@@ -8,48 +8,22 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 
 ## Near-term
 
-### Cut Release 2026.3.5
+### Multi-Tenant Hardening
 **Priority:** High
 
-The `[Unreleased]` changelog section has grown large (WebSocket bridge, structured schemas, test persistence, multi-tenant, AGNOS Agent HUD, Prometheus ServiceMonitor, scheduled reports, GitOps/ArgoCD). Commit outstanding changes, tag and release.
+Tenant CRUD endpoints are wired to `TenantRepository` with real database operations. Remaining work is tenant isolation in the runtime layer.
 
-- [ ] Commit database model fix (`metadata` → `extra_metadata` rename)
-- [ ] Commit new ADRs (023, 024, 025)
-- [ ] Commit new unit tests (agent registration, database models, yeoman schemas, yeoman websocket)
-- [ ] Run full test suite, confirm all 289+ tests pass
-- [ ] Tag release `2026.3.5`
-
-### Database Schema Migrations
-**Priority:** High
-
-ADR-025 notes PostgreSQL persistence is live but has no automated migration tooling. Schema changes will break existing databases without it.
-
-- [ ] Add Alembic for SQLAlchemy migration management
-- [ ] Generate initial migration from current models
-- [ ] Document migration workflow in `docs/development/setup.md`
-
-### Multi-Tenant Testing & Hardening
-**Priority:** High
-
-Multi-tenant support (`shared/database/tenants.py`) is implemented but lacks integration tests and production hardening.
-
-- [ ] Integration tests for tenant isolation (data leakage prevention)
-- [ ] Tenant-scoped API key validation tests
+- [x] Wire `TenantRepository` into tenant API endpoints
+- [x] Unit tests for `TenantManager`, `TenantRepository`, and endpoints (66 tests)
+- [ ] Integrate tenant isolation into session/task management (Redis key prefixing is defined but unused)
+- [ ] Tenant-scoped API key validation
+- [ ] Integration tests for tenant data isolation (leakage prevention)
 - [ ] Rate limiting per tenant
 - [ ] Document tenant provisioning workflow
 
 ---
 
 ## Medium-term
-
-### Configurable YEOMAN Action Thresholds
-**Priority:** Medium
-
-ADR-024 notes that action thresholds in `shared/yeoman_schemas.py` are hardcoded (80% coverage, 5% error rate, 2x response time degradation). These should be configurable per-project or per-tenant.
-
-- [ ] Extract thresholds to config (env vars or database)
-- [ ] Allow per-tenant threshold overrides
-- [ ] Update ADR-024
 
 ### WebSocket Reconnection & Missed Message Recovery
 **Priority:** Medium
@@ -60,14 +34,14 @@ ADR-023 notes Redis pub/sub is fire-and-forget — disconnected clients lose mes
 - [ ] Client-side reconnection with last-seen message ID
 - [ ] Update ADR-023
 
-### Scheduled Report Enhancements
+### Scheduled Report Delivery
 **Priority:** Medium
 
-Basic APScheduler integration is in place. Production needs:
+APScheduler generates reports on schedule but has no delivery mechanism beyond API retrieval.
 
-- [ ] Persistent job store (database-backed, not in-memory)
-- [ ] Report delivery (email, Slack webhook)
-- [ ] Tenant-scoped scheduled reports
+- [ ] Persistent job store (database-backed, not in-memory) — currently uses Redis
+- [ ] Report delivery channels (email, Slack webhook)
+- [ ] Tenant-scoped scheduled reports (depends on multi-tenant completion)
 
 ---
 
@@ -88,6 +62,22 @@ Manual testing guide exists (`docs/development/manual-testing.md`) but automated
 - [ ] Docker Compose test harness
 - [ ] Automated smoke test (health check, task submit, report download)
 - [ ] CI integration for E2E suite
+
+---
+
+## Recently Completed
+
+| Item | Date |
+|------|------|
+| Tag release 2026.3.5 — changelog updated | 2026-03-05 |
+| Alembic database migrations — async PostgreSQL, initial migration (7 tables) | 2026-03-05 |
+| Migration docs — Alembic section added to `docs/development/setup.md` | 2026-03-05 |
+| Scheduled reports test coverage — 27 tests in `test_scheduled_reports.py` | 2026-03-05 |
+| Configurable YEOMAN thresholds — `YEOMAN_COVERAGE_THRESHOLD`, `YEOMAN_ERROR_RATE_THRESHOLD`, `YEOMAN_PERF_DEGRADATION_FACTOR` | 2026-03-05 |
+| Webhook callback retry — exponential backoff (1s/2s/4s), configurable `WEBHOOK_MAX_RETRIES` | 2026-03-05 |
+| WebSocket realtime test hang fix | 2026-03-05 |
+| pytest collection warning fix (`__test__ = False`) | 2026-03-05 |
+| TODO.md consolidated into roadmap | 2026-03-05 |
 
 ---
 

@@ -423,6 +423,8 @@ class TestFireWebhook:
 
         class FakeResponse:
             status_code = 200
+            def raise_for_status(self):
+                pass
 
         class FakeClient:
             async def __aenter__(self):
@@ -464,6 +466,8 @@ class TestFireWebhook:
 
         class FakeResponse:
             status_code = 200
+            def raise_for_status(self):
+                pass
 
         class FakeClient:
             async def __aenter__(self):
@@ -495,9 +499,64 @@ class TestFireWebhook:
             async def post(self, *args, **kwargs):
                 raise ConnectionError("unreachable")
 
-        with patch("httpx.AsyncClient", return_value=BrokenClient()):
+        with patch("httpx.AsyncClient", return_value=BrokenClient()), \
+             patch("webgui.api.WEBHOOK_MAX_RETRIES", 1):
             # Should not raise
             await _fire_webhook("https://bad.example.com", "secret", {"x": 1})
+
+    @pytest.mark.asyncio
+    async def test_webhook_retries_on_failure(self):
+        """Webhook retries with exponential backoff on failure."""
+        attempts = []
+
+        class FailThenSucceedClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, *args, **kwargs):
+                attempts.append(1)
+                if len(attempts) < 3:
+                    raise ConnectionError("unreachable")
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                return resp
+
+        with patch("httpx.AsyncClient", return_value=FailThenSucceedClient()), \
+             patch("webgui.api.WEBHOOK_MAX_RETRIES", 3), \
+             patch("webgui.api.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            await _fire_webhook("https://hook.example.com/cb", None, {"x": 1})
+
+        assert len(attempts) == 3  # 2 failures + 1 success
+        assert mock_sleep.call_count == 2  # sleep between retries
+        # Verify exponential backoff: 2^0=1, 2^1=2
+        assert mock_sleep.call_args_list[0][0][0] == 1
+        assert mock_sleep.call_args_list[1][0][0] == 2
+
+    @pytest.mark.asyncio
+    async def test_webhook_exhausts_retries(self):
+        """Webhook logs error after exhausting all retries."""
+        attempts = []
+
+        class AlwaysFailClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, *args, **kwargs):
+                attempts.append(1)
+                raise ConnectionError("unreachable")
+
+        with patch("httpx.AsyncClient", return_value=AlwaysFailClient()), \
+             patch("webgui.api.WEBHOOK_MAX_RETRIES", 3), \
+             patch("webgui.api.asyncio.sleep", new_callable=AsyncMock):
+            await _fire_webhook("https://bad.example.com", None, {"x": 1})
+
+        assert len(attempts) == 3  # tried all 3 times
 
 
 # ---------------------------------------------------------------------------

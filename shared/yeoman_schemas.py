@@ -6,10 +6,16 @@ and act on results programmatically — e.g., auto-open issues for critical
 security findings, block PRs on regression failures.
 """
 
+import os
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import Any
+
+# Configurable thresholds for YEOMAN action triggers.
+# Override via environment variables.
+COVERAGE_THRESHOLD = float(os.getenv("YEOMAN_COVERAGE_THRESHOLD", "80.0"))
+ERROR_RATE_THRESHOLD = float(os.getenv("YEOMAN_ERROR_RATE_THRESHOLD", "5.0"))
+PERF_DEGRADATION_FACTOR = float(os.getenv("YEOMAN_PERF_DEGRADATION_FACTOR", "2.0"))
 
 
 class FindingSeverity(str, Enum):
@@ -136,19 +142,19 @@ class PerformanceResult:
             })
 
         # Block on severe degradation
-        if self.previous_score and self.response_times.get("avg", 0) > self.previous_score * 2:
+        if self.previous_score and self.response_times.get("avg", 0) > self.previous_score * PERF_DEGRADATION_FACTOR:
             actions.append({
                 "type": "block_merge",
-                "reason": f"Response time degraded by >100% (was {self.previous_score}ms, now {self.response_times.get('avg', 0)}ms)",
+                "reason": f"Response time degraded by >{(PERF_DEGRADATION_FACTOR - 1) * 100:.0f}% (was {self.previous_score}ms, now {self.response_times.get('avg', 0)}ms)",
             })
 
         # Alert on error rate
-        if self.error_rate > 5.0:
+        if self.error_rate > ERROR_RATE_THRESHOLD:
             actions.append({
                 "type": "create_issue",
                 "priority": "high",
                 "title": f"[HIGH ERROR RATE] {self.error_rate:.1f}% errors during load test",
-                "body": f"Error rate exceeds 5% threshold. Throughput: {self.throughput} req/s",
+                "body": f"Error rate exceeds {ERROR_RATE_THRESHOLD}% threshold. Throughput: {self.throughput} req/s",
                 "labels": ["performance", "errors", "auto-generated"],
             })
 
@@ -211,12 +217,12 @@ class TestExecutionResult:
             })
 
         # Alert on low coverage
-        if self.coverage_percentage < 80.0:
+        if self.coverage_percentage < COVERAGE_THRESHOLD:
             actions.append({
                 "type": "create_issue",
                 "priority": "medium",
                 "title": f"[COVERAGE] Test coverage below threshold: {self.coverage_percentage:.1f}%",
-                "body": f"Current coverage is {self.coverage_percentage}%, target is 80%",
+                "body": f"Current coverage is {self.coverage_percentage}%, target is {COVERAGE_THRESHOLD}%",
                 "labels": ["testing", "coverage", "auto-generated"],
             })
 

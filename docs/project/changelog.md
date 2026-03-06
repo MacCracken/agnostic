@@ -11,16 +11,38 @@ Versions use **YYYY.M.D** (calendar versioning).
 
 ### Added
 
+- **Webhook callback retry with exponential backoff** — `_fire_webhook` retries up to 3 times with 1s/2s/4s delays on failure; configurable via `WEBHOOK_MAX_RETRIES` env var; failed deliveries logged with attempt count (`webgui/api.py`)
+- **Configurable YEOMAN action thresholds** — coverage, error rate, and performance degradation thresholds extracted from hardcoded values to env vars: `YEOMAN_COVERAGE_THRESHOLD`, `YEOMAN_ERROR_RATE_THRESHOLD`, `YEOMAN_PERF_DEGRADATION_FACTOR` (`shared/yeoman_schemas.py`)
+
+---
+
+## [2026.3.5]
+
+### Added
+
 - **WebSocket Real-Time Dashboard** — `/ws/realtime` endpoint fully wired in `webgui/app.py`; initializes Redis pub/sub on startup, subscribes to agent task channels (`manager:tasks`, `senior:tasks`, etc.) for real-time task progress; dashboard.js auto-subscribes to active sessions on connect (`webgui/realtime.py`, `webgui/static/js/dashboard.js`)
 - **Prometheus ServiceMonitor** — `ServiceMonitor` and `PodMonitor` CRDs for Prometheus scraping of `/api/metrics` endpoint; configurable via `metrics.enabled` in Helm values (`k8s/helm/agentic-qa/templates/service-monitor.yaml`)
 - **Scheduled Report Generation** — APScheduler integration for automated daily/weekly reports; `POST /api/reports/scheduled`, `GET /api/reports/scheduled`, `DELETE /api/reports/scheduled/{job_id}` endpoints; configurable via `SCHEDULED_REPORTS_ENABLED`, `SCHEDULED_REPORT_DAILY_TIME`, `SCHEDULED_REPORT_WEEKLY_DAY`, `SCHEDULED_REPORT_WEEKLY_TIME` env vars (`webgui/scheduled_reports.py`, `webgui/api.py`, `pyproject.toml`)
 - **GitOps/ArgoCD Integration** — ArgoCD `ApplicationSet` for multi-environment promotion; External Secrets Operator for Vault-backed secret rotation; Kustomize overlays for dev/staging/prod (`k8s/argocd/applicationset.yaml`, `k8s/argocd/external-secrets.yaml`, `k8s/overlays/`)
 - **Test Result Persistence (PostgreSQL)** — SQLAlchemy async models for test sessions, results, metrics, and reports; REST endpoints for CRUD operations; quality trends API; configurable via `DATABASE_ENABLED`, `POSTGRES_*` env vars (`shared/database/models.py`, `shared/database/repository.py`, `webgui/api.py`, `pyproject.toml`)
-- **Multi-Tenant WebGUI** — Tenant models (`Tenant`, `TenantUser`, `TenantAPIKey`) for tenant isolation; tenant middleware for X-Tenant-ID header; admin endpoints for tenant provisioning; tenant-scoped Redis keyspaces; configurable via `MULTI_TENANT_ENABLED` env var (`shared/database/tenants.py`, `webgui/api.py`)
+- **Multi-Tenant WebGUI** — Tenant models (`Tenant`, `TenantUser`, `TenantAPIKey`) with `TenantRepository` for database CRUD; admin endpoints for tenant provisioning (create, update, soft-delete, user management); tenant-scoped Redis keyspaces; configurable via `MULTI_TENANT_ENABLED` env var (`shared/database/tenants.py`, `shared/database/tenant_repository.py`, `webgui/api.py`)
 - **AGNOS OS Phase 2 - Agent HUD Registration** — AgentRegistryClient for registering Agnostic QA agents with agnosticos Agent HUD; registration on startup, deregistration on shutdown; REST endpoints for status and manual registration; configurable via `AGNOS_AGENT_REGISTRATION_ENABLED`, `AGNOS_AGENT_REGISTRY_URL` env vars (`config/agnos_agent_registration.py`, `webgui/api.py`, `docs/adr/022-agnosticos-agent-hud.md`)
 - **YEOMAN MCP Bridge WebSocket Support** — WebSocket task subscription via `subscribe_task` message; task status updates published to Redis `task:{id}` channel on status changes; enables MCP bridge to receive push notifications instead of polling (`webgui/realtime.py`, `webgui/api.py`)
 - **Structured Result Schemas for YEOMAN** — Typed dataclasses for security, performance, and test execution results with `to_yeoman_action()` method for programmatic actions (auto-create issues, block PRs); `GET /results/structured/{session_id}` endpoint (`shared/yeoman_schemas.py`, `webgui/api.py`)
-- **Unit tests for WebSocket realtime** (`tests/unit/test_webgui_realtime.py`) — 12 tests covering EventType, WebSocketMessage, RealtimeManager, WebSocketHandler, and channel configuration
+- **Alembic database migrations** — async PostgreSQL migration support; initial migration covering all 7 tables (test_sessions, test_results, test_metrics, test_reports, tenants, tenant_users, tenant_api_keys); `alembic/env.py` configured for `asyncpg` (`alembic/`)
+- **Scheduled reports unit tests** (`tests/unit/test_scheduled_reports.py`) — 27 tests covering init, enabled/disabled behavior, job scheduling, triggers, day mapping, error handling
+- **Multi-tenant unit tests** (`tests/unit/test_tenant.py`) — 39 tests covering TenantManager, TenantRepository CRUD, endpoint guards, auth, 404 handling
+- **Unit tests for WebSocket realtime** (`tests/unit/test_webgui_realtime.py`) — 15 tests covering EventType, WebSocketMessage, RealtimeManager, WebSocketHandler, and channel configuration
+
+### Fixed
+
+- **WebSocket realtime test hang** — `test_handle_websocket_accepts_connection` blocked forever due to missing `receive_json` side_effect; handler's `while True` receive loop now properly terminated in test
+- **pytest collection warnings** — `TestStatus` and `TestExecutionResult` in `shared/yeoman_schemas.py` suppressed via `__test__ = False`
+- **SQLAlchemy reserved name conflict** — `TestResult.metadata` renamed to `extra_metadata` with explicit column name `"metadata"` to avoid collision with SQLAlchemy's `Base.metadata`
+
+### Changed
+
+- **TODO.md consolidated** — deleted `TODO.md` (was a redirect); all tracking moved to `docs/development/roadmap.md`; references in `README.md` and `docs/README.md` updated
 
 ---
 
@@ -138,6 +160,7 @@ Versions use **YYYY.M.D** (calendar versioning).
 
 ---
 
-[Unreleased]: https://github.com/MacCracken/agnostic/compare/2026.2.28...HEAD
+[Unreleased]: https://github.com/MacCracken/agnostic/compare/2026.3.5...HEAD
+[2026.3.5]: https://github.com/MacCracken/agnostic/compare/2026.2.28...2026.3.5
 [2026.2.28]: https://github.com/MacCracken/agnostic/compare/2026.2.16...2026.2.28
 [2026.2.16]: https://github.com/MacCracken/agnostic/releases/tag/2026.2.16

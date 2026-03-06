@@ -197,11 +197,10 @@ class TestWebSocketHandler:
         """Verify WebSocket handler accepts connections."""
         mock_websocket = AsyncMock()
         mock_websocket.accept = AsyncMock()
+        # Must raise to break the receive loop
+        mock_websocket.receive_json = AsyncMock(side_effect=Exception("Close"))
 
-        with patch("webgui.realtime.datetime") as mock_datetime:
-            mock_datetime.now.return_value.timestamp.return_value = "123456.789"
-
-            await websocket_handler.handle_websocket(mock_websocket, "user-1")
+        await websocket_handler.handle_websocket(mock_websocket, "user-1")
 
         mock_websocket.accept.assert_called_once()
 

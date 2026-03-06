@@ -278,6 +278,73 @@ The `AgentRegistry` in `config/agent_registry.py` routes tasks via `registry.rou
 
 ---
 
+## Database Migrations (Alembic)
+
+The project uses [Alembic](https://alembic.sqlalchemy.org/) for PostgreSQL schema migrations with async support via `asyncpg`.
+
+### Prerequisites
+
+PostgreSQL must be running and accessible. Configure connection via environment variables:
+
+```bash
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=secret
+POSTGRES_DB=agnostic
+```
+
+### Running migrations
+
+```bash
+# Apply all pending migrations
+alembic upgrade head
+
+# Check current revision
+alembic current
+
+# View migration history
+alembic history --verbose
+```
+
+### Creating new migrations
+
+After modifying models in `shared/database/models.py` or `shared/database/tenants.py`:
+
+```bash
+# Auto-generate migration from model changes (requires DB connection)
+alembic revision --autogenerate -m "describe your change"
+
+# Or create a manual migration
+alembic revision -m "describe your change"
+# Then edit the generated file in alembic/versions/
+```
+
+### Downgrading
+
+```bash
+# Roll back one migration
+alembic downgrade -1
+
+# Roll back to a specific revision
+alembic downgrade <revision_id>
+
+# Roll back everything
+alembic downgrade base
+```
+
+### Key files
+
+| File | Purpose |
+|------|---------|
+| `alembic.ini` | Alembic configuration (URL set dynamically from env vars) |
+| `alembic/env.py` | Async engine setup, model imports for autogenerate |
+| `alembic/versions/` | Migration scripts |
+
+> **Note:** The initial migration (`db8d3fe1686e_initial_schema.py`) creates all 7 tables: `test_sessions`, `test_results`, `test_metrics`, `test_reports`, `tenants`, `tenant_users`, `tenant_api_keys`. If your database was created by SQLAlchemy's `create_all()` before Alembic was added, stamp it: `alembic stamp head`.
+
+---
+
 ## Common Tasks
 
 ```bash

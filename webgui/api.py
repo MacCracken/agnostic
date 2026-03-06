@@ -406,31 +406,52 @@ async def _run_task_async(
         await _fire_webhook(callback_url, callback_secret, final_record)
 
 
+WEBHOOK_MAX_RETRIES = int(os.getenv("WEBHOOK_MAX_RETRIES", "3"))
+
+
 async def _fire_webhook(
     callback_url: str,
     callback_secret: str | None,
     payload: dict[str, Any],
 ) -> None:
-    """POST task result to callback_url with optional HMAC-SHA256 signature."""
-    try:
-        import httpx
+    """POST task result to callback_url with optional HMAC-SHA256 signature.
 
-        body = json.dumps(payload)
-        headers: dict[str, str] = {"Content-Type": "application/json"}
+    Retries up to WEBHOOK_MAX_RETRIES times with exponential backoff (1s, 2s, 4s, ...).
+    """
+    import httpx
 
-        if callback_secret:
-            sig = hmac.new(
-                callback_secret.encode(), body.encode(), hashlib.sha256
-            ).hexdigest()
-            headers["X-Signature"] = f"sha256={sig}"
+    body = json.dumps(payload)
+    headers: dict[str, str] = {"Content-Type": "application/json"}
 
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(callback_url, content=body, headers=headers)
+    if callback_secret:
+        sig = hmac.new(
+            callback_secret.encode(), body.encode(), hashlib.sha256
+        ).hexdigest()
+        headers["X-Signature"] = f"sha256={sig}"
 
-        logger.info(f"Webhook delivered to {callback_url}")
+    last_error: Exception | None = None
+    for attempt in range(WEBHOOK_MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(callback_url, content=body, headers=headers)
+                resp.raise_for_status()
 
-    except Exception as e:
-        logger.warning(f"Webhook delivery to {callback_url} failed: {e}")
+            logger.info(f"Webhook delivered to {callback_url}")
+            return
+
+        except Exception as e:
+            last_error = e
+            if attempt < WEBHOOK_MAX_RETRIES - 1:
+                delay = 2**attempt  # 1s, 2s, 4s, ...
+                logger.warning(
+                    f"Webhook delivery to {callback_url} failed (attempt {attempt + 1}/{WEBHOOK_MAX_RETRIES}): {e}. "
+                    f"Retrying in {delay}s"
+                )
+                await asyncio.sleep(delay)
+
+    logger.error(
+        f"Webhook delivery to {callback_url} failed after {WEBHOOK_MAX_RETRIES} attempts: {last_error}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1194,7 +1215,34 @@ class TenantUpdate(BaseModel):
 
 class TenantUserInvite(BaseModel):
     email: str
+    user_id: str
     role: str = "member"
+
+
+async def get_tenant_repo():
+    """Get tenant repository instance."""
+    if not MULTI_TENANT_ENABLED or not DATABASE_ENABLED:
+        return None
+    try:
+        from shared.database.tenant_repository import TenantRepository
+        from shared.database.models import get_session
+
+        session = await get_session()
+        return TenantRepository(session)
+    except Exception:
+        return None
+
+
+def _require_tenant_enabled():
+    """Raise 503 if multi-tenancy is not enabled."""
+    if not MULTI_TENANT_ENABLED:
+        raise HTTPException(
+            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
+        )
+    if not DATABASE_ENABLED:
+        raise HTTPException(
+            status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
+        )
 
 
 @api_router.get("/tenants")
@@ -1202,15 +1250,31 @@ async def list_tenants(
     user: dict = Depends(get_current_user),
 ):
     """List tenants (admin only)."""
-    if not MULTI_TENANT_ENABLED:
-        raise HTTPException(
-            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
-        )
+    _require_tenant_enabled()
 
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    return {"tenants": [], "message": "Implement with database"}
+    repo = await get_tenant_repo()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Tenant database unavailable")
+
+    tenants = await repo.list_tenants()
+    return {
+        "tenants": [
+            {
+                "tenant_id": t.tenant_id,
+                "name": t.name,
+                "slug": t.slug,
+                "status": t.status,
+                "plan": t.plan,
+                "owner_email": t.owner_email,
+                "is_active": t.is_active,
+                "created_at": t.created_at.isoformat(),
+            }
+            for t in tenants
+        ]
+    }
 
 
 @api_router.post("/tenants")
@@ -1219,19 +1283,28 @@ async def create_tenant(
     user: dict = Depends(get_current_user),
 ):
     """Create a new tenant (admin only)."""
-    if not MULTI_TENANT_ENABLED:
-        raise HTTPException(
-            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
-        )
+    _require_tenant_enabled()
 
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
+    repo = await get_tenant_repo()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Tenant database unavailable")
+
+    tenant = await repo.create_tenant(
+        tenant_id=req.tenant_id,
+        name=req.name,
+        slug=req.slug,
+        owner_email=req.owner_email,
+        plan=req.plan,
+    )
     return {
-        "tenant_id": req.tenant_id,
-        "name": req.name,
-        "slug": req.slug,
-        "status": "active",
+        "tenant_id": tenant.tenant_id,
+        "name": tenant.name,
+        "slug": tenant.slug,
+        "status": tenant.status,
+        "plan": tenant.plan,
     }
 
 
@@ -1241,16 +1314,27 @@ async def get_tenant(
     user: dict = Depends(get_current_user),
 ):
     """Get tenant details."""
-    if not MULTI_TENANT_ENABLED:
-        raise HTTPException(
-            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
-        )
+    _require_tenant_enabled()
+
+    repo = await get_tenant_repo()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Tenant database unavailable")
+
+    tenant = await repo.get_tenant(tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
 
     return {
-        "tenant_id": tenant_id,
-        "name": "Tenant Name",
-        "status": "active",
-        "plan": "free",
+        "tenant_id": tenant.tenant_id,
+        "name": tenant.name,
+        "slug": tenant.slug,
+        "status": tenant.status,
+        "plan": tenant.plan,
+        "owner_email": tenant.owner_email,
+        "max_sessions": tenant.max_sessions,
+        "max_agents": tenant.max_agents,
+        "is_active": tenant.is_active,
+        "created_at": tenant.created_at.isoformat(),
     }
 
 
@@ -1261,15 +1345,26 @@ async def update_tenant(
     user: dict = Depends(get_current_user),
 ):
     """Update tenant (admin only)."""
-    if not MULTI_TENANT_ENABLED:
-        raise HTTPException(
-            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
-        )
+    _require_tenant_enabled()
 
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    return {"tenant_id": tenant_id, "status": "updated"}
+    repo = await get_tenant_repo()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Tenant database unavailable")
+
+    updates = req.model_dump(exclude_none=True)
+    tenant = await repo.update_tenant(tenant_id, updates)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    return {
+        "tenant_id": tenant.tenant_id,
+        "name": tenant.name,
+        "status": tenant.status,
+        "plan": tenant.plan,
+    }
 
 
 @api_router.delete("/tenants/{tenant_id}")
@@ -1278,13 +1373,18 @@ async def delete_tenant(
     user: dict = Depends(get_current_user),
 ):
     """Delete tenant (admin only)."""
-    if not MULTI_TENANT_ENABLED:
-        raise HTTPException(
-            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
-        )
+    _require_tenant_enabled()
 
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+
+    repo = await get_tenant_repo()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Tenant database unavailable")
+
+    deleted = await repo.delete_tenant(tenant_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Tenant not found")
 
     return {"tenant_id": tenant_id, "status": "deleted"}
 
@@ -1295,12 +1395,26 @@ async def list_tenant_users(
     user: dict = Depends(get_current_user),
 ):
     """List users in a tenant."""
-    if not MULTI_TENANT_ENABLED:
-        raise HTTPException(
-            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
-        )
+    _require_tenant_enabled()
 
-    return {"users": []}
+    repo = await get_tenant_repo()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Tenant database unavailable")
+
+    users = await repo.list_users(tenant_id)
+    return {
+        "users": [
+            {
+                "user_id": u.user_id,
+                "email": u.email,
+                "role": u.role,
+                "is_owner": u.is_owner,
+                "is_admin": u.is_admin,
+                "created_at": u.created_at.isoformat(),
+            }
+            for u in users
+        ]
+    }
 
 
 @api_router.post("/tenants/{tenant_id}/users")
@@ -1310,15 +1424,27 @@ async def invite_tenant_user(
     user: dict = Depends(get_current_user),
 ):
     """Invite user to tenant."""
-    if not MULTI_TENANT_ENABLED:
-        raise HTTPException(
-            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
-        )
+    _require_tenant_enabled()
 
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    return {"email": req.email, "role": req.role, "status": "invited"}
+    repo = await get_tenant_repo()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Tenant database unavailable")
+
+    tenant_user = await repo.add_user(
+        tenant_id=tenant_id,
+        user_id=req.user_id,
+        email=req.email,
+        role=req.role,
+    )
+    return {
+        "user_id": tenant_user.user_id,
+        "email": tenant_user.email,
+        "role": tenant_user.role,
+        "status": "invited",
+    }
 
 
 @api_router.delete("/tenants/{tenant_id}/users/{user_id}")
@@ -1328,13 +1454,18 @@ async def remove_tenant_user(
     user: dict = Depends(get_current_user),
 ):
     """Remove user from tenant."""
-    if not MULTI_TENANT_ENABLED:
-        raise HTTPException(
-            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
-        )
+    _require_tenant_enabled()
 
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
+
+    repo = await get_tenant_repo()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Tenant database unavailable")
+
+    removed = await repo.remove_user(tenant_id, user_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="User not found in tenant")
 
     return {"user_id": user_id, "status": "removed"}
 
