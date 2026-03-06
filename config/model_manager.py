@@ -88,9 +88,7 @@ class OpenAIProvider(BaseModelProvider):
                     }
                 else:
                     error_text = await response.text()
-                    logger.error(
-                        f"OpenAI API error: {response.status} - {error_text}"
-                    )
+                    logger.error(f"OpenAI API error: {response.status} - {error_text}")
                     return {
                         "success": False,
                         "error": f"OpenAI API error: {response.status}",
@@ -244,9 +242,7 @@ class LocalLLMProvider(BaseModelProvider):
                     )
                 else:
                     error_text = await response.text()
-                    logger.error(
-                        f"Ollama API error: {response.status} - {error_text}"
-                    )
+                    logger.error(f"Ollama API error: {response.status} - {error_text}")
                     return {
                         "success": False,
                         "error": f"Ollama API error: {response.status}",
@@ -349,7 +345,9 @@ class LocalLLMProvider(BaseModelProvider):
                 else:
                     # openai-compatible SSE format (LM Studio, custom)
                     line_str = line.decode().strip()
-                    if line_str.startswith("data: ") and not line_str.endswith("[DONE]"):
+                    if line_str.startswith("data: ") and not line_str.endswith(
+                        "[DONE]"
+                    ):
                         try:
                             data = json.loads(line_str[6:])
                             if "choices" in data and len(data["choices"]) > 0:
@@ -451,9 +449,7 @@ class GoogleProvider(BaseModelProvider):
                 if response.status == 200:
                     result = await response.json()
                     if "candidates" in result and len(result["candidates"]) > 0:
-                        content = result["candidates"][0]["content"]["parts"][0][
-                            "text"
-                        ]
+                        content = result["candidates"][0]["content"]["parts"][0]["text"]
                         return {
                             "success": True,
                             "content": content,
@@ -468,9 +464,7 @@ class GoogleProvider(BaseModelProvider):
                         }
                 else:
                     error_text = await response.text()
-                    logger.error(
-                        f"Google API error: {response.status} - {error_text}"
-                    )
+                    logger.error(f"Google API error: {response.status} - {error_text}")
                     return {
                         "success": False,
                         "error": f"Google API error: {response.status}",

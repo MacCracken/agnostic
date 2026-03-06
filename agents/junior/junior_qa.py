@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
-from crewai import Agent, Crew, LLM, Process, Task
+from crewai import LLM, Agent, Crew, Process, Task
 
 from shared.crewai_compat import BaseTool
 
@@ -913,7 +913,9 @@ class FlakyTestDetectionTool(BaseTool):
         self.quarantine_duration = 7  # Days in quarantine
 
     def _run(
-        self, test_history: dict[str, Any], execution_context: dict[str, Any] | None = None
+        self,
+        test_history: dict[str, Any],
+        execution_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Analyze test history for flaky patterns and manage quarantine"""
         test_results = test_history.get("test_results", [])
@@ -2829,9 +2831,7 @@ class JuniorQAAgent:
         connection_info = config.get_connection_info()
         logger.info(f"Redis connection: {connection_info['redis']['url']}")
         logger.info(f"RabbitMQ connection: {connection_info['rabbitmq']['url']}")
-        self.llm = LLM(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1
-        )
+        self.llm = LLM(model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1)
 
         # Initialize CrewAI agent
         self.agent = Agent(

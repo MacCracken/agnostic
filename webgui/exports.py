@@ -614,7 +614,9 @@ class ReportGenerator:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         # Sanitize session_id to prevent path traversal characters in the filename
         safe_session_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", request.session_id)[:64]
-        filename = f"{request.report_type.value}_{safe_session_id}_{timestamp}.{format.value}"
+        filename = (
+            f"{request.report_type.value}_{safe_session_id}_{timestamp}.{format.value}"
+        )
         file_path = self.reports_dir / filename
 
         try:
@@ -658,7 +660,10 @@ class ReportGenerator:
 
                     # Title
                     title_style = ParagraphStyle(
-                        "ReportTitle", parent=styles["Heading1"], fontSize=18, spaceAfter=12
+                        "ReportTitle",
+                        parent=styles["Heading1"],
+                        fontSize=18,
+                        spaceAfter=12,
                     )
                     story.append(Paragraph(content.get("title", "Report"), title_style))
                     story.append(Spacer(1, 0.2 * inch))
@@ -666,7 +671,8 @@ class ReportGenerator:
                     # Session info
                     story.append(
                         Paragraph(
-                            f"Session: {content.get('session_id', 'N/A')}", styles["Normal"]
+                            f"Session: {content.get('session_id', 'N/A')}",
+                            styles["Normal"],
                         )
                     )
                     story.append(
@@ -714,9 +720,7 @@ class ReportGenerator:
                     if "recommendations" in content:
                         story.append(Paragraph("Recommendations", styles["Heading2"]))
                         for rec in content["recommendations"]:
-                            story.append(
-                                Paragraph(f"\u2022 {rec}", styles["Normal"])
-                            )
+                            story.append(Paragraph(f"\u2022 {rec}", styles["Normal"]))
                         story.append(Spacer(1, 0.2 * inch))
 
                     # Metrics table
@@ -729,14 +733,17 @@ class ReportGenerator:
                                     [key.replace("_", " ").title(), str(value)]
                                 )
                         if len(table_data) > 1:
-                            table = Table(
-                                table_data, colWidths=[3 * inch, 4 * inch]
-                            )
+                            table = Table(table_data, colWidths=[3 * inch, 4 * inch])
                             table.setStyle(
                                 TableStyle(
                                     [
                                         ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
-                                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                                        (
+                                            "TEXTCOLOR",
+                                            (0, 0),
+                                            (-1, 0),
+                                            colors.whitesmoke,
+                                        ),
                                         ("GRID", (0, 0), (-1, -1), 1, colors.black),
                                         ("FONTSIZE", (0, 0), (-1, -1), 9),
                                         ("TOPPADDING", (0, 0), (-1, -1), 4),

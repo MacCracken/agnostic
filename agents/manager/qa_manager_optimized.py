@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 from typing import Any
 
-from crewai import Agent, Crew, LLM, Process, Task
+from crewai import LLM, Agent, Crew, Process, Task
 
 from shared.crewai_compat import BaseTool
 
@@ -214,9 +214,7 @@ class OptimizedQAManager:
     def __init__(self):
         self.redis_client = config.get_redis_client()
         self.celery_app = config.get_celery_app("qa_manager")
-        self.llm = LLM(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1
-        )
+        self.llm = LLM(model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1)
 
         # Agent routing configuration for 6-agent system
         self.agent_routing = {

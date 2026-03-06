@@ -35,7 +35,7 @@ import hmac
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
@@ -60,20 +60,32 @@ class ReportDeliveryService:
         self.webhook_secret = os.getenv("REPORT_WEBHOOK_SECRET")
         self.slack_webhook_url = os.getenv("REPORT_SLACK_WEBHOOK_URL")
         self.max_retries = int(os.getenv("REPORT_DELIVERY_MAX_RETRIES", "3"))
-        self.email_enabled = os.getenv("REPORT_EMAIL_ENABLED", "false").lower() == "true"
+        self.email_enabled = (
+            os.getenv("REPORT_EMAIL_ENABLED", "false").lower() == "true"
+        )
         self.smtp_host = os.getenv("SMTP_HOST", "")
         self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
         self.smtp_username = os.getenv("SMTP_USERNAME", "")
         self.smtp_password = os.getenv("SMTP_PASSWORD", "")
         self.smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
         self.smtp_from = os.getenv("SMTP_FROM", "")
-        self.email_recipients = [r.strip() for r in os.getenv("REPORT_EMAIL_RECIPIENTS", "").split(",") if r.strip()]
+        self.email_recipients = [
+            r.strip()
+            for r in os.getenv("REPORT_EMAIL_RECIPIENTS", "").split(",")
+            if r.strip()
+        ]
 
     @property
     def has_delivery_channels(self) -> bool:
-        return bool(self.webhook_url or self.slack_webhook_url or (self.email_enabled and self.email_recipients))
+        return bool(
+            self.webhook_url
+            or self.slack_webhook_url
+            or (self.email_enabled and self.email_recipients)
+        )
 
-    async def deliver(self, report_result: dict[str, Any], job_name: str) -> dict[str, Any]:
+    async def deliver(
+        self, report_result: dict[str, Any], job_name: str
+    ) -> dict[str, Any]:
         """Deliver report notification to all configured channels.
 
         Returns dict with delivery status per channel.
@@ -91,14 +103,16 @@ class ReportDeliveryService:
 
         return results
 
-    async def _deliver_webhook(self, report_result: dict[str, Any], job_name: str) -> str:
+    async def _deliver_webhook(
+        self, report_result: dict[str, Any], job_name: str
+    ) -> str:
         """POST report notification to webhook URL with optional HMAC signature."""
         payload = {
             "event": "report.generated",
             "job_name": job_name,
             "report_id": report_result.get("report_id"),
             "status": report_result.get("status"),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
         body = json.dumps(payload)
         headers = {"Content-Type": "application/json"}
@@ -113,7 +127,9 @@ class ReportDeliveryService:
         for attempt in range(self.max_retries):
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.post(self.webhook_url, content=body, headers=headers)
+                    resp = await client.post(
+                        self.webhook_url, content=body, headers=headers
+                    )
                     resp.raise_for_status()
                 logger.info(f"Report webhook delivered for {job_name}")
                 return "delivered"
@@ -122,7 +138,9 @@ class ReportDeliveryService:
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(2**attempt)
 
-        logger.error(f"Report webhook failed after {self.max_retries} attempts: {last_error}")
+        logger.error(
+            f"Report webhook failed after {self.max_retries} attempts: {last_error}"
+        )
         return f"failed: {last_error}"
 
     async def _deliver_slack(self, report_result: dict[str, Any], job_name: str) -> str:
@@ -133,9 +151,9 @@ class ReportDeliveryService:
 
         payload = {
             "text": f"{status_emoji} *Scheduled Report: {job_name}*\n"
-                    f"Status: {status}\n"
-                    f"Report ID: `{report_id}`\n"
-                    f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            f"Status: {status}\n"
+            f"Report ID: `{report_id}`\n"
+            f"Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
         }
 
         last_error = None
@@ -155,14 +173,16 @@ class ReportDeliveryService:
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(2**attempt)
 
-        logger.error(f"Slack delivery failed after {self.max_retries} attempts: {last_error}")
+        logger.error(
+            f"Slack delivery failed after {self.max_retries} attempts: {last_error}"
+        )
         return f"failed: {last_error}"
 
     async def _deliver_email(self, report_result: dict[str, Any], job_name: str) -> str:
         """Send report notification via SMTP email."""
         report_id = report_result.get("report_id", "unknown")
         status = report_result.get("status", "unknown")
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = f"Scheduled Report: {job_name} - {status}"
@@ -199,7 +219,9 @@ class ReportDeliveryService:
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(2**attempt)
 
-        logger.error(f"Email delivery failed after {self.max_retries} attempts: {last_error}")
+        logger.error(
+            f"Email delivery failed after {self.max_retries} attempts: {last_error}"
+        )
         return f"failed: {last_error}"
 
 
@@ -321,7 +343,11 @@ class ScheduledReportManager:
         )
 
     async def _generate_and_deliver(
-        self, report_type_name: str, report_type_val: str, format_val: str, job_name: str
+        self,
+        report_type_name: str,
+        report_type_val: str,
+        format_val: str,
+        job_name: str,
     ) -> dict[str, Any]:
         """Generate a report and deliver via configured channels."""
         logger.info(f"Generating {report_type_name}")
@@ -339,7 +365,9 @@ class ScheduledReportManager:
                 format=ReportFormat(format_val),
             )
 
-            metadata = await report_generator.generate_report(report_req, f"scheduler:{job_name}")
+            metadata = await report_generator.generate_report(
+                report_req, f"scheduler:{job_name}"
+            )
 
             result = {"status": "success", "report_id": metadata.report_id}
             logger.info(f"{report_type_name} generated: {metadata.report_id}")
@@ -358,7 +386,9 @@ class ScheduledReportManager:
             # Notify delivery channels about failure too
             if self.delivery.has_delivery_channels:
                 try:
-                    delivery_results = await self.delivery.deliver(result, report_type_name)
+                    delivery_results = await self.delivery.deliver(
+                        result, report_type_name
+                    )
                     result["delivery"] = delivery_results
                 except Exception as de:
                     logger.error(f"Delivery notification also failed: {de}")
@@ -466,9 +496,7 @@ class ScheduledReportManager:
                 day_of_week=schedule.get("day_of_week"),
             )
         elif schedule_type == "interval":
-            return DateTrigger(
-                run_date=datetime.fromisoformat(schedule["run_at"])
-            )
+            return DateTrigger(run_date=datetime.fromisoformat(schedule["run_at"]))
         else:
             raise ValueError(f"Unknown schedule type: {schedule_type}")
 

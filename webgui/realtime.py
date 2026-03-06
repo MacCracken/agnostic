@@ -54,7 +54,7 @@ class WebSocketMessage:
 
 
 class MessageBuffer:
-    """Redis Streams–based message buffer for missed-message recovery.
+    """Redis Streams-based message buffer for missed-message recovery.
 
     Each subscribed channel gets a stream key: ``stream:{channel}``.
     Messages are appended with XADD (capped at STREAM_MAX_LEN).
@@ -79,7 +79,13 @@ class MessageBuffer:
                 {"payload": json.dumps(message_data)},
                 maxlen=self.max_len,
             )
-            return msg_id if isinstance(msg_id, str) else msg_id.decode() if msg_id else None
+            return (
+                msg_id
+                if isinstance(msg_id, str)
+                else msg_id.decode()
+                if msg_id
+                else None
+            )
         except Exception as e:
             logger.debug(f"Stream buffer write failed for {channel}: {e}")
             return None
@@ -331,7 +337,9 @@ class RealtimeManager:
                 logger.error(f"Error replaying message {stream_id}: {e}")
 
         if count:
-            logger.info(f"Replayed {count} missed messages for {connection_id} on {channel}")
+            logger.info(
+                f"Replayed {count} missed messages for {connection_id} on {channel}"
+            )
         return count
 
     async def _redis_listener(self):
@@ -383,7 +391,9 @@ class RealtimeManager:
                         if session_channel in subscriptions:
                             target_connections.append(conn_id)
                     # Also notify all connected clients about task activity
-                    target_connections.extend(list(self.connection_subscriptions.keys()))
+                    target_connections.extend(
+                        list(self.connection_subscriptions.keys())
+                    )
 
             elif channel == "webgui:notifications":
                 # Global notifications - send to all connections
@@ -429,7 +439,9 @@ class RealtimeManager:
                     try:
                         await websocket.send_json(payload)
                     except Exception as e:
-                        logger.error(f"Error sending to connection {connection_id}: {e}")
+                        logger.error(
+                            f"Error sending to connection {connection_id}: {e}"
+                        )
                         await self.remove_connection(connection_id)
                 else:
                     await self.send_to_connection(connection_id, message)

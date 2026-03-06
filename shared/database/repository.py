@@ -3,10 +3,10 @@ Repository for test result persistence operations.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database.models import TestMetrics, TestReport, TestResult, TestSession
@@ -53,7 +53,7 @@ class TestResultRepository:
         if session:
             session.status = status
             if status in ("completed", "failed", "cancelled"):
-                session.completed_at = datetime.now(timezone.utc)
+                session.completed_at = datetime.now(UTC)
             await self.session.commit()
             await self.session.refresh(session)
         return session
@@ -107,7 +107,9 @@ class TestResultRepository:
             select(
                 TestResult.status,
                 func.count(TestResult.id).label("count"),
-            ).where(TestResult.session_id == session_id).group_by(TestResult.status)
+            )
+            .where(TestResult.session_id == session_id)
+            .group_by(TestResult.status)
         )
         summary = {row.status: row.count for row in result.all()}
 
@@ -135,7 +137,9 @@ class TestResultRepository:
         query = select(TestSession)
         if status:
             query = query.where(TestSession.status == status)
-        query = query.order_by(TestSession.created_at.desc()).limit(limit).offset(offset)
+        query = (
+            query.order_by(TestSession.created_at.desc()).limit(limit).offset(offset)
+        )
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
@@ -218,11 +222,9 @@ class TestResultRepository:
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def get_quality_trends(
-        self, days: int = 30
-    ) -> list[dict[str, Any]]:
+    async def get_quality_trends(self, days: int = 30) -> list[dict[str, Any]]:
         """Get quality trends over time."""
-        since = datetime.now(timezone.utc) - timedelta(days=days)
+        since = datetime.now(UTC) - timedelta(days=days)
 
         result = await self.session.execute(
             select(

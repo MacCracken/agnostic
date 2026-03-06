@@ -13,7 +13,6 @@ import hmac
 import json
 import logging
 import os
-import re
 import sys
 import uuid
 from dataclasses import asdict
@@ -40,6 +39,7 @@ api_router = APIRouter(prefix="/api")
 # Auth dependency
 # ---------------------------------------------------------------------------
 
+
 async def get_current_user(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
@@ -54,7 +54,12 @@ async def get_current_user(
         # Static env-var key (simple deployments) — constant-time compare prevents timing attacks
         static_key = os.getenv("AGNOSTIC_API_KEY")
         if static_key and hmac.compare_digest(x_api_key, static_key):
-            audit_log(AuditAction.AUTH_API_KEY_USED, actor="api-key-user", resource_type="auth", detail={"method": "static"})
+            audit_log(
+                AuditAction.AUTH_API_KEY_USED,
+                actor="api-key-user",
+                resource_type="auth",
+                detail={"method": "static"},
+            )
             return {
                 "user_id": "api-key-user",
                 "email": "api@agnostic",
@@ -71,14 +76,21 @@ async def get_current_user(
             key_data = redis_client.get(f"api_key:{key_hash}")
             if key_data:
                 parsed = json.loads(key_data)
-                audit_log(AuditAction.AUTH_API_KEY_USED, actor=parsed.get("key_id", key_hash[:8]), resource_type="auth", detail={"method": "redis"})
+                audit_log(
+                    AuditAction.AUTH_API_KEY_USED,
+                    actor=parsed.get("key_id", key_hash[:8]),
+                    resource_type="auth",
+                    detail={"method": "redis"},
+                )
                 return parsed
 
             # Tenant-scoped API keys
             from shared.database.tenants import tenant_manager
 
             if tenant_manager.enabled:
-                tenant_user = tenant_manager.validate_tenant_api_key(redis_client, x_api_key)
+                tenant_user = tenant_manager.validate_tenant_api_key(
+                    redis_client, x_api_key
+                )
                 if tenant_user:
                     return tenant_user
 
@@ -116,6 +128,7 @@ def require_permission(permission: Permission):
 # Pydantic request/response models
 # ---------------------------------------------------------------------------
 
+
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -141,8 +154,12 @@ class SessionCompareRequest(BaseModel):
 
 
 _VALID_AGENTS = {
-    "security-compliance", "performance", "junior-qa", "qa-analyst",
-    "senior-qa", "qa-manager",
+    "security-compliance",
+    "performance",
+    "junior-qa",
+    "qa-analyst",
+    "senior-qa",
+    "qa-manager",
 }
 
 
@@ -151,20 +168,22 @@ class TaskSubmitRequest(BaseModel):
     description: str = Field(..., min_length=1, max_length=5000)
     target_url: str | None = None
     priority: Literal["critical", "high", "medium", "low"] = "high"
-    standards: list[str] = Field(default_factory=list)   # ["OWASP", "GDPR", ...]
-    agents: list[str] = Field(default_factory=list)      # [] = all; or subset of _VALID_AGENTS
+    standards: list[str] = Field(default_factory=list)  # ["OWASP", "GDPR", ...]
+    agents: list[str] = Field(
+        default_factory=list
+    )  # [] = all; or subset of _VALID_AGENTS
     business_goals: str = Field(
         default="Ensure quality and functionality", max_length=500
     )
     constraints: str = Field(default="Standard testing environment", max_length=500)
-    callback_url: str | None = None   # POST here on completion
+    callback_url: str | None = None  # POST here on completion
     callback_secret: str | None = None  # HMAC-SHA256 signing secret
 
 
 class TaskStatusResponse(BaseModel):
     task_id: str
     session_id: str
-    status: str       # pending | running | completed | failed
+    status: str  # pending | running | completed | failed
     created_at: str
     updated_at: str
     result: dict | None = None
@@ -178,6 +197,7 @@ class ApiKeyCreateRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Auth endpoints
 # ---------------------------------------------------------------------------
+
 
 @api_router.post("/auth/login")
 async def login(req: LoginRequest):
@@ -227,6 +247,7 @@ async def auth_me(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 # API key management endpoints (require SYSTEM_CONFIGURE permission)
 # ---------------------------------------------------------------------------
+
 
 @api_router.post("/auth/api-keys")
 async def create_api_key(
@@ -287,6 +308,7 @@ async def delete_api_key(
 # Task submission endpoints (P1)
 # ---------------------------------------------------------------------------
 
+
 @api_router.post("/tasks", response_model=TaskStatusResponse)
 async def submit_task(
     req: TaskSubmitRequest,
@@ -296,9 +318,7 @@ async def submit_task(
     from config.environment import config
 
     task_id = str(uuid.uuid4())
-    session_id = (
-        f"session_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{task_id[:8]}"
-    )
+    session_id = f"session_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{task_id[:8]}"
     now = datetime.now(UTC).isoformat()
 
     requirements = {
@@ -332,8 +352,14 @@ async def submit_task(
     task_redis_key = tenant_manager.task_key(tenant_id, task_id)
 
     # Rate limit check for tenant
-    if tenant_manager.enabled and not tenant_manager.check_rate_limit(redis_client, tenant_id):
-        audit_log(AuditAction.RATE_LIMIT_EXCEEDED, actor=user.get("user_id"), tenant_id=tenant_id)
+    if tenant_manager.enabled and not tenant_manager.check_rate_limit(
+        redis_client, tenant_id
+    ):
+        audit_log(
+            AuditAction.RATE_LIMIT_EXCEEDED,
+            actor=user.get("user_id"),
+            tenant_id=tenant_id,
+        )
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     redis_client.setex(task_redis_key, 86400, json.dumps(task_record))
@@ -351,7 +377,12 @@ async def submit_task(
         )
     )
 
-    audit_log(AuditAction.TASK_SUBMITTED, actor=user.get("user_id"), resource_type="task", resource_id=task_id)
+    audit_log(
+        AuditAction.TASK_SUBMITTED,
+        actor=user.get("user_id"),
+        resource_type="task",
+        resource_id=task_id,
+    )
 
     return TaskStatusResponse(**task_record)
 
@@ -389,24 +420,33 @@ async def _run_task_async(
 
     def _update_task(status: str, result: dict | None = None) -> dict[str, Any]:
         raw = redis_client.get(task_redis_key)
-        record: dict[str, Any] = json.loads(raw) if raw else {
-            "task_id": task_id,
-            "session_id": session_id,
-            "created_at": datetime.now(UTC).isoformat(),
-        }
+        record: dict[str, Any] = (
+            json.loads(raw)
+            if raw
+            else {
+                "task_id": task_id,
+                "session_id": session_id,
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+        )
         record["status"] = status
         record["updated_at"] = datetime.now(UTC).isoformat()
         record["result"] = result
         redis_client.setex(task_redis_key, 86400, json.dumps(record))
 
         # Publish task update to WebSocket subscribers
-        redis_client.publish(f"task:{task_id}", json.dumps({
-            "type": "task_status_changed",
-            "task_id": task_id,
-            "status": status,
-            "timestamp": datetime.now(UTC).isoformat(),
-            "result": result,
-        }))
+        redis_client.publish(
+            f"task:{task_id}",
+            json.dumps(
+                {
+                    "type": "task_status_changed",
+                    "task_id": task_id,
+                    "status": status,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "result": result,
+                }
+            ),
+        )
 
         return record
 
@@ -493,6 +533,7 @@ async def _fire_webhook(
 # Agent-specific convenience endpoints (P4)
 # ---------------------------------------------------------------------------
 
+
 @api_router.post("/tasks/security", response_model=TaskStatusResponse)
 async def submit_security_task(
     req: TaskSubmitRequest,
@@ -537,13 +578,14 @@ async def submit_full_task(
 # P8 — A2A (Agent-to-Agent) protocol endpoints
 # ---------------------------------------------------------------------------
 
+
 class A2AMessage(BaseModel):
     id: str
-    type: str           # "a2a:delegate", "a2a:heartbeat", etc.
+    type: str  # "a2a:delegate", "a2a:heartbeat", etc.
     fromPeerId: str
     toPeerId: str
     payload: dict[str, Any] = {}
-    timestamp: int      # Unix milliseconds
+    timestamp: int  # Unix milliseconds
 
 
 @api_router.post("/v1/a2a/receive")
@@ -569,7 +611,11 @@ async def receive_a2a_message(
         return {"accepted": True, "message_id": msg.id, "timestamp": msg.timestamp}
 
     # Unknown message type — acknowledge receipt but take no action
-    return {"accepted": True, "message_id": msg.id, "warning": f"Unhandled type: {msg.type}"}
+    return {
+        "accepted": True,
+        "message_id": msg.id,
+        "warning": f"Unhandled type: {msg.type}",
+    }
 
 
 @api_router.get("/v1/a2a/capabilities")
@@ -599,6 +645,7 @@ async def a2a_capabilities():
 # ---------------------------------------------------------------------------
 # Dashboard endpoints
 # ---------------------------------------------------------------------------
+
 
 @api_router.get("/dashboard")
 async def get_dashboard(user: dict = Depends(get_current_user)):
@@ -636,6 +683,7 @@ async def get_dashboard_metrics(user: dict = Depends(get_current_user)):
 async def get_agent_dashboard(user: dict = Depends(get_current_user)):
     """Per-agent metrics: task counts, success rates, LLM token usage."""
     from shared.agent_metrics import get_agent_metrics
+
     return {"agents": get_agent_metrics()}
 
 
@@ -643,12 +691,14 @@ async def get_agent_dashboard(user: dict = Depends(get_current_user)):
 async def get_llm_dashboard(user: dict = Depends(get_current_user)):
     """Aggregated LLM usage metrics: call counts, error rates, by method."""
     from shared.agent_metrics import get_llm_metrics
+
     return {"llm": get_llm_metrics()}
 
 
 # ---------------------------------------------------------------------------
 # Session endpoints
 # ---------------------------------------------------------------------------
+
 
 @api_router.get("/sessions")
 async def get_sessions(
@@ -660,7 +710,9 @@ async def get_sessions(
     from webgui.history import history_manager
 
     sessions = await history_manager.get_session_history(
-        user_id=user_id, limit=limit, offset=offset,
+        user_id=user_id,
+        limit=limit,
+        offset=offset,
     )
     return [asdict(s) for s in sessions]
 
@@ -695,7 +747,8 @@ async def compare_sessions(
     from webgui.history import history_manager
 
     comparison = await history_manager.compare_sessions(
-        req.session1_id, req.session2_id,
+        req.session1_id,
+        req.session2_id,
     )
     if comparison is None:
         raise HTTPException(status_code=404, detail="One or both sessions not found")
@@ -705,6 +758,7 @@ async def compare_sessions(
 # ---------------------------------------------------------------------------
 # Report endpoints
 # ---------------------------------------------------------------------------
+
 
 @api_router.get("/reports")
 async def list_reports(user: dict = Depends(get_current_user)):
@@ -732,7 +786,9 @@ async def generate_report(
         report_type = ReportType(req.report_type)
         report_format = ReportFormat(req.format)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid report type or format: {e}") from e
+        raise HTTPException(
+            status_code=400, detail=f"Invalid report type or format: {e}"
+        ) from e
 
     report_req = ReportRequest(
         session_id=req.session_id,
@@ -740,7 +796,12 @@ async def generate_report(
         format=report_format,
     )
     metadata = await report_generator.generate_report(report_req, user["user_id"])
-    audit_log(AuditAction.REPORT_GENERATED, actor=user.get("user_id"), resource_type="report", resource_id=metadata.report_id)
+    audit_log(
+        AuditAction.REPORT_GENERATED,
+        actor=user.get("user_id"),
+        resource_type="report",
+        resource_id=metadata.report_id,
+    )
     return {
         "report_id": metadata.report_id,
         "generated_at": metadata.generated_at.isoformat(),
@@ -774,13 +835,20 @@ async def download_report(
     # Prevent path traversal: ensure file is inside the reports directory
     resolved = Path(file_path).resolve()
     if not resolved.is_relative_to(_REPORTS_DIR):
-        logger.warning("Path traversal attempt blocked for report %s: %s", report_id, file_path)
+        logger.warning(
+            "Path traversal attempt blocked for report %s: %s", report_id, file_path
+        )
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not resolved.exists():
         raise HTTPException(status_code=404, detail="Report file not found on disk")
 
-    audit_log(AuditAction.REPORT_DOWNLOADED, actor=user.get("user_id"), resource_type="report", resource_id=report_id)
+    audit_log(
+        AuditAction.REPORT_DOWNLOADED,
+        actor=user.get("user_id"),
+        resource_type="report",
+        resource_id=report_id,
+    )
 
     return FileResponse(
         path=str(resolved),
@@ -792,8 +860,6 @@ async def download_report(
 # ---------------------------------------------------------------------------
 # Scheduled Report endpoints
 # ---------------------------------------------------------------------------
-
-from pydantic import BaseModel
 
 
 class ScheduleReportRequest(BaseModel):
@@ -834,7 +900,12 @@ async def schedule_report(
             tenant_id=user.get("tenant_id"),
         )
 
-        audit_log(AuditAction.REPORT_SCHEDULED, actor=user.get("user_id"), resource_type="report", resource_id=job_id)
+        audit_log(
+            AuditAction.REPORT_SCHEDULED,
+            actor=user.get("user_id"),
+            resource_type="report",
+            resource_id=job_id,
+        )
 
         jobs = scheduled_report_manager.get_jobs()
         job = next((j for j in jobs if j["id"] == job_id), None)
@@ -845,10 +916,10 @@ async def schedule_report(
             "next_run": job["next_run"] if job else None,
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Failed to schedule report: {e}")
-        raise HTTPException(status_code=500, detail="Failed to schedule report")
+        raise HTTPException(status_code=500, detail="Failed to schedule report") from e
 
 
 @api_router.delete("/reports/scheduled/{job_id}")
@@ -859,7 +930,12 @@ async def delete_scheduled_report(
     from webgui.scheduled_reports import scheduled_report_manager
 
     if scheduled_report_manager.remove_job(job_id):
-        audit_log(AuditAction.REPORT_SCHEDULE_REMOVED, actor=user.get("user_id"), resource_type="report", resource_id=job_id)
+        audit_log(
+            AuditAction.REPORT_SCHEDULE_REMOVED,
+            actor=user.get("user_id"),
+            resource_type="report",
+            resource_id=job_id,
+        )
         return {"status": "deleted", "job_id": job_id}
     raise HTTPException(status_code=404, detail="Job not found")
 
@@ -867,6 +943,7 @@ async def delete_scheduled_report(
 # ---------------------------------------------------------------------------
 # Agent endpoints
 # ---------------------------------------------------------------------------
+
 
 @api_router.get("/agents")
 async def get_agents(user: dict = Depends(get_current_user)):
@@ -900,6 +977,7 @@ async def get_agent_detail(
 # Metrics endpoint (unauthenticated — for Prometheus scraping)
 # ---------------------------------------------------------------------------
 
+
 @api_router.get("/metrics")
 async def get_metrics():
     from shared.metrics import get_content_type, get_metrics_text
@@ -913,6 +991,7 @@ async def get_metrics():
 # ---------------------------------------------------------------------------
 # Structured Result Schemas for YEOMAN
 # ---------------------------------------------------------------------------
+
 
 @api_router.get("/results/structured/{session_id}")
 async def get_structured_results(
@@ -928,6 +1007,7 @@ async def get_structured_results(
     - Alert on flaky tests
     """
     try:
+        from config.environment import config
         from shared.yeoman_schemas import (
             PerformanceResult,
             QAReport,
@@ -945,17 +1025,24 @@ async def get_structured_results(
                 sec = json.loads(security_data)
                 findings = []
                 for v in sec.get("vulnerabilities", []):
-                    from shared.yeoman_schemas import Finding, FindingCategory, FindingSeverity
-                    findings.append(Finding(
-                        finding_id=v.get("id", f"sec-{len(findings)}"),
-                        title=v.get("description", "Unknown vulnerability"),
-                        description=v.get("description", ""),
-                        severity=FindingSeverity(v.get("severity", "medium")),
-                        category=FindingCategory.SECURITY,
-                        component=v.get("component", "unknown"),
-                        cwe_id=v.get("cwe_id"),
-                        cvss_score=v.get("cvss_score"),
-                    ))
+                    from shared.yeoman_schemas import (
+                        Finding,
+                        FindingCategory,
+                        FindingSeverity,
+                    )
+
+                    findings.append(
+                        Finding(
+                            finding_id=v.get("id", f"sec-{len(findings)}"),
+                            title=v.get("description", "Unknown vulnerability"),
+                            description=v.get("description", ""),
+                            severity=FindingSeverity(v.get("severity", "medium")),
+                            category=FindingCategory.SECURITY,
+                            component=v.get("component", "unknown"),
+                            cwe_id=v.get("cwe_id"),
+                            cvss_score=v.get("cvss_score"),
+                        )
+                    )
                 results["security"] = SecurityResult(
                     scan_id=f"scan-{session_id}",
                     session_id=session_id,
@@ -992,7 +1079,9 @@ async def get_structured_results(
                     session_id=session_id,
                     test_type="automated",
                     timestamp=datetime.now(UTC).isoformat(),
-                    status="passed" if test.get("passed", 0) > test.get("failed", 0) else "failed",
+                    status="passed"
+                    if test.get("passed", 0) > test.get("failed", 0)
+                    else "failed",
                     total_tests=test.get("total", 0),
                     passed=test.get("passed", 0),
                     failed=test.get("failed", 0),
@@ -1018,14 +1107,12 @@ async def get_structured_results(
 
     except Exception as e:
         logger.error(f"Error generating structured results: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # ---------------------------------------------------------------------------
 # Test Result Persistence (PostgreSQL) endpoints
 # ---------------------------------------------------------------------------
-
-from pydantic import BaseModel
 
 
 class TestSessionCreate(BaseModel):
@@ -1076,7 +1163,6 @@ def _get_db_repo():
         return None
     try:
         from shared.database.repository import TestResultRepository
-        from shared.database.models import get_session
 
         return TestResultRepository
     except Exception:
@@ -1280,8 +1366,8 @@ async def get_tenant_repo():
     if not MULTI_TENANT_ENABLED or not DATABASE_ENABLED:
         return None
     try:
-        from shared.database.tenant_repository import TenantRepository
         from shared.database.models import get_session
+        from shared.database.tenant_repository import TenantRepository
 
         session = await get_session()
         return TenantRepository(session)
@@ -1293,7 +1379,8 @@ def _require_tenant_enabled():
     """Raise 503 if multi-tenancy is not enabled."""
     if not MULTI_TENANT_ENABLED:
         raise HTTPException(
-            status_code=503, detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true"
+            status_code=503,
+            detail="Multi-tenancy not enabled. Set MULTI_TENANT_ENABLED=true",
         )
     if not DATABASE_ENABLED:
         raise HTTPException(
@@ -1530,6 +1617,7 @@ async def remove_tenant_user(
 # AGNOS OS Agent Registration endpoints
 # ---------------------------------------------------------------------------
 
+
 @api_router.get("/agents/registration-status")
 async def get_agent_registration_status(
     user: dict = Depends(get_current_user),
@@ -1540,7 +1628,7 @@ async def get_agent_registration_status(
 
         return agent_registry_client.get_registration_status()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @api_router.post("/agents/register-agnostic")
@@ -1557,7 +1645,7 @@ async def register_agnostic_agents(
         results = await agent_registry_client.register_all_agents()
         return {"results": results}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @api_router.post("/agents/deregister-agnostic")
@@ -1574,4 +1662,4 @@ async def deregister_agnostic_agents(
         results = await agent_registry_client.deregister_all_agents()
         return {"results": results}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

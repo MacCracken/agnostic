@@ -107,9 +107,7 @@ class AgentRegistry:
                 "celery_task",
                 defaults.get("celery_task", f"{role}.handle_task"),
             )
-            celery_queue = info.get(
-                "celery_queue", defaults.get("celery_queue", role)
-            )
+            celery_queue = info.get("celery_queue", defaults.get("celery_queue", role))
             redis_prefix = info.get(
                 "redis_prefix", defaults.get("redis_prefix", key.split("-")[0])
             )

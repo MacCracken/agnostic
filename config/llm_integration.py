@@ -11,18 +11,30 @@ from typing import Any
 
 import litellm
 
-from shared.metrics import LLM_CALLS_TOTAL, LLM_CALL_DURATION, LLM_TOKENS_PROMPT, LLM_TOKENS_COMPLETION
+from shared.metrics import (
+    LLM_CALL_DURATION,
+    LLM_CALLS_TOTAL,
+    LLM_TOKENS_COMPLETION,
+    LLM_TOKENS_PROMPT,
+)
 from shared.resilience import CircuitBreaker
 
 logger = logging.getLogger(__name__)
 
-_llm_circuit = CircuitBreaker(name="llm_api", failure_threshold=5, recovery_timeout=60.0)
+_llm_circuit = CircuitBreaker(
+    name="llm_api", failure_threshold=5, recovery_timeout=60.0
+)
 
 
 class LLMIntegrationService:
     """Service for integrating with various LLM providers for tool implementations."""
 
-    def __init__(self, model_name: str | None = None, temperature: float = 0.3, agent_name: str = "unknown"):
+    def __init__(
+        self,
+        model_name: str | None = None,
+        temperature: float = 0.3,
+        agent_name: str = "unknown",
+    ):
         """Initialize LLM service with specified model."""
         self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o")
         self.temperature = temperature
@@ -60,7 +72,10 @@ class LLMIntegrationService:
             response = await litellm.acompletion(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are an expert QA engineer specializing in test scenario generation."},
+                    {
+                        "role": "system",
+                        "content": "You are an expert QA engineer specializing in test scenario generation.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=self.temperature,
@@ -75,21 +90,31 @@ class LLMIntegrationService:
 
             scenarios = json.loads(content)
             _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(method="generate_test_scenarios", status="success").inc()
+            LLM_CALLS_TOTAL.labels(
+                method="generate_test_scenarios", status="success"
+            ).inc()
             if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="generate_test_scenarios").inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="generate_test_scenarios").inc(response.usage.completion_tokens or 0)
+                LLM_TOKENS_PROMPT.labels(
+                    agent=self._agent_name, method="generate_test_scenarios"
+                ).inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(
+                    agent=self._agent_name, method="generate_test_scenarios"
+                ).inc(response.usage.completion_tokens or 0)
             return (
                 scenarios if isinstance(scenarios, list) else self._fallback_scenarios()
             )
 
         except Exception as e:
             _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(method="generate_test_scenarios", status="error").inc()
+            LLM_CALLS_TOTAL.labels(
+                method="generate_test_scenarios", status="error"
+            ).inc()
             logger.error(f"LLM scenario generation failed: {e}")
             return self._fallback_scenarios()
         finally:
-            LLM_CALL_DURATION.labels(method="generate_test_scenarios").observe(time.monotonic() - start)
+            LLM_CALL_DURATION.labels(method="generate_test_scenarios").observe(
+                time.monotonic() - start
+            )
 
     async def extract_acceptance_criteria(self, requirements: str) -> list[str]:
         """Extract acceptance criteria using LLM from requirements."""
@@ -113,7 +138,10 @@ class LLMIntegrationService:
             response = await litellm.acompletion(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are an expert QA engineer specializing in requirements analysis."},
+                    {
+                        "role": "system",
+                        "content": "You are an expert QA engineer specializing in requirements analysis.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=self.temperature,
@@ -127,19 +155,29 @@ class LLMIntegrationService:
 
             criteria = json.loads(content)
             _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(method="extract_acceptance_criteria", status="success").inc()
+            LLM_CALLS_TOTAL.labels(
+                method="extract_acceptance_criteria", status="success"
+            ).inc()
             if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="extract_acceptance_criteria").inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="extract_acceptance_criteria").inc(response.usage.completion_tokens or 0)
+                LLM_TOKENS_PROMPT.labels(
+                    agent=self._agent_name, method="extract_acceptance_criteria"
+                ).inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(
+                    agent=self._agent_name, method="extract_acceptance_criteria"
+                ).inc(response.usage.completion_tokens or 0)
             return criteria if isinstance(criteria, list) else self._fallback_criteria()
 
         except Exception as e:
             _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(method="extract_acceptance_criteria", status="error").inc()
+            LLM_CALLS_TOTAL.labels(
+                method="extract_acceptance_criteria", status="error"
+            ).inc()
             logger.error(f"LLM criteria extraction failed: {e}")
             return self._fallback_criteria()
         finally:
-            LLM_CALL_DURATION.labels(method="extract_acceptance_criteria").observe(time.monotonic() - start)
+            LLM_CALL_DURATION.labels(method="extract_acceptance_criteria").observe(
+                time.monotonic() - start
+            )
 
     async def identify_test_risks(self, requirements: str) -> list[str]:
         """Identify potential test risks using LLM from requirements."""
@@ -166,7 +204,10 @@ class LLMIntegrationService:
             response = await litellm.acompletion(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are an expert QA risk analyst with deep experience in testing risk identification."},
+                    {
+                        "role": "system",
+                        "content": "You are an expert QA risk analyst with deep experience in testing risk identification.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=self.temperature,
@@ -182,8 +223,12 @@ class LLMIntegrationService:
             _llm_circuit.record_success()
             LLM_CALLS_TOTAL.labels(method="identify_test_risks", status="success").inc()
             if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="identify_test_risks").inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="identify_test_risks").inc(response.usage.completion_tokens or 0)
+                LLM_TOKENS_PROMPT.labels(
+                    agent=self._agent_name, method="identify_test_risks"
+                ).inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(
+                    agent=self._agent_name, method="identify_test_risks"
+                ).inc(response.usage.completion_tokens or 0)
             return risks if isinstance(risks, list) else self._fallback_risks()
 
         except Exception as e:
@@ -192,7 +237,9 @@ class LLMIntegrationService:
             logger.error(f"LLM risk identification failed: {e}")
             return self._fallback_risks()
         finally:
-            LLM_CALL_DURATION.labels(method="identify_test_risks").observe(time.monotonic() - start)
+            LLM_CALL_DURATION.labels(method="identify_test_risks").observe(
+                time.monotonic() - start
+            )
 
     async def perform_fuzzy_verification(
         self, test_results: dict[str, Any], business_goals: str
@@ -228,7 +275,10 @@ class LLMIntegrationService:
             response = await litellm.acompletion(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are an expert QA analyst specializing in test result verification and business alignment."},
+                    {
+                        "role": "system",
+                        "content": "You are an expert QA analyst specializing in test result verification and business alignment.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=self.temperature,
@@ -242,10 +292,16 @@ class LLMIntegrationService:
 
             verification = json.loads(content)
             _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(method="perform_fuzzy_verification", status="success").inc()
+            LLM_CALLS_TOTAL.labels(
+                method="perform_fuzzy_verification", status="success"
+            ).inc()
             if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="perform_fuzzy_verification").inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="perform_fuzzy_verification").inc(response.usage.completion_tokens or 0)
+                LLM_TOKENS_PROMPT.labels(
+                    agent=self._agent_name, method="perform_fuzzy_verification"
+                ).inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(
+                    agent=self._agent_name, method="perform_fuzzy_verification"
+                ).inc(response.usage.completion_tokens or 0)
             return (
                 verification
                 if isinstance(verification, dict)
@@ -254,11 +310,15 @@ class LLMIntegrationService:
 
         except Exception as e:
             _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(method="perform_fuzzy_verification", status="error").inc()
+            LLM_CALLS_TOTAL.labels(
+                method="perform_fuzzy_verification", status="error"
+            ).inc()
             logger.error(f"LLM fuzzy verification failed: {e}")
             return self._fallback_verification(test_results, business_goals)
         finally:
-            LLM_CALL_DURATION.labels(method="perform_fuzzy_verification").observe(time.monotonic() - start)
+            LLM_CALL_DURATION.labels(method="perform_fuzzy_verification").observe(
+                time.monotonic() - start
+            )
 
     async def analyze_security_findings(
         self, scan_results: dict[str, Any]
@@ -294,7 +354,10 @@ class LLMIntegrationService:
             response = await litellm.acompletion(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a cybersecurity expert specializing in vulnerability analysis and risk assessment."},
+                    {
+                        "role": "system",
+                        "content": "You are a cybersecurity expert specializing in vulnerability analysis and risk assessment.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=self.temperature,
@@ -308,10 +371,16 @@ class LLMIntegrationService:
 
             analysis = json.loads(content)
             _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(method="analyze_security_findings", status="success").inc()
+            LLM_CALLS_TOTAL.labels(
+                method="analyze_security_findings", status="success"
+            ).inc()
             if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="analyze_security_findings").inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="analyze_security_findings").inc(response.usage.completion_tokens or 0)
+                LLM_TOKENS_PROMPT.labels(
+                    agent=self._agent_name, method="analyze_security_findings"
+                ).inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(
+                    agent=self._agent_name, method="analyze_security_findings"
+                ).inc(response.usage.completion_tokens or 0)
             return (
                 analysis
                 if isinstance(analysis, dict)
@@ -320,11 +389,15 @@ class LLMIntegrationService:
 
         except Exception as e:
             _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(method="analyze_security_findings", status="error").inc()
+            LLM_CALLS_TOTAL.labels(
+                method="analyze_security_findings", status="error"
+            ).inc()
             logger.error(f"LLM security analysis failed: {e}")
             return self._fallback_security_analysis(scan_results)
         finally:
-            LLM_CALL_DURATION.labels(method="analyze_security_findings").observe(time.monotonic() - start)
+            LLM_CALL_DURATION.labels(method="analyze_security_findings").observe(
+                time.monotonic() - start
+            )
 
     async def generate_performance_profile(
         self, performance_data: dict[str, Any]
@@ -360,7 +433,10 @@ class LLMIntegrationService:
             response = await litellm.acompletion(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a performance engineering expert specializing in system optimization and capacity planning."},
+                    {
+                        "role": "system",
+                        "content": "You are a performance engineering expert specializing in system optimization and capacity planning.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=self.temperature,
@@ -374,10 +450,16 @@ class LLMIntegrationService:
 
             profile = json.loads(content)
             _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(method="generate_performance_profile", status="success").inc()
+            LLM_CALLS_TOTAL.labels(
+                method="generate_performance_profile", status="success"
+            ).inc()
             if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(agent=self._agent_name, method="generate_performance_profile").inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(agent=self._agent_name, method="generate_performance_profile").inc(response.usage.completion_tokens or 0)
+                LLM_TOKENS_PROMPT.labels(
+                    agent=self._agent_name, method="generate_performance_profile"
+                ).inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(
+                    agent=self._agent_name, method="generate_performance_profile"
+                ).inc(response.usage.completion_tokens or 0)
             return (
                 profile
                 if isinstance(profile, dict)
@@ -386,11 +468,15 @@ class LLMIntegrationService:
 
         except Exception as e:
             _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(method="generate_performance_profile", status="error").inc()
+            LLM_CALLS_TOTAL.labels(
+                method="generate_performance_profile", status="error"
+            ).inc()
             logger.error(f"LLM performance profiling failed: {e}")
             return self._fallback_performance_analysis(performance_data)
         finally:
-            LLM_CALL_DURATION.labels(method="generate_performance_profile").observe(time.monotonic() - start)
+            LLM_CALL_DURATION.labels(method="generate_performance_profile").observe(
+                time.monotonic() - start
+            )
 
     def _fallback_scenarios(self) -> list[str]:
         """Fallback scenarios when LLM is unavailable."""

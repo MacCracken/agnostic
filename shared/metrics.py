@@ -10,8 +10,13 @@ guarding imports.
 from __future__ import annotations
 
 try:
-    from prometheus_client import Counter, Gauge, Histogram
-    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    from prometheus_client import (
+        CONTENT_TYPE_LATEST,
+        Counter,
+        Gauge,
+        Histogram,
+        generate_latest,
+    )
 
     PROMETHEUS_AVAILABLE = True
 except ImportError:
@@ -22,22 +27,23 @@ except ImportError:
 # No-op fallback when prometheus_client is absent
 # ------------------------------------------------------------------
 
+
 class _NoOpMetric:
     """Drop-in replacement that silently ignores all metric operations."""
 
-    def labels(self, **_kwargs: object) -> "_NoOpMetric":
+    def labels(self, **_kwargs: object) -> _NoOpMetric:
         return self
 
-    def inc(self, amount: float = 1) -> None:  # noqa: ARG002
+    def inc(self, amount: float = 1) -> None:
         pass
 
-    def dec(self, amount: float = 1) -> None:  # noqa: ARG002
+    def dec(self, amount: float = 1) -> None:
         pass
 
-    def observe(self, amount: float) -> None:  # noqa: ARG002
+    def observe(self, amount: float) -> None:
         pass
 
-    def set(self, value: float) -> None:  # noqa: ARG002
+    def set(self, value: float) -> None:
         pass
 
 
@@ -45,19 +51,26 @@ class _NoOpMetric:
 # Metric definitions
 # ------------------------------------------------------------------
 
-def _counter(name: str, documentation: str, labelnames: tuple[str, ...]) -> Counter | _NoOpMetric:
+
+def _counter(
+    name: str, documentation: str, labelnames: tuple[str, ...]
+) -> Counter | _NoOpMetric:
     if PROMETHEUS_AVAILABLE:
         return Counter(name, documentation, labelnames)
     return _NoOpMetric()
 
 
-def _histogram(name: str, documentation: str, labelnames: tuple[str, ...]) -> Histogram | _NoOpMetric:
+def _histogram(
+    name: str, documentation: str, labelnames: tuple[str, ...]
+) -> Histogram | _NoOpMetric:
     if PROMETHEUS_AVAILABLE:
         return Histogram(name, documentation, labelnames)
     return _NoOpMetric()
 
 
-def _gauge(name: str, documentation: str, labelnames: tuple[str, ...]) -> Gauge | _NoOpMetric:
+def _gauge(
+    name: str, documentation: str, labelnames: tuple[str, ...]
+) -> Gauge | _NoOpMetric:
     if PROMETHEUS_AVAILABLE:
         return Gauge(name, documentation, labelnames)
     return _NoOpMetric()
@@ -124,6 +137,7 @@ CIRCUIT_BREAKER_STATE = _gauge(
 # ------------------------------------------------------------------
 # Exposition helpers
 # ------------------------------------------------------------------
+
 
 def get_metrics_text() -> str:
     """Return Prometheus exposition format text, or empty string if unavailable."""

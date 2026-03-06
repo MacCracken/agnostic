@@ -8,7 +8,7 @@ security findings, block PRs on regression failures.
 
 import os
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 # Configurable thresholds for YEOMAN action triggers.
@@ -18,7 +18,7 @@ ERROR_RATE_THRESHOLD = float(os.getenv("YEOMAN_ERROR_RATE_THRESHOLD", "5.0"))
 PERF_DEGRADATION_FACTOR = float(os.getenv("YEOMAN_PERF_DEGRADATION_FACTOR", "2.0"))
 
 
-class FindingSeverity(str, Enum):
+class FindingSeverity(StrEnum):
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -26,7 +26,7 @@ class FindingSeverity(str, Enum):
     INFO = "info"
 
 
-class FindingCategory(str, Enum):
+class FindingCategory(StrEnum):
     SECURITY = "security"
     PERFORMANCE = "performance"
     FUNCTIONAL = "functional"
@@ -35,7 +35,7 @@ class FindingCategory(str, Enum):
     REGRESSION = "regression"
 
 
-class TestStatus(str, Enum):
+class TestStatus(StrEnum):
     __test__ = False  # prevent pytest collection
 
     PASSED = "passed"
@@ -47,6 +47,7 @@ class TestStatus(str, Enum):
 @dataclass
 class Finding:
     """Represents a single QA finding."""
+
     finding_id: str
     title: str
     description: str
@@ -64,6 +65,7 @@ class Finding:
 @dataclass
 class SecurityResult:
     """Structured security scan results for YEOMAN integration."""
+
     scan_id: str
     session_id: str
     scan_type: str
@@ -76,28 +78,36 @@ class SecurityResult:
 
     def to_yeoman_action(self) -> dict[str, Any]:
         """Convert to YEOMAN-actionable format."""
-        critical_findings = [f for f in self.findings if f.severity == FindingSeverity.CRITICAL]
+        critical_findings = [
+            f for f in self.findings if f.severity == FindingSeverity.CRITICAL
+        ]
         high_findings = [f for f in self.findings if f.severity == FindingSeverity.HIGH]
 
         actions = []
 
         # Auto-create issues for critical findings
         if critical_findings:
-            actions.append({
-                "type": "create_issue",
-                "priority": "highest",
-                "title": f"[CRITICAL] Security scan found {len(critical_findings)} critical issues",
-                "body": "\n\n".join(f"- {f.title}: {f.description}" for f in critical_findings),
-                "labels": ["security", "critical", "auto-generated"],
-            })
+            actions.append(
+                {
+                    "type": "create_issue",
+                    "priority": "highest",
+                    "title": f"[CRITICAL] Security scan found {len(critical_findings)} critical issues",
+                    "body": "\n\n".join(
+                        f"- {f.title}: {f.description}" for f in critical_findings
+                    ),
+                    "labels": ["security", "critical", "auto-generated"],
+                }
+            )
 
         # Block PRs if high+ findings exist
         if high_findings:
-            actions.append({
-                "type": "block_merge",
-                "reason": f"Found {len(high_findings)} high-severity security issues",
-                "findings": [f.finding_id for f in high_findings],
-            })
+            actions.append(
+                {
+                    "type": "block_merge",
+                    "reason": f"Found {len(high_findings)} high-severity security issues",
+                    "findings": [f.finding_id for f in high_findings],
+                }
+            )
 
         return {
             "scan_id": self.scan_id,
@@ -114,6 +124,7 @@ class SecurityResult:
 @dataclass
 class PerformanceResult:
     """Structured performance test results for YEOMAN integration."""
+
     test_id: str
     session_id: str
     test_type: str  # load, stress, spike, endurance
@@ -133,30 +144,40 @@ class PerformanceResult:
 
         # Alert on regression
         if self.regression_detected and self.previous_score:
-            actions.append({
-                "type": "create_issue",
-                "priority": "high",
-                "title": f"[REGRESSION] Performance degradation detected",
-                "body": f"Response time increased from {self.previous_score}ms to {self.response_times.get('avg', 0)}ms",
-                "labels": ["performance", "regression", "auto-generated"],
-            })
+            actions.append(
+                {
+                    "type": "create_issue",
+                    "priority": "high",
+                    "title": "[REGRESSION] Performance degradation detected",
+                    "body": f"Response time increased from {self.previous_score}ms to {self.response_times.get('avg', 0)}ms",
+                    "labels": ["performance", "regression", "auto-generated"],
+                }
+            )
 
         # Block on severe degradation
-        if self.previous_score and self.response_times.get("avg", 0) > self.previous_score * PERF_DEGRADATION_FACTOR:
-            actions.append({
-                "type": "block_merge",
-                "reason": f"Response time degraded by >{(PERF_DEGRADATION_FACTOR - 1) * 100:.0f}% (was {self.previous_score}ms, now {self.response_times.get('avg', 0)}ms)",
-            })
+        if (
+            self.previous_score
+            and self.response_times.get("avg", 0)
+            > self.previous_score * PERF_DEGRADATION_FACTOR
+        ):
+            actions.append(
+                {
+                    "type": "block_merge",
+                    "reason": f"Response time degraded by >{(PERF_DEGRADATION_FACTOR - 1) * 100:.0f}% (was {self.previous_score}ms, now {self.response_times.get('avg', 0)}ms)",
+                }
+            )
 
         # Alert on error rate
         if self.error_rate > ERROR_RATE_THRESHOLD:
-            actions.append({
-                "type": "create_issue",
-                "priority": "high",
-                "title": f"[HIGH ERROR RATE] {self.error_rate:.1f}% errors during load test",
-                "body": f"Error rate exceeds {ERROR_RATE_THRESHOLD}% threshold. Throughput: {self.throughput} req/s",
-                "labels": ["performance", "errors", "auto-generated"],
-            })
+            actions.append(
+                {
+                    "type": "create_issue",
+                    "priority": "high",
+                    "title": f"[HIGH ERROR RATE] {self.error_rate:.1f}% errors during load test",
+                    "body": f"Error rate exceeds {ERROR_RATE_THRESHOLD}% threshold. Throughput: {self.throughput} req/s",
+                    "labels": ["performance", "errors", "auto-generated"],
+                }
+            )
 
         return {
             "test_id": self.test_id,
@@ -173,6 +194,7 @@ class PerformanceResult:
 @dataclass
 class TestExecutionResult:
     """Structured test execution results for YEOMAN integration."""
+
     __test__ = False  # prevent pytest collection
     execution_id: str
     session_id: str
@@ -200,31 +222,40 @@ class TestExecutionResult:
 
         # Block on test failures
         if self.failed > 0:
-            actions.append({
-                "type": "block_merge",
-                "reason": f"{self.failed} tests failed",
-                "failed_tests": [t.get("name", "unknown") for t in self.failed_tests[:5]],
-            })
+            actions.append(
+                {
+                    "type": "block_merge",
+                    "reason": f"{self.failed} tests failed",
+                    "failed_tests": [
+                        t.get("name", "unknown") for t in self.failed_tests[:5]
+                    ],
+                }
+            )
 
         # Alert on flaky tests
         if self.flaky_tests:
-            actions.append({
-                "type": "create_issue",
-                "priority": "medium",
-                "title": f"[FLAKY] {len(self.flaky_tests)} flaky tests detected",
-                "body": "These tests have inconsistent results:\n" + "\n".join(f"- {t}" for t in self.flaky_tests),
-                "labels": ["testing", "flaky", "auto-generated"],
-            })
+            actions.append(
+                {
+                    "type": "create_issue",
+                    "priority": "medium",
+                    "title": f"[FLAKY] {len(self.flaky_tests)} flaky tests detected",
+                    "body": "These tests have inconsistent results:\n"
+                    + "\n".join(f"- {t}" for t in self.flaky_tests),
+                    "labels": ["testing", "flaky", "auto-generated"],
+                }
+            )
 
         # Alert on low coverage
         if self.coverage_percentage < COVERAGE_THRESHOLD:
-            actions.append({
-                "type": "create_issue",
-                "priority": "medium",
-                "title": f"[COVERAGE] Test coverage below threshold: {self.coverage_percentage:.1f}%",
-                "body": f"Current coverage is {self.coverage_percentage}%, target is {COVERAGE_THRESHOLD}%",
-                "labels": ["testing", "coverage", "auto-generated"],
-            })
+            actions.append(
+                {
+                    "type": "create_issue",
+                    "priority": "medium",
+                    "title": f"[COVERAGE] Test coverage below threshold: {self.coverage_percentage:.1f}%",
+                    "body": f"Current coverage is {self.coverage_percentage}%, target is {COVERAGE_THRESHOLD}%",
+                    "labels": ["testing", "coverage", "auto-generated"],
+                }
+            )
 
         return {
             "execution_id": self.execution_id,
@@ -243,6 +274,7 @@ class TestExecutionResult:
 @dataclass
 class QAReport:
     """Comprehensive QA report with structured results."""
+
     report_id: str
     session_id: str
     report_type: str

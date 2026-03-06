@@ -8,8 +8,8 @@ Provides tenant isolation using:
 """
 
 import os
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint
@@ -18,7 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from shared.database.models import Base
 
 
-class TenantStatus(str, Enum):
+class TenantStatus(StrEnum):
     ACTIVE = "active"
     SUSPENDED = "suspended"
     TRIAL = "trial"
@@ -51,12 +51,12 @@ class Tenant(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(UTC)
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -80,12 +80,10 @@ class TenantUser(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(UTC)
     )
 
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "user_id", name="uq_tenant_user"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "user_id", name="uq_tenant_user"),)
 
 
 class TenantAPIKey(Base):
@@ -104,7 +102,7 @@ class TenantAPIKey(Base):
 
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(UTC)
     )
 
     __table_args__ = (
@@ -168,17 +166,19 @@ class TenantManager:
     def is_within_trial(self, tenant: Tenant) -> bool:
         """Check if tenant is within trial period."""
         if tenant.status == TenantStatus.TRIAL and tenant.trial_ends_at:
-            return datetime.now(timezone.utc) < tenant.trial_ends_at
+            return datetime.now(UTC) < tenant.trial_ends_at
         return False
 
-    def check_rate_limit(self, redis_client, tenant_id: str, rate_limit: int | None = None) -> bool:
+    def check_rate_limit(
+        self, redis_client, tenant_id: str, rate_limit: int | None = None
+    ) -> bool:
         """Check and increment rate limit counter for a tenant.
 
         Uses a sliding window: one Redis key per minute, expires after 60s.
         Returns True if request is allowed, False if rate-limited.
         """
         limit = rate_limit or self.default_rate_limit
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         window_key = f"tenant:{tenant_id}:rate:{now.strftime('%Y%m%d%H%M')}"
 
         current = redis_client.incr(window_key)
@@ -187,7 +187,9 @@ class TenantManager:
 
         return current <= limit
 
-    def validate_tenant_api_key(self, redis_client, api_key: str) -> dict[str, Any] | None:
+    def validate_tenant_api_key(
+        self, redis_client, api_key: str
+    ) -> dict[str, Any] | None:
         """Validate a tenant-scoped API key.
 
         Looks up key hash in Redis under tenant_api_key:{hash}.
@@ -201,10 +203,11 @@ class TenantManager:
             return None
 
         import json
+
         data = json.loads(key_data)
 
         # Update last_used timestamp
-        data["last_used_at"] = datetime.now(timezone.utc).isoformat()
+        data["last_used_at"] = datetime.now(UTC).isoformat()
         redis_client.set(f"tenant_api_key:{key_hash}", json.dumps(data))
 
         return {

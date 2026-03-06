@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agnostic-qa-system"
-version = "2026.2.16"
+version = "2026.3.5"
 description = "Agentic QA Team System - Containerized, multi-agent QA platform powered by CrewAI"
 readme = "README.md"
 license = {text = "MIT"}

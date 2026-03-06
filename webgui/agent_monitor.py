@@ -227,9 +227,7 @@ class AgentMonitor:
             logger.error(f"Error getting agent status {agent_name}: {e}")
             return None
 
-    async def get_active_tasks(
-        self, agent_name: str | None = None
-    ) -> list[TaskInfo]:
+    async def get_active_tasks(self, agent_name: str | None = None) -> list[TaskInfo]:
         """Get currently active tasks"""
         active_tasks = []
 

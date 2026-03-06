@@ -13,7 +13,7 @@ image:
   registry: docker.io
   repository: agentic-qa
   pullPolicy: IfNotPresent
-  tag: "2026.2.16"
+  tag: "2026.3.5"
 
 # Common annotations and labels
 commonLabels: {}

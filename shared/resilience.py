@@ -18,9 +18,10 @@ import functools
 import logging
 import signal
 import time
+from collections.abc import Callable, Coroutine  # noqa: TC003
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 # Circuit Breaker
 # ------------------------------------------------------------------
+
 
 class CircuitState(Enum):
     CLOSED = "closed"
@@ -85,6 +87,7 @@ class CircuitBreaker:
 # Retry with exponential backoff
 # ------------------------------------------------------------------
 
+
 @dataclass
 class RetryConfig:
     """Configuration for retry_async decorator."""
@@ -114,7 +117,7 @@ def retry_async(
                     last_exc = exc
                     if attempt < cfg.max_retries:
                         delay = min(
-                            cfg.base_delay * (cfg.exponential_base ** attempt),
+                            cfg.base_delay * (cfg.exponential_base**attempt),
                             cfg.max_delay,
                         )
                         logger.warning(
@@ -136,6 +139,7 @@ def retry_async(
 # ------------------------------------------------------------------
 # Graceful Shutdown
 # ------------------------------------------------------------------
+
 
 class GracefulShutdown:
     """Async context manager that handles SIGTERM/SIGINT for clean shutdown.
@@ -165,7 +169,7 @@ class GracefulShutdown:
         logger.info("%s received shutdown signal", self.service_name)
         self._stop_event.set()
 
-    async def __aenter__(self) -> "GracefulShutdown":
+    async def __aenter__(self) -> GracefulShutdown:
         self._loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
@@ -177,8 +181,11 @@ class GracefulShutdown:
         return self
 
     async def __aexit__(self, *_exc: object) -> None:
-        logger.info("%s shutting down, running %d cleanup callbacks ...",
-                    self.service_name, len(self._cleanup_callbacks))
+        logger.info(
+            "%s shutting down, running %d cleanup callbacks ...",
+            self.service_name,
+            len(self._cleanup_callbacks),
+        )
         for cb in reversed(self._cleanup_callbacks):
             try:
                 result = cb()

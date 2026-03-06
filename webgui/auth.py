@@ -91,7 +91,7 @@ class AuthManager:
         if environment == "production" and not secret_key:
             raise ValueError(
                 "WEBGUI_SECRET_KEY must be set in production. "
-                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+                'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))"'
             )
         self.secret_key = secret_key or secrets.token_urlsafe(32)
 
@@ -163,22 +163,51 @@ class AuthManager:
                 user = await self._authenticate_azure_ad(auth_code, id_token)
             elif provider == AuthProvider.SAML:
                 logger.warning("SAML authentication is not yet implemented")
-                audit_log(AuditAction.AUTH_LOGIN_FAILURE, actor=email, outcome="failure", resource_type="auth", detail={"provider": provider.value, "reason": "unsupported"})
+                audit_log(
+                    AuditAction.AUTH_LOGIN_FAILURE,
+                    actor=email,
+                    outcome="failure",
+                    resource_type="auth",
+                    detail={"provider": provider.value, "reason": "unsupported"},
+                )
                 return None
             else:
                 logger.error(f"Unsupported auth provider: {provider}")
-                audit_log(AuditAction.AUTH_LOGIN_FAILURE, actor=email, outcome="failure", resource_type="auth", detail={"provider": str(provider), "reason": "unsupported"})
+                audit_log(
+                    AuditAction.AUTH_LOGIN_FAILURE,
+                    actor=email,
+                    outcome="failure",
+                    resource_type="auth",
+                    detail={"provider": str(provider), "reason": "unsupported"},
+                )
                 return None
 
             if user:
-                audit_log(AuditAction.AUTH_LOGIN_SUCCESS, actor=user.user_id, resource_type="auth", detail={"provider": provider.value})
+                audit_log(
+                    AuditAction.AUTH_LOGIN_SUCCESS,
+                    actor=user.user_id,
+                    resource_type="auth",
+                    detail={"provider": provider.value},
+                )
             else:
-                audit_log(AuditAction.AUTH_LOGIN_FAILURE, actor=email, outcome="failure", resource_type="auth", detail={"provider": provider.value})
+                audit_log(
+                    AuditAction.AUTH_LOGIN_FAILURE,
+                    actor=email,
+                    outcome="failure",
+                    resource_type="auth",
+                    detail={"provider": provider.value},
+                )
             return user
 
         except Exception as e:
             logger.error(f"Authentication error for {email}: {e}")
-            audit_log(AuditAction.AUTH_LOGIN_FAILURE, actor=email, outcome="failure", resource_type="auth", detail={"provider": provider.value, "error": str(e)})
+            audit_log(
+                AuditAction.AUTH_LOGIN_FAILURE,
+                actor=email,
+                outcome="failure",
+                resource_type="auth",
+                detail={"provider": provider.value, "error": str(e)},
+            )
             return None
 
     async def _authenticate_local(self, email: str, password: str) -> User | None:
@@ -241,9 +270,7 @@ class AuthManager:
                 return None
 
             # Fetch Google's public keys and verify signature
-            jwks_client = PyJWKClient(
-                "https://www.googleapis.com/oauth2/v3/certs"
-            )
+            jwks_client = PyJWKClient("https://www.googleapis.com/oauth2/v3/certs")
             signing_key = jwks_client.get_signing_key_from_jwt(id_token)
 
             payload = jwt.decode(
@@ -308,7 +335,9 @@ class AuthManager:
 
             access_token = token_data.get("access_token")
             if not access_token:
-                logger.error(f"GitHub token exchange failed: {token_data.get('error_description', 'unknown error')}")
+                logger.error(
+                    f"GitHub token exchange failed: {token_data.get('error_description', 'unknown error')}"
+                )
                 return None
 
             # Fetch user profile
@@ -729,6 +758,7 @@ class AuthManager:
         """Verify password against hash"""
         try:
             import bcrypt
+
             return bcrypt.checkpw(password.encode(), password_hash.encode())
         except ImportError as err:
             raise RuntimeError(
@@ -743,6 +773,7 @@ class AuthManager:
         """Hash password"""
         try:
             import bcrypt
+
             return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         except ImportError as err:
             raise RuntimeError(

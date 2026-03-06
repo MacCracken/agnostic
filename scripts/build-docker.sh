@@ -16,6 +16,12 @@ echo -e "${BLUE}Agentic QA Team - Docker Build Script${NC}"
 echo -e "${BLUE}===========================================${NC}"
 echo ""
 
+# Pull version from pyproject.toml
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VERSION=$(grep '^version = ' "$SCRIPT_DIR/../pyproject.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
+echo -e "${BLUE}Version: ${VERSION}${NC}"
+echo ""
+
 # Function to check if Docker is running
 check_docker() {
     if ! docker info > /dev/null 2>&1; then
@@ -38,7 +44,7 @@ build_base() {
     # Build base image with BuildKit
     docker build \
         --tag agnostic-qa-base:latest \
-        --tag agnostic-qa-base:2026.2.16 \
+        --tag "agnostic-qa-base:${VERSION}" \
         --file docker/Dockerfile.base \
         --progress=plain \
         .

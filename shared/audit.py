@@ -12,8 +12,8 @@ Configure via:
 import json
 import logging
 import os
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 AUDIT_ENABLED = os.getenv("AUDIT_LOG_ENABLED", "true").lower() == "true"
@@ -25,7 +25,7 @@ AUDIT_LOG_LEVEL = getattr(
 _audit_logger = logging.getLogger("audit")
 
 
-class AuditAction(str, Enum):
+class AuditAction(StrEnum):
     """Auditable actions."""
 
     # Auth
@@ -85,7 +85,7 @@ def audit_log(
         return
 
     event: dict[str, Any] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "event": "audit",
         "action": action.value if isinstance(action, AuditAction) else action,
         "actor": actor or "anonymous",

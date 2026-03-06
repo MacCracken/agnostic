@@ -800,6 +800,7 @@ from webgui.realtime import realtime_manager, websocket_handler  # noqa: E402
 # Lifespan — startup / shutdown
 # ---------------------------------------------------------------------------
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown."""
@@ -815,6 +816,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.getenv("DATABASE_ENABLED", "false").lower() == "true":
         try:
             from shared.database.models import init_db
+
             await init_db()
             logger.info("Database initialized")
         except Exception as e:
@@ -823,6 +825,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.getenv("AGNOS_AGENT_REGISTRATION_ENABLED", "false").lower() == "true":
         try:
             from config.agnos_agent_registration import agent_registry_client
+
             await agent_registry_client.register_all_agents()
             logger.info("Registered agents with agnosticos")
         except Exception as e:
@@ -840,6 +843,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.getenv("AGNOS_AGENT_REGISTRATION_ENABLED", "false").lower() == "true":
         try:
             from config.agnos_agent_registration import agent_registry_client
+
             await agent_registry_client.deregister_all_agents()
             logger.info("Deregistered agents from agnosticos")
         except Exception as e:
@@ -892,6 +896,7 @@ async def websocket_endpoint(websocket):
 # ---------------------------------------------------------------------------
 # P6 — Enhanced health check
 # ---------------------------------------------------------------------------
+
 
 @app.get("/health")
 async def health_check() -> dict[str, Any]:
@@ -965,9 +970,7 @@ async def health_check() -> dict[str, Any]:
                 status_details["agents"][agent_name] = "offline"
 
     # Determine overall status
-    infra_ok = (
-        status_details["redis"] == "ok" and status_details["rabbitmq"] == "ok"
-    )
+    infra_ok = status_details["redis"] == "ok" and status_details["rabbitmq"] == "ok"
     any_alive = any(v == "alive" for v in status_details["agents"].values())
 
     if not infra_ok:

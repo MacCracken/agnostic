@@ -17,6 +17,7 @@ except ImportError:
 
 try:
     from crewai import LLM as CrewLLM  # type: ignore
+
     _CREWAI_LLM_AVAILABLE = True
 except ImportError:
     _CREWAI_LLM_AVAILABLE = False
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Provider → litellm model prefix mapping
 _PROVIDER_PREFIXES: dict[str, str] = {
-    "openai": "",           # e.g. "gpt-4o" (no prefix needed for openai)
+    "openai": "",  # e.g. "gpt-4o" (no prefix needed for openai)
     "anthropic": "anthropic/",
     "google": "gemini/",
     "ollama": "ollama/",
@@ -80,10 +81,16 @@ def create_llm(
             logger.info("Created crewai LLM: %s (temp=%.2f)", model_string, temperature)
             return llm
         except Exception as exc:
-            logger.error("Failed to create crewai LLM %s: %s — falling back to model string", model_string, exc)
+            logger.error(
+                "Failed to create crewai LLM %s: %s — falling back to model string",
+                model_string,
+                exc,
+            )
 
     # crewai 1.x also accepts a plain model string for Agent(llm=...)
-    logger.warning("crewai.LLM not available; using bare model string '%s'", model_string)
+    logger.warning(
+        "crewai.LLM not available; using bare model string '%s'", model_string
+    )
     return model_string
 
 

@@ -9,7 +9,7 @@ from typing import Any
 
 import cv2
 import numpy as np
-from crewai import Agent, Crew, LLM, Process, Task
+from crewai import LLM, Agent, Crew, Process, Task
 
 from shared.crewai_compat import BaseTool
 
@@ -1326,9 +1326,7 @@ class AutonomousTestDataGeneratorTool(BaseTool):
         if null_count > len(data) * 0.1:
             issues.append("High null value percentage")
 
-        duplicate_count = len(data) - len(
-            {json.dumps(r, sort_keys=True) for r in data}
-        )
+        duplicate_count = len(data) - len({json.dumps(r, sort_keys=True) for r in data})
         if duplicate_count > len(data) * 0.2:
             issues.append("High duplicate percentage")
 
@@ -1375,9 +1373,7 @@ class SeniorQAAgent:
         connection_info = config.get_connection_info()
         logger.info(f"Redis connection: {connection_info['redis']['url']}")
         logger.info(f"RabbitMQ connection: {connection_info['rabbitmq']['url']}")
-        self.llm = LLM(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1
-        )
+        self.llm = LLM(model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1)
 
         # Initialize CrewAI agent
         self.agent = Agent(

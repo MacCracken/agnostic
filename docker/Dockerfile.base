@@ -81,7 +81,7 @@ USER appuser
 # Metadata
 LABEL maintainer="Agentic QA Team"
 LABEL description="Base image for all QA agent containers"
-LABEL version="2026.2.16"
+LABEL version="2026.3.5"
 
 # Default command
 CMD ["python", "--version"]

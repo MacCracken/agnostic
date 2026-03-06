@@ -63,7 +63,9 @@ class RateLimiter:
     def _cleanup_stale_keys(self, window_start: float) -> None:
         """Remove keys with no recent requests."""
         stale_keys = [
-            k for k, v in self.requests.items() if not v or all(t <= window_start for t in v)
+            k
+            for k, v in self.requests.items()
+            if not v or all(t <= window_start for t in v)
         ]
         for k in stale_keys:
             del self.requests[k]
@@ -85,6 +87,7 @@ default_rate_limiter = RateLimiter(
 
 def rate_limit(limiter: RateLimiter = None):
     """Decorator to apply rate limiting to an endpoint."""
+
     def decorator(func: Callable):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -112,4 +115,5 @@ def rate_limit(limiter: RateLimiter = None):
             return await func(*args, **kwargs)
 
         return wrapper
+
     return decorator

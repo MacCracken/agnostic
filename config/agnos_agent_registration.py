@@ -5,10 +5,9 @@ Registers Agnostic QA agents with agnosticos Agent HUD.
 Phase 2 of AGNOS OS integration (ADR-022).
 """
 
-import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import requests
@@ -38,7 +37,11 @@ AGNOSTIC_AGENTS = {
         "agent_name": "Junior QA Engineer",
         "agent_type": "qa",
         "description": "Executes test cases and generates test data",
-        "capabilities": ["test_execution", "test_data_generation", "regression_testing"],
+        "capabilities": [
+            "test_execution",
+            "test_data_generation",
+            "regression_testing",
+        ],
         "resource_limits": {"cpu": "1.5", "memory": "2Gi"},
     },
     "qa-analyst": {
@@ -54,7 +57,11 @@ AGNOSTIC_AGENTS = {
         "agent_name": "Security & Compliance Officer",
         "agent_type": "security",
         "description": "Performs security audits and compliance checks",
-        "capabilities": ["security_audit", "compliance_check", "vulnerability_scanning"],
+        "capabilities": [
+            "security_audit",
+            "compliance_check",
+            "vulnerability_scanning",
+        ],
         "resource_limits": {"cpu": "1.5", "memory": "2Gi"},
     },
     "performance": {
@@ -72,9 +79,9 @@ class AgentRegistryClient:
     """Client for agnosticos Agent Registry REST API."""
 
     def __init__(self):
-        self.enabled = os.getenv(
-            "AGNOS_AGENT_REGISTRATION_ENABLED", "false"
-        ).lower() == "true"
+        self.enabled = (
+            os.getenv("AGNOS_AGENT_REGISTRATION_ENABLED", "false").lower() == "true"
+        )
         self.base_url = os.getenv("AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090")
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
         self.version = os.getenv("AGNOSTIC_VERSION", "2026.2.28")
@@ -151,7 +158,7 @@ class AgentRegistryClient:
             payload = {
                 "agent_id": agent_id,
                 "status": status,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "metadata": metadata or {},
             }
             response = self.session.post(
