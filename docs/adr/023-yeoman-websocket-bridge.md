@@ -1,6 +1,6 @@
 # ADR-023: YEOMAN MCP Bridge WebSocket Support
 
-**Status**: Accepted
+**Status**: Accepted (updated with reconnection support)
 **Date**: 2026-03-05
 **Authors**: Agnostic team
 
@@ -52,12 +52,43 @@ elif channel.startswith("task:"):
 
 ---
 
+## Reconnection & Missed Message Recovery
+
+Redis pub/sub is fire-and-forget — disconnected clients lose messages. To address this, messages are also buffered in **Redis Streams** alongside pub/sub.
+
+### How It Works
+
+1. Every message published to a channel is also appended to a Redis Stream (`stream:{channel}`) via `XADD`, capped at `REALTIME_STREAM_MAX_LEN` (default: 1000) entries.
+2. Live messages include a `stream_id` field so clients can track their position.
+3. On reconnection, the client includes `last_message_id` in the subscribe message:
+   ```json
+   {"type": "subscribe_task", "task_id": "task-abc", "last_message_id": "1709654321000-0"}
+   ```
+4. The server calls `XRANGE stream:task:task-abc (last_message_id +` to fetch missed messages (up to `REALTIME_STREAM_REPLAY_LIMIT`, default: 100).
+5. Missed messages are sent with `"replayed": true` so the client can distinguish them from live updates.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REALTIME_STREAM_MAX_LEN` | `1000` | Max messages retained per stream |
+| `REALTIME_STREAM_REPLAY_LIMIT` | `100` | Max messages replayed on reconnection |
+
+### Backward Compatibility
+
+- Clients that don't send `last_message_id` get the same behavior as before (no replay).
+- REST API polling via `GET /api/tasks/{id}` remains fully supported.
+- The `stream_id` field on live messages is informational — clients can ignore it.
+
+---
+
 ## Files Modified
 
-- `webgui/realtime.py` — `subscribe_to_task()` method, `task:` channel routing in `_handle_redis_message`, `subscribe_task` client message handler
+- `webgui/realtime.py` — `MessageBuffer` class (Redis Streams XADD/XRANGE), `replay_missed_messages()`, `subscribe_to_task()`, `subscribe_task`/`subscribe_session` client message handlers with `last_message_id` support
 - `webgui/api.py` — `_run_task_async()` publishes to `task:{task_id}` Redis channel
 - `webgui/static/js/dashboard.js` — Client-side `subscribe_task` message support
-- `tests/unit/test_yeoman_websocket.py` — 14 unit tests
+- `tests/unit/test_yeoman_websocket.py` — 14 unit tests (original)
+- `tests/unit/test_message_buffer.py` — 15 unit tests for message buffering, replay, and reconnection
 
 ---
 
@@ -67,10 +98,11 @@ elif channel.startswith("task:"):
 - MCP bridge receives task updates in real-time (sub-second latency vs seconds of polling)
 - Reduced API load — no more repeated `GET /api/tasks/{id}` calls
 - Same infrastructure as session subscriptions — no new dependencies
+- Disconnected clients can recover missed messages on reconnection
 
 ### Negative
-- Requires WebSocket connection management in MCP bridge client
-- Redis pub/sub is fire-and-forget — if the client disconnects, missed messages are lost (client can fall back to polling `GET /api/tasks/{id}`)
+- Redis Streams add storage overhead (mitigated by MAXLEN cap)
+- Replay is bounded — very long disconnections may still miss messages beyond the buffer
 
 ### Neutral
 - Polling via REST API remains fully supported — WebSocket is an optimization, not a replacement

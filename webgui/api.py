@@ -807,6 +807,7 @@ async def schedule_report(
             format=req.format,
             schedule=req.schedule,
             report_name=f"{req.report_type} by {user['user_id']}",
+            tenant_id=user.get("tenant_id"),
         )
 
         jobs = scheduled_report_manager.get_jobs()

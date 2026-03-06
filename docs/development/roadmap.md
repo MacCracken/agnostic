@@ -8,40 +8,26 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 
 ## Near-term
 
-### Multi-Tenant Hardening
-**Priority:** High
-
-Tenant CRUD endpoints are wired to `TenantRepository` with real database operations. Runtime tenant isolation is implemented for task submit/get and API key validation.
-
-- [x] Wire `TenantRepository` into tenant API endpoints
-- [x] Unit tests for `TenantManager`, `TenantRepository`, and endpoints (52 tests)
-- [x] Integrate tenant isolation into session/task management (tenant-scoped Redis keys in submit_task, get_task, _run_task_async)
-- [x] Tenant-scoped API key validation (wired into `get_current_user`)
-- [x] Rate limiting per tenant (sliding-window check in submit_task, 429 response)
-- [x] Tenant data isolation tests — 12 tests covering key isolation, endpoint cross-tenant leakage, rate limit independence, API key scoping, quota isolation (`tests/unit/test_tenant_isolation.py`)
-- [x] Tenant provisioning documentation (`docs/api/tenant-provisioning.md`)
+No near-term items remaining. See [Recently Completed](#recently-completed) and the [Changelog](../project/changelog.md).
 
 ---
 
 ## Medium-term
 
 ### WebSocket Reconnection & Missed Message Recovery
-**Priority:** Medium
+**Priority:** Medium — **Complete**
 
-ADR-023 notes Redis pub/sub is fire-and-forget — disconnected clients lose messages. MCP bridge falls back to polling, but a proper recovery mechanism would be better.
-
-- [ ] Message buffering for disconnected subscribers (Redis Streams or similar)
-- [ ] Client-side reconnection with last-seen message ID
-- [ ] Update ADR-023
+- [x] Message buffering for disconnected subscribers — Redis Streams (`MessageBuffer` class, `XADD`/`XRANGE`)
+- [x] Client-side reconnection with last-seen message ID — `last_message_id` in subscribe messages, `replay_missed_messages()`
+- [x] Update ADR-023 — reconnection section added with configuration and protocol docs
 
 ### Scheduled Report Delivery
-**Priority:** Medium
+**Priority:** Medium — **Partially complete**
 
-APScheduler generates reports on schedule but has no delivery mechanism beyond API retrieval.
-
-- [ ] Persistent job store (database-backed, not in-memory) — currently uses Redis
-- [ ] Report delivery channels (email, Slack webhook)
-- [ ] Tenant-scoped scheduled reports (depends on multi-tenant completion)
+- [x] Report delivery channels — webhook (HMAC-signed) + Slack incoming webhook (`ReportDeliveryService`)
+- [x] Tenant-scoped scheduled reports — `tenant_id` parameter on `schedule_custom_report()`
+- [ ] Persistent job store migration — currently uses Redis; database-backed store would survive Redis flushes
+- [ ] Email delivery channel — SMTP-based report delivery (webhook + Slack are done)
 
 ---
 
@@ -69,15 +55,24 @@ Manual testing guide exists (`docs/development/manual-testing.md`) but automated
 
 | Item | Date |
 |------|------|
-| Tag release 2026.3.5 — changelog updated | 2026-03-05 |
-| Alembic database migrations — async PostgreSQL, initial migration (7 tables) | 2026-03-05 |
-| Migration docs — Alembic section added to `docs/development/setup.md` | 2026-03-05 |
-| Scheduled reports test coverage — 27 tests in `test_scheduled_reports.py` | 2026-03-05 |
-| Configurable YEOMAN thresholds — `YEOMAN_COVERAGE_THRESHOLD`, `YEOMAN_ERROR_RATE_THRESHOLD`, `YEOMAN_PERF_DEGRADATION_FACTOR` | 2026-03-05 |
-| Webhook callback retry — exponential backoff (1s/2s/4s), configurable `WEBHOOK_MAX_RETRIES` | 2026-03-05 |
+| WebSocket reconnection — Redis Streams message buffering + replay | 2026-03-05 |
+| Report delivery — webhook (HMAC) + Slack + tenant-scoped reports | 2026-03-05 |
+| ADR-023 updated with reconnection protocol | 2026-03-05 |
+| Multi-tenant hardening complete — all 7 near-term items done | 2026-03-05 |
+| Tenant provisioning docs (`docs/api/tenant-provisioning.md`) | 2026-03-05 |
+| Tenant data isolation tests — 12 tests (`test_tenant_isolation.py`) | 2026-03-05 |
+| Tenant-scoped Redis keys wired into task submit/get/run | 2026-03-05 |
+| Tenant-scoped API key validation in `get_current_user` | 2026-03-05 |
+| Per-tenant rate limiting (sliding window, HTTP 429) | 2026-03-05 |
+| Tenant manager unit tests — 52 total (`test_tenant.py`) | 2026-03-05 |
+| Webhook callback retry — exponential backoff, `WEBHOOK_MAX_RETRIES` | 2026-03-05 |
+| Configurable YEOMAN thresholds — env-var driven | 2026-03-05 |
+| Alembic database migrations — async PostgreSQL, 7 tables | 2026-03-05 |
+| Scheduled reports test coverage — 27 tests | 2026-03-05 |
 | WebSocket realtime test hang fix | 2026-03-05 |
 | pytest collection warning fix (`__test__ = False`) | 2026-03-05 |
 | TODO.md consolidated into roadmap | 2026-03-05 |
+| Tag release 2026.3.5 | 2026-03-05 |
 
 ---
 
@@ -95,4 +90,4 @@ Manual testing guide exists (`docs/development/manual-testing.md`) but automated
 
 ---
 
-*Last Updated: 2026-03-05 · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-05 · Test count: 409 · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

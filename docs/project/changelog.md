@@ -19,6 +19,12 @@ Versions use **YYYY.M.D** (calendar versioning).
 - **Tenant manager unit tests** — 13 new tests for `task_key`, `session_key`, `check_rate_limit`, and `validate_tenant_api_key` (52 total tenant tests) (`tests/unit/test_tenant.py`)
 - **Tenant data isolation tests** — 12 tests verifying cross-tenant leakage prevention: key isolation, endpoint-level task visibility, rate limit independence, API key scoping, quota boundaries (`tests/unit/test_tenant_isolation.py`)
 - **Tenant provisioning documentation** — provisioning workflow, API key issuance, isolation model, rate limiting, lifecycle states, backward compatibility (`docs/api/tenant-provisioning.md`)
+- **Scheduled report delivery channels** — `ReportDeliveryService` with webhook (HMAC-SHA256 signed POST, exponential backoff retry) and Slack (incoming webhook with status emoji) delivery; configurable via `REPORT_WEBHOOK_URL`, `REPORT_WEBHOOK_SECRET`, `REPORT_SLACK_WEBHOOK_URL`, `REPORT_DELIVERY_MAX_RETRIES`; integrated into `_generate_and_deliver()` for both built-in and custom reports; failure notifications also delivered (`webgui/scheduled_reports.py`)
+- **Tenant-scoped scheduled reports** — `schedule_custom_report()` accepts optional `tenant_id`; job IDs include tenant prefix for namespace isolation (`webgui/scheduled_reports.py`, `webgui/api.py`)
+- **WebSocket missed-message recovery** — `MessageBuffer` class buffers all pub/sub messages to Redis Streams (`XADD` with configurable `REALTIME_STREAM_MAX_LEN`); `replay_missed_messages()` replays buffered messages via `XRANGE` on reconnection; live messages include `stream_id` for position tracking; replayed messages tagged with `"replayed": true` (`webgui/realtime.py`)
+- **Client reconnection with last_message_id** — `subscribe_session` and `subscribe_task` messages accept optional `last_message_id` field; server replays missed messages (up to `REALTIME_STREAM_REPLAY_LIMIT`) before resuming live updates; backward-compatible with clients that don't send it (`webgui/realtime.py`)
+- **Report delivery unit tests** — 13 tests covering webhook delivery, HMAC signatures, retry logic, Slack formatting, multi-channel dispatch, tenant-scoped job IDs (`tests/unit/test_report_delivery.py`)
+- **Message buffer unit tests** — 15 tests covering Redis Streams XADD/XRANGE, replay mechanics, reconnection protocol, publish buffering (`tests/unit/test_message_buffer.py`)
 
 ---
 

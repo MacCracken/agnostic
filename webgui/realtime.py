@@ -1,6 +1,11 @@
 """
 Real-time Communication Module
 WebSocket infrastructure for live updates and notifications.
+
+Supports:
+- Redis pub/sub for fire-and-forget broadcasts
+- Redis Streams for message buffering and missed-message recovery
+- Client reconnection with last_message_id replay
 """
 
 import asyncio
@@ -19,6 +24,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.environment import config
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of messages to retain per stream
+STREAM_MAX_LEN = int(os.getenv("REALTIME_STREAM_MAX_LEN", "1000"))
+# Maximum number of messages to replay on reconnection
+STREAM_REPLAY_LIMIT = int(os.getenv("REALTIME_STREAM_REPLAY_LIMIT", "100"))
 
 
 class EventType(Enum):
@@ -43,6 +53,64 @@ class WebSocketMessage:
     data: dict[str, Any] | None = None
 
 
+class MessageBuffer:
+    """Redis Streams–based message buffer for missed-message recovery.
+
+    Each subscribed channel gets a stream key: ``stream:{channel}``.
+    Messages are appended with XADD (capped at STREAM_MAX_LEN).
+    On reconnection the client provides a ``last_message_id`` and
+    receives all buffered messages since that ID via XRANGE.
+    """
+
+    def __init__(self, redis_client):
+        self.redis = redis_client
+        self.max_len = STREAM_MAX_LEN
+        self.replay_limit = STREAM_REPLAY_LIMIT
+
+    def _stream_key(self, channel: str) -> str:
+        return f"stream:{channel}"
+
+    def buffer_message(self, channel: str, message_data: dict[str, Any]) -> str | None:
+        """Append a message to the channel's stream. Returns the stream ID."""
+        try:
+            stream_key = self._stream_key(channel)
+            msg_id = self.redis.xadd(
+                stream_key,
+                {"payload": json.dumps(message_data)},
+                maxlen=self.max_len,
+            )
+            return msg_id if isinstance(msg_id, str) else msg_id.decode() if msg_id else None
+        except Exception as e:
+            logger.debug(f"Stream buffer write failed for {channel}: {e}")
+            return None
+
+    def get_messages_since(
+        self, channel: str, last_id: str = "0-0"
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Read messages from the stream after *last_id*.
+
+        Returns list of ``(stream_id, parsed_payload)`` tuples.
+        """
+        try:
+            stream_key = self._stream_key(channel)
+            # XRANGE is inclusive on min; use '(' prefix for exclusive
+            exclusive_id = f"({last_id}" if last_id != "0-0" else "-"
+            entries = self.redis.xrange(
+                stream_key, min=exclusive_id, max="+", count=self.replay_limit
+            )
+            results = []
+            for entry_id, fields in entries:
+                eid = entry_id if isinstance(entry_id, str) else entry_id.decode()
+                raw = fields.get(b"payload") or fields.get("payload")
+                if raw:
+                    payload = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    results.append((eid, payload))
+            return results
+        except Exception as e:
+            logger.debug(f"Stream replay failed for {channel}: {e}")
+            return []
+
+
 class RealtimeManager:
     """Manages WebSocket connections and real-time communication"""
 
@@ -57,6 +125,7 @@ class RealtimeManager:
         self.websockets: dict[str, Any] = {}  # connection_id -> websocket
         self.pubsub = None
         self.background_tasks = set()
+        self.message_buffer = MessageBuffer(self.redis_client)
 
     async def initialize(self):
         """Initialize Redis pub/sub subscription"""
@@ -203,7 +272,7 @@ class RealtimeManager:
             await self.remove_connection(connection_id)
 
     async def publish_event(self, channel: str, message: WebSocketMessage):
-        """Publish event to Redis pub/sub"""
+        """Publish event to Redis pub/sub and buffer in stream"""
         try:
             event_data = {
                 "type": message.type.value,
@@ -215,10 +284,55 @@ class RealtimeManager:
             }
 
             self.redis_client.publish(channel, json.dumps(event_data))
+
+            # Buffer in Redis Stream for replay on reconnection
+            self.message_buffer.buffer_message(channel, event_data)
+
             logger.debug(f"Published event to {channel}: {message.type.value}")
 
         except Exception as e:
             logger.error(f"Error publishing event to {channel}: {e}")
+
+    async def replay_missed_messages(
+        self, connection_id: str, channel: str, last_message_id: str
+    ) -> int:
+        """Replay messages the client missed while disconnected.
+
+        Returns the number of replayed messages.
+        """
+        messages = self.message_buffer.get_messages_since(channel, last_message_id)
+        count = 0
+        for stream_id, data in messages:
+            try:
+                msg = WebSocketMessage(
+                    type=EventType(data["type"]),
+                    timestamp=data["timestamp"],
+                    session_id=data.get("session_id"),
+                    agent_name=data.get("agent_name"),
+                    user_id=data.get("user_id"),
+                    data=data.get("data"),
+                )
+                # Attach stream_id so client can track position
+                if connection_id in self.websockets:
+                    websocket = self.websockets[connection_id]
+                    payload = {
+                        "type": msg.type.value,
+                        "timestamp": msg.timestamp,
+                        "session_id": msg.session_id,
+                        "agent_name": msg.agent_name,
+                        "user_id": msg.user_id,
+                        "data": msg.data,
+                        "stream_id": stream_id,
+                        "replayed": True,
+                    }
+                    await websocket.send_json(payload)
+                    count += 1
+            except Exception as e:
+                logger.error(f"Error replaying message {stream_id}: {e}")
+
+        if count:
+            logger.info(f"Replayed {count} missed messages for {connection_id} on {channel}")
+        return count
 
     async def _redis_listener(self):
         """Background task to listen to Redis pub/sub messages"""
@@ -242,10 +356,13 @@ class RealtimeManager:
             task.add_done_callback(self.background_tasks.discard)
 
     async def _handle_redis_message(self, redis_message):
-        """Handle incoming Redis pub/sub message"""
+        """Handle incoming Redis pub/sub message and buffer to stream"""
         try:
             channel = redis_message["channel"].decode()
             data = json.loads(redis_message["data"])
+
+            # Buffer message in Redis Stream for replay
+            stream_id = self.message_buffer.buffer_message(channel, data)
 
             # Determine target connections
             target_connections = []
@@ -287,7 +404,7 @@ class RealtimeManager:
                     if channel in subscriptions:
                         target_connections.append(conn_id)
 
-            # Send to target connections
+            # Send to target connections with stream_id for tracking
             for connection_id in target_connections:
                 message = WebSocketMessage(
                     type=EventType(data["type"]),
@@ -297,7 +414,25 @@ class RealtimeManager:
                     user_id=data.get("user_id"),
                     data=data.get("data"),
                 )
-                await self.send_to_connection(connection_id, message)
+                if stream_id and connection_id in self.websockets:
+                    # Include stream_id so client can track position
+                    websocket = self.websockets[connection_id]
+                    payload = {
+                        "type": message.type.value,
+                        "timestamp": message.timestamp,
+                        "session_id": message.session_id,
+                        "agent_name": message.agent_name,
+                        "user_id": message.user_id,
+                        "data": message.data,
+                        "stream_id": stream_id,
+                    }
+                    try:
+                        await websocket.send_json(payload)
+                    except Exception as e:
+                        logger.error(f"Error sending to connection {connection_id}: {e}")
+                        await self.remove_connection(connection_id)
+                else:
+                    await self.send_to_connection(connection_id, message)
 
         except Exception as e:
             logger.error(f"Error handling Redis message: {e}")
@@ -369,6 +504,13 @@ class WebSocketHandler:
                 await self.realtime_manager.subscribe_to_session(
                     connection_id, session_id
                 )
+                # Replay missed messages if client provides last_message_id
+                last_id = data.get("last_message_id")
+                if last_id:
+                    channel = f"webgui:session:{session_id}"
+                    await self.realtime_manager.replay_missed_messages(
+                        connection_id, channel, last_id
+                    )
 
         elif message_type == "unsubscribe_session":
             session_id = data.get("session_id")
@@ -390,6 +532,22 @@ class WebSocketHandler:
                         data={"message": f"Subscribed to task {task_id}"},
                     ),
                 )
+                # Replay missed messages if client provides last_message_id
+                last_id = data.get("last_message_id")
+                if last_id:
+                    channel = f"task:{task_id}"
+                    count = await self.realtime_manager.replay_missed_messages(
+                        connection_id, channel, last_id
+                    )
+                    if count:
+                        await self.realtime_manager.send_to_connection(
+                            connection_id,
+                            WebSocketMessage(
+                                type=EventType.NOTIFICATION,
+                                timestamp=datetime.now().isoformat(),
+                                data={"message": f"Replayed {count} missed messages"},
+                            ),
+                        )
 
         elif message_type == "ping":
             # Respond with pong
