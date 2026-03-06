@@ -17,9 +17,9 @@ No near-term items remaining. See the [Changelog](../project/changelog.md).
 ### Hardening & Operational Improvements
 **Priority:** Medium
 
-- [ ] Rate limiting for all API endpoints — currently only tenant task submission has sliding-window limiting
-- [ ] Request tracing — correlation IDs across API → Redis → agent → webhook
-- [ ] Database connection pooling tuning — stress test async pool under load
+- [x] Rate limiting for all API endpoints — `RateLimitMiddleware` on all `/api/*` paths with per-IP sliding window; configurable via `RATE_LIMIT_MAX_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS`; returns 429 with `Retry-After` and `X-RateLimit-*` headers
+- [x] Request tracing — `CorrelationIdMiddleware` generates/propagates `X-Correlation-ID` on every request; bound to structlog contextvars and audit log events
+- [x] Database connection pooling tuning — added `DB_POOL_TIMEOUT` env var, pool config logging on startup, `close_db()` in shutdown handler to prevent connection leaks
 
 ### New Features
 **Priority:** Medium
@@ -51,4 +51,4 @@ No long-term items remaining. See [Dependency Watch](dependency-watch.md) for up
 
 ---
 
-*Last Updated: 2026-03-05 · Test count: 465 (unit) + 19 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-05 · Test count: 457 (unit) + 19 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

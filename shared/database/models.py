@@ -4,6 +4,7 @@ Uses SQLAlchemy with async support for PostgreSQL.
 """
 
 import asyncio
+import logging
 import os
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -146,6 +147,8 @@ class TestReport(Base):
     )
 
 
+logger = logging.getLogger(__name__)
+
 _engine = None
 _session_factory = None
 _init_lock = asyncio.Lock()
@@ -178,6 +181,15 @@ async def init_db():
             pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
             max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "10")),
             pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "3600")),
+            pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "30")),
+        )
+
+        logger.info(
+            "Database pool configured: size=%s, overflow=%s, recycle=%ss, timeout=%ss",
+            os.getenv("DB_POOL_SIZE", "5"),
+            os.getenv("DB_MAX_OVERFLOW", "10"),
+            os.getenv("DB_POOL_RECYCLE", "3600"),
+            os.getenv("DB_POOL_TIMEOUT", "30"),
         )
 
         async with _engine.begin() as conn:

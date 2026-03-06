@@ -92,6 +92,16 @@ def audit_log(
         "outcome": outcome,
     }
 
+    # Attach correlation ID if present
+    try:
+        from webgui.app import correlation_id_ctx
+
+        cid = correlation_id_ctx.get()
+        if cid:
+            event["correlation_id"] = cid
+    except (ImportError, LookupError):
+        pass
+
     if resource_type:
         event["resource_type"] = resource_type
     if resource_id:

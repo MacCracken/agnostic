@@ -3,8 +3,10 @@ import logging
 import os
 import socket
 import sys
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,13 +14,17 @@ import chainlit as cl
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+# Correlation ID context var — available to all code in the request
+correlation_id_ctx: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 
 # Add config path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.agent_registry import AgentRegistry
-from config.environment import config
+from config.agent_registry import AgentRegistry  # noqa: E402
+from config.environment import config  # noqa: E402
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -768,6 +774,82 @@ async def on_chat_end() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Correlation ID middleware
+# ---------------------------------------------------------------------------
+
+_CORRELATION_HEADER = "X-Correlation-ID"
+
+
+class CorrelationIdMiddleware(BaseHTTPMiddleware):
+    """Propagate or generate a correlation ID for every request.
+
+    - Reads ``X-Correlation-ID`` from the incoming request (or generates a UUID).
+    - Stores the ID in :data:`correlation_id_ctx` so any code in the call
+      chain can access it (including structlog via ``merge_contextvars``).
+    - Attaches the header to the response.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        cid = request.headers.get(_CORRELATION_HEADER) or uuid.uuid4().hex
+        correlation_id_ctx.set(cid)
+
+        # Bind to structlog contextvars so JSON logs include correlation_id
+        try:
+            import structlog
+
+            structlog.contextvars.clear_contextvars()
+            structlog.contextvars.bind_contextvars(correlation_id=cid)
+        except ImportError:
+            pass
+
+        response = await call_next(request)
+        response.headers[_CORRELATION_HEADER] = cid
+        return response
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting middleware
+# ---------------------------------------------------------------------------
+
+# Paths exempt from global rate limiting (health, metrics, static assets)
+_RATE_LIMIT_EXEMPT = frozenset({"/health", "/api/metrics", "/docs", "/openapi.json"})
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Global per-client rate limiter for all API endpoints.
+
+    Uses the in-memory :class:`~shared.rate_limit.RateLimiter` keyed by
+    client IP.  Exempt paths (health, metrics) are not counted.
+    Configurable via ``RATE_LIMIT_MAX_REQUESTS`` and
+    ``RATE_LIMIT_WINDOW_SECONDS`` env vars.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+
+        # Skip non-API and exempt paths
+        if not path.startswith("/api") or path in _RATE_LIMIT_EXEMPT:
+            return await call_next(request)
+
+        from shared.rate_limit import default_rate_limiter
+
+        client_ip = request.client.host if request.client else "unknown"
+        if not await default_rate_limiter.is_allowed(client_ip):
+            remaining = default_rate_limiter.get_remaining(client_ip)
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Please try again later."},
+                headers={
+                    "Retry-After": str(default_rate_limiter.window_seconds),
+                    "X-RateLimit-Limit": str(default_rate_limiter.max_requests),
+                    "X-RateLimit-Remaining": str(remaining),
+                },
+            )
+
+        return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
 # Security headers middleware
 # ---------------------------------------------------------------------------
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -840,6 +922,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await scheduled_report_manager.shutdown()
     logger.info("Scheduled reports shutdown")
 
+    if os.getenv("DATABASE_ENABLED", "false").lower() == "true":
+        try:
+            from shared.database.models import close_db
+
+            await close_db()
+            logger.info("Database connection pool closed")
+        except Exception as e:
+            logger.warning(f"Database shutdown failed: {e}")
+
     if os.getenv("AGNOS_AGENT_REGISTRATION_ENABLED", "false").lower() == "true":
         try:
             from config.agnos_agent_registration import agent_registry_client
@@ -869,6 +960,8 @@ app.add_middleware(
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(api_router)
 
