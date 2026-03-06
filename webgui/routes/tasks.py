@@ -457,12 +457,26 @@ async def receive_a2a_message(
 
 @router.get("/v1/a2a/capabilities")
 async def a2a_capabilities():
-    """Advertise what this Agnostic instance can do as an A2A peer."""
+    """Advertise what this Agnostic instance can do as an A2A peer.
+
+    Includes MCP server info for auto-discovery by SecureYeoman.
+    """
     if not YEOMAN_A2A_ENABLED:
         raise HTTPException(
             status_code=503,
             detail="A2A protocol not enabled. Set YEOMAN_A2A_ENABLED=true",
         )
+
+    # MCP tool count
+    mcp_tool_count = 0
+    try:
+        from webgui.routes.mcp import MCP_ENABLED, MCP_TOOLS
+
+        if MCP_ENABLED:
+            mcp_tool_count = len(MCP_TOOLS)
+    except ImportError:
+        pass
+
     return {
         "capabilities": [
             {
@@ -480,5 +494,20 @@ async def a2a_capabilities():
                 "description": "Load testing and P95/P99 latency profiling",
                 "version": "1.0",
             },
-        ]
+        ],
+        "mcp": {
+            "enabled": mcp_tool_count > 0,
+            "tool_count": mcp_tool_count,
+            "endpoints": {
+                "tools": "/api/v1/mcp/tools",
+                "invoke": "/api/v1/mcp/invoke",
+                "server_info": "/api/v1/mcp/server-info",
+            },
+        },
+        "webhooks": {
+            "endpoint": "/api/v1/yeoman/webhooks",
+            "events_endpoint": "/api/v1/yeoman/events",
+            "stream_endpoint": "/api/v1/yeoman/events/stream",
+        },
+        "auth_methods": ["api_key", "bearer_jwt", "yeoman_jwt"],
     }

@@ -55,6 +55,10 @@ class AuditAction(StrEnum):
     TENANT_USER_ADDED = "tenant.user.added"
     TENANT_USER_REMOVED = "tenant.user.removed"
 
+    # Integration
+    TOOL_INVOKED = "integration.tool_invoked"
+    WEBHOOK_RECEIVED = "integration.webhook_received"
+
     # System
     RATE_LIMIT_EXCEEDED = "system.rate_limit"
     PERMISSION_DENIED = "system.permission_denied"

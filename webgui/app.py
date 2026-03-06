@@ -930,6 +930,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.warning(f"Agent registration failed: {e}")
 
+    # Auto-register AGNOSTIC as MCP server with SecureYeoman
+    try:
+        from shared.yeoman_mcp_server import yeoman_mcp_registration
+
+        await yeoman_mcp_registration.register()
+    except Exception as e:
+        logger.warning(f"YEOMAN MCP auto-registration failed: {e}")
+
+    # Start outbound event push to SecureYeoman
+    try:
+        from shared.yeoman_event_stream import yeoman_event_push
+
+        await yeoman_event_push.start()
+    except Exception as e:
+        logger.warning(f"YEOMAN event push startup failed: {e}")
+
     # Start health monitor for alerts
     from shared.alerts import health_monitor
 
@@ -954,6 +970,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("AGNOS dashboard bridge stopped")
     except Exception as e:
         logger.warning(f"AGNOS dashboard bridge shutdown failed: {e}")
+
+    # Deregister AGNOSTIC MCP server from SecureYeoman
+    try:
+        from shared.yeoman_mcp_server import yeoman_mcp_registration
+
+        await yeoman_mcp_registration.deregister()
+        await yeoman_mcp_registration.close()
+        logger.info("YEOMAN MCP server deregistered")
+    except Exception as e:
+        logger.warning(f"YEOMAN MCP deregistration failed: {e}")
+
+    # Stop outbound event push to SecureYeoman
+    try:
+        from shared.yeoman_event_stream import yeoman_event_push
+
+        await yeoman_event_push.stop()
+        logger.info("YEOMAN event push stopped")
+    except Exception as e:
+        logger.warning(f"YEOMAN event push shutdown failed: {e}")
 
     # Close YEOMAN A2A client (httpx client)
     try:
@@ -981,6 +1016,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("AGNOS token budget client closed")
     except Exception as e:
         logger.warning(f"AGNOS token budget client shutdown failed: {e}")
+
+    # Close AGNOS vector store client
+    try:
+        from shared.agnos_vector_client import agnos_vector_client
+
+        await agnos_vector_client.close()
+        logger.info("AGNOS vector client closed")
+    except Exception as e:
+        logger.warning(f"AGNOS vector client shutdown failed: {e}")
 
     # Close alert manager HTTP client
     try:

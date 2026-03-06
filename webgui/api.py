@@ -20,11 +20,13 @@ from webgui.routes import (
     auth,
     dashboard,
     integration,
+    mcp,
     persistence,
     reports,
     sessions,
     tasks,
     tenants,
+    yeoman_webhooks,
 )
 
 # ---------------------------------------------------------------------------
@@ -42,6 +44,8 @@ api_router.include_router(agents.router)
 api_router.include_router(integration.router)
 api_router.include_router(persistence.router)
 api_router.include_router(tenants.router)
+api_router.include_router(mcp.router)
+api_router.include_router(yeoman_webhooks.router)
 
 # ---------------------------------------------------------------------------
 # Backward-compatible re-exports (used by tests and app.py)

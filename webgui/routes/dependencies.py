@@ -165,6 +165,26 @@ async def get_current_user(
         )
 
     token = authorization.removeprefix("Bearer ")
+
+    # 2a. Try SecureYeoman JWT first (if configured)
+    try:
+        from shared.yeoman_jwt import is_enabled as yeoman_jwt_enabled
+        from shared.yeoman_jwt import validate_yeoman_jwt
+
+        if yeoman_jwt_enabled():
+            yeoman_user = validate_yeoman_jwt(token)
+            if yeoman_user is not None:
+                audit_log(
+                    AuditAction.AUTH_LOGIN_SUCCESS,
+                    actor=yeoman_user["user_id"],
+                    resource_type="auth",
+                    detail={"method": "yeoman_jwt"},
+                )
+                return yeoman_user
+    except ImportError:
+        pass
+
+    # 2b. AGNOSTIC's own JWT
     payload = await auth_manager.verify_token(token)
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")

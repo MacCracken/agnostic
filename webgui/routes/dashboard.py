@@ -153,6 +153,83 @@ async def get_unified_dashboard(user: dict = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
+# Embeddable metrics widget for SecureYeoman dashboard
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboard/widget")
+async def get_embeddable_widget(user: dict = Depends(get_current_user)):
+    """Compact JSON optimized for SecureYeoman dashboard embedding.
+
+    Returns a minimal summary: agent status, active sessions, pass/fail rates,
+    compliance scores, and recent task counts — all in a single request.
+    """
+    from webgui.dashboard import dashboard_manager
+
+    # Core dashboard data
+    try:
+        dashboard_data = await dashboard_manager.export_dashboard_data()
+    except Exception:
+        dashboard_data = {}
+
+    # Agent status summary
+    agents_summary = []
+    try:
+        agents = await dashboard_manager.get_agent_status()
+        agents_summary = [
+            {"name": a.name, "status": a.status, "tasks_completed": getattr(a, "tasks_completed", 0)}
+            for a in agents
+        ]
+    except Exception:
+        pass
+
+    # Active session count
+    try:
+        sessions = await dashboard_manager.get_active_sessions()
+        active_sessions = len([s for s in sessions if s.status in ("running", "pending")])
+        total_sessions = len(sessions)
+    except Exception:
+        active_sessions = 0
+        total_sessions = 0
+
+    # Per-agent metrics
+    agent_metrics = {}
+    try:
+        from shared.agent_metrics import get_agent_metrics
+
+        agent_metrics = get_agent_metrics()
+    except Exception:
+        pass
+
+    # Compute pass/fail rates from agent metrics
+    total_passed = sum(m.get("tasks_passed", 0) for m in agent_metrics.values()) if isinstance(agent_metrics, dict) else 0
+    total_failed = sum(m.get("tasks_failed", 0) for m in agent_metrics.values()) if isinstance(agent_metrics, dict) else 0
+    total_tasks = total_passed + total_failed
+    pass_rate = (total_passed / total_tasks * 100) if total_tasks > 0 else 0.0
+
+    # Compliance scores (if available in dashboard data)
+    compliance = dashboard_data.get("compliance_scores", {})
+
+    return {
+        "provider": "agnostic-qa",
+        "version": os.getenv("AGNOSTIC_VERSION", "2026.3.5"),
+        "agents": agents_summary,
+        "sessions": {
+            "active": active_sessions,
+            "total": total_sessions,
+        },
+        "quality": {
+            "pass_rate": round(pass_rate, 1),
+            "total_tasks": total_tasks,
+            "passed": total_passed,
+            "failed": total_failed,
+        },
+        "compliance": compliance,
+        "healthy": True,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Alert query endpoint
 # ---------------------------------------------------------------------------
 
