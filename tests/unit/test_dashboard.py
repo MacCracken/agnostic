@@ -18,11 +18,11 @@ def _patch_redis(monkeypatch):
     monkeypatch.setattr("config.environment.config.get_redis_client", lambda: _mock_redis)
     _mock_redis.reset_mock()
     _mock_redis.get.reset_mock()
-    _mock_redis.keys.reset_mock()
+    _mock_redis.scan_iter.reset_mock()
     _mock_redis.get.return_value = None
     _mock_redis.get.side_effect = None
-    _mock_redis.keys.return_value = []
-    _mock_redis.keys.side_effect = None
+    _mock_redis.scan_iter.return_value = []
+    _mock_redis.scan_iter.side_effect = None
 
 
 def _make_manager():
@@ -50,7 +50,7 @@ class TestEnums:
 class TestGetActiveSessions:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_sessions(self):
-        _mock_redis.keys.return_value = []
+        _mock_redis.scan_iter.return_value = []
         mgr = _make_manager()
         sessions = await mgr.get_active_sessions()
         assert sessions == []
@@ -68,7 +68,7 @@ class TestGetActiveSessions:
             "scenarios_completed": 5,
             "scenarios_total": 10,
         }
-        _mock_redis.keys.return_value = [b"session:abc:info"]
+        _mock_redis.scan_iter.return_value = [b"session:abc:info"]
         _mock_redis.get.return_value = json.dumps(session_data).encode()
         mgr = _make_manager()
         sessions = await mgr.get_active_sessions()
@@ -85,7 +85,7 @@ class TestGetActiveSessions:
             "created_at": now,
             "updated_at": now,
         }
-        _mock_redis.keys.return_value = [b"session:x:info"]
+        _mock_redis.scan_iter.return_value = [b"session:x:info"]
         _mock_redis.get.return_value = json.dumps(session_data).encode()
         mgr = _make_manager()
         sessions = await mgr.get_active_sessions()
@@ -96,7 +96,7 @@ class TestGetActiveSessions:
 
     @pytest.mark.asyncio
     async def test_skips_invalid_json(self):
-        _mock_redis.keys.return_value = [b"session:bad:info"]
+        _mock_redis.scan_iter.return_value = [b"session:bad:info"]
         _mock_redis.get.return_value = b"not json"
         mgr = _make_manager()
         sessions = await mgr.get_active_sessions()
@@ -106,7 +106,7 @@ class TestGetActiveSessions:
 class TestGetAgentStatus:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_agents(self):
-        _mock_redis.keys.return_value = []
+        _mock_redis.scan_iter.return_value = []
         mgr = _make_manager()
         agents = await mgr.get_agent_status()
         assert agents == []
@@ -122,7 +122,7 @@ class TestGetAgentStatus:
             "cpu_usage": 45.0,
             "memory_usage": 60.0,
         }
-        _mock_redis.keys.return_value = [b"agent:qa-manager:status"]
+        _mock_redis.scan_iter.return_value = [b"agent:qa-manager:status"]
         _mock_redis.get.return_value = json.dumps(agent_data).encode()
         mgr = _make_manager()
         agents = await mgr.get_agent_status()
@@ -138,7 +138,7 @@ class TestGetAgentStatus:
             ("agent:zeta:status", {"status": "idle", "last_heartbeat": datetime.now().isoformat()}),
             ("agent:alpha:status", {"status": "busy", "last_heartbeat": datetime.now().isoformat()}),
         ]
-        _mock_redis.keys.return_value = [a[0].encode() for a in agents_data]
+        _mock_redis.scan_iter.return_value = [a[0].encode() for a in agents_data]
         _mock_redis.get.side_effect = [json.dumps(a[1]).encode() for a in agents_data]
         mgr = _make_manager()
         agents = await mgr.get_agent_status()
@@ -154,7 +154,7 @@ class TestGetResourceMetrics:
             "connected_clients": 5,
             "uptime_in_seconds": 3600,
         }
-        _mock_redis.keys.return_value = []
+        _mock_redis.scan_iter.return_value = []
         mgr = _make_manager()
         metrics = await mgr.get_resource_metrics()
         assert metrics.redis_memory_usage == 1024000
@@ -186,7 +186,7 @@ class TestGetSessionDetails:
             None,  # verification
         ]
         _mock_redis.lrange.return_value = []  # agent tasks
-        _mock_redis.keys = MagicMock(return_value=[])
+        _mock_redis.scan_iter = MagicMock(return_value=[])
         mgr = _make_manager()
         result = await mgr.get_session_details("sess1")
         assert result is not None
@@ -216,7 +216,7 @@ class TestStatusColors:
 class TestExportDashboardData:
     @pytest.mark.asyncio
     async def test_returns_full_export(self):
-        _mock_redis.keys.return_value = []
+        _mock_redis.scan_iter.return_value = []
         _mock_redis.info.return_value = {
             "used_memory": 0,
             "connected_clients": 0,

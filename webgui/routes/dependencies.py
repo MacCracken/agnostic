@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import os
+import socket
 from typing import Any
 from urllib.parse import urlparse
 
@@ -33,18 +34,25 @@ _BLOCKED_NETWORKS = [
 
 
 def _validate_callback_url(url: str) -> None:
-    """Raise ValueError if url points to a private/internal network."""
+    """Raise ValueError if url points to a private/internal network.
+
+    Resolves domain names to IP addresses to prevent DNS rebinding attacks.
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"Unsupported scheme: {parsed.scheme}")
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("Missing hostname")
-    try:
-        addr = ipaddress.ip_address(hostname)
+
+    def _check_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
         for net in _BLOCKED_NETWORKS:
             if addr in net:
-                raise ValueError(f"Callback to private network blocked: {hostname}")
+                raise ValueError(f"Callback to private network blocked: {addr}")
+
+    try:
+        addr = ipaddress.ip_address(hostname)
+        _check_ip(addr)
     except ValueError as e:
         if (
             "private network" in str(e)
@@ -52,7 +60,14 @@ def _validate_callback_url(url: str) -> None:
             or "Missing" in str(e)
         ):
             raise
-        # hostname is a domain name, not an IP — allowed
+        # hostname is a domain name — resolve and validate all addresses
+        try:
+            addrinfos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+            for _family, _type, _proto, _canonname, sockaddr in addrinfos:
+                resolved_ip = ipaddress.ip_address(sockaddr[0])
+                _check_ip(resolved_ip)
+        except socket.gaierror:
+            raise ValueError(f"Cannot resolve hostname: {hostname}")  # noqa: B904
 
 
 # ---------------------------------------------------------------------------

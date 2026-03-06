@@ -1,6 +1,7 @@
 """Token management — JWT creation, verification, refresh, and logout."""
 
 import hashlib
+import hmac
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -107,7 +108,9 @@ class TokenManager:
             refresh_key = f"refresh_token:{user_id}"
             stored_token = self.redis_client.get(refresh_key)
 
-            if not stored_token or stored_token.decode() != refresh_token:
+            if not stored_token or not hmac.compare_digest(
+                stored_token.decode(), refresh_token
+            ):
                 return None
 
             user = await get_user_fn(user_id)

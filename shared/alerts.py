@@ -143,9 +143,14 @@ class AlertManager:
 
         self._last_fired[cooldown_key] = now
 
-        # Periodic eviction of stale cooldown entries
-        if len(self._last_fired) > _COOLDOWN_MAX_ENTRIES:
+        # Proactive eviction: run every 100 entries or when exceeding hard cap
+        if len(self._last_fired) % 100 == 0 or len(self._last_fired) > _COOLDOWN_MAX_ENTRIES:
             self._evict_stale_cooldowns()
+            # Hard-cap: if still too large after eviction, drop oldest entries
+            if len(self._last_fired) > _COOLDOWN_MAX_ENTRIES:
+                sorted_keys = sorted(self._last_fired, key=self._last_fired.get)
+                for k in sorted_keys[: len(self._last_fired) - _COOLDOWN_MAX_ENTRIES]:
+                    del self._last_fired[k]
 
         payload = {
             "event": "alert",

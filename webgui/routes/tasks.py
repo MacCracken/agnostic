@@ -140,11 +140,14 @@ async def _run_task_async(
     tenant_id: str = "default",
 ) -> None:
     """Run a QA task asynchronously, updating Redis through status transitions."""
+    import asyncio as _asyncio
+
     from shared.database.tenants import tenant_manager
 
     task_redis_key = tenant_manager.task_key(tenant_id, task_id)
+    loop = _asyncio.get_running_loop()
 
-    def _update_task(status: str, result: dict | None = None) -> dict[str, Any]:
+    def _update_task_sync(status: str, result: dict | None = None) -> dict[str, Any]:
         raw = redis_client.get(task_redis_key)
         record: dict[str, Any] = (
             json.loads(raw)
@@ -176,9 +179,12 @@ async def _run_task_async(
 
         return record
 
+    async def _update_task(status: str, result: dict | None = None) -> dict[str, Any]:
+        return await loop.run_in_executor(None, _update_task_sync, status, result)
+
     final_record: dict[str, Any] = {}
     try:
-        _update_task("running")
+        await _update_task("running")
 
         # Lazy-import to avoid startup overhead
         try:
@@ -196,11 +202,11 @@ async def _run_task_async(
                 {"session_id": session_id, **requirements}
             )
 
-        final_record = _update_task("completed", result)
+        final_record = await _update_task("completed", result)
 
     except Exception as e:
         logger.error(f"Task {task_id} failed: {e}")
-        final_record = _update_task("failed", {"error": str(e)})
+        final_record = await _update_task("failed", {"error": str(e)})
 
     # P3 — Webhook callback on completion
     if callback_url and final_record:
@@ -389,6 +395,33 @@ async def receive_a2a_message(
 
     if msg.type == "a2a:heartbeat":
         return {"accepted": True, "message_id": msg.id, "timestamp": msg.timestamp}
+
+    if msg.type == "a2a:result":
+        # YEOMAN sending task results back to AGNOSTIC
+        try:
+            from shared.yeoman_a2a_client import yeoman_a2a_client
+
+            task_id = msg.payload.get("task_id", msg.id)
+            yeoman_a2a_client.cache_result(task_id, msg.payload)
+        except ImportError:
+            pass
+        return {"accepted": True, "message_id": msg.id, "type": "result_cached"}
+
+    if msg.type == "a2a:status_query":
+        # YEOMAN querying AGNOSTIC status
+        status_data: dict = {"provider": "agnostic-qa", "agents": [], "sessions": []}
+        try:
+            from webgui.dashboard import dashboard_manager
+
+            status_data = await dashboard_manager.export_dashboard_data()
+        except Exception:
+            pass
+        return {
+            "accepted": True,
+            "message_id": msg.id,
+            "type": "status_response",
+            "data": status_data,
+        }
 
     # Unknown message type — acknowledge receipt but take no action
     return {

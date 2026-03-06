@@ -485,17 +485,56 @@ class TestSSRFProtection:
         with pytest.raises(ValueError, match="private network"):
             _validate_callback_url("http://169.254.169.254/latest/meta-data/")
 
-    def test_allows_public_url(self):
+    def test_allows_public_url(self, monkeypatch):
+        import socket as _socket
+
         from webgui.api import _validate_callback_url
 
-        # Should not raise
+        # Mock DNS resolution to return a public IP
+        monkeypatch.setattr(
+            "webgui.routes.dependencies.socket.getaddrinfo",
+            lambda *a, **kw: [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))],
+        )
         _validate_callback_url("https://hooks.example.com/callback")
 
-    def test_allows_domain_name(self):
+    def test_allows_domain_name(self, monkeypatch):
+        import socket as _socket
+
         from webgui.api import _validate_callback_url
 
-        # Domain names are allowed (DNS resolved at request time)
+        monkeypatch.setattr(
+            "webgui.routes.dependencies.socket.getaddrinfo",
+            lambda *a, **kw: [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("203.0.113.1", 0))],
+        )
         _validate_callback_url("https://my-webhook.company.io/hook")
+
+    def test_blocks_dns_rebinding_to_private(self, monkeypatch):
+        import socket as _socket
+
+        from webgui.api import _validate_callback_url
+
+        # DNS rebinding: domain resolves to a private IP
+        monkeypatch.setattr(
+            "webgui.routes.dependencies.socket.getaddrinfo",
+            lambda *a, **kw: [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("10.0.0.1", 0))],
+        )
+        with pytest.raises(ValueError, match="private network"):
+            _validate_callback_url("https://evil-rebind.attacker.com/hook")
+
+    def test_blocks_unresolvable_hostname(self, monkeypatch):
+        import socket as _socket
+
+        from webgui.api import _validate_callback_url
+
+        def _raise_gaierror(*a, **kw):
+            raise _socket.gaierror("Name resolution failed")
+
+        monkeypatch.setattr(
+            "webgui.routes.dependencies.socket.getaddrinfo",
+            _raise_gaierror,
+        )
+        with pytest.raises(ValueError, match="Cannot resolve hostname"):
+            _validate_callback_url("https://nonexistent.invalid/hook")
 
     def test_blocks_unsupported_scheme(self):
         from webgui.api import _validate_callback_url

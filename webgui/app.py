@@ -929,6 +929,51 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await scheduled_report_manager.shutdown()
     logger.info("Scheduled reports shutdown")
 
+    # Close AGNOS dashboard bridge (httpx client + periodic task)
+    try:
+        from shared.agnos_dashboard_bridge import agnos_dashboard_bridge
+
+        await agnos_dashboard_bridge.stop()
+        logger.info("AGNOS dashboard bridge stopped")
+    except Exception as e:
+        logger.warning(f"AGNOS dashboard bridge shutdown failed: {e}")
+
+    # Close YEOMAN A2A client (httpx client)
+    try:
+        from shared.yeoman_a2a_client import yeoman_a2a_client
+
+        await yeoman_a2a_client.close()
+        logger.info("YEOMAN A2A client closed")
+    except Exception as e:
+        logger.warning(f"YEOMAN A2A client shutdown failed: {e}")
+
+    # Flush and close AGNOS audit forwarder (buffer + httpx client)
+    try:
+        from shared.agnos_audit import agnos_audit_forwarder
+
+        await agnos_audit_forwarder.close()
+        logger.info("AGNOS audit forwarder closed")
+    except Exception as e:
+        logger.warning(f"AGNOS audit forwarder shutdown failed: {e}")
+
+    # Close alert manager HTTP client
+    try:
+        from shared.alerts import alert_manager
+
+        await alert_manager.close()
+        logger.info("Alert manager HTTP client closed")
+    except Exception as e:
+        logger.warning(f"Alert manager shutdown failed: {e}")
+
+    # Close model manager provider sessions
+    try:
+        from config.model_manager import model_manager
+
+        await model_manager.close()
+        logger.info("Model manager sessions closed")
+    except Exception as e:
+        logger.warning(f"Model manager shutdown failed: {e}")
+
     if os.getenv("DATABASE_ENABLED", "false").lower() == "true":
         try:
             from shared.database.models import close_db

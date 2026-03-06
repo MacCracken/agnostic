@@ -744,6 +744,14 @@ class ModelManager:
             }
         return None
 
+    async def close(self) -> None:
+        """Close all provider sessions (aiohttp/httpx clients)."""
+        for name, provider in self.providers.items():
+            try:
+                await provider.close()
+            except Exception as e:
+                logger.warning(f"Error closing provider {name}: {e}")
+
 
 # Global model manager instance
 model_manager = ModelManager()

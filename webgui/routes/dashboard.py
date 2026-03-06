@@ -75,6 +75,62 @@ async def get_llm_gateway_health(user: dict = Depends(get_current_user)):
     return await model_manager.gateway_health()
 
 
+@router.get("/dashboard/yeoman")
+async def get_yeoman_status(user: dict = Depends(get_current_user)):
+    """Get cached YEOMAN task results and status for unified dashboard view."""
+    try:
+        from shared.yeoman_a2a_client import yeoman_a2a_client
+
+        return {
+            "enabled": yeoman_a2a_client.enabled,
+            "cached_results": yeoman_a2a_client.get_all_cached_results(),
+            "peer_id": yeoman_a2a_client.yeoman_peer_id if yeoman_a2a_client.enabled else None,
+        }
+    except ImportError:
+        return {"enabled": False, "cached_results": {}, "peer_id": None}
+
+
+@router.get("/dashboard/unified")
+async def get_unified_dashboard(user: dict = Depends(get_current_user)):
+    """Get combined AGNOSTIC + YEOMAN status for unified AGNOS dashboard view."""
+    from webgui.dashboard import dashboard_manager
+
+    # AGNOSTIC dashboard data
+    agnostic_data = await dashboard_manager.export_dashboard_data()
+
+    # YEOMAN data (if available)
+    yeoman_data: dict = {"enabled": False, "cached_results": {}}
+    try:
+        from shared.yeoman_a2a_client import yeoman_a2a_client
+
+        if yeoman_a2a_client.enabled:
+            yeoman_data = {
+                "enabled": True,
+                "cached_results": yeoman_a2a_client.get_all_cached_results(),
+                "peer_id": yeoman_a2a_client.yeoman_peer_id,
+            }
+    except ImportError:
+        pass
+
+    # AGNOS bridge status
+    bridge_status: dict = {"enabled": False}
+    try:
+        from shared.agnos_dashboard_bridge import agnos_dashboard_bridge
+
+        bridge_status = {
+            "enabled": agnos_dashboard_bridge.enabled,
+            "pushing": agnos_dashboard_bridge._periodic_task is not None,
+        }
+    except ImportError:
+        pass
+
+    return {
+        "agnostic": agnostic_data,
+        "yeoman": yeoman_data,
+        "agnos_bridge": bridge_status,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Alert query endpoint
 # ---------------------------------------------------------------------------

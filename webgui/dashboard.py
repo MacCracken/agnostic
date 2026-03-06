@@ -115,8 +115,8 @@ class DashboardManager:
         sessions = []
 
         try:
-            # Get session keys from Redis
-            session_keys = self.redis_client.keys("session:*:info")
+            # Get session keys from Redis (scan_iter avoids blocking the server)
+            session_keys = list(self.redis_client.scan_iter("session:*:info", count=200))
 
             for key in session_keys:
                 session_id = key.decode().split(":")[1]
@@ -171,8 +171,8 @@ class DashboardManager:
         agents = []
 
         try:
-            # Get agent status from Redis
-            agent_keys = self.redis_client.keys("agent:*:status")
+            # Get agent status from Redis (scan_iter avoids blocking the server)
+            agent_keys = list(self.redis_client.scan_iter("agent:*:status", count=200))
 
             for key in agent_keys:
                 agent_name = key.decode().split(":")[1]
@@ -224,11 +224,13 @@ class DashboardManager:
             # Get Redis info
             redis_info = self.redis_client.info()
 
-            # Count active sessions and agents
+            # Fetch once, derive both filtered and total counts
+            all_sessions = await self.get_active_sessions()
+            all_agents = await self.get_agent_status()
             active_sessions = len(
                 [
                     s
-                    for s in await self.get_active_sessions()
+                    for s in all_sessions
                     if s.status
                     in [
                         SessionStatus.PLANNING,
@@ -240,13 +242,13 @@ class DashboardManager:
             active_agents = len(
                 [
                     a
-                    for a in await self.get_agent_status()
+                    for a in all_agents
                     if a.status != AgentStatus.OFFLINE
                 ]
             )
 
             return ResourceMetrics(
-                total_sessions=len(await self.get_active_sessions()),
+                total_sessions=len(all_sessions),
                 active_sessions=active_sessions,
                 active_agents=active_agents,
                 redis_memory_usage=redis_info.get("used_memory", 0),

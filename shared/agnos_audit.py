@@ -31,6 +31,8 @@ except ImportError:
 class AgnosAuditForwarder:
     """Batched, async forwarder for AGNOS cryptographic audit chain."""
 
+    _MAX_BUFFER_SIZE = 10_000  # Hard cap to prevent unbounded memory growth
+
     def __init__(self) -> None:
         self.enabled = (
             os.getenv("AGNOS_AUDIT_ENABLED", "false").lower() == "true"
@@ -69,6 +71,16 @@ class AgnosAuditForwarder:
         if not self.enabled:
             return
 
+        # Enforce hard cap on buffer size to prevent unbounded memory growth
+        if len(self._buffer) >= self._MAX_BUFFER_SIZE:
+            dropped = len(self._buffer) - self._MAX_BUFFER_SIZE + self.batch_size
+            self._buffer = self._buffer[dropped:]
+            logger.warning(
+                "AGNOS audit buffer exceeded %d entries, dropped %d oldest events",
+                self._MAX_BUFFER_SIZE,
+                dropped,
+            )
+
         self._buffer.append(event)
 
         if len(self._buffer) >= self.batch_size:
@@ -83,8 +95,13 @@ class AgnosAuditForwarder:
             if self._flush_task is None or self._flush_task.done():
                 self._flush_task = loop.create_task(self._delayed_flush())
         except RuntimeError:
-            # No running loop — skip (events will flush on next opportunity)
-            pass
+            # No running loop — events will accumulate until an async
+            # context calls flush() or queue_event() with a running loop.
+            logger.debug(
+                "AGNOS audit: no running event loop, deferring flush "
+                "(buffer size: %d)",
+                len(self._buffer),
+            )
 
     async def _delayed_flush(self) -> None:
         """Wait up to flush_interval then send the batch."""
