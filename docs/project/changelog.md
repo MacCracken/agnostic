@@ -182,7 +182,7 @@ Versions use **YYYY.M.D** (calendar versioning).
 - `tests/unit/test_webgui_exports.py`: `TestGenerateFileSanitization` (path traversal in session ID neutralised, normal IDs preserved)
 - `tests/unit/test_model_manager.py`: 41 tests for AGNOS OS provider, gateway routing, env-var guards
 - `tests/k8s/`: YAML structural validation for all Kubernetes manifests and Helm values
-- **492 unit tests + 19 E2E tests passing**
+- **494 unit tests + 19 E2E tests passing**
 
 ---
 

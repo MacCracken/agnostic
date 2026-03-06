@@ -46,4 +46,4 @@ No long-term items remaining. See [Dependency Watch](dependency-watch.md) for up
 
 ---
 
-*Last Updated: 2026-03-05 · Test count: 492 (unit) + 19 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-05 · Test count: 494 (unit) + 19 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
