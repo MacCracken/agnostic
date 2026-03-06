@@ -17,12 +17,6 @@ Versions use **YYYY.M.D** (calendar versioning).
 - **LLM Gateway consolidation** — `ModelManager.load_config()` auto-enables `agnos_gateway` provider when `AGNOS_LLM_GATEWAY_ENABLED=true`; `OpenAIProvider` propagates `x-agent-id` header for per-agent token accounting via AGNOS gateway; `ModelManager.gateway_health()` checks gateway `/health` endpoint; `GET /api/dashboard/llm-gateway` endpoint exposes gateway status (`config/model_manager.py`, `webgui/routes/dashboard.py`)
 - **REST API Proxy tools (9 new)** — `AgnosticApiClient` adapter implements `CoreApiClient` interface wrapping `agnosticGet`/`agnosticPost`; 9 high-value endpoints registered via `registerApiProxyTool()` factory: `agnostic_proxy_sessions`, `agnostic_proxy_session_search`, `agnostic_proxy_task_list`, `agnostic_proxy_agent_detail`, `agnostic_proxy_agent_registration`, `agnostic_proxy_dashboard_overview`, `agnostic_proxy_llm_gateway`, `agnostic_proxy_reports`, `agnostic_proxy_alerts` (`agnostic-tools.ts`, `manifest.ts`; 25 total agnostic tools)
 
-### Fixed
-
-- **`test_redis_url_format` / `test_rabbitmq_url_format` failures** — tests now clear `REDIS_URL`/`RABBITMQ_URL` env vars before asserting component-based URL construction, fixing the `os.getenv("REDIS_URL")` precedence issue (`tests/unit/test_config_environment.py`)
-
-### Added (continued)
-
 - **WebSocket Real-Time Dashboard** — `/ws/realtime` endpoint fully wired in `webgui/app.py`; initializes Redis pub/sub on startup, subscribes to agent task channels (`manager:tasks`, `senior:tasks`, etc.) for real-time task progress; dashboard.js auto-subscribes to active sessions on connect (`webgui/realtime.py`, `webgui/static/js/dashboard.js`)
 - **Prometheus ServiceMonitor** — `ServiceMonitor` and `PodMonitor` CRDs for Prometheus scraping of `/api/metrics` endpoint; configurable via `metrics.enabled` in Helm values (`k8s/helm/agentic-qa/templates/service-monitor.yaml`)
 - **Scheduled Report Generation** — APScheduler integration for automated daily/weekly reports; `POST /api/reports/scheduled`, `GET /api/reports/scheduled`, `DELETE /api/reports/scheduled/{job_id}` endpoints; configurable via `SCHEDULED_REPORTS_ENABLED`, `SCHEDULED_REPORT_DAILY_TIME`, `SCHEDULED_REPORT_WEEKLY_DAY`, `SCHEDULED_REPORT_WEEKLY_TIME` env vars (`webgui/scheduled_reports.py`, `webgui/api.py`, `pyproject.toml`)
@@ -83,8 +77,12 @@ Versions use **YYYY.M.D** (calendar versioning).
 - **Tenant isolation enforcement** — `_check_tenant_access()` guard added to `GET /tenants/{id}`, `PUT /tenants/{id}`, `DELETE /tenants/{id}`, `GET /tenants/{id}/users`; users can only access their own tenant; super_admin bypasses (`webgui/api.py`)
 - **Agent name normalization** — `_normalize_agent_name()` converts underscores to hyphens, fixing YEOMAN snake_case→kebab-case mismatch that caused silent agent filtering failures (`webgui/api.py`)
 
+- **Unit tests for 7 previously untested modules** — 136 new tests: `shared/rate_limit.py` (18 tests), `shared/crewai_compat.py` (4 tests), `shared/data_generation_service.py` (30 tests), `webgui/app.py` (12 tests), `webgui/agent_monitor.py` (15 tests), `webgui/dashboard.py` (15 tests), `webgui/history.py` (20 tests); total unit tests: 587 (`tests/unit/test_rate_limit.py`, `tests/unit/test_crewai_compat.py`, `tests/unit/test_data_generation.py`, `tests/unit/test_webgui_app.py`, `tests/unit/test_agent_monitor.py`, `tests/unit/test_dashboard.py`, `tests/unit/test_history.py`)
+
 ### Fixed
 
+- **`UnifiedDataGenerator._generate_data_item()` crash on non-dict preset keys** — `_generate_data_item()` and `_get_data_schema()` now skip `_`-prefixed and non-dict entries in preset dicts, fixing `AttributeError: 'str' object has no attribute 'get'` when presets contain metadata keys like `_name` or scalar overrides from `optimize_for_agent()` (`shared/data_generation_service.py`)
+- **`test_redis_url_format` / `test_rabbitmq_url_format` failures** — tests now clear `REDIS_URL`/`RABBITMQ_URL` env vars before asserting component-based URL construction, fixing the `os.getenv("REDIS_URL")` precedence issue (`tests/unit/test_config_environment.py`)
 - **WebSocket realtime test hang** — `test_handle_websocket_accepts_connection` blocked forever due to missing `receive_json` side_effect; handler's `while True` receive loop now properly terminated in test
 - **pytest collection warnings** — `TestStatus` and `TestExecutionResult` in `shared/yeoman_schemas.py` suppressed via `__test__ = False`
 - **SQLAlchemy reserved name conflict** — `TestResult.metadata` renamed to `extra_metadata` with explicit column name `"metadata"` to avoid collision with SQLAlchemy's `Base.metadata`
@@ -94,9 +92,6 @@ Versions use **YYYY.M.D** (calendar versioning).
 - **Redis `KEYS` command replaced with `SCAN`** — report listing endpoint now uses non-blocking `SCAN` + `MGET` instead of `KEYS` + individual `GET` calls (`webgui/api.py`)
 - **httpx client reuse** — `AlertManager` and webhook delivery now use shared `httpx.AsyncClient` singletons instead of creating new clients per request (`shared/alerts.py`, `webgui/api.py`)
 - **LLM integration deduplicated** — extracted `_llm_call()` common wrapper replacing 6 identical 70-line methods with circuit breaker, metrics, and fallback logic (`config/llm_integration.py`)
-
-### Added
-
 - **Alert query endpoint** — `GET /api/alerts?limit=&severity=` reads from Redis stream for recent alert history; alerts persisted via `XADD` with 1000-entry cap (`webgui/api.py`, `shared/alerts.py`)
 - **SSRF protection unit tests** — 9 tests covering private IP blocking, public URL allowance, scheme validation (`tests/unit/test_webgui_api.py`)
 - **Agent name normalization tests** — 4 tests covering snake_case/kebab-case conversion (`tests/unit/test_webgui_api.py`)

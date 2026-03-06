@@ -72,6 +72,8 @@ class UnifiedDataGenerator:
         item: dict[str, Any] = {}
 
         for field_name, field_config in preset.items():
+            if field_name.startswith("_") or not isinstance(field_config, dict):
+                continue
             field_type = field_config.get("type", "string")
             field_options = field_config.get("options", {})
 
@@ -171,7 +173,7 @@ class UnifiedDataGenerator:
         """Extract schema from preset for documentation"""
         schema = {}
         for field_name, field_config in preset.items():
-            if field_name.startswith("_"):
+            if field_name.startswith("_") or not isinstance(field_config, dict):
                 continue
 
             schema[field_name] = {

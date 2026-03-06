@@ -6,15 +6,6 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 
 ---
 
-## Medium-term
-
-### Test Coverage
-**Priority:** Medium
-
-- [ ] Add unit tests for untested modules — `shared/rate_limit.py`, `shared/crewai_compat.py`, `shared/data_generation_service.py`, `webgui/app.py`, `webgui/agent_monitor.py`, `webgui/dashboard.py`, `webgui/history.py`
-
----
-
 ## SecureYeoman Integration
 
 ### Docker Base Image Migration
@@ -44,4 +35,4 @@ No long-term items remaining. See [Dependency Watch](dependency-watch.md) for up
 
 ---
 
-*Last Updated: 2026-03-05 · Test count: 451 (unit) + 19 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-05 · Test count: 587 (unit) + 19 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
