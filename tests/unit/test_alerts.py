@@ -127,25 +127,23 @@ class TestAlertManager:
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
 
-        with patch("shared.alerts.ALERTS_ENABLED", True):
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client.post = AsyncMock(return_value=mock_response)
-                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                mock_client.__aexit__ = AsyncMock(return_value=False)
-                mock_client_cls.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.is_closed = False
 
-                result = await mgr.fire(
-                    AlertType.HEALTH_UNHEALTHY,
-                    AlertSeverity.CRITICAL,
-                    "System down",
-                    "Redis is unreachable",
-                )
-                assert result["webhook"] == "delivered"
-                call_kwargs = mock_client.post.call_args
-                assert "X-Signature" in call_kwargs.kwargs.get(
-                    "headers", call_kwargs[1].get("headers", {})
-                )
+        with patch("shared.alerts.ALERTS_ENABLED", True):
+            mgr._http_client = mock_client
+            result = await mgr.fire(
+                AlertType.HEALTH_UNHEALTHY,
+                AlertSeverity.CRITICAL,
+                "System down",
+                "Redis is unreachable",
+            )
+            assert result["webhook"] == "delivered"
+            call_kwargs = mock_client.post.call_args
+            assert "X-Signature" in call_kwargs.kwargs.get(
+                "headers", call_kwargs[1].get("headers", {})
+            )
 
     def test_has_channels(self):
         mgr = AlertManager()
@@ -186,25 +184,22 @@ class TestHealthMonitor:
         monitor._previous_status = "healthy"
         monitor._previous_agents = {"qa-manager": "alive"}
 
+        health_data = {
+            "status": "degraded",
+            "redis": "ok",
+            "rabbitmq": "ok",
+            "agents": {"qa-manager": "offline"},
+        }
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = health_data
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
+        mgr._http_client = mock_client
+
         with patch("shared.alerts.ALERTS_ENABLED", True):
-            # Simulate health check returning degraded
-            health_data = {
-                "status": "degraded",
-                "redis": "ok",
-                "rabbitmq": "ok",
-                "agents": {"qa-manager": "offline"},
-            }
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = health_data
-
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client.get = AsyncMock(return_value=mock_resp)
-                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                mock_client.__aexit__ = AsyncMock(return_value=False)
-                mock_client_cls.return_value = mock_client
-
-                await monitor._check_health()
+            await monitor._check_health()
 
         # Should have fired for health.degraded and agent.offline
         assert mgr.fire.call_count >= 1
@@ -227,15 +222,13 @@ class TestHealthMonitor:
         mock_resp = MagicMock()
         mock_resp.json.return_value = health_data
 
-        with patch("shared.alerts.ALERTS_ENABLED", True):
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client.get = AsyncMock(return_value=mock_resp)
-                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                mock_client.__aexit__ = AsyncMock(return_value=False)
-                mock_client_cls.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.is_closed = False
+        mgr._http_client = mock_client
 
-                await monitor._check_health()
+        with patch("shared.alerts.ALERTS_ENABLED", True):
+            await monitor._check_health()
 
         mgr.fire.assert_not_called()
         assert monitor._previous_status == "healthy"

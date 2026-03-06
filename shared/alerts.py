@@ -58,6 +58,9 @@ class AlertType(StrEnum):
 
 ALERTS_ENABLED = os.getenv("ALERTS_ENABLED", "false").lower() == "true"
 
+_COOLDOWN_MAX_ENTRIES = 5_000
+_COOLDOWN_EVICT_AGE = 7200  # Remove entries older than 2 hours
+
 
 class AlertManager:
     """Manages alert delivery with cooldown throttling."""
@@ -86,9 +89,34 @@ class AlertManager:
         # Tracks last alert time per (alert_type, context_key) to avoid storms
         self._last_fired: dict[str, float] = {}
 
+        # Shared httpx client (created lazily)
+        self._http_client: Any = None
+
+    async def _get_http_client(self) -> Any:
+        """Return a shared httpx.AsyncClient, created on first use."""
+        if self._http_client is None or self._http_client.is_closed:
+            import httpx
+
+            self._http_client = httpx.AsyncClient(timeout=10)
+        return self._http_client
+
+    async def close(self) -> None:
+        """Close the shared HTTP client."""
+        if self._http_client and not self._http_client.is_closed:
+            await self._http_client.aclose()
+            self._http_client = None
+
     @property
     def has_channels(self) -> bool:
         return bool(self.webhook_url or self.slack_webhook_url or self.email_recipients)
+
+    def _evict_stale_cooldowns(self) -> None:
+        """Remove old cooldown entries to prevent unbounded growth."""
+        now = time.monotonic()
+        cutoff = now - _COOLDOWN_EVICT_AGE
+        stale = [k for k, v in self._last_fired.items() if v < cutoff]
+        for k in stale:
+            del self._last_fired[k]
 
     async def fire(
         self,
@@ -114,6 +142,10 @@ class AlertManager:
             return None
 
         self._last_fired[cooldown_key] = now
+
+        # Periodic eviction of stale cooldown entries
+        if len(self._last_fired) > _COOLDOWN_MAX_ENTRIES:
+            self._evict_stale_cooldowns()
 
         payload = {
             "event": "alert",
@@ -143,21 +175,26 @@ class AlertManager:
         if self.email_recipients:
             results["email"] = await self._deliver_email(payload)
 
-        # Publish to Redis pub/sub for WebSocket clients
+        # Publish to Redis pub/sub for WebSocket clients + persist to stream
         try:
             from config.environment import config
 
             redis_client = config.get_redis_client()
             redis_client.publish("webgui:alerts", json.dumps(payload))
+            # Persist to stream for query endpoint (capped at 1000 entries)
+            redis_client.xadd(
+                "stream:webgui:alerts",
+                {"data": json.dumps(payload)},
+                maxlen=1000,
+            )
         except Exception:
             pass
 
-        logger.info("Alert fired: [%s] %s — %s", severity, alert_type, title)
+        logger.info("Alert fired: [%s] %s - %s", severity, alert_type, title)
         return results
 
     async def _deliver_webhook(self, payload: dict[str, Any]) -> str:
-        import httpx
-
+        client = await self._get_http_client()
         body = json.dumps(payload)
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.webhook_secret:
@@ -169,11 +206,10 @@ class AlertManager:
         last_error = None
         for attempt in range(self.max_retries):
             try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.post(
-                        self.webhook_url, content=body, headers=headers
-                    )
-                    resp.raise_for_status()
+                resp = await client.post(
+                    self.webhook_url, content=body, headers=headers
+                )
+                resp.raise_for_status()
                 return "delivered"
             except Exception as e:
                 last_error = e
@@ -182,8 +218,7 @@ class AlertManager:
         return f"failed: {last_error}"
 
     async def _deliver_slack(self, payload: dict[str, Any]) -> str:
-        import httpx
-
+        client = await self._get_http_client()
         severity = payload.get("severity", "info")
         emoji = {
             "critical": ":rotating_light:",
@@ -202,13 +237,12 @@ class AlertManager:
         last_error = None
         for attempt in range(self.max_retries):
             try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.post(
-                        self.slack_webhook_url,
-                        content=json.dumps(slack_payload),
-                        headers={"Content-Type": "application/json"},
-                    )
-                    resp.raise_for_status()
+                resp = await client.post(
+                    self.slack_webhook_url,
+                    content=json.dumps(slack_payload),
+                    headers={"Content-Type": "application/json"},
+                )
+                resp.raise_for_status()
                 return "delivered"
             except Exception as e:
                 last_error = e
@@ -276,7 +310,7 @@ alert_manager = AlertManager()
 
 
 # ---------------------------------------------------------------------------
-# Health monitor — background task that polls health and fires alerts
+# Health monitor - background task that polls health and fires alerts
 # ---------------------------------------------------------------------------
 
 
@@ -308,6 +342,7 @@ class HealthMonitor:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        await self.manager.close()
         logger.info("Health monitor stopped")
 
     async def _poll_loop(self) -> None:
@@ -323,13 +358,11 @@ class HealthMonitor:
     async def _check_health(self) -> None:
         """Fetch health status and fire alerts on transitions."""
         try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get("http://127.0.0.1:8000/health")
-                data = resp.json()
+            client = await self.manager._get_http_client()
+            resp = await client.get("http://127.0.0.1:8000/health")
+            data = resp.json()
         except Exception:
-            # Can't reach self — likely starting up
+            # Can't reach self - likely starting up
             return
 
         current_status = data.get("status", "unknown")

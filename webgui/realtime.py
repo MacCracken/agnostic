@@ -343,17 +343,25 @@ class RealtimeManager:
         return count
 
     async def _redis_listener(self):
-        """Background task to listen to Redis pub/sub messages"""
+        """Background task to listen to Redis pub/sub messages.
+
+        Uses run_in_executor to avoid blocking the event loop with
+        the synchronous redis-py get_message call.
+        """
         logger.info("Starting Redis pub/sub listener")
+        loop = asyncio.get_running_loop()
 
         try:
             while True:
                 if self.pubsub:
-                    message = self.pubsub.get_message(timeout=1.0)
+                    # Run blocking get_message in a thread to avoid starving the event loop
+                    message = await loop.run_in_executor(
+                        None, lambda: self.pubsub.get_message(timeout=0.5)
+                    )
                     if message and message["type"] == "message":
                         await self._handle_redis_message(message)
-
-                await asyncio.sleep(0.01)  # Small delay to prevent CPU spin
+                else:
+                    await asyncio.sleep(0.5)
 
         except Exception as e:
             logger.error(f"Redis listener error: {e}")

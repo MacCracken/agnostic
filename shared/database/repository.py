@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 class TestResultRepository:
     """Repository for test result database operations."""
 
+    __test__ = False
+
     def __init__(self, session: AsyncSession):
         self.session = session
 
@@ -221,6 +223,125 @@ class TestResultRepository:
         query = query.order_by(TestReport.created_at.desc()).limit(limit)
         result = await self.session.execute(query)
         return list(result.scalars().all())
+
+    async def diff_sessions(
+        self, base_session_id: str, compare_session_id: str
+    ) -> dict[str, Any]:
+        """Compare test results between two sessions to detect regressions.
+
+        Matches tests by ``test_id`` and categorises changes as regressions
+        (was passing, now failing), fixes, new tests, and removed tests.
+        Also compares aggregate pass rates and execution times.
+        """
+        base_rows = await self.session.execute(
+            select(TestResult)
+            .where(TestResult.session_id == base_session_id)
+            .order_by(TestResult.test_id)
+        )
+        compare_rows = await self.session.execute(
+            select(TestResult)
+            .where(TestResult.session_id == compare_session_id)
+            .order_by(TestResult.test_id)
+        )
+
+        base_results = {r.test_id: r for r in base_rows.scalars().all()}
+        compare_results = {r.test_id: r for r in compare_rows.scalars().all()}
+
+        base_ids = set(base_results.keys())
+        compare_ids = set(compare_results.keys())
+
+        regressions: list[dict[str, Any]] = []
+        fixes: list[dict[str, Any]] = []
+        stable: list[str] = []
+        new_tests: list[dict[str, Any]] = []
+        removed_tests: list[str] = []
+
+        # Tests present in both sessions
+        for test_id in sorted(base_ids & compare_ids):
+            base = base_results[test_id]
+            comp = compare_results[test_id]
+
+            if base.status == "passed" and comp.status != "passed":
+                regressions.append(
+                    {
+                        "test_id": test_id,
+                        "test_name": comp.test_name,
+                        "base_status": base.status,
+                        "compare_status": comp.status,
+                        "error_message": comp.error_message,
+                        "component": comp.component,
+                        "base_time_ms": base.execution_time_ms,
+                        "compare_time_ms": comp.execution_time_ms,
+                    }
+                )
+            elif base.status != "passed" and comp.status == "passed":
+                fixes.append(
+                    {
+                        "test_id": test_id,
+                        "test_name": comp.test_name,
+                        "base_status": base.status,
+                        "compare_status": comp.status,
+                    }
+                )
+            else:
+                stable.append(test_id)
+
+        # New tests (in compare but not base)
+        for test_id in sorted(compare_ids - base_ids):
+            comp = compare_results[test_id]
+            new_tests.append(
+                {
+                    "test_id": test_id,
+                    "test_name": comp.test_name,
+                    "status": comp.status,
+                }
+            )
+
+        # Removed tests (in base but not compare)
+        removed_tests = sorted(base_ids - compare_ids)
+
+        # Aggregate stats
+        def _pass_rate(results: dict) -> float:
+            total = len(results)
+            if total == 0:
+                return 0.0
+            passed = sum(1 for r in results.values() if r.status == "passed")
+            return round(passed / total * 100, 2)
+
+        def _avg_time(results: dict) -> float | None:
+            times = [
+                r.execution_time_ms
+                for r in results.values()
+                if r.execution_time_ms is not None
+            ]
+            return round(sum(times) / len(times), 1) if times else None
+
+        base_pass_rate = _pass_rate(base_results)
+        compare_pass_rate = _pass_rate(compare_results)
+
+        return {
+            "base_session_id": base_session_id,
+            "compare_session_id": compare_session_id,
+            "summary": {
+                "base_total": len(base_results),
+                "compare_total": len(compare_results),
+                "base_pass_rate": base_pass_rate,
+                "compare_pass_rate": compare_pass_rate,
+                "pass_rate_delta": round(compare_pass_rate - base_pass_rate, 2),
+                "base_avg_time_ms": _avg_time(base_results),
+                "compare_avg_time_ms": _avg_time(compare_results),
+                "regressions": len(regressions),
+                "fixes": len(fixes),
+                "new_tests": len(new_tests),
+                "removed_tests": len(removed_tests),
+                "stable": len(stable),
+            },
+            "regressions": regressions,
+            "fixes": fixes,
+            "new_tests": new_tests,
+            "removed_tests": removed_tests,
+            "has_regressions": len(regressions) > 0,
+        }
 
     async def get_quality_trends(self, days: int = 30) -> list[dict[str, Any]]:
         """Get quality trends over time."""

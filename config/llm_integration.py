@@ -46,14 +46,66 @@ class LLMIntegrationService:
         else:
             logger.warning("OPENAI_API_KEY not set — LLM calls will use fallbacks")
 
-    async def generate_test_scenarios(self, requirements: str) -> list[str]:
-        """Generate test scenarios using LLM from requirements."""
+    async def _llm_call(
+        self,
+        method_name: str,
+        system_prompt: str,
+        user_prompt: str,
+        fallback: Any,
+        expected_type: type = list,
+    ) -> Any:
+        """Common LLM call wrapper with circuit breaker, metrics, and fallback.
+
+        Returns parsed JSON response or fallback value on failure.
+        """
         if not self._api_key or not _llm_circuit.can_execute():
-            return self._fallback_scenarios()
+            return fallback
 
         start = time.monotonic()
         try:
-            prompt = f"""
+            response = await litellm.acompletion(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                api_key=self._api_key,
+            )
+
+            content = str(response.choices[0].message.content).strip()
+            if content.startswith("```json"):
+                content = content[7:-3].strip()
+
+            parsed = json.loads(content)
+            _llm_circuit.record_success()
+            LLM_CALLS_TOTAL.labels(method=method_name, status="success").inc()
+            if hasattr(response, "usage") and response.usage:
+                LLM_TOKENS_PROMPT.labels(
+                    agent=self._agent_name, method=method_name
+                ).inc(response.usage.prompt_tokens or 0)
+                LLM_TOKENS_COMPLETION.labels(
+                    agent=self._agent_name, method=method_name
+                ).inc(response.usage.completion_tokens or 0)
+            return parsed if isinstance(parsed, expected_type) else fallback
+
+        except Exception as e:
+            _llm_circuit.record_failure()
+            LLM_CALLS_TOTAL.labels(method=method_name, status="error").inc()
+            logger.error(f"LLM {method_name} failed: {e}")
+            return fallback
+        finally:
+            LLM_CALL_DURATION.labels(method=method_name).observe(
+                time.monotonic() - start
+            )
+
+    async def generate_test_scenarios(self, requirements: str) -> list[str]:
+        """Generate test scenarios using LLM from requirements."""
+        return await self._llm_call(
+            method_name="generate_test_scenarios",
+            system_prompt="You are an expert QA engineer specializing in test scenario generation.",
+            user_prompt=f"""
             As an expert QA engineer, analyze the following requirements and generate comprehensive test scenarios:
 
             Requirements: {requirements}
@@ -67,63 +119,17 @@ class LLMIntegrationService:
 
             Return ONLY a JSON array of scenario strings, like:
             ["Scenario 1", "Scenario 2", "Scenario 3"]
-            """
-
-            response = await litellm.acompletion(
-                model=self.model_name,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert QA engineer specializing in test scenario generation.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=self._api_key,
-            )
-
-            # Parse JSON response
-            content = str(response.choices[0].message.content).strip()
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
-
-            scenarios = json.loads(content)
-            _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(
-                method="generate_test_scenarios", status="success"
-            ).inc()
-            if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(
-                    agent=self._agent_name, method="generate_test_scenarios"
-                ).inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(
-                    agent=self._agent_name, method="generate_test_scenarios"
-                ).inc(response.usage.completion_tokens or 0)
-            return (
-                scenarios if isinstance(scenarios, list) else self._fallback_scenarios()
-            )
-
-        except Exception as e:
-            _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(
-                method="generate_test_scenarios", status="error"
-            ).inc()
-            logger.error(f"LLM scenario generation failed: {e}")
-            return self._fallback_scenarios()
-        finally:
-            LLM_CALL_DURATION.labels(method="generate_test_scenarios").observe(
-                time.monotonic() - start
-            )
+            """,
+            fallback=self._fallback_scenarios(),
+            expected_type=list,
+        )
 
     async def extract_acceptance_criteria(self, requirements: str) -> list[str]:
         """Extract acceptance criteria using LLM from requirements."""
-        if not self._api_key or not _llm_circuit.can_execute():
-            return self._fallback_criteria()
-
-        start = time.monotonic()
-        try:
-            prompt = f"""
+        return await self._llm_call(
+            method_name="extract_acceptance_criteria",
+            system_prompt="You are an expert QA engineer specializing in requirements analysis.",
+            user_prompt=f"""
             As an expert QA engineer, extract detailed acceptance criteria from these requirements:
 
             Requirements: {requirements}
@@ -133,60 +139,17 @@ class LLMIntegrationService:
 
             Return ONLY a JSON array of criteria strings, like:
             ["Criterion 1", "Criterion 2", "Criterion 3"]
-            """
-
-            response = await litellm.acompletion(
-                model=self.model_name,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert QA engineer specializing in requirements analysis.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=self._api_key,
-            )
-
-            content = str(response.choices[0].message.content).strip()
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
-
-            criteria = json.loads(content)
-            _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(
-                method="extract_acceptance_criteria", status="success"
-            ).inc()
-            if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(
-                    agent=self._agent_name, method="extract_acceptance_criteria"
-                ).inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(
-                    agent=self._agent_name, method="extract_acceptance_criteria"
-                ).inc(response.usage.completion_tokens or 0)
-            return criteria if isinstance(criteria, list) else self._fallback_criteria()
-
-        except Exception as e:
-            _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(
-                method="extract_acceptance_criteria", status="error"
-            ).inc()
-            logger.error(f"LLM criteria extraction failed: {e}")
-            return self._fallback_criteria()
-        finally:
-            LLM_CALL_DURATION.labels(method="extract_acceptance_criteria").observe(
-                time.monotonic() - start
-            )
+            """,
+            fallback=self._fallback_criteria(),
+            expected_type=list,
+        )
 
     async def identify_test_risks(self, requirements: str) -> list[str]:
         """Identify potential test risks using LLM from requirements."""
-        if not self._api_key or not _llm_circuit.can_execute():
-            return self._fallback_risks()
-
-        start = time.monotonic()
-        try:
-            prompt = f"""
+        return await self._llm_call(
+            method_name="identify_test_risks",
+            system_prompt="You are an expert QA risk analyst with deep experience in testing risk identification.",
+            user_prompt=f"""
             As a seasoned QA risk analyst, identify potential testing risks from these requirements:
 
             Requirements: {requirements}
@@ -199,58 +162,19 @@ class LLMIntegrationService:
 
             Return ONLY a JSON array of risk descriptions, like:
             ["Risk 1", "Risk 2", "Risk 3"]
-            """
-
-            response = await litellm.acompletion(
-                model=self.model_name,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert QA risk analyst with deep experience in testing risk identification.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=self._api_key,
-            )
-
-            content = str(response.choices[0].message.content).strip()
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
-
-            risks = json.loads(content)
-            _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(method="identify_test_risks", status="success").inc()
-            if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(
-                    agent=self._agent_name, method="identify_test_risks"
-                ).inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(
-                    agent=self._agent_name, method="identify_test_risks"
-                ).inc(response.usage.completion_tokens or 0)
-            return risks if isinstance(risks, list) else self._fallback_risks()
-
-        except Exception as e:
-            _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(method="identify_test_risks", status="error").inc()
-            logger.error(f"LLM risk identification failed: {e}")
-            return self._fallback_risks()
-        finally:
-            LLM_CALL_DURATION.labels(method="identify_test_risks").observe(
-                time.monotonic() - start
-            )
+            """,
+            fallback=self._fallback_risks(),
+            expected_type=list,
+        )
 
     async def perform_fuzzy_verification(
         self, test_results: dict[str, Any], business_goals: str
     ) -> dict[str, Any]:
         """Perform LLM-based fuzzy verification of test results."""
-        if not self._api_key or not _llm_circuit.can_execute():
-            return self._fallback_verification(test_results, business_goals)
-
-        start = time.monotonic()
-        try:
-            prompt = f"""
+        return await self._llm_call(
+            method_name="perform_fuzzy_verification",
+            system_prompt="You are an expert QA analyst specializing in test result verification and business alignment.",
+            user_prompt=f"""
             As an expert QA analyst, perform fuzzy verification of these test results against business goals:
 
             Test Results: {json.dumps(test_results, indent=2)}
@@ -270,66 +194,19 @@ class LLMIntegrationService:
                 "business_alignment": "aligned",
                 "recommendations": ["Recommendation 1", "Recommendation 2"]
             }}
-            """
-
-            response = await litellm.acompletion(
-                model=self.model_name,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert QA analyst specializing in test result verification and business alignment.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=self._api_key,
-            )
-
-            content = str(response.choices[0].message.content).strip()
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
-
-            verification = json.loads(content)
-            _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(
-                method="perform_fuzzy_verification", status="success"
-            ).inc()
-            if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(
-                    agent=self._agent_name, method="perform_fuzzy_verification"
-                ).inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(
-                    agent=self._agent_name, method="perform_fuzzy_verification"
-                ).inc(response.usage.completion_tokens or 0)
-            return (
-                verification
-                if isinstance(verification, dict)
-                else self._fallback_verification(test_results, business_goals)
-            )
-
-        except Exception as e:
-            _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(
-                method="perform_fuzzy_verification", status="error"
-            ).inc()
-            logger.error(f"LLM fuzzy verification failed: {e}")
-            return self._fallback_verification(test_results, business_goals)
-        finally:
-            LLM_CALL_DURATION.labels(method="perform_fuzzy_verification").observe(
-                time.monotonic() - start
-            )
+            """,
+            fallback=self._fallback_verification(test_results, business_goals),
+            expected_type=dict,
+        )
 
     async def analyze_security_findings(
         self, scan_results: dict[str, Any]
     ) -> dict[str, Any]:
         """Analyze security findings using LLM intelligence."""
-        if not self._api_key or not _llm_circuit.can_execute():
-            return self._fallback_security_analysis(scan_results)
-
-        start = time.monotonic()
-        try:
-            prompt = f"""
+        return await self._llm_call(
+            method_name="analyze_security_findings",
+            system_prompt="You are a cybersecurity expert specializing in vulnerability analysis and risk assessment.",
+            user_prompt=f"""
             As a security expert, analyze these scan results and provide intelligent assessment:
 
             Scan Results: {json.dumps(scan_results, indent=2)}
@@ -349,66 +226,19 @@ class LLMIntegrationService:
                 "compliance_gaps": ["PCI-DSS", "GDPR"],
                 "executive_summary": "Multiple high-severity vulnerabilities requiring immediate attention"
             }}
-            """
-
-            response = await litellm.acompletion(
-                model=self.model_name,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a cybersecurity expert specializing in vulnerability analysis and risk assessment.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=self._api_key,
-            )
-
-            content = str(response.choices[0].message.content).strip()
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
-
-            analysis = json.loads(content)
-            _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(
-                method="analyze_security_findings", status="success"
-            ).inc()
-            if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(
-                    agent=self._agent_name, method="analyze_security_findings"
-                ).inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(
-                    agent=self._agent_name, method="analyze_security_findings"
-                ).inc(response.usage.completion_tokens or 0)
-            return (
-                analysis
-                if isinstance(analysis, dict)
-                else self._fallback_security_analysis(scan_results)
-            )
-
-        except Exception as e:
-            _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(
-                method="analyze_security_findings", status="error"
-            ).inc()
-            logger.error(f"LLM security analysis failed: {e}")
-            return self._fallback_security_analysis(scan_results)
-        finally:
-            LLM_CALL_DURATION.labels(method="analyze_security_findings").observe(
-                time.monotonic() - start
-            )
+            """,
+            fallback=self._fallback_security_analysis(scan_results),
+            expected_type=dict,
+        )
 
     async def generate_performance_profile(
         self, performance_data: dict[str, Any]
     ) -> dict[str, Any]:
         """Generate intelligent performance profile analysis."""
-        if not self._api_key or not _llm_circuit.can_execute():
-            return self._fallback_performance_analysis(performance_data)
-
-        start = time.monotonic()
-        try:
-            prompt = f"""
+        return await self._llm_call(
+            method_name="generate_performance_profile",
+            system_prompt="You are a performance engineering expert specializing in system optimization and capacity planning.",
+            user_prompt=f"""
             As a performance engineering expert, analyze this performance data:
 
             Performance Data: {json.dumps(performance_data, indent=2)}
@@ -428,55 +258,10 @@ class LLMIntegrationService:
                 "sla_impact": "Current response times exceed SLA by 15%",
                 "capacity_insights": "Expected load increase of 25% in 6 months"
             }}
-            """
-
-            response = await litellm.acompletion(
-                model=self.model_name,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a performance engineering expert specializing in system optimization and capacity planning.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=self._api_key,
-            )
-
-            content = str(response.choices[0].message.content).strip()
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
-
-            profile = json.loads(content)
-            _llm_circuit.record_success()
-            LLM_CALLS_TOTAL.labels(
-                method="generate_performance_profile", status="success"
-            ).inc()
-            if hasattr(response, "usage") and response.usage:
-                LLM_TOKENS_PROMPT.labels(
-                    agent=self._agent_name, method="generate_performance_profile"
-                ).inc(response.usage.prompt_tokens or 0)
-                LLM_TOKENS_COMPLETION.labels(
-                    agent=self._agent_name, method="generate_performance_profile"
-                ).inc(response.usage.completion_tokens or 0)
-            return (
-                profile
-                if isinstance(profile, dict)
-                else self._fallback_performance_analysis(performance_data)
-            )
-
-        except Exception as e:
-            _llm_circuit.record_failure()
-            LLM_CALLS_TOTAL.labels(
-                method="generate_performance_profile", status="error"
-            ).inc()
-            logger.error(f"LLM performance profiling failed: {e}")
-            return self._fallback_performance_analysis(performance_data)
-        finally:
-            LLM_CALL_DURATION.labels(method="generate_performance_profile").observe(
-                time.monotonic() - start
-            )
+            """,
+            fallback=self._fallback_performance_analysis(performance_data),
+            expected_type=dict,
+        )
 
     def _fallback_scenarios(self) -> list[str]:
         """Fallback scenarios when LLM is unavailable."""
@@ -574,7 +359,3 @@ class LLMIntegrationService:
             "sla_impact": f"Grade {grade} performance - {'within' if grade in ['A', 'B'] else 'below'} SLA expectations",
             "capacity_insights": "Monitor load patterns for capacity planning",
         }
-
-
-# Global LLM service instance
-llm_service = LLMIntegrationService()

@@ -10,15 +10,17 @@ from collections.abc import Callable
 from functools import wraps
 
 _MAX_KEYS = 10_000
+_KEY_TTL_SECONDS = 3600  # Evict keys not seen for 1 hour
 
 
 class RateLimiter:
-    """Simple in-memory rate limiter."""
+    """Simple in-memory rate limiter with automatic stale-key eviction."""
 
     def __init__(self, max_requests: int = 100, window_seconds: int = 60):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.requests: dict[str, list[float]] = defaultdict(list)
+        self._last_seen: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
     async def is_allowed(self, key: str) -> bool:
@@ -29,6 +31,7 @@ class RateLimiter:
 
             # Remove old requests
             self.requests[key] = [t for t in self.requests[key] if t > window_start]
+            self._last_seen[key] = now
 
             if len(self.requests[key]) >= self.max_requests:
                 return False
@@ -37,7 +40,7 @@ class RateLimiter:
 
             # Periodic cleanup of stale keys
             if len(self.requests) > _MAX_KEYS:
-                self._cleanup_stale_keys(window_start)
+                self._cleanup_stale_keys(now)
 
             return True
 
@@ -48,6 +51,7 @@ class RateLimiter:
 
         # Remove old requests
         self.requests[key] = [t for t in self.requests[key] if t > window_start]
+        self._last_seen[key] = now
 
         if len(self.requests[key]) >= self.max_requests:
             return False
@@ -56,19 +60,23 @@ class RateLimiter:
 
         # Periodic cleanup of stale keys
         if len(self.requests) > _MAX_KEYS:
-            self._cleanup_stale_keys(window_start)
+            self._cleanup_stale_keys(now)
 
         return True
 
-    def _cleanup_stale_keys(self, window_start: float) -> None:
-        """Remove keys with no recent requests."""
+    def _cleanup_stale_keys(self, now: float) -> None:
+        """Remove keys with no recent requests or not seen within TTL."""
+        window_start = now - self.window_seconds
+        ttl_cutoff = now - _KEY_TTL_SECONDS
         stale_keys = [
             k
             for k, v in self.requests.items()
-            if not v or all(t <= window_start for t in v)
+            if (not v or all(t <= window_start for t in v))
+            or self._last_seen.get(k, 0) < ttl_cutoff
         ]
         for k in stale_keys:
             del self.requests[k]
+            self._last_seen.pop(k, None)
 
     def get_remaining(self, key: str) -> int:
         """Get remaining requests for key."""

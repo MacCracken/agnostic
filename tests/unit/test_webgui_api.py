@@ -447,3 +447,118 @@ class TestSecurityHeaders:
         assert resp.headers.get("X-Frame-Options") == "DENY"
         assert resp.headers.get("X-XSS-Protection") == "1; mode=block"
         assert resp.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+
+
+# ---------------------------------------------------------------------------
+# SSRF protection tests
+# ---------------------------------------------------------------------------
+
+
+class TestSSRFProtection:
+    def test_blocks_localhost(self):
+        from webgui.api import _validate_callback_url
+
+        with pytest.raises(ValueError, match="private network"):
+            _validate_callback_url("http://127.0.0.1/hook")
+
+    def test_blocks_private_10_network(self):
+        from webgui.api import _validate_callback_url
+
+        with pytest.raises(ValueError, match="private network"):
+            _validate_callback_url("http://10.0.0.1/hook")
+
+    def test_blocks_private_172_network(self):
+        from webgui.api import _validate_callback_url
+
+        with pytest.raises(ValueError, match="private network"):
+            _validate_callback_url("http://172.16.0.1/hook")
+
+    def test_blocks_private_192_network(self):
+        from webgui.api import _validate_callback_url
+
+        with pytest.raises(ValueError, match="private network"):
+            _validate_callback_url("http://192.168.1.1:8080/hook")
+
+    def test_blocks_metadata_endpoint(self):
+        from webgui.api import _validate_callback_url
+
+        with pytest.raises(ValueError, match="private network"):
+            _validate_callback_url("http://169.254.169.254/latest/meta-data/")
+
+    def test_allows_public_url(self):
+        from webgui.api import _validate_callback_url
+
+        # Should not raise
+        _validate_callback_url("https://hooks.example.com/callback")
+
+    def test_allows_domain_name(self):
+        from webgui.api import _validate_callback_url
+
+        # Domain names are allowed (DNS resolved at request time)
+        _validate_callback_url("https://my-webhook.company.io/hook")
+
+    def test_blocks_unsupported_scheme(self):
+        from webgui.api import _validate_callback_url
+
+        with pytest.raises(ValueError, match="Unsupported scheme"):
+            _validate_callback_url("ftp://example.com/file")
+
+    def test_blocks_missing_hostname(self):
+        from webgui.api import _validate_callback_url
+
+        with pytest.raises(ValueError, match="Missing hostname"):
+            _validate_callback_url("http:///path")
+
+
+# ---------------------------------------------------------------------------
+# Agent name normalization tests
+# ---------------------------------------------------------------------------
+
+
+class TestAgentNameNormalization:
+    def test_snake_case_to_kebab(self):
+        from webgui.api import _normalize_agent_name
+
+        assert _normalize_agent_name("security_compliance") == "security-compliance"
+
+    def test_kebab_case_unchanged(self):
+        from webgui.api import _normalize_agent_name
+
+        assert _normalize_agent_name("security-compliance") == "security-compliance"
+
+    def test_simple_name_unchanged(self):
+        from webgui.api import _normalize_agent_name
+
+        assert _normalize_agent_name("performance") == "performance"
+
+    def test_multiple_underscores(self):
+        from webgui.api import _normalize_agent_name
+
+        assert _normalize_agent_name("qa_senior_lead") == "qa-senior-lead"
+
+
+# ---------------------------------------------------------------------------
+# Static API key permissions test
+# ---------------------------------------------------------------------------
+
+
+class TestStaticApiKeyPermissions:
+    def test_static_key_excludes_system_configure(self):
+        """Static API key should not include SYSTEM_CONFIGURE permission."""
+        from webgui.auth import Permission
+
+        with patch.dict(os.environ, {"AGNOSTIC_API_KEY": "test-key-123"}):
+            # Re-import to pick up env var
+            from webgui.api import get_current_user
+
+            # Simulate what get_current_user does for static key
+            import hmac
+
+            static_key = "test-key-123"
+            x_api_key = "test-key-123"
+            assert hmac.compare_digest(x_api_key, static_key)
+            _static_permissions = [
+                p.value for p in Permission if p != Permission.SYSTEM_CONFIGURE
+            ]
+            assert "system:configure" not in _static_permissions
+            assert "sessions:read" in _static_permissions

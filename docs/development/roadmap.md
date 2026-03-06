@@ -8,26 +8,21 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 
 ## Near-term
 
-No near-term items remaining. See the [Changelog](../project/changelog.md).
+### Code Quality & Architecture
+**Priority:** High
+
+- [ ] Split `webgui/api.py` into route modules — auth, tasks, reports, tenants, agents, dashboard (currently 1800+ lines, 85+ endpoints)
+- [ ] Split `AuthManager` into `TokenManager`, `OAuthProviderFactory`, `PermissionValidator` (currently 25+ methods mixing auth, tokens, permissions)
+- [ ] Add YEOMAN MCP tools for new endpoints — `agnostic_session_diff`, `agnostic_structured_results`, `agnostic_quality_trends` (endpoints exist, tools missing)
 
 ---
 
 ## Medium-term
 
-### Hardening & Operational Improvements
+### Test Coverage
 **Priority:** Medium
 
-- [x] Rate limiting for all API endpoints — `RateLimitMiddleware` on all `/api/*` paths with per-IP sliding window; configurable via `RATE_LIMIT_MAX_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS`; returns 429 with `Retry-After` and `X-RateLimit-*` headers
-- [x] Request tracing — `CorrelationIdMiddleware` generates/propagates `X-Correlation-ID` on every request; bound to structlog contextvars and audit log events
-- [x] Database connection pooling tuning — added `DB_POOL_TIMEOUT` env var, pool config logging on startup, `close_db()` in shutdown handler to prevent connection leaks
-
-### New Features
-**Priority:** Medium
-
-- [ ] Test result diffing — compare sessions to detect regressions across runs
-- [x] Notification system — `AlertManager` with webhook/Slack/email delivery, cooldown throttling; `HealthMonitor` background task polls health state and fires alerts on transitions (degraded, unhealthy, agent offline/stale); circuit breaker `on_state_change` callback; configurable via `ALERTS_ENABLED`, `ALERT_POLL_INTERVAL_SECONDS`, `ALERT_COOLDOWN_SECONDS`
-- [x] API pagination — all list endpoints return `{items, total, limit, offset}` with `limit`/`offset` query params; paginated: reports, scheduled reports, agents, tenants, tenant users, API keys
-- [x] OpenAPI client SDK generation — `scripts/generate-sdk.sh` fetches OpenAPI schema (live or offline) and generates Python (`openapi-python-client`) and TypeScript (`openapi-generator-cli`) client SDKs
+- [ ] Add unit tests for untested modules — `shared/rate_limit.py`, `shared/crewai_compat.py`, `shared/data_generation_service.py`, `webgui/app.py`, `webgui/agent_monitor.py`, `webgui/dashboard.py`, `webgui/history.py`
 
 ---
 
@@ -51,4 +46,4 @@ No long-term items remaining. See [Dependency Watch](dependency-watch.md) for up
 
 ---
 
-*Last Updated: 2026-03-05 · Test count: 471 (unit) + 19 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-05 · Test count: 492 (unit) + 19 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

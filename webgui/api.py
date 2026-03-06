@@ -10,6 +10,7 @@ auth dependency).
 import asyncio
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -33,6 +35,54 @@ from webgui.auth import Permission, auth_manager
 logger = logging.getLogger(__name__)
 
 api_router = APIRouter(prefix="/api")
+
+# ---------------------------------------------------------------------------
+# SSRF protection — block callbacks to private/internal networks
+# ---------------------------------------------------------------------------
+
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+
+def _validate_callback_url(url: str) -> None:
+    """Raise ValueError if url points to a private/internal network."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported scheme: {parsed.scheme}")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Missing hostname")
+    try:
+        addr = ipaddress.ip_address(hostname)
+        for net in _BLOCKED_NETWORKS:
+            if addr in net:
+                raise ValueError(f"Callback to private network blocked: {hostname}")
+    except ValueError as e:
+        if (
+            "private network" in str(e)
+            or "Unsupported" in str(e)
+            or "Missing" in str(e)
+        ):
+            raise
+        # hostname is a domain name, not an IP — allowed
+
+
+# ---------------------------------------------------------------------------
+# Agent name normalization — accept both snake_case and kebab-case
+# ---------------------------------------------------------------------------
+
+
+def _normalize_agent_name(name: str) -> str:
+    """Normalize agent name: convert underscores to hyphens."""
+    return name.replace("_", "-")
 
 
 # ---------------------------------------------------------------------------
@@ -60,11 +110,15 @@ async def get_current_user(
                 resource_type="auth",
                 detail={"method": "static"},
             )
+            # Static key gets operational permissions only (not SYSTEM_CONFIGURE)
+            _static_permissions = [
+                p.value for p in Permission if p != Permission.SYSTEM_CONFIGURE
+            ]
             return {
                 "user_id": "api-key-user",
                 "email": "api@agnostic",
                 "role": "api_user",
-                "permissions": [p.value for p in Permission],
+                "permissions": _static_permissions,
             }
 
         # Redis-backed keys (multi-key deployments)
@@ -323,6 +377,17 @@ async def submit_task(
     user: dict = Depends(get_current_user),
 ):
     """Submit a new QA task. Returns immediately with task_id for polling."""
+    # Validate callback URL against SSRF
+    if req.callback_url:
+        try:
+            _validate_callback_url(req.callback_url)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # Normalize agent names (accept both snake_case and kebab-case)
+    if req.agents:
+        req.agents = [_normalize_agent_name(a) for a in req.agents]
+
     from config.environment import config
 
     task_id = str(uuid.uuid4())
@@ -492,6 +557,19 @@ async def _run_task_async(
 WEBHOOK_MAX_RETRIES = int(os.getenv("WEBHOOK_MAX_RETRIES", "3"))
 
 
+_webhook_http_client: Any = None
+
+
+async def _get_webhook_client() -> Any:
+    """Return a shared httpx.AsyncClient for webhook delivery."""
+    global _webhook_http_client
+    if _webhook_http_client is None or _webhook_http_client.is_closed:
+        import httpx
+
+        _webhook_http_client = httpx.AsyncClient(timeout=10)
+    return _webhook_http_client
+
+
 async def _fire_webhook(
     callback_url: str,
     callback_secret: str | None,
@@ -501,8 +579,6 @@ async def _fire_webhook(
 
     Retries up to WEBHOOK_MAX_RETRIES times with exponential backoff (1s, 2s, 4s, ...).
     """
-    import httpx
-
     body = json.dumps(payload)
     headers: dict[str, str] = {"Content-Type": "application/json"}
 
@@ -512,12 +588,12 @@ async def _fire_webhook(
         ).hexdigest()
         headers["X-Signature"] = f"sha256={sig}"
 
+    client = await _get_webhook_client()
     last_error: Exception | None = None
     for attempt in range(WEBHOOK_MAX_RETRIES):
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(callback_url, content=body, headers=headers)
-                resp.raise_for_status()
+            resp = await client.post(callback_url, content=body, headers=headers)
+            resp.raise_for_status()
 
             logger.info(f"Webhook delivered to {callback_url}")
             return
@@ -704,6 +780,39 @@ async def get_llm_dashboard(user: dict = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
+# Alert query endpoint
+# ---------------------------------------------------------------------------
+
+
+@api_router.get("/alerts")
+async def list_alerts(
+    limit: int = Query(50, ge=1, le=200),
+    severity: str | None = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    """Query recent alerts from Redis stream."""
+    try:
+        from config.environment import config
+
+        redis_client = config.get_redis_client()
+        # Read from the alerts stream (most recent first)
+        raw = redis_client.xrevrange("stream:webgui:alerts", count=limit)
+        alerts = []
+        for stream_id, fields in raw:
+            try:
+                data = json.loads(fields.get("data", "{}"))
+                if severity and data.get("severity") != severity:
+                    continue
+                data["stream_id"] = stream_id
+                alerts.append(data)
+            except (json.JSONDecodeError, AttributeError):
+                continue
+        return {"items": alerts, "total": len(alerts), "limit": limit}
+    except Exception:
+        return {"items": [], "total": 0, "limit": limit}
+
+
+# ---------------------------------------------------------------------------
 # Session endpoints
 # ---------------------------------------------------------------------------
 
@@ -778,12 +887,22 @@ async def list_reports(
 
     redis_client = config.get_redis_client()
     user_id = user.get("user_id", "")
-    keys = redis_client.keys(f"report:*:{user_id}:*")
+    # Use SCAN instead of KEYS to avoid blocking Redis
+    pattern = f"report:*:{user_id}:*"
+    matched_keys: list[str] = []
+    cursor = 0
+    while True:
+        cursor, batch = redis_client.scan(cursor=cursor, match=pattern, count=200)
+        matched_keys.extend(batch)
+        if cursor == 0:
+            break
+    # Fetch all values in one round-trip with MGET
     reports = []
-    for key in keys:
-        data = redis_client.get(key)
-        if data:
-            reports.append(json.loads(data))
+    if matched_keys:
+        values = redis_client.mget(matched_keys)
+        for data in values:
+            if data:
+                reports.append(json.loads(data))
     total = len(reports)
     return {
         "items": reports[offset : offset + limit],
@@ -1369,6 +1488,26 @@ async def get_quality_trends(
     return trends
 
 
+@api_router.get("/test-sessions/diff")
+async def diff_test_sessions(
+    base: str = Query(..., description="Base session ID (the 'before')"),
+    compare: str = Query(..., description="Compare session ID (the 'after')"),
+    user: dict = Depends(get_current_user),
+):
+    """Compare test results between two sessions to detect regressions.
+
+    Returns regressions (was passing, now failing), fixes, new tests,
+    removed tests, and aggregate pass-rate / timing deltas.
+    Requires DATABASE_ENABLED=true.
+    """
+    repo = await get_db_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
+        )
+    return await repo.diff_sessions(base, compare)
+
+
 # ---------------------------------------------------------------------------
 # Multi-Tenant endpoints
 # ---------------------------------------------------------------------------
@@ -1495,6 +1634,15 @@ async def create_tenant(
     }
 
 
+def _check_tenant_access(user: dict[str, Any], tenant_id: str) -> None:
+    """Ensure user has access to the specified tenant."""
+    if user.get("role") == "super_admin":
+        return  # Super admins can access all tenants
+    user_tenant = user.get("tenant_id")
+    if user_tenant and user_tenant != tenant_id:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+
 @api_router.get("/tenants/{tenant_id}")
 async def get_tenant(
     tenant_id: str,
@@ -1502,6 +1650,7 @@ async def get_tenant(
 ):
     """Get tenant details."""
     _require_tenant_enabled()
+    _check_tenant_access(user, tenant_id)
 
     repo = await get_tenant_repo()
     if repo is None:
@@ -1533,8 +1682,9 @@ async def update_tenant(
 ):
     """Update tenant (admin only)."""
     _require_tenant_enabled()
+    _check_tenant_access(user, tenant_id)
 
-    if user.get("role") != "super_admin":
+    if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     repo = await get_tenant_repo()
@@ -1559,11 +1709,11 @@ async def delete_tenant(
     tenant_id: str,
     user: dict = Depends(get_current_user),
 ):
-    """Delete tenant (admin only)."""
+    """Delete tenant (admin only — super_admin only for delete)."""
     _require_tenant_enabled()
 
     if user.get("role") != "super_admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+        raise HTTPException(status_code=403, detail="Super admin access required")
 
     repo = await get_tenant_repo()
     if repo is None:
@@ -1585,6 +1735,7 @@ async def list_tenant_users(
 ):
     """List users in a tenant."""
     _require_tenant_enabled()
+    _check_tenant_access(user, tenant_id)
 
     repo = await get_tenant_repo()
     if repo is None:

@@ -427,11 +427,7 @@ class TestFireWebhook:
                 pass
 
         class FakeClient:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
+            is_closed = False
 
             async def post(self, url, content, headers):
                 captured_requests.append(
@@ -439,7 +435,7 @@ class TestFireWebhook:
                 )
                 return FakeResponse()
 
-        with patch("httpx.AsyncClient", return_value=FakeClient()):
+        with patch("webgui.api._get_webhook_client", new_callable=AsyncMock, return_value=FakeClient()):
             await _fire_webhook(
                 "https://hook.example.com/cb",
                 secret,
@@ -470,17 +466,13 @@ class TestFireWebhook:
                 pass
 
         class FakeClient:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
+            is_closed = False
 
             async def post(self, url, content, headers):
                 captured_requests.append(headers)
                 return FakeResponse()
 
-        with patch("httpx.AsyncClient", return_value=FakeClient()):
+        with patch("webgui.api._get_webhook_client", new_callable=AsyncMock, return_value=FakeClient()):
             await _fire_webhook("https://hook.example.com/cb", None, payload)
 
         assert "X-Signature" not in captured_requests[0]
@@ -490,16 +482,12 @@ class TestFireWebhook:
         """Webhook errors should be caught and logged, not propagated."""
 
         class BrokenClient:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
+            is_closed = False
 
             async def post(self, *args, **kwargs):
                 raise ConnectionError("unreachable")
 
-        with patch("httpx.AsyncClient", return_value=BrokenClient()), \
+        with patch("webgui.api._get_webhook_client", new_callable=AsyncMock, return_value=BrokenClient()), \
              patch("webgui.api.WEBHOOK_MAX_RETRIES", 1):
             # Should not raise
             await _fire_webhook("https://bad.example.com", "secret", {"x": 1})
@@ -510,11 +498,7 @@ class TestFireWebhook:
         attempts = []
 
         class FailThenSucceedClient:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
+            is_closed = False
 
             async def post(self, *args, **kwargs):
                 attempts.append(1)
@@ -524,7 +508,7 @@ class TestFireWebhook:
                 resp.raise_for_status = MagicMock()
                 return resp
 
-        with patch("httpx.AsyncClient", return_value=FailThenSucceedClient()), \
+        with patch("webgui.api._get_webhook_client", new_callable=AsyncMock, return_value=FailThenSucceedClient()), \
              patch("webgui.api.WEBHOOK_MAX_RETRIES", 3), \
              patch("webgui.api.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             await _fire_webhook("https://hook.example.com/cb", None, {"x": 1})
@@ -541,17 +525,13 @@ class TestFireWebhook:
         attempts = []
 
         class AlwaysFailClient:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
+            is_closed = False
 
             async def post(self, *args, **kwargs):
                 attempts.append(1)
                 raise ConnectionError("unreachable")
 
-        with patch("httpx.AsyncClient", return_value=AlwaysFailClient()), \
+        with patch("webgui.api._get_webhook_client", new_callable=AsyncMock, return_value=AlwaysFailClient()), \
              patch("webgui.api.WEBHOOK_MAX_RETRIES", 3), \
              patch("webgui.api.asyncio.sleep", new_callable=AsyncMock):
             await _fire_webhook("https://bad.example.com", None, {"x": 1})

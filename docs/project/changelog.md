@@ -52,12 +52,43 @@ Versions use **YYYY.M.D** (calendar versioning).
 - **Audit logging unit tests** — 10 tests covering JSON emission, enable/disable, field completeness, failure outcomes, enum validation, handler setup idempotency (`tests/unit/test_audit.py`)
 - **Agent metrics unit tests** — 10 tests covering agent list, structure, success rate calculation, zero defaults, LLM metrics structure, Prometheus fallback (`tests/unit/test_agent_metrics.py`)
 - **ADR-027** — Audit logging and agent metrics dashboard (`docs/adr/027-audit-logging-agent-metrics.md`)
+- **Rate limiting middleware** — `RateLimitMiddleware` on all `/api/*` paths with per-IP sliding window; configurable via `RATE_LIMIT_MAX_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS`; returns 429 with `Retry-After` and `X-RateLimit-*` headers (`webgui/app.py`, `shared/rate_limit.py`)
+- **Correlation ID request tracing** — `CorrelationIdMiddleware` generates/propagates `X-Correlation-ID` on every request; bound to structlog contextvars and audit log events (`webgui/app.py`, `shared/audit.py`)
+- **Database connection pooling tuning** — `DB_POOL_TIMEOUT` env var; pool config logging on startup; `close_db()` in shutdown handler to prevent connection leaks (`shared/database/models.py`, `webgui/app.py`, `.env.example`)
+- **Alert & notification system** — `AlertManager` with webhook/Slack/email delivery, cooldown throttling; `HealthMonitor` background task polls health state and fires alerts on transitions (degraded, unhealthy, agent offline/stale); circuit breaker `on_state_change` callback; configurable via `ALERTS_ENABLED`, `ALERT_POLL_INTERVAL_SECONDS`, `ALERT_COOLDOWN_SECONDS` (`shared/alerts.py`, `shared/resilience.py`, `webgui/app.py`)
+- **API pagination** — all list endpoints return `{items, total, limit, offset}` with `limit`/`offset` query params; paginated: reports, scheduled reports, agents, tenants, tenant users, API keys (`webgui/api.py`)
+- **OpenAPI client SDK generation** — `scripts/generate-sdk.sh` fetches OpenAPI schema (live or offline) and generates Python (`openapi-python-client`) and TypeScript (`openapi-generator-cli`) client SDKs (`scripts/generate-sdk.sh`)
+- **Test result diffing** — `TestResultRepository.diff_sessions()` compares two sessions by `test_id`; categorises regressions, fixes, new tests, removed tests; computes pass rate delta and average execution time; `GET /test-sessions/diff?base=&compare=` endpoint (`shared/database/repository.py`, `webgui/api.py`)
+- **Middleware unit tests** — 12 tests covering CorrelationIdMiddleware, RateLimitMiddleware, correlation ID in audit log, DB pool config (`tests/unit/test_middleware.py`)
+- **Alert system unit tests** — 14 tests covering AlertManager, HealthMonitor, circuit breaker callback (`tests/unit/test_alerts.py`)
+- **Session diff unit tests** — 9 tests covering identical sessions, regressions, fixes, new/removed tests, pass rate delta, avg time (`tests/unit/test_session_diff.py`)
+
+### Security
+
+- **SSRF protection for webhooks** — `_validate_callback_url()` blocks callbacks to private networks (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, IPv6 link-local/ULA); validates URL scheme (http/https only) (`webgui/api.py`)
+- **CORS hardened** — restricted `allow_methods` from `["*"]` to `["GET", "POST", "PUT", "DELETE", "OPTIONS"]`; restricted `allow_headers` to `["Content-Type", "Authorization", "X-API-Key", "X-Correlation-ID"]` (`webgui/app.py`)
+- **Static API key permissions restricted** — static `AGNOSTIC_API_KEY` no longer grants `SYSTEM_CONFIGURE` permission; operational permissions only (`webgui/api.py`)
+- **Tenant isolation enforcement** — `_check_tenant_access()` guard added to `GET /tenants/{id}`, `PUT /tenants/{id}`, `DELETE /tenants/{id}`, `GET /tenants/{id}/users`; users can only access their own tenant; super_admin bypasses (`webgui/api.py`)
+- **Agent name normalization** — `_normalize_agent_name()` converts underscores to hyphens, fixing YEOMAN snake_case→kebab-case mismatch that caused silent agent filtering failures (`webgui/api.py`)
 
 ### Fixed
 
 - **WebSocket realtime test hang** — `test_handle_websocket_accepts_connection` blocked forever due to missing `receive_json` side_effect; handler's `while True` receive loop now properly terminated in test
 - **pytest collection warnings** — `TestStatus` and `TestExecutionResult` in `shared/yeoman_schemas.py` suppressed via `__test__ = False`
 - **SQLAlchemy reserved name conflict** — `TestResult.metadata` renamed to `extra_metadata` with explicit column name `"metadata"` to avoid collision with SQLAlchemy's `Base.metadata`
+- **Rate limiter memory leak** — added `_last_seen` tracking and TTL-based eviction (1 hour) to prevent unbounded growth of per-IP entries (`shared/rate_limit.py`)
+- **Alert cooldown memory leak** — added `_evict_stale_cooldowns()` with 2-hour TTL to prevent `_last_fired` dict from growing unbounded (`shared/alerts.py`)
+- **Redis pub/sub blocking event loop** — replaced synchronous `get_message(timeout=1.0)` with `run_in_executor()` to avoid blocking the async event loop for up to 1 second (`webgui/realtime.py`)
+- **Redis `KEYS` command replaced with `SCAN`** — report listing endpoint now uses non-blocking `SCAN` + `MGET` instead of `KEYS` + individual `GET` calls (`webgui/api.py`)
+- **httpx client reuse** — `AlertManager` and webhook delivery now use shared `httpx.AsyncClient` singletons instead of creating new clients per request (`shared/alerts.py`, `webgui/api.py`)
+- **LLM integration deduplicated** — extracted `_llm_call()` common wrapper replacing 6 identical 70-line methods with circuit breaker, metrics, and fallback logic (`config/llm_integration.py`)
+
+### Added
+
+- **Alert query endpoint** — `GET /api/alerts?limit=&severity=` reads from Redis stream for recent alert history; alerts persisted via `XADD` with 1000-entry cap (`webgui/api.py`, `shared/alerts.py`)
+- **SSRF protection unit tests** — 9 tests covering private IP blocking, public URL allowance, scheme validation (`tests/unit/test_webgui_api.py`)
+- **Agent name normalization tests** — 4 tests covering snake_case/kebab-case conversion (`tests/unit/test_webgui_api.py`)
+- **Static API key permission test** — verifies SYSTEM_CONFIGURE excluded from static key (`tests/unit/test_webgui_api.py`)
 
 ### Changed
 
@@ -151,7 +182,7 @@ Versions use **YYYY.M.D** (calendar versioning).
 - `tests/unit/test_webgui_exports.py`: `TestGenerateFileSanitization` (path traversal in session ID neutralised, normal IDs preserved)
 - `tests/unit/test_model_manager.py`: 41 tests for AGNOS OS provider, gateway routing, env-var guards
 - `tests/k8s/`: YAML structural validation for all Kubernetes manifests and Helm values
-- **465 unit tests + 19 E2E tests passing**
+- **492 unit tests + 19 E2E tests passing**
 
 ---
 
