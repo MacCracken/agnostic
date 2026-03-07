@@ -137,7 +137,9 @@ def configure_telemetry() -> None:
         # Metrics
         metric_exporter = OTLPMetricExporter(endpoint=_OTEL_ENDPOINT)
         metric_reader = PeriodicExportingMetricReader(metric_exporter)
-        meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+        meter_provider = MeterProvider(
+            resource=resource, metric_readers=[metric_reader]
+        )
         otel_metrics.set_meter_provider(meter_provider)
 
         _configured = True

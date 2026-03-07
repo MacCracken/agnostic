@@ -40,9 +40,7 @@ async def get_structured_results(
         results = {}
 
         if result_type in (None, "security"):
-            security_data = redis_client.get(
-                f"security_compliance:{session_id}:audit"
-            )
+            security_data = redis_client.get(f"security_compliance:{session_id}:audit")
             if security_data:
                 sec = json.loads(security_data)
                 findings = []

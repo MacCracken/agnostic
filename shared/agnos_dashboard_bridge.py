@@ -34,9 +34,7 @@ except ImportError:  # pragma: no cover
     httpx = None  # type: ignore[assignment]
 
 # Context-var used by the correlation-ID middleware elsewhere in the app.
-_correlation_id_var: ContextVar[str | None] = ContextVar(
-    "correlation_id", default=None
-)
+_correlation_id_var: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 
 PROVIDER_ID = "agnostic-qa"
 
@@ -53,9 +51,7 @@ class AgnosDashboardBridge:
             os.getenv("AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090"),
         )
         self.api_key = os.getenv("AGNOS_DASHBOARD_API_KEY", "")
-        self.push_interval = float(
-            os.getenv("AGNOS_DASHBOARD_PUSH_INTERVAL", "30")
-        )
+        self.push_interval = float(os.getenv("AGNOS_DASHBOARD_PUSH_INTERVAL", "30"))
 
         self._client: httpx.AsyncClient | None = None
         self._periodic_task: asyncio.Task[None] | None = None
@@ -65,7 +61,9 @@ class AgnosDashboardBridge:
 
             def _on_breaker_change(name: str, old: str, new: str) -> None:
                 if new == "closed":
-                    logger.info("Dashboard bridge circuit breaker recovered (was %s)", old)
+                    logger.info(
+                        "Dashboard bridge circuit breaker recovered (was %s)", old
+                    )
                 elif new == "open":
                     logger.warning("Dashboard bridge circuit breaker tripped OPEN")
 
@@ -120,9 +118,7 @@ class AgnosDashboardBridge:
             return False
 
         if self._circuit_breaker and not self._circuit_breaker.can_execute():
-            logger.debug(
-                "Dashboard bridge circuit open — skipping push to %s", path
-            )
+            logger.debug("Dashboard bridge circuit open — skipping push to %s", path)
             return False
 
         try:
@@ -221,15 +217,9 @@ class AgnosDashboardBridge:
         Returns:
             ``True`` if **all three** pushes succeeded.
         """
-        agents_ok = await self.push_agent_status(
-            dashboard_data.get("agents", [])
-        )
-        sessions_ok = await self.push_session_status(
-            dashboard_data.get("sessions", [])
-        )
-        metrics_ok = await self.push_metrics(
-            dashboard_data.get("metrics", {})
-        )
+        agents_ok = await self.push_agent_status(dashboard_data.get("agents", []))
+        sessions_ok = await self.push_session_status(dashboard_data.get("sessions", []))
+        metrics_ok = await self.push_metrics(dashboard_data.get("metrics", {}))
         return agents_ok and sessions_ok and metrics_ok
 
     # ------------------------------------------------------------------
@@ -261,7 +251,9 @@ class AgnosDashboardBridge:
             logger.warning("Dashboard bridge pull failed", exc_info=True)
             return None
 
-    async def pull_peer_metrics(self, provider: str = "secureyeoman") -> dict[str, Any] | None:
+    async def pull_peer_metrics(
+        self, provider: str = "secureyeoman"
+    ) -> dict[str, Any] | None:
         """Pull metrics for a specific peer from the AGNOS dashboard.
 
         Returns the parsed JSON on success, or ``None`` on failure.
@@ -283,7 +275,9 @@ class AgnosDashboardBridge:
         except Exception:
             if self._circuit_breaker:
                 self._circuit_breaker.record_failure()
-            logger.warning("Dashboard bridge pull for %s failed", provider, exc_info=True)
+            logger.warning(
+                "Dashboard bridge pull for %s failed", provider, exc_info=True
+            )
             return None
 
     # ------------------------------------------------------------------
@@ -337,7 +331,9 @@ class AgnosDashboardBridge:
                         exc_info=True,
                     )
 
-        self._periodic_task = asyncio.create_task(_loop(), name="agnos-dashboard-bridge")
+        self._periodic_task = asyncio.create_task(
+            _loop(), name="agnos-dashboard-bridge"
+        )
 
     async def stop(self) -> None:
         """Cancel the periodic task and close the HTTP client."""

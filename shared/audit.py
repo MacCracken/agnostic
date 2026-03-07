@@ -32,7 +32,7 @@ class AuditAction(StrEnum):
     AUTH_LOGIN_SUCCESS = "auth.login.success"
     AUTH_LOGIN_FAILURE = "auth.login.failure"
     AUTH_LOGOUT = "auth.logout"
-    AUTH_TOKEN_REFRESH = "auth.token.refresh"
+    AUTH_TOKEN_REFRESH = "auth.token.refresh"  # nosec B105
     AUTH_API_KEY_CREATED = "auth.apikey.created"
     AUTH_API_KEY_DELETED = "auth.apikey.deleted"
     AUTH_API_KEY_USED = "auth.apikey.used"
@@ -123,7 +123,9 @@ def audit_log(
 
         agnos_audit_forwarder.queue_event(event)
     except Exception:
-        pass  # Never block local audit logging
+        _audit_logger.debug(
+            "AGNOS audit forwarding unavailable"
+        )  # Never block local audit logging
 
 
 def configure_audit_logging() -> None:

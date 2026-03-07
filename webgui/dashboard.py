@@ -116,7 +116,9 @@ class DashboardManager:
 
         try:
             # Get session keys from Redis (scan_iter avoids blocking the server)
-            session_keys = list(self.redis_client.scan_iter("session:*:info", count=200))
+            session_keys = list(
+                self.redis_client.scan_iter("session:*:info", count=200)
+            )
 
             for key in session_keys:
                 session_id = key.decode().split(":")[1]
@@ -240,11 +242,7 @@ class DashboardManager:
                 ]
             )
             active_agents = len(
-                [
-                    a
-                    for a in all_agents
-                    if a.status != AgentStatus.OFFLINE
-                ]
+                [a for a in all_agents if a.status != AgentStatus.OFFLINE]
             )
 
             return ResourceMetrics(

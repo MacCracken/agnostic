@@ -144,7 +144,10 @@ class AlertManager:
         self._last_fired[cooldown_key] = now
 
         # Proactive eviction: run every 100 entries or when exceeding hard cap
-        if len(self._last_fired) % 100 == 0 or len(self._last_fired) > _COOLDOWN_MAX_ENTRIES:
+        if (
+            len(self._last_fired) % 100 == 0
+            or len(self._last_fired) > _COOLDOWN_MAX_ENTRIES
+        ):
             self._evict_stale_cooldowns()
             # Hard-cap: if still too large after eviction, drop oldest entries
             if len(self._last_fired) > _COOLDOWN_MAX_ENTRIES:
@@ -193,7 +196,7 @@ class AlertManager:
                 maxlen=1000,
             )
         except Exception:
-            pass
+            logger.debug("Failed to publish alert to Redis")
 
         logger.info("Alert fired: [%s] %s - %s", severity, alert_type, title)
         return results

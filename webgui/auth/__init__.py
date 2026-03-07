@@ -105,9 +105,7 @@ class AuthManager:
         self.access_token_expire_minutes = (
             self.token_manager.access_token_expire_minutes
         )
-        self.refresh_token_expire_days = (
-            self.token_manager.refresh_token_expire_days
-        )
+        self.refresh_token_expire_days = self.token_manager.refresh_token_expire_days
 
     # --- Token operations (delegated to TokenManager) ---
 
@@ -118,9 +116,7 @@ class AuthManager:
         return await self.token_manager.verify_token(token)
 
     async def refresh_tokens(self, refresh_token: str) -> AuthToken | None:
-        return await self.token_manager.refresh_tokens(
-            refresh_token, self.get_user
-        )
+        return await self.token_manager.refresh_tokens(refresh_token, self.get_user)
 
     async def logout(self, user_id: str, access_token: str) -> bool:
         return await self.token_manager.logout(user_id, access_token)

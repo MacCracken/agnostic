@@ -441,11 +441,11 @@ class RegressionTestingTool(BaseTool):
 
         failure_rate = failure_rates.get(test_type, 0.05)
 
-        if random.random() < failure_rate:
+        if random.random() < failure_rate:  # nosec B311
             return {
                 "status": "failed",
                 "error": f"Simulated failure in {test_case['name']}",
-                "stack_trace": f"Traceback: Failed at line {random.randint(1, 100)}",
+                "stack_trace": f"Traceback: Failed at line {random.randint(1, 100)}",  # nosec B311
             }
         else:
             return {"status": "passed"}
@@ -607,8 +607,8 @@ class SyntheticDataGeneratorTool(BaseTool):
                 "last_login": self.faker.date_time_between(
                     start_date="-30d", end_date="now"
                 ).isoformat(),
-                "user_status": random.choice(["active", "inactive", "suspended"]),
-                "subscription_tier": random.choice(
+                "user_status": random.choice(["active", "inactive", "suspended"]),  # nosec B311
+                "subscription_tier": random.choice(  # nosec B311
                     ["free", "basic", "premium", "enterprise"]
                 ),
             }
@@ -617,8 +617,8 @@ class SyntheticDataGeneratorTool(BaseTool):
             if spec.get("include_custom_fields", False):
                 user["custom_fields"] = {
                     "preferences": self.faker.words(nb=3),
-                    "notifications_enabled": random.choice([True, False]),
-                    "profile_completeness": random.randint(0, 100),
+                    "notifications_enabled": random.choice([True, False]),  # nosec B311
+                    "profile_completeness": random.randint(0, 100),  # nosec B311
                 }
 
             users.append(user)
@@ -632,29 +632,29 @@ class SyntheticDataGeneratorTool(BaseTool):
         for i in range(count):
             transaction = {
                 "id": f"txn_{i + 1:06d}",
-                "user_id": f"user_{random.randint(1, 1000):04d}",
-                "amount": round(random.uniform(1.00, 10000.00), 2),
-                "currency": random.choice(["USD", "EUR", "GBP", "JPY"]),
-                "transaction_type": random.choice(
+                "user_id": f"user_{random.randint(1, 1000):04d}",  # nosec B311
+                "amount": round(random.uniform(1.00, 10000.00), 2),  # nosec B311
+                "currency": random.choice(["USD", "EUR", "GBP", "JPY"]),  # nosec B311
+                "transaction_type": random.choice(  # nosec B311
                     ["purchase", "refund", "transfer", "payment"]
                 ),
-                "status": random.choice(
+                "status": random.choice(  # nosec B311
                     ["completed", "pending", "failed", "cancelled"]
                 ),
                 "timestamp": self.faker.date_time_between(
                     start_date="-30d", end_date="now"
                 ).isoformat(),
-                "payment_method": random.choice(
+                "payment_method": random.choice(  # nosec B311
                     ["credit_card", "debit_card", "paypal", "bank_transfer"]
                 ),
                 "merchant": {
                     "name": self.faker.company(),
-                    "category": random.choice(
+                    "category": random.choice(  # nosec B311
                         ["retail", "food", "travel", "entertainment", "services"]
                     ),
                 },
                 "ip_address": self.faker.ipv4(),
-                "device_id": f"device_{random.randint(1, 500):03d}",
+                "device_id": f"device_{random.randint(1, 500):03d}",  # nosec B311
             }
 
             transactions.append(transaction)
@@ -680,28 +680,29 @@ class SyntheticDataGeneratorTool(BaseTool):
                 "id": f"prod_{i + 1:05d}",
                 "name": self.faker.catch_phrase(),
                 "description": self.faker.text(max_nb_chars=200),
-                "category": random.choice(categories),
-                "price": round(random.uniform(9.99, 999.99), 2),
-                "sku": f"SKU-{random.randint(100000, 999999)}",
-                "stock_quantity": random.randint(0, 1000),
-                "weight": round(random.uniform(0.1, 50.0), 2),
+                "category": random.choice(categories),  # nosec B311
+                "price": round(random.uniform(9.99, 999.99), 2),  # nosec B311
+                "sku": f"SKU-{random.randint(100000, 999999)}",  # nosec B311
+                "stock_quantity": random.randint(0, 1000),  # nosec B311
+                "weight": round(random.uniform(0.1, 50.0), 2),  # nosec B311
                 "dimensions": {
-                    "length": round(random.uniform(1.0, 100.0), 1),
-                    "width": round(random.uniform(1.0, 100.0), 1),
-                    "height": round(random.uniform(1.0, 100.0), 1),
+                    "length": round(random.uniform(1.0, 100.0), 1),  # nosec B311
+                    "width": round(random.uniform(1.0, 100.0), 1),  # nosec B311
+                    "height": round(random.uniform(1.0, 100.0), 1),  # nosec B311
                 },
-                "colors": random.sample(
+                "colors": random.sample(  # nosec B311
                     ["red", "blue", "green", "black", "white", "yellow", "purple"],
-                    k=random.randint(1, 3),
+                    k=random.randint(1, 3),  # nosec B311
                 ),
-                "sizes": random.sample(
-                    ["XS", "S", "M", "L", "XL", "XXL"], k=random.randint(1, 4)
+                "sizes": random.sample(  # nosec B311
+                    ["XS", "S", "M", "L", "XL", "XXL"],
+                    k=random.randint(1, 4),  # nosec B311
                 )
-                if random.random() > 0.5
+                if random.random() > 0.5  # nosec B311
                 else None,
-                "rating": round(random.uniform(1.0, 5.0), 1),
-                "review_count": random.randint(0, 500),
-                "is_active": random.choice([True, False]),
+                "rating": round(random.uniform(1.0, 5.0), 1),  # nosec B311
+                "review_count": random.randint(0, 500),  # nosec B311
+                "is_active": random.choice([True, False]),  # nosec B311
                 "created_date": self.faker.date_between(
                     start_date="-1y", end_date="today"
                 ).isoformat(),
@@ -745,7 +746,7 @@ class SyntheticDataGeneratorTool(BaseTool):
             item = {
                 "id": f"item_{i + 1:04d}",
                 "name": self.faker.word(),
-                "value": random.randint(1, 1000),
+                "value": random.randint(1, 1000),  # nosec B311
                 "description": self.faker.sentence(),
                 "created_at": self.faker.date_time_between(
                     start_date="-1y", end_date="now"
@@ -2399,11 +2400,11 @@ class MobileAppTestingTool(BaseTool):
             "test_name": test_case.get("name", "performance_test"),
             "device": device["name"],
             "metrics": {
-                "launch_time_ms": random.randint(1500, 2500)
-                if random.random() > 0.1
+                "launch_time_ms": random.randint(1500, 2500)  # nosec B311
+                if random.random() > 0.1  # nosec B311
                 else launch_time + 500,
-                "memory_mb": random.randint(80, 150),
-                "cpu_percent": random.randint(5, 25),
+                "memory_mb": random.randint(80, 150),  # nosec B311
+                "cpu_percent": random.randint(5, 25),  # nosec B311
             },
         }
 
@@ -3318,9 +3319,9 @@ class JuniorQAAgent:
         test_types = ["ui", "api", "unit", "integration"]
 
         for i in range(20):  # Generate 20 test executions
-            test_type = random.choice(test_types)
+            test_type = random.choice(test_types)  # nosec B311
             status = (
-                "failed" if random.random() < 0.25 else "passed"
+                "failed" if random.random() < 0.25 else "passed"  # nosec B311
             )  # 25% failure rate
 
             error_message = None
@@ -3332,7 +3333,7 @@ class JuniorQAAgent:
                     "TypeError: Cannot read property 'value' of undefined",
                     "Database connection refused",
                 ]
-                error_message = random.choice(error_types)
+                error_message = random.choice(error_types)  # nosec B311
 
             sample_history.append(
                 {
@@ -3342,9 +3343,9 @@ class JuniorQAAgent:
                     "status": status,
                     "error_message": error_message,
                     "timestamp": (
-                        datetime.now() - timedelta(hours=random.randint(0, 72))
+                        datetime.now() - timedelta(hours=random.randint(0, 72))  # nosec B311
                     ).isoformat(),
-                    "execution_time": random.uniform(1.0, 60.0),
+                    "execution_time": random.uniform(1.0, 60.0),  # nosec B311
                 }
             )
 

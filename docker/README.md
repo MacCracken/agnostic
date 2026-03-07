@@ -57,7 +57,7 @@ The build system uses a **base image** pattern to significantly speed up agent c
 docker compose -f docker-compose.build.yml build base
 
 # Or using docker build directly
-docker build -t agnostic-qa-base:latest -t agnostic-qa-base:2026.3.5 -f docker/Dockerfile.base .
+docker build -t agnostic-qa-base:latest -t agnostic-qa-base:2026.3.6 -f docker/Dockerfile.base .
 ```
 
 ### Build Agent Images

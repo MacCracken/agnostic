@@ -432,9 +432,7 @@ async def invoke_mcp_tool(
 
     route = _TOOL_ROUTES.get(req.tool)
     if not route:
-        raise HTTPException(
-            status_code=404, detail=f"Unknown MCP tool: {req.tool}"
-        )
+        raise HTTPException(status_code=404, detail=f"Unknown MCP tool: {req.tool}")
 
     from shared.audit import AuditAction, audit_log
 
@@ -465,9 +463,7 @@ async def invoke_mcp_tool(
         )
 
 
-async def _dispatch_tool(
-    tool_name: str, arguments: dict[str, Any], user: dict
-) -> Any:
+async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) -> Any:
     """Route MCP tool invocations to internal API handlers."""
     # Task submission tools
     if tool_name in (
@@ -487,14 +483,20 @@ async def _dispatch_tool(
 
         task_req = TaskSubmitRequest(
             title=arguments.get("title", f"MCP: {tool_name}"),
-            description=arguments.get("description", f"Invoked via MCP tool {tool_name}"),
+            description=arguments.get(
+                "description", f"Invoked via MCP tool {tool_name}"
+            ),
             target_url=arguments.get("target_url"),
             priority=arguments.get("priority", "high"),
             agents=agents,
             standards=arguments.get("standards", []),
         )
         result = await submit_task(task_req, user)
-        return {"task_id": result.task_id, "session_id": result.session_id, "status": result.status}
+        return {
+            "task_id": result.task_id,
+            "session_id": result.session_id,
+            "status": result.status,
+        }
 
     # Task status
     if tool_name == "agnostic_task_status":
@@ -534,7 +536,11 @@ async def _dispatch_tool(
         return await get_embeddable_widget(user)
 
     # Structured results
-    if tool_name in ("agnostic_structured_results", "agnostic_security_findings", "agnostic_performance_results"):
+    if tool_name in (
+        "agnostic_structured_results",
+        "agnostic_security_findings",
+        "agnostic_performance_results",
+    ):
         from webgui.routes.integration import get_structured_results
 
         result_type = arguments.get("result_type")
@@ -548,7 +554,9 @@ async def _dispatch_tool(
     if tool_name == "agnostic_session_diff":
         from webgui.routes.sessions import compare_sessions
 
-        return await compare_sessions(arguments["session_a"], arguments["session_b"], user)
+        return await compare_sessions(
+            arguments["session_a"], arguments["session_b"], user
+        )
 
     # Quality trends
     if tool_name == "agnostic_quality_trends":
@@ -560,7 +568,9 @@ async def _dispatch_tool(
     if tool_name == "agnostic_generate_report":
         from webgui.routes.reports import generate_report
 
-        return await generate_report(arguments["session_id"], arguments.get("format", "json"), user)
+        return await generate_report(
+            arguments["session_id"], arguments.get("format", "json"), user
+        )
 
     if tool_name == "agnostic_list_reports":
         from webgui.routes.reports import list_reports
@@ -617,4 +627,6 @@ async def _dispatch_tool(
 
         return {"metrics": get_metrics_text()}
 
-    raise HTTPException(status_code=404, detail=f"Tool dispatch not implemented: {tool_name}")
+    raise HTTPException(
+        status_code=404, detail=f"Tool dispatch not implemented: {tool_name}"
+    )

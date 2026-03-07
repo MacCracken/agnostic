@@ -219,9 +219,7 @@ async def schedule_report(
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Failed to schedule report: {e}")
-        raise HTTPException(
-            status_code=500, detail="Failed to schedule report"
-        ) from e
+        raise HTTPException(status_code=500, detail="Failed to schedule report") from e
 
 
 @router.delete("/reports/scheduled/{job_id}")

@@ -96,9 +96,7 @@ class TokenManager:
             get_user_fn: Async callable(user_id) -> User | None.
         """
         try:
-            payload = jwt.decode(
-                refresh_token, self.secret_key, algorithms=["HS256"]
-            )
+            payload = jwt.decode(refresh_token, self.secret_key, algorithms=["HS256"])
 
             if payload.get("type") != "refresh":
                 return None

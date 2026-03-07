@@ -47,7 +47,7 @@ class AgnosTokenBudgetClient:
         ).rstrip("/")
         self.api_key = os.getenv("AGNOS_TOKEN_BUDGET_API_KEY", "")
         self.pool = os.getenv("AGNOS_TOKEN_BUDGET_POOL", "agnostic-qa")
-        self._client: httpx.AsyncClient | None = None if _HTTPX_AVAILABLE else None
+        self._client: httpx.AsyncClient | None = None
 
     # ------------------------------------------------------------------
     # Internal helpers

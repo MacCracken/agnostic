@@ -64,13 +64,11 @@ class AgnosVectorClient:
             os.getenv("AGNOS_VECTOR_ENABLED", "false").lower() in ("true", "1", "yes")
             and _HTTPX_AVAILABLE
         )
-        self.base_url = os.getenv(
-            "AGNOS_VECTOR_URL", "http://localhost:8090"
-        ).rstrip("/")
-        self.api_key = os.getenv("AGNOS_VECTOR_API_KEY", "")
-        self.default_collection = os.getenv(
-            "AGNOS_VECTOR_COLLECTION", "agnostic-qa"
+        self.base_url = os.getenv("AGNOS_VECTOR_URL", "http://localhost:8090").rstrip(
+            "/"
         )
+        self.api_key = os.getenv("AGNOS_VECTOR_API_KEY", "")
+        self.default_collection = os.getenv("AGNOS_VECTOR_COLLECTION", "agnostic-qa")
         self._client: httpx.AsyncClient | None = None  # type: ignore[name-defined]
 
         try:

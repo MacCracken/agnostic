@@ -129,7 +129,9 @@ def _fetch_oidc_config() -> dict[str, Any] | None:
         return jwks
 
     except Exception as exc:
-        logger.warning("Failed to fetch OIDC configuration from %s: %s", _OIDC_DISCOVERY_URL, exc)
+        logger.warning(
+            "Failed to fetch OIDC configuration from %s: %s", _OIDC_DISCOVERY_URL, exc
+        )
         return None
 
 
@@ -155,7 +157,7 @@ def _validate_with_oidc(token: str) -> dict[str, Any] | None:
                     disco = client.get(_OIDC_DISCOVERY_URL).json()
                     jwks_uri = disco.get("jwks_uri", "")
             except Exception:
-                pass
+                logger.debug("OIDC discovery fetch failed for %s", _OIDC_DISCOVERY_URL)
 
         if not jwks_uri:
             return None
@@ -273,9 +275,7 @@ def validate_yeoman_jwt(token: str) -> dict[str, Any] | None:
 
     role_permissions = {
         "super_admin": [p.value for p in Permission],
-        "api_user": [
-            p.value for p in Permission if p != Permission.SYSTEM_CONFIGURE
-        ],
+        "api_user": [p.value for p in Permission if p != Permission.SYSTEM_CONFIGURE],
         "analyst": [
             Permission.SESSIONS_READ.value,
             Permission.REPORTS_GENERATE.value,

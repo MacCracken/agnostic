@@ -97,7 +97,7 @@ def _get_counter_value(counter: Any, labels: dict[str, str]) -> int:
             if all(sample.labels.get(k) == v for k, v in labels.items()):
                 return int(sample.value)
     except Exception:
-        pass
+        logger.debug("Failed to read counter value for labels %s", labels)
     return 0
 
 
@@ -108,7 +108,7 @@ def _get_gauge_value(gauge: Any, labels: dict[str, str]) -> float:
             if all(sample.labels.get(k) == v for k, v in labels.items()):
                 return sample.value
     except Exception:
-        pass
+        logger.debug("Failed to read gauge value for labels %s", labels)
     return 0.0
 
 

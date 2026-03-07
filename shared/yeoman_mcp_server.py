@@ -40,6 +40,7 @@ _SERVER_DESCRIPTION = (
     "regression testing, compliance scanning, and comprehensive QA reports."
 )
 
+
 # Tool manifest: import from the canonical source (webgui/routes/mcp.py).
 # Falls back to a minimal manifest when FastAPI route module is unavailable
 # (e.g. agent containers that don't ship webgui).
@@ -83,9 +84,11 @@ class YeomanMcpRegistration:
     """Handles auto-registration of AGNOSTIC as an MCP server with SecureYeoman."""
 
     def __init__(self) -> None:
-        self.enabled: bool = os.getenv(
-            "YEOMAN_MCP_AUTO_REGISTER", "false"
-        ).lower() in ("true", "1", "yes")
+        self.enabled: bool = os.getenv("YEOMAN_MCP_AUTO_REGISTER", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
         self.yeoman_url: str = os.getenv(
             "YEOMAN_MCP_URL", _DEFAULT_YEOMAN_CORE_URL
         ).rstrip("/")
@@ -103,9 +106,7 @@ class YeomanMcpRegistration:
             headers: dict[str, str] = {"Content-Type": "application/json"}
             if self.api_key:
                 headers["X-API-Key"] = self.api_key
-            self._client = httpx.AsyncClient(
-                timeout=_REQUEST_TIMEOUT, headers=headers
-            )
+            self._client = httpx.AsyncClient(timeout=_REQUEST_TIMEOUT, headers=headers)
         return self._client
 
     async def register(self) -> bool:
@@ -128,7 +129,7 @@ class YeomanMcpRegistration:
             "enabled": True,
             "metadata": {
                 "provider": "agnostic-qa",
-                "version": os.getenv("AGNOSTIC_VERSION", "2026.3.5"),
+                "version": os.getenv("AGNOSTIC_VERSION", "2026.3.6"),
                 "capabilities": [
                     "security-audit",
                     "performance-test",

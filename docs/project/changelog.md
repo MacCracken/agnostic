@@ -3,7 +3,9 @@
 All notable changes to the Agentic QA Team System are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
-Versions use **YYYY.M.D** (calendar versioning).
+Versions use **YYYY.M.D** (calendar versioning) for git tags and releases.
+Build artifacts use **agnostic_qa_YYYY_MM_DD** (underscore format).
+See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ---
 

@@ -1271,21 +1271,21 @@ class AutonomousTestDataGeneratorTool(BaseTool):
         if data_type == "user":
             record["username"] = f"user_{index + 1}"
             record["email"] = f"user{index + 1}@example.com"
-            record["age"] = random.randint(18, 80)
-            record["country"] = random.choice(["US", "UK", "CA", "AU", "DE"])
-            record["is_active"] = random.choice([True, False])
+            record["age"] = random.randint(18, 80)  # nosec B311
+            record["country"] = random.choice(["US", "UK", "CA", "AU", "DE"])  # nosec B311
+            record["is_active"] = random.choice([True, False])  # nosec B311
         elif data_type == "transaction":
-            record["amount"] = round(random.uniform(10, 10000), 2)
-            record["currency"] = random.choice(["USD", "EUR", "GBP"])
-            record["status"] = random.choice(["completed", "pending", "failed"])
+            record["amount"] = round(random.uniform(10, 10000), 2)  # nosec B311
+            record["currency"] = random.choice(["USD", "EUR", "GBP"])  # nosec B311
+            record["status"] = random.choice(["completed", "pending", "failed"])  # nosec B311
             record["timestamp"] = datetime.now().isoformat()
         elif data_type == "product":
             record["name"] = f"Product {index + 1}"
-            record["price"] = round(random.uniform(5, 500), 2)
-            record["category"] = random.choice(
+            record["price"] = round(random.uniform(5, 500), 2)  # nosec B311
+            record["category"] = random.choice(  # nosec B311
                 ["electronics", "clothing", "food", "books"]
             )
-            record["in_stock"] = random.choice([True, False])
+            record["in_stock"] = random.choice([True, False])  # nosec B311
         else:
             record["data"] = f"record_{index + 1}"
 

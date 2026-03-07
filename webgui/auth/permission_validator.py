@@ -71,9 +71,7 @@ class PermissionValidator:
         """Check if user can access specific resource."""
         try:
             required_permission = f"{resource_type}:{action}"
-            if not any(
-                perm.value == required_permission for perm in user.permissions
-            ):
+            if not any(perm.value == required_permission for perm in user.permissions):
                 return False
 
             if resource_type == "sessions":

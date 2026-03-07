@@ -57,9 +57,7 @@ class YeomanA2AClient:
         )
         self.api_key: str | None = os.getenv("YEOMAN_A2A_API_KEY")
         self.peer_id: str = _AGNOSTIC_PEER_ID
-        self.yeoman_peer_id: str = os.getenv(
-            "YEOMAN_PEER_ID", _DEFAULT_YEOMAN_PEER_ID
-        )
+        self.yeoman_peer_id: str = os.getenv("YEOMAN_PEER_ID", _DEFAULT_YEOMAN_PEER_ID)
 
         # Circuit breaker to avoid hammering an unavailable YEOMAN instance.
         try:
@@ -227,9 +225,7 @@ class YeomanA2AClient:
         except Exception as exc:
             if self._breaker:
                 self._breaker.record_failure()
-            logger.error(
-                "Failed to query YEOMAN capabilities at %s: %s", url, exc
-            )
+            logger.error("Failed to query YEOMAN capabilities at %s: %s", url, exc)
             return []
 
     async def send_heartbeat(self) -> bool:
@@ -247,9 +243,7 @@ class YeomanA2AClient:
         ``task_type`` and ``params``.  Returns a list of task IDs (or ``None``
         for any that failed).
         """
-        result = await self.send_message(
-            "a2a:delegate_batch", {"tasks": tasks}
-        )
+        result = await self.send_message("a2a:delegate_batch", {"tasks": tasks})
         if result is None:
             return [None] * len(tasks)
         return result.get("task_ids", [None] * len(tasks))  # type: ignore[return-value]
@@ -266,7 +260,7 @@ class YeomanA2AClient:
             "a2a:status_query_batch", {"task_ids": task_ids}
         )
         if result is None:
-            return {tid: None for tid in task_ids}
+            return dict.fromkeys(task_ids)
         return result.get("statuses", {})  # type: ignore[return-value]
 
     async def send_result(self, task_id: str, result: dict[str, Any]) -> bool:

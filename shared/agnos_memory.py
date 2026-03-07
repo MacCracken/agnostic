@@ -97,9 +97,7 @@ class AgnosMemoryClient:
             return None
         try:
             client = self._get_client()
-            response = await client.get(
-                f"/api/v1/memory/{agent_id}/{namespace}/{key}"
-            )
+            response = await client.get(f"/api/v1/memory/{agent_id}/{namespace}/{key}")
             response.raise_for_status()
             self._record_success()
             data = response.json()
@@ -109,17 +107,13 @@ class AgnosMemoryClient:
             logger.debug("AGNOS memory retrieve failed: %s", exc)
             return None
 
-    async def list_keys(
-        self, agent_id: str, namespace: str = "default"
-    ) -> list[str]:
+    async def list_keys(self, agent_id: str, namespace: str = "default") -> list[str]:
         """List all keys for an agent in a namespace."""
         if not self._can_execute():
             return []
         try:
             client = self._get_client()
-            response = await client.get(
-                f"/api/v1/memory/{agent_id}/{namespace}"
-            )
+            response = await client.get(f"/api/v1/memory/{agent_id}/{namespace}")
             response.raise_for_status()
             self._record_success()
             return response.json().get("keys", [])
@@ -128,9 +122,7 @@ class AgnosMemoryClient:
             logger.debug("AGNOS memory list_keys failed: %s", exc)
             return []
 
-    async def delete(
-        self, agent_id: str, key: str, namespace: str = "default"
-    ) -> bool:
+    async def delete(self, agent_id: str, key: str, namespace: str = "default") -> bool:
         """Delete a key from AGNOS memory."""
         if not self._can_execute():
             return False

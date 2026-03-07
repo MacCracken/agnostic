@@ -84,9 +84,7 @@ async def login(req: LoginRequest):
 async def refresh(req: RefreshRequest):
     tokens = await auth_manager.refresh_tokens(req.refresh_token)
     if tokens is None:
-        raise HTTPException(
-            status_code=401, detail="Invalid or expired refresh token"
-        )
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
     return {
         "access_token": tokens.access_token,
         "refresh_token": tokens.refresh_token,

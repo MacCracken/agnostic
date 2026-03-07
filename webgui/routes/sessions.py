@@ -68,7 +68,5 @@ async def compare_sessions(
         req.session2_id,
     )
     if comparison is None:
-        raise HTTPException(
-            status_code=404, detail="One or both sessions not found"
-        )
+        raise HTTPException(status_code=404, detail="One or both sessions not found")
     return asdict(comparison)

@@ -121,7 +121,9 @@ class YeomanEventPushClient:
         try:
             self._queue.put_nowait(event)
         except asyncio.QueueFull:
-            logger.warning("YEOMAN event push queue full; dropping event: %s", event_type)
+            logger.warning(
+                "YEOMAN event push queue full; dropping event: %s", event_type
+            )
 
     async def _flush_loop(self) -> None:
         """Background loop that flushes events in batches."""

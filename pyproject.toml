@@ -3,8 +3,8 @@ requires = ["setuptools>=65", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agnostic-qa-system"
-version = "2026.3.5"
+name = "agnostic-qa"
+version = "2026.3.6"
 description = "Agentic QA Team System - Containerized, multi-agent QA platform powered by CrewAI"
 readme = "README.md"
 license = {text = "MIT"}
@@ -219,8 +219,8 @@ warn_unreachable = true
 strict_equality = true
 show_error_codes = true
 show_column_numbers = true
-hide_error_context = false
 color_output = true
+explicit_package_bases = true
 error_summary = true
 
 [[tool.mypy.overrides]]

@@ -280,7 +280,7 @@ class AgentRegistryClient:
         )
         self.base_url = os.getenv("AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090")
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
-        self.version = os.getenv("AGNOSTIC_VERSION", "2026.2.28")
+        self.version = os.getenv("AGNOSTIC_VERSION", "2026.3.6")
         self._session = None
         self._registered_agents: dict[str, bool] = {}
         self._capabilities_advertised: bool = False
@@ -457,8 +457,7 @@ class AgentRegistryClient:
 
         capability = CAPABILITY_DEFINITIONS[capability_name]
         task_id = (
-            f"agnostic-{capability_name}-"
-            f"{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
+            f"agnostic-{capability_name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
         )
 
         logger.info(

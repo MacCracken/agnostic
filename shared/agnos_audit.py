@@ -98,8 +98,7 @@ class AgnosAuditForwarder:
             # No running loop — events will accumulate until an async
             # context calls flush() or queue_event() with a running loop.
             logger.debug(
-                "AGNOS audit: no running event loop, deferring flush "
-                "(buffer size: %d)",
+                "AGNOS audit: no running event loop, deferring flush (buffer size: %d)",
                 len(self._buffer),
             )
 

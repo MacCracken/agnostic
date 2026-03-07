@@ -62,9 +62,7 @@ class YeomanWebhookPayload(BaseModel):
         max_length=100,
         description="Event type: after-deploy, on-pr-merge, on-push, on-schedule, etc.",
     )
-    timestamp: int = Field(
-        ..., description="Unix millisecond timestamp of the event"
-    )
+    timestamp: int = Field(..., description="Unix millisecond timestamp of the event")
     data: dict[str, Any] = Field(
         default_factory=dict,
         description="Event-specific data (repo, branch, commit, PR number, etc.)",
@@ -146,7 +144,9 @@ def _build_task_from_event(
         "repo": data.get("repository", data.get("repo", "unknown")),
         "branch": data.get("branch", data.get("ref", "main")),
         "commit_sha": data.get("commit_sha", data.get("sha", "unknown")),
-        "pr_number": data.get("pr_number", data.get("pull_request", {}).get("number", "?")),
+        "pr_number": data.get(
+            "pr_number", data.get("pull_request", {}).get("number", "?")
+        ),
         "tag": data.get("tag", data.get("release", {}).get("tag_name", "?")),
         "alert_title": data.get("alert_title", data.get("title", "Unknown alert")),
     }
@@ -178,9 +178,7 @@ def _build_task_from_event(
 # ---------------------------------------------------------------------------
 
 
-def _verify_webhook_signature(
-    body: bytes, signature_header: str | None
-) -> bool:
+def _verify_webhook_signature(body: bytes, signature_header: str | None) -> bool:
     """Verify HMAC-SHA256 signature from SecureYeoman webhook.
 
     If no secret is configured, signatures are not required.
@@ -306,9 +304,7 @@ async def receive_yeoman_webhook(
         payload_data = json.loads(body)
         payload = YeomanWebhookPayload(**payload_data)
     except (json.JSONDecodeError, Exception) as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid payload: {exc}"
-        ) from exc
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {exc}") from exc
 
     # Validate event type format
     if not _EVENT_TYPE_RE.match(payload.event):

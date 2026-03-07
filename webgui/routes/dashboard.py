@@ -105,7 +105,9 @@ async def get_yeoman_status(user: dict = Depends(get_current_user)):
         return {
             "enabled": yeoman_a2a_client.enabled,
             "cached_results": yeoman_a2a_client.get_all_cached_results(),
-            "peer_id": yeoman_a2a_client.yeoman_peer_id if yeoman_a2a_client.enabled else None,
+            "peer_id": yeoman_a2a_client.yeoman_peer_id
+            if yeoman_a2a_client.enabled
+            else None,
         }
     except ImportError:
         return {"enabled": False, "cached_results": {}, "peer_id": None}
@@ -177,7 +179,11 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
     try:
         agents = await dashboard_manager.get_agent_status()
         agents_summary = [
-            {"name": a.name, "status": a.status, "tasks_completed": getattr(a, "tasks_completed", 0)}
+            {
+                "name": a.name,
+                "status": a.status,
+                "tasks_completed": getattr(a, "tasks_completed", 0),
+            }
             for a in agents
         ]
     except Exception:
@@ -186,7 +192,9 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
     # Active session count
     try:
         sessions = await dashboard_manager.get_active_sessions()
-        active_sessions = len([s for s in sessions if s.status in ("running", "pending")])
+        active_sessions = len(
+            [s for s in sessions if s.status in ("running", "pending")]
+        )
         total_sessions = len(sessions)
     except Exception:
         active_sessions = 0
@@ -202,8 +210,16 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
         pass
 
     # Compute pass/fail rates from agent metrics
-    total_passed = sum(m.get("tasks_passed", 0) for m in agent_metrics.values()) if isinstance(agent_metrics, dict) else 0
-    total_failed = sum(m.get("tasks_failed", 0) for m in agent_metrics.values()) if isinstance(agent_metrics, dict) else 0
+    total_passed = (
+        sum(m.get("tasks_passed", 0) for m in agent_metrics.values())
+        if isinstance(agent_metrics, dict)
+        else 0
+    )
+    total_failed = (
+        sum(m.get("tasks_failed", 0) for m in agent_metrics.values())
+        if isinstance(agent_metrics, dict)
+        else 0
+    )
     total_tasks = total_passed + total_failed
     pass_rate = (total_passed / total_tasks * 100) if total_tasks > 0 else 0.0
 
@@ -212,7 +228,7 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
 
     return {
         "provider": "agnostic-qa",
-        "version": os.getenv("AGNOSTIC_VERSION", "2026.3.5"),
+        "version": os.getenv("AGNOSTIC_VERSION", "2026.3.6"),
         "agents": agents_summary,
         "sessions": {
             "active": active_sessions,

@@ -108,9 +108,7 @@ class OAuthProviderFactory:
                 logger.error("OAUTH2_GOOGLE_CLIENT_ID not configured")
                 return None
 
-            jwks_client = PyJWKClient(
-                "https://www.googleapis.com/oauth2/v3/certs"
-            )
+            jwks_client = PyJWKClient("https://www.googleapis.com/oauth2/v3/certs")
             signing_key = jwks_client.get_signing_key_from_jwt(id_token)
 
             payload = jwt.decode(
@@ -365,9 +363,7 @@ class OAuthProviderFactory:
                 "organization_id": user.organization_id,
                 "team_id": user.team_id,
                 "created_at": user.created_at.isoformat(),
-                "last_login": user.last_login.isoformat()
-                if user.last_login
-                else None,
+                "last_login": user.last_login.isoformat() if user.last_login else None,
                 "is_active": user.is_active,
                 "metadata": user.metadata,
             }

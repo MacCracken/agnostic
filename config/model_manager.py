@@ -87,9 +87,7 @@ class OpenAIProvider(BaseModelProvider):
 
         try:
             session = await self._get_session()
-            async with session.post(
-                url, headers=headers, json=payload
-            ) as response:
+            async with session.post(url, headers=headers, json=payload) as response:
                 if response.status == 200:
                     result = await response.json()
                     return {
@@ -522,7 +520,9 @@ class ModelManager:
                 ).lower() in ("true", "1", "yes")
                 if gateway_enabled and "agnos_gateway" in config.get("providers", {}):
                     config["providers"]["agnos_gateway"]["enabled"] = True
-                    logger.info("AGNOS LLM Gateway auto-enabled via AGNOS_LLM_GATEWAY_ENABLED")
+                    logger.info(
+                        "AGNOS LLM Gateway auto-enabled via AGNOS_LLM_GATEWAY_ENABLED"
+                    )
 
                 # Initialize providers
                 for provider_name, provider_config in config.get(
@@ -730,7 +730,9 @@ class ModelManager:
 
         try:
             session = await provider._get_session()
-            async with session.get(health_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.get(
+                health_url, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 healthy = resp.status == 200
                 body = await resp.json() if healthy else {}
                 return {"enabled": True, "healthy": healthy, "detail": body}

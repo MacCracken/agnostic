@@ -81,9 +81,7 @@ def list_api_keys(redis_client: Any) -> list[dict[str, Any]]:
             continue
 
         key_hash = (
-            key_hash_raw.decode()
-            if isinstance(key_hash_raw, bytes)
-            else key_hash_raw
+            key_hash_raw.decode() if isinstance(key_hash_raw, bytes) else key_hash_raw
         )
         meta_data = redis_client.get(f"api_key:{key_hash}")
         if not meta_data:
