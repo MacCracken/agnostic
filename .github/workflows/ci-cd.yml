@@ -12,6 +12,31 @@ env:
   TZ: UTC
 
 jobs:
+  # Code Quality Checks
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check agents/ config/ shared/ webgui/ --output-format=github
+
+      - name: Ruff format
+        run: ruff format --check agents/ config/ shared/ webgui/
+
+      - name: Mypy type check
+        run: mypy agents/ config/ shared/ --ignore-missing-imports || true
+
   # Security Scanning
   security-scan:
     runs-on: ubuntu-latest
@@ -35,8 +60,8 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
 
-  # Code Quality Checks
-  code-quality:
+  # Bandit Security Code Scan
+  security-code-scan:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -47,23 +72,25 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install dependencies
-        run: |
-          pip install ruff black isort mypy
+      - name: Install Bandit
+        run: pip install bandit[toml]
 
-      - name: Run Python linting
-        run: |
-          ruff check agents/ config/ shared/ webgui/ --output-format=github
-          black --check agents/ config/ shared/ webgui/
-          isort --check-only agents/ config/ shared/ webgui/
-          mypy agents/ config/ shared/ --ignore-missing-imports --no-error-summary || true
+      - name: Run Bandit (JSON report)
+        run: bandit -r agents/ config/ shared/ webgui/ -f json -o bandit-report.json || true
 
-  # Build and Test
-  build-and-test:
+      - name: Run Bandit (enforce zero medium/high)
+        run: bandit -r agents/ config/ shared/ webgui/ -ll
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+  # Unit Tests
+  unit-tests:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        test-mode: [unit, integration]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -75,41 +102,21 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: |
-          pip install -e ".[dev,test,web,ml]"
+        run: pip install -e ".[dev,test,web]"
 
-      - name: Set up test environment
-        run: |
-          echo "REDIS_HOST=localhost" >> $GITHUB_ENV
-          echo "RABBITMQ_HOST=localhost" >> $GITHUB_ENV
-          echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
-
-          # Start test services for integration tests
-          if [ "${{ matrix.test-mode }}" == "integration" ]; then
-            docker compose -f docker-compose.test.yml up -d redis-test rabbitmq-test
-            sleep 10
-          fi
-
-      - name: Run tests
-        run: |
-          python run_tests.py --mode ${{ matrix.test-mode }} --env $([ "${{ matrix.test-mode }}" == "integration" ] && echo "docker" || echo "mock")
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short --cov=agents --cov=config --cov=shared --cov=webgui --cov-report=xml
 
       - name: Upload coverage reports
-        if: matrix.test-mode == 'unit'
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
           flags: unittests
 
-      - name: Cleanup test services
-        if: matrix.test-mode == 'integration'
-        run: |
-          docker compose -f docker-compose.test.yml down -v || true
-
-  # End-to-End Tests
-  e2e-tests:
+  # Integration Tests
+  integration-tests:
     runs-on: ubuntu-latest
-    needs: [build-and-test]
+    needs: [unit-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -121,8 +128,40 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
+        run: pip install -e ".[dev,test,web]"
+
+      - name: Start test services
         run: |
-          pip install -e ".[dev,test,web]"
+          docker compose -f docker-compose.test.yml up -d redis-test rabbitmq-test
+          sleep 10
+
+      - name: Run integration tests
+        env:
+          REDIS_HOST: localhost
+          RABBITMQ_HOST: localhost
+          LOG_LEVEL: DEBUG
+        run: python run_tests.py --mode integration --env docker
+
+      - name: Teardown test services
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v || true
+
+  # End-to-End Tests
+  e2e-tests:
+    runs-on: ubuntu-latest
+    needs: [unit-tests]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,test,web]"
 
       - name: Build and start full stack
         run: |
@@ -156,41 +195,11 @@ jobs:
         env:
           E2E_BASE_URL: http://localhost:8000
           E2E_API_KEY: test-e2e-key
-        run: |
-          pytest tests/e2e/ -v -m e2e
+        run: pytest tests/e2e/ -v -m e2e
 
       - name: Teardown services
         if: always()
-        run: |
-          docker compose -f docker-compose.yml down -v || true
-
-  # Bandit Security Code Scan
-  security-code-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install Bandit
-        run: pip install bandit[toml]
-
-      - name: Run Bandit (JSON report)
-        run: bandit -r agents/ config/ shared/ webgui/ -f json -o bandit-report.json || true
-
-      - name: Run Bandit (console output)
-        run: bandit -r agents/ config/ shared/ webgui/
-
-      - name: Upload Bandit report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: bandit-report
-          path: bandit-report.json
+        run: docker compose -f docker-compose.yml down -v || true
 
   # Helm Chart Lint
   helm-lint:
@@ -200,7 +209,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Helm
-        uses: azure/setup-helm@v3
+        uses: azure/setup-helm@v4
 
       - name: Lint Helm chart
         run: helm lint k8s/helm/agentic-qa/
@@ -208,30 +217,51 @@ jobs:
       - name: Template Helm chart
         run: helm template agentic-qa k8s/helm/agentic-qa/ --debug
 
-  # Container Build
-  container-build:
+  # Build Release Artifacts + Container
+  build-release:
     runs-on: ubuntu-latest
-    needs: [code-quality, build-and-test, security-code-scan, helm-lint]
+    needs: [code-quality, unit-tests, security-code-scan, helm-lint]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build release artifacts
+        run: |
+          PYTHON=$(which python) ./scripts/build-release.sh
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/agnostic_qa_*
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build containers
-        run: |
-          docker compose -f docker-compose.yml build
+        run: docker compose -f docker-compose.yml build
+        env:
+          OPENAI_API_KEY: sk-test-placeholder
+          RABBITMQ_USER: qa_user
+          RABBITMQ_PASSWORD: ci_password
 
       - name: Test container health
         run: |
           docker compose -f docker-compose.yml up -d redis rabbitmq
           sleep 10
-
-          # Check Redis connection
           docker compose exec -T redis redis-cli ping
-
-          # Check RabbitMQ connection
           docker compose exec -T rabbitmq rabbitmq-diagnostics ping
-
           docker compose -f docker-compose.yml down
+        env:
+          OPENAI_API_KEY: sk-test-placeholder
+          RABBITMQ_USER: qa_user
+          RABBITMQ_PASSWORD: ci_password

@@ -13,12 +13,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DIST_DIR="$PROJECT_ROOT/dist"
+PYTHON="${PYTHON:-${PROJECT_ROOT}/.venv/bin/python}"
+
+if [[ ! -x "$PYTHON" ]]; then
+    PYTHON="$(command -v python3 || command -v python)"
+fi
 
 # Read version from pyproject.toml or CLI arg
 if [[ $# -ge 1 ]]; then
     PEP_VERSION="$1"
 else
-    PEP_VERSION=$(python -c "
+    PEP_VERSION=$("$PYTHON" -c "
 import re, pathlib
 m = re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('$PROJECT_ROOT/pyproject.toml').read_text(), re.M)
 print(m.group(1))
@@ -36,7 +41,7 @@ echo ""
 
 # Build sdist + wheel
 cd "$PROJECT_ROOT"
-python -m build --sdist --wheel
+"$PYTHON" -m build --sdist --wheel
 
 # Rename artifacts
 PEP_NAME="agnostic_qa-${PEP_VERSION}"
