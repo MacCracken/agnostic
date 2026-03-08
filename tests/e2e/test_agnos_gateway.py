@@ -85,18 +85,18 @@ def test_gateway_llm_round_trip(http_client: httpx.Client, api_headers: dict):
 
     # Submit a lightweight task that triggers an LLM call
     task_payload = {
-        "type": "quick_test",
-        "requirements": "Verify that the login page loads correctly",
+        "title": "Quick test",
+        "description": "Verify that the login page loads correctly",
         "priority": "low",
     }
     resp = http_client.post(
-        "/api/v1/tasks/submit",
+        "/api/tasks",
         json=task_payload,
         headers=api_headers,
     )
 
-    # 200/202 means the task was accepted (LLM call may be async)
-    assert resp.status_code in (200, 202), f"Task submit failed: {resp.text}"
+    # 201 means the task was accepted (LLM call runs in background)
+    assert resp.status_code in (200, 201, 202), f"Task submit failed: {resp.text}"
     data = resp.json()
     assert "task_id" in data or "session_id" in data
 
@@ -156,10 +156,10 @@ def test_no_openai_key_needed_with_gateway(http_client: httpx.Client, api_header
     # Submit task — if gateway is properly configured, this should not fail
     # with "OPENAI_API_KEY not set"
     resp = http_client.post(
-        "/api/v1/tasks/submit",
+        "/api/tasks",
         json={
-            "type": "quick_test",
-            "requirements": "Smoke test: verify homepage loads",
+            "title": "Smoke test",
+            "description": "Smoke test: verify homepage loads",
             "priority": "low",
         },
         headers=api_headers,
