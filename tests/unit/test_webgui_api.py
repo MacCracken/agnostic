@@ -240,7 +240,7 @@ class TestHealthCheckEndpoint:
         assert data["status"] == "unhealthy"
 
     def test_health_rabbitmq_error(self):
-        """RabbitMQ failure → unhealthy."""
+        """RabbitMQ failure → degraded (RabbitMQ is optional, only needed for workers profile)."""
         try:
             from webgui.app import app as real_app
         except ImportError:
@@ -264,7 +264,7 @@ class TestHealthCheckEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["rabbitmq"] == "error"
-        assert data["status"] == "unhealthy"
+        assert data["status"] == "degraded"
 
     def test_health_alive_agent(self):
         """At least one alive agent + infra ok → healthy."""

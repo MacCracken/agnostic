@@ -104,6 +104,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       AGNOSTIC_API_KEY: ${AGNOSTIC_API_KEY:-}
+      YEOMAN_A2A_ENABLED: ${YEOMAN_A2A_ENABLED:-true}
+      MCP_SERVER_ENABLED: ${MCP_SERVER_ENABLED:-true}
       WEBGUI_HOST: "0.0.0.0"
       WEBGUI_PORT: "8000"
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agnostic}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agnostic}

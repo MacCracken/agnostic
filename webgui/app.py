@@ -1203,15 +1203,17 @@ async def health_check() -> dict[str, Any]:
         status_details["agnos_bridge"] = "unavailable"
 
     # Determine overall status
-    infra_ok = status_details["redis"] == "ok" and status_details["rabbitmq"] == "ok"
+    # Redis is critical (webgui needs it); RabbitMQ is optional (workers profile)
+    redis_ok = status_details["redis"] == "ok"
+    rabbitmq_ok = status_details["rabbitmq"] == "ok"
     any_alive = any(v == "alive" for v in status_details["agents"].values())
 
-    if not infra_ok:
+    if not redis_ok:
         overall = "unhealthy"
-    elif any_alive:
-        overall = "healthy"
-    else:
+    elif not rabbitmq_ok or not any_alive:
         overall = "degraded"
+    else:
+        overall = "healthy"
 
     status_details["status"] = overall
     return status_details
