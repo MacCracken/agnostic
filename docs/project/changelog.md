@@ -5,7 +5,7 @@ All notable changes to the Agentic QA Team System are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versions use **YYYY.M.D** (calendar versioning) for git tags and releases.
 Same-day patches use **YYYY.M.D-N** suffix (e.g. `2026.3.8-1`, `2026.3.8-2`).
-Build artifacts use **agnostic_qa_YYYY_MM_DD[-N]** (underscore format).
+Build artifacts use **agnostic-VERSION** (e.g. `agnostic-2026.3.8-1`).
 See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ---

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build release artifacts and rename to agnostic_qa_YYYY_MM_DD format.
+# Build release artifacts and rename to agnostic-VERSION format.
 #
 # Usage:
 #   ./scripts/build-release.sh            # uses version from VERSION file
@@ -7,7 +7,7 @@
 #   ./scripts/build-release.sh 2026.3.8-1 # same-day patch
 #
 # Git tags/releases use YYYY.M.D or YYYY.M.D-N (calendar versioning).
-# Build artifacts use agnostic_qa_YYYY_MM_DD[-N] (underscore format).
+# Build artifacts use agnostic-VERSION (e.g. agnostic-2026.3.8-1).
 
 set -euo pipefail
 
@@ -22,39 +22,39 @@ fi
 
 # Read version from VERSION file or CLI arg
 if [[ $# -ge 1 ]]; then
-    PEP_VERSION="$1"
+    VERSION="$1"
 else
     VERSION_FILE="$PROJECT_ROOT/VERSION"
     if [[ ! -f "$VERSION_FILE" ]]; then
         echo "ERROR: VERSION file not found at $VERSION_FILE" >&2
         exit 1
     fi
-    PEP_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+    VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
 fi
 
-# Convert YYYY.M.D[-N] -> YYYY_MM_DD[-N]
-BASE_VERSION="${PEP_VERSION%%-*}"  # strip patch suffix if present
-PATCH_SUFFIX=""
-if [[ "$PEP_VERSION" == *-* ]]; then
-    PATCH_SUFFIX="-${PEP_VERSION#*-}"
-fi
-IFS='.' read -r YEAR MONTH DAY <<< "$BASE_VERSION"
-UNDERSCORE_VERSION="${YEAR}_$(printf '%02d' "$MONTH")_$(printf '%02d' "$DAY")${PATCH_SUFFIX}"
-BUILD_NAME="agnostic_qa_${UNDERSCORE_VERSION}"
+BUILD_NAME="agnostic-${VERSION}"
 
-echo "PEP 440 version : $PEP_VERSION"
-echo "Build name       : $BUILD_NAME"
+echo "Version    : $VERSION"
+echo "Build name : $BUILD_NAME"
 echo ""
 
 # Build sdist + wheel
 cd "$PROJECT_ROOT"
 "$PYTHON" -m build --sdist --wheel
 
-# Rename artifacts
-PEP_NAME="agnostic_qa-${PEP_VERSION}"
+# PEP 440 normalizes "2026.3.8-1" to "2026.3.8.post1", so we need to match
+# the normalized name that `python -m build` actually produces.
+BASE_VERSION="${VERSION%%-*}"
+if [[ "$VERSION" == *-* ]]; then
+    PATCH_NUM="${VERSION#*-}"
+    PEP_NORMALIZED="agnostic_qa-${BASE_VERSION}.post${PATCH_NUM}"
+else
+    PEP_NORMALIZED="agnostic_qa-${VERSION}"
+fi
 
+# Rename artifacts
 for ext in tar.gz; do
-    src="$DIST_DIR/${PEP_NAME}.${ext}"
+    src="$DIST_DIR/${PEP_NORMALIZED}.${ext}"
     dst="$DIST_DIR/${BUILD_NAME}.${ext}"
     if [[ -f "$src" ]]; then
         mv "$src" "$dst"
@@ -62,10 +62,10 @@ for ext in tar.gz; do
     fi
 done
 
-for whl in "$DIST_DIR"/${PEP_NAME}-*.whl; do
+for whl in "$DIST_DIR"/${PEP_NORMALIZED}-*.whl; do
     if [[ -f "$whl" ]]; then
         base="$(basename "$whl")"
-        new_base="${base/${PEP_NAME}/${BUILD_NAME}}"
+        new_base="${base/${PEP_NORMALIZED}/${BUILD_NAME}}"
         mv "$whl" "$DIST_DIR/$new_base"
         echo "Renamed: $base -> $new_base"
     fi
@@ -75,4 +75,4 @@ echo ""
 echo "Release artifacts:"
 ls -1 "$DIST_DIR"/${BUILD_NAME}*
 echo ""
-echo "Git tag/release: $PEP_VERSION"
+echo "Git tag/release: $VERSION"

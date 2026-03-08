@@ -60,7 +60,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-artifacts
-          path: dist/agnostic_qa_*
+          path: dist/agnostic-*
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -92,6 +92,6 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.version }}
-          files: dist/agnostic_qa_*
+          files: dist/agnostic-*
           generate_release_notes: true
           make_latest: true
