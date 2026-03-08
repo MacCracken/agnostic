@@ -1078,7 +1078,12 @@ def _configure_app(target_app: FastAPI) -> None:
         allow_origins=[o.strip() for o in _cors_origins_raw.split(",")],
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Correlation-ID"],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "X-API-Key",
+            "X-Correlation-ID",
+        ],
     )
 
     target_app.add_middleware(SecurityHeadersMiddleware)
@@ -1235,13 +1240,30 @@ async def _websocket_endpoint(websocket):
 app.get("/health")(health_check)
 app.websocket("/ws/realtime")(_websocket_endpoint)
 
-# Also register on Chainlit's app so routes work under `chainlit run`
+# Also register on Chainlit's app so routes work under `chainlit run`.
+# Chainlit registers a catch-all ``GET /{full_path:path}`` for its SPA at import
+# time, so routes added via ``include_router`` after that never match.  The fix
+# is to insert our routes *before* the catch-all in the route list.
 try:
     from chainlit.server import app as chainlit_app
 
     _configure_app(chainlit_app)
     chainlit_app.get("/health")(health_check)
     chainlit_app.websocket("/ws/realtime")(_websocket_endpoint)
+
+    # Move our routes before Chainlit's catch-all ``/{full_path:path}``
+    _catchall_indices = [
+        i
+        for i, r in enumerate(chainlit_app.routes)
+        if hasattr(r, "path") and r.path == "/{full_path:path}"
+    ]
+    if _catchall_indices:
+        _catchall_idx = _catchall_indices[0]
+        # Routes we just added are at the end — move them before the catch-all
+        _our_routes = chainlit_app.routes[_catchall_idx + 1 :]
+        del chainlit_app.routes[_catchall_idx + 1 :]
+        for _r in reversed(_our_routes):
+            chainlit_app.routes.insert(_catchall_idx, _r)
 except Exception:
     pass  # Not running under Chainlit
 

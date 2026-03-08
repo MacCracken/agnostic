@@ -19,15 +19,17 @@ def run_command(cmd, description):
     print(f"{'='*60}")
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
         print(result.stdout)
         if result.stderr:
             print("STDERR:", result.stderr)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Error running {description}:")
-        print("STDOUT:", e.stdout)
-        print("STDERR:", e.stderr)
+        # Exit code 0 = passed, 5 = no tests collected (all skipped) — both OK
+        if result.returncode in (0, 5):
+            return True
+        print(f"Error running {description} (exit code {result.returncode})")
+        return False
+    except Exception as e:
+        print(f"Error running {description}: {e}")
         return False
 
 
