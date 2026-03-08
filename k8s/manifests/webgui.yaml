@@ -22,7 +22,7 @@ spec:
         runAsNonRoot: true
       containers:
       - name: webgui
-        image: ghcr.io/maccracken/agnostic-webgui:latest
+        image: ghcr.io/maccracken/agnostic:latest
         imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false

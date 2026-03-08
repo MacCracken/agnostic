@@ -56,7 +56,7 @@ This document tracks third-party dependencies that are currently blocking upgrad
 **Changes made:**
 - `config/llm_integration.py`: added `llm_service = LLMIntegrationService()` singleton
 - `requirements-docker.txt`: added `pytest` and `Faker` (used at runtime by junior QA agent)
-- All 7 Dockerfiles: added `COPY shared/ ./shared/`
+- `Dockerfile`: single image includes all code (agents, config, shared, webgui)
 - Agent BaseTool subclasses: added `ClassVar` annotations for class-level attributes (pydantic v2 requirement)
 - `SyntheticDataGeneratorTool`: converted `faker` from instance attribute to lazy ClassVar + property
 
@@ -74,7 +74,7 @@ This document tracks third-party dependencies that are currently blocking upgrad
 **Resolution:** crewai 1.10.1 exists on PyPI with `Requires-Python: >=3.10,<3.14`. Docker containers now use Python 3.13 where it installs cleanly. crewai 1.10.1 has dropped langchain entirely and uses direct openai/litellm, eliminating the tiktoken version conflict.
 
 **Changes made:**
-- `docker/Dockerfile.base`: `FROM python:3.13-slim` (was `python:3.11-slim`)
+- `Dockerfile`: `FROM python:3.13-slim` (was `python:3.11-slim`)
 - `requirements-docker.txt`: `crewai[litellm]==1.10.1`; removed langchain stack; uses minimum version pins instead of exact pins to avoid transitive conflicts
 - Removed `--no-deps` litellm workaround (no longer needed)
 
@@ -91,7 +91,7 @@ This document tracks third-party dependencies that are currently blocking upgrad
 
 **Changes made:**
 - Created `requirements-docker.txt` — runtime deps only, minimum version pins
-- `docker/Dockerfile.base`: installs from `requirements-docker.txt` instead of `requirements.txt`
+- `Dockerfile`: installs from `requirements-docker.txt` instead of `requirements.txt`
 
 ---
 
@@ -100,12 +100,12 @@ This document tracks third-party dependencies that are currently blocking upgrad
 | | |
 |---|---|
 | **Resolved** | 2026-03-07 |
-| **Resolved by** | Updating `docker/Dockerfile.base` to `python:3.13-slim` |
+| **Resolved by** | Updating `Dockerfile` to `python:3.13-slim` |
 
 **Changes made:**
-- `docker/Dockerfile.base`: `FROM python:3.11-slim` → `FROM python:3.13-slim`
+- `Dockerfile`: `FROM python:3.13-slim` (consolidated from multiple Dockerfiles)
 - `requirements-docker.txt`: added `audioop-lts>=0.2.0` (audioop removed from stdlib in 3.13)
-- `.github/workflows/ci-cd.yml`: added GHCR login + push steps with lowercase owner enforcement
+- `.github/workflows/release.yml`: GHCR login + push steps with lowercase owner enforcement
 
 ---
 
@@ -131,7 +131,7 @@ This document tracks third-party dependencies that are currently blocking upgrad
 
 **Changes made:**
 - `pyproject.toml`: `chainlit>=2.0.0,<3.0.0` (was `>=1.1.304,<2.0.0`); `fastapi>=0.116.1` (was `>=0.115.0`); `uvicorn>=0.35.0` (was `>=0.32.0`)
-- `webgui/Dockerfile`: `CHAINLIT_SERVER_ROOT` renamed to `CHAINLIT_ROOT_PATH` (2.x canonical name)
+- `Dockerfile`: `CHAINLIT_ROOT_PATH` env var set (chainlit 2.x canonical name)
 - `webgui/app.py`: migrated deprecated `@app.on_event("startup"/"shutdown")` to `lifespan` async context manager (required by starlette >=0.47 pulled in by chainlit 2.x)
 
 ---

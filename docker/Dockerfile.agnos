@@ -1,16 +1,15 @@
-# Agnostic QA Platform — AGNOS-integrated base image
+# Agnostic QA Platform — AGNOS env var defaults (optional layer)
 #
-# Identical to Dockerfile.base but sets AGNOS defaults so all containers
-# route LLM calls through hoosh and register with daimon out of the box.
+# The primary docker-compose.yml sets these via x-agnos-env, so this
+# Dockerfile is only needed if you want the defaults baked into the image.
 #
 # Usage:
-#   docker build -f docker/Dockerfile.agnos -t agnostic-qa-base:agnos .
-#   IMAGE=agnostic-qa-base:agnos docker compose up -d
+#   docker build -f docker/Dockerfile.agnos -t agnostic:agnos .
 
-FROM agnostic-qa-base:latest
+FROM agnostic:latest
 
 # ── AGNOS integration defaults ──────────────────────────────────────────
-# These can all be overridden per-service in docker-compose.agnos.yml.
+# These can all be overridden per-service in docker-compose.yml.
 
 # LLM Gateway (hoosh) — all LLM calls route through this
 ENV AGNOS_LLM_GATEWAY_ENABLED=true

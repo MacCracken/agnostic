@@ -7,7 +7,8 @@
 #   docker compose -f docker-compose.old-style.yml --profile workers up -d
 
 x-worker-common: &worker-common
-  image: agnostic-agent:latest
+  image: agnostic:latest
+  entrypoint: ["/app/agent-entrypoint.sh"]
   restart: unless-stopped
   profiles: ["workers"]
   networks:
@@ -90,9 +91,7 @@ services:
       retries: 5
 
   webgui:
-    build:
-      context: .
-      dockerfile: webgui/Dockerfile
+    image: agnostic:latest
     ports:
       - "8000:8000"
     environment:
@@ -132,7 +131,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Workers (--profile workers)
-  # All use the same docker/Dockerfile.agent image, differentiated by AGENT_ROLE.
+  # All use the same agnostic:latest image, differentiated by AGENT_ROLE.
   # ---------------------------------------------------------------------------
   rabbitmq:
     image: rabbitmq:3-management-alpine

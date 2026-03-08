@@ -1,4 +1,4 @@
-[![CI/CD](https://img.shields.io/github/actions/workflow/status/MacCracken/agnostic/ci-cd.yml?branch=main&label=CI/CD)](https://github.com/MacCracken/agnostic/actions/workflows/ci-cd.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/MacCracken/agnostic/ci.yml?branch=main&label=CI)](https://github.com/MacCracken/agnostic/actions/workflows/ci.yml)
 ![Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.11--3.13-blue)
@@ -96,8 +96,7 @@ docker compose --profile dev --profile workers up -d
 For running without AGNOS, use the standalone compose file which bundles all infrastructure:
 
 ```bash
-./scripts/build-docker.sh --base-only  # One-time (~5 min)
-./scripts/build-docker.sh --agents-only  # Rebuilds (~30 sec)
+./scripts/build-docker.sh
 docker compose -f docker-compose.old-style.yml up -d
 ```
 

@@ -99,7 +99,9 @@ class AgnosMemoryClient:
             return None
         try:
             client = self._get_client()
-            response = await client.get(f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}/{key}")
+            response = await client.get(
+                f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}/{key}"
+            )
             response.raise_for_status()
             self._record_success()
             data = response.json()
@@ -115,7 +117,9 @@ class AgnosMemoryClient:
             return []
         try:
             client = self._get_client()
-            response = await client.get(f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}")
+            response = await client.get(
+                f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}"
+            )
             response.raise_for_status()
             self._record_success()
             return response.json().get("keys", [])

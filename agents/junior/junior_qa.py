@@ -785,6 +785,7 @@ class SyntheticDataGeneratorTool(BaseTool):
 
 
 class TestExecutionOptimizerTool(BaseTool):
+    __test__ = False  # Not a pytest test class
     name: str = "Test Execution Optimizer"
     description: str = "Optimizes test execution order based on risk and code changes"
 
@@ -3414,6 +3415,7 @@ async def main():
     # Apply AGNOS environment profile (dev/staging/prod defaults)
     try:
         from config.agnos_environment import apply_agnos_profile
+
         apply_agnos_profile()
     except Exception:
         pass

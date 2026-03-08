@@ -319,8 +319,13 @@ MCP_TOOLS: list[dict[str, Any]] = [
                 "provider": {
                     "type": "string",
                     "enum": [
-                        "openai", "anthropic", "google",
-                        "ollama", "lm_studio", "custom_local", "agnos_gateway",
+                        "openai",
+                        "anthropic",
+                        "google",
+                        "ollama",
+                        "lm_studio",
+                        "custom_local",
+                        "agnos_gateway",
                     ],
                 },
                 "api_key": {"type": "string"},

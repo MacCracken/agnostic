@@ -22,7 +22,7 @@ The Agentic QA System implements a layered security posture suitable for product
 
 | Control | Status | Details |
 |---------|--------|---------|
-| Non-root containers | **Implemented** | `USER appuser` in `docker/Dockerfile.base` and `webgui/Dockerfile` |
+| Non-root containers | **Implemented** | `USER appuser` in `Dockerfile` |
 | Redis authentication | **Implemented** | `REDIS_PASSWORD` required in production (`docker-compose.prod.yml`) |
 | RabbitMQ credentials | **Implemented** | `RABBITMQ_USER`/`RABBITMQ_PASSWORD` required (no guest defaults) |
 | Resource limits | **Implemented** | CPU/memory limits in `docker-compose.yml` for all services |

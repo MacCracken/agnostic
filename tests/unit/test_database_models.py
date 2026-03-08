@@ -107,6 +107,9 @@ class TestTestResultRepository:
     @pytest.fixture
     def mock_session(self):
         session = AsyncMock()
+        # session.add() is sync in SQLAlchemy — use MagicMock to avoid
+        # "coroutine never awaited" warnings
+        session.add = MagicMock()
         return session
 
     @pytest.fixture

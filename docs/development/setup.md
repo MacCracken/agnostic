@@ -68,26 +68,24 @@ python -m webgui.app
 ## Docker (recommended)
 
 ```bash
-# Optimised build (~30 sec rebuilds after first run)
-./scripts/build-docker.sh --base-only   # one-time base (~5 min)
-./scripts/build-docker.sh --agents-only # subsequent rebuilds
+# Build the single image
+./scripts/build-docker.sh
 
-docker-compose up -d
+# Production (on AGNOS host — webgui only)
+docker compose up -d
 
-# Traditional build (simpler, slower first run)
-docker-compose up --build
+# Development (simulate AGNOS with containers)
+docker compose --profile dev up -d
 
-# Rebuild a single service
-docker-compose up --build qa-manager
+# Development + distributed workers
+docker compose --profile dev --profile workers up -d
 
 # View logs
-docker-compose logs -f webgui
-docker-compose logs qa-manager senior-qa junior-qa qa-analyst security-compliance-agent performance-agent
+docker compose logs -f webgui
 ```
 
 **Access URLs (Docker):**
 - WebGUI: `http://localhost:8000`
-- RabbitMQ Management: `http://localhost:15672`
 
 ---
 
@@ -266,10 +264,9 @@ CORS_ALLOWED_ORIGINS=http://localhost:18789,http://localhost:3001
 The **Plugin Architecture** ([ADR-013](../adr/013-plugin-architecture.md)) means adding a new agent requires **no code changes** to the manager or WebGUI — only 5 steps:
 
 1. **Create `agents/<name>/`** — implement an agent class using `crewai.Agent`; extend `BaseTool` (from `shared.crewai_compat`) for custom tools.
-2. **Add a Dockerfile** — follow the existing pattern (`FROM python:3.11-slim`, `PYTHONPATH=/app`, copy only the agent directory).
-3. **Register in `config/team_config.json`** — add an entry with `role`, `celery_task`, `celery_queue`, and `redis_prefix` fields. `AgentRegistry` picks it up automatically.
-4. **Add service to `docker-compose.yml`** — extend the existing agent service pattern.
-5. **Add K8s manifest** — add to `k8s/manifests/` or extend the Helm chart.
+2. **Register in `config/team_config.json`** — add an entry with `role`, `celery_task`, `celery_queue`, and `redis_prefix` fields. `AgentRegistry` picks it up automatically.
+3. **Add worker service to `docker-compose.yml`** — use the `x-worker-common` anchor with `AGENT_ROLE: <name>`. All workers share the single `agnostic:latest` image.
+4. **Add K8s manifest** — add to `k8s/manifests/` or extend the Helm chart.
 
 The `AgentRegistry` in `config/agent_registry.py` routes tasks via `registry.route_task()` and the WebGUI welcome message regenerates dynamically from `registry.get_agents_for_team()`.
 

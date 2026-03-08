@@ -325,9 +325,14 @@ class AgentRegistryClient:
             self._registered_agents[agent_key] = daimon_id
             logger.info(
                 "Registered agent with agnosticos: %s (daimon_id=%s)",
-                agent_key, daimon_id,
+                agent_key,
+                daimon_id,
             )
-            return {"status": "registered", "agent_id": agent_config["agent_id"], "daimon_id": daimon_id}
+            return {
+                "status": "registered",
+                "agent_id": agent_config["agent_id"],
+                "daimon_id": daimon_id,
+            }
         except requests.exceptions.RequestException as e:
             logger.warning(f"Failed to register agent {agent_key}: {e}")
             return {"status": "error", "message": str(e)}

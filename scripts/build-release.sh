@@ -2,11 +2,12 @@
 # Build release artifacts and rename to agnostic_qa_YYYY_MM_DD format.
 #
 # Usage:
-#   ./scripts/build-release.sh          # uses version from pyproject.toml
-#   ./scripts/build-release.sh 2026.3.8 # explicit version
+#   ./scripts/build-release.sh            # uses version from VERSION file
+#   ./scripts/build-release.sh 2026.3.8   # explicit version
+#   ./scripts/build-release.sh 2026.3.8-1 # same-day patch
 #
-# Git tags/releases use YYYY.M.D (PEP 440).
-# Build artifacts use agnostic_qa_YYYY_MM_DD (underscore format).
+# Git tags/releases use YYYY.M.D or YYYY.M.D-N (calendar versioning).
+# Build artifacts use agnostic_qa_YYYY_MM_DD[-N] (underscore format).
 
 set -euo pipefail
 
@@ -31,9 +32,14 @@ else
     PEP_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
 fi
 
-# Convert YYYY.M.D -> YYYY_MM_DD
-IFS='.' read -r YEAR MONTH DAY <<< "$PEP_VERSION"
-UNDERSCORE_VERSION="${YEAR}_$(printf '%02d' "$MONTH")_$(printf '%02d' "$DAY")"
+# Convert YYYY.M.D[-N] -> YYYY_MM_DD[-N]
+BASE_VERSION="${PEP_VERSION%%-*}"  # strip patch suffix if present
+PATCH_SUFFIX=""
+if [[ "$PEP_VERSION" == *-* ]]; then
+    PATCH_SUFFIX="-${PEP_VERSION#*-}"
+fi
+IFS='.' read -r YEAR MONTH DAY <<< "$BASE_VERSION"
+UNDERSCORE_VERSION="${YEAR}_$(printf '%02d' "$MONTH")_$(printf '%02d' "$DAY")${PATCH_SUFFIX}"
 BUILD_NAME="agnostic_qa_${UNDERSCORE_VERSION}"
 
 echo "PEP 440 version : $PEP_VERSION"

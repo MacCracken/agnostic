@@ -2,8 +2,8 @@ apiVersion: v2
 name: agentic-qa
 description: A Helm chart for Agentic QA Team System - Containerized multi-agent QA platform
 type: application
-version: 2026.3.8
-appVersion: "2026.3.8"
+version: 2026.3.8-1
+appVersion: "2026.3.8-1"
 keywords:
   - qa
   - testing

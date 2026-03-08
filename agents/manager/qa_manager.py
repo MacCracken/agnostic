@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class TestPlanDecompositionTool(BaseTool):
+    __test__ = False  # Not a pytest test class
     name: str = "Test Plan Decomposition"
     description: str = "Decomposes user requirements into comprehensive test plans"
 
@@ -492,6 +493,7 @@ async def main():
     # Apply AGNOS environment profile (dev/staging/prod defaults)
     try:
         from config.agnos_environment import apply_agnos_profile
+
         apply_agnos_profile()
     except Exception:
         pass

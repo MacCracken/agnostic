@@ -1,168 +1,80 @@
-# Docker Build Optimization
+# Docker Build
 
-This directory contains optimized Docker build configurations for the Agentic QA Team System.
+Single image build for the Agnostic QA Platform.
 
-## Overview
-
-The build system uses a **base image** pattern to significantly speed up agent container builds:
-
-- **Base Image** (`agnostic-qa-base`): Contains all common dependencies (Python, CrewAI, LangChain, Redis, RabbitMQ, Playwright, OpenCV, etc.)
-- **Agent Images**: Lightweight images that extend the base with only agent-specific code
-
-## Benefits
-
-- **~90% faster builds** after the first base image build
-- **~70% smaller incremental builds** (only code changes, not dependencies)
-- **Consistent environment** across all agents
-- **Shared layer caching** between all agent containers
-
-## Quick Start
-
-### Build Everything (Base + All Agents)
+## Build
 
 ```bash
 ./scripts/build-docker.sh
 ```
 
-### Build Only the Base Image
+This produces `agnostic:latest` (and `agnostic:<version>` from the VERSION file).
+
+## Run
 
 ```bash
-./scripts/build-docker.sh --base-only
-# or
-./scripts/build-docker.sh -b
-```
-
-### Build Only Agent Images (requires base image)
-
-```bash
-./scripts/build-docker.sh --agents-only
-# or
-./scripts/build-docker.sh -a
-```
-
-### Clean Up Dangling Images
-
-```bash
-./scripts/build-docker.sh --cleanup
-# or
-./scripts/build-docker.sh -c
-```
-
-## Manual Build Commands
-
-### Build Base Image
-
-```bash
-# Using docker-compose
-docker compose -f docker-compose.build.yml build base
-
-# Or using docker build directly
-docker build -t agnostic-qa-base:latest -t agnostic-qa-base:2026.3.8 -f docker/Dockerfile.base .
-```
-
-### Build Agent Images
-
-```bash
-docker compose build qa-manager senior-qa junior-qa qa-analyst security-compliance-agent performance-agent webgui
-```
-
-## Docker Compose Usage
-
-### Start All Services
-
-```bash
+# Production (on AGNOS host — webgui only)
 docker compose up -d
+
+# Development (simulate AGNOS with containers)
+docker compose --profile dev up -d
+
+# Development + distributed workers
+docker compose --profile dev --profile workers up -d
 ```
 
-### Start Only Infrastructure (Redis + RabbitMQ)
+## Image
 
-```bash
-docker compose up -d redis rabbitmq
+One image serves all roles:
+
+- **webgui** (default CMD) — Chainlit + FastAPI web interface, agents run in-process
+- **workers** (via `agent-entrypoint.sh`) — distributed agent workers selected by `AGENT_ROLE` env var
+
 ```
-
-### Start Specific Agents
-
-```bash
-docker compose up -d qa-manager senior-qa
+┌──────────────────────────────────────┐
+│          agnostic:latest             │
+│                                      │
+│  Python 3.13 + all dependencies      │
+│  • CrewAI 1.x + litellm             │
+│  • Chainlit + FastAPI + Uvicorn      │
+│  • Redis + Celery                    │
+│  • Playwright + Chromium             │
+│  • OpenCV + scikit-learn + pandas    │
+│                                      │
+│  Application code:                   │
+│  • webgui/  agents/  config/  shared/│
+│                                      │
+│  CMD: chainlit run webgui/app.py     │
+│  ALT: ./agent-entrypoint.sh (worker) │
+└──────────────────────────────────────┘
 ```
 
 ## Build Performance
 
-| Build Type | First Build | Incremental |
-|------------|-------------|-------------|
-| Base Image | ~10-15 min | N/A |
-| Manager Agent | ~30 sec | ~5 sec |
-| Senior Agent | ~30 sec | ~5 sec |
-| Junior Agent | ~30 sec | ~5 sec |
-| Analyst Agent | ~30 sec | ~5 sec |
-| Security Agent | ~30 sec | ~5 sec |
-| Performance Agent | ~30 sec | ~5 sec |
-| WebGUI | ~30 sec | ~5 sec |
-
-## Troubleshooting
-
-### Base image not found
-
-If you get "pull access denied" errors, the base image hasn't been built locally:
-
-```bash
-./scripts/build-docker.sh --base-only
-```
-
-### Rebuild base image after requirements.txt changes
-
-```bash
-./scripts/build-docker.sh --base-only
-./scripts/build-docker.sh --agents-only
-```
-
-### Clean build (no cache)
-
-```bash
-docker compose build --no-cache qa-manager
-```
+| Scenario | Time |
+|----------|------|
+| First build | ~10-15 min |
+| Code-only change | ~30 sec (cached deps layer) |
 
 ## Files
 
-- `docker/Dockerfile.base` - Base image definition
-- `docker-compose.build.yml` - Docker Compose for building base image
-- `scripts/build-docker.sh` - Convenience build script
-- `agents/*/Dockerfile` - Agent-specific Dockerfiles (all use base image)
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Single-stage image definition |
+| `docker/agent-entrypoint.sh` | Worker entrypoint (resolves `AGENT_ROLE`) |
+| `requirements-docker.txt` | Runtime Python dependencies |
+| `scripts/build-docker.sh` | Build script |
 
-## Architecture
+## Troubleshooting
 
+**Rebuild after dependency changes:**
+
+```bash
+./scripts/build-docker.sh  # rebuilds from requirements-docker.txt layer
 ```
-┌─────────────────────────────────────────────────┐
-│           agnostic-qa-base:latest               │
-│  ┌───────────────────────────────────────────┐  │
-│  │  Python 3.11 + All Dependencies          │  │
-│  │  • CrewAI + CrewAI Tools                  │  │
-│  │  • LangChain + LangChain OpenAI          │  │
-│  │  • Redis + Celery                        │  │
-│  │  • Chainlit + FastAPI + Uvicorn          │  │
-│  │  • Playwright + Chromium                 │  │
-│  │  • OpenCV + scikit-learn + pandas        │  │
-│  │  • pytest + pytest-playwright            │  │
-│  │  • All other requirements...             │  │
-│  └───────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────┘
-           │
-    ┌──────┴──────┐
-    │             │
-    ▼             ▼
-┌─────────┐  ┌─────────┐  ┌─────────┐
-│ Manager │  │ Senior  │  │ Junior  │
-│  Agent  │  │  Agent  │  │  Agent  │
-└─────────┘  └─────────┘  └─────────┘
-    │             │             │
-    ▼             ▼             ▼
-┌─────────┐  ┌─────────┐  ┌─────────┐
-│ Analyst │  │Security │  │Perform. │
-│  Agent  │  │  Agent  │  │  Agent  │
-└─────────┘  └─────────┘  └─────────┘
-                  │
-                  ▼
-            ┌─────────┐
-            │ WebGUI  │
-            └─────────┘
+
+**Clean build (no cache):**
+
+```bash
+docker build --no-cache -t agnostic:latest .
 ```

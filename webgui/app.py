@@ -1269,7 +1269,7 @@ async def health_check() -> dict[str, Any]:
     # Determine overall status
     # Redis is critical (webgui needs it); RabbitMQ is optional (workers profile)
     redis_ok = status_details["redis"] == "ok"
-    rabbitmq_ok = status_details["rabbitmq"] == "ok"
+    rabbitmq_ok = status_details["rabbitmq"] in ("ok", "not_configured")
     any_alive = any(v == "alive" for v in status_details["agents"].values())
 
     if not redis_ok:

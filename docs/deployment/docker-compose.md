@@ -42,29 +42,24 @@ CACHE_TTL=3600
 
 ### 2. System Deployment
 
-#### ⚡ Optimized Build Process (Recommended)
-
-Using the base image significantly speeds up builds:
+#### Build and Deploy
 
 ```bash
-# Build base image first (one-time, ~5 minutes)
-./scripts/build-docker.sh --base-only
+# Build the single image
+./scripts/build-docker.sh
 
-# Build all agent images (~30 seconds)
-./scripts/build-docker.sh --agents-only
+# Production (on AGNOS host — webgui only)
+docker compose up -d
 
-# Start all services
-docker-compose up -d
+# Development (simulate AGNOS with containers)
+docker compose --profile dev up -d
+
+# Development + distributed workers
+docker compose --profile dev --profile workers up -d
 
 # Verify deployment
-docker-compose ps
+docker compose ps
 ```
-
-**Performance Benefits:**
-- First base image build: ~5 minutes (cached for all agents)
-- Agent rebuilds: ~30 seconds (99% faster)
-- Incremental builds: ~5 seconds
-- See [Docker Build Optimization](docker/README.md) for details
 
 #### Development Environment
 ```bash

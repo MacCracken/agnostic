@@ -30,7 +30,15 @@ CREDENTIAL_PROVISIONING_ENABLED = (
 
 # Providers that can be provisioned
 VALID_PROVIDERS = frozenset(
-    {"openai", "anthropic", "google", "ollama", "lm_studio", "custom_local", "agnos_gateway"}
+    {
+        "openai",
+        "anthropic",
+        "google",
+        "ollama",
+        "lm_studio",
+        "custom_local",
+        "agnos_gateway",
+    }
 )
 
 
@@ -110,7 +118,11 @@ class CredentialStore:
             is_rotation = credential.provider in self._credentials
             self._credentials[credential.provider] = credential
 
-        action = AuditAction.CREDENTIAL_ROTATED if is_rotation else AuditAction.CREDENTIAL_PROVISIONED
+        action = (
+            AuditAction.CREDENTIAL_ROTATED
+            if is_rotation
+            else AuditAction.CREDENTIAL_PROVISIONED
+        )
         audit_log(
             action,
             actor=credential.provisioned_by,
@@ -162,9 +174,7 @@ class CredentialStore:
     def list_providers(self) -> list[str]:
         """Return provider names that have provisioned credentials (no secrets)."""
         with self._lock:
-            return [
-                p for p, c in self._credentials.items() if not c.is_expired
-            ]
+            return [p for p, c in self._credentials.items() if not c.is_expired]
 
     def is_provisioned(self, provider: str) -> bool:
         """Check whether a provider has a valid credential without returning it."""

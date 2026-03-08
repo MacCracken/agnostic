@@ -11,9 +11,8 @@ For development without an AGNOS host, use `--profile dev` to spin up these serv
 ## Quick Start
 
 ```bash
-# 1. Build base + webgui images
-./scripts/build-docker.sh --base-only   # one-time (~5 min)
-./scripts/build-docker.sh --agents-only # rebuilds (~30 sec)
+# 1. Build the image
+./scripts/build-docker.sh
 
 # 2. Configure
 cp .env.example .env

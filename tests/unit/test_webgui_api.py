@@ -190,7 +190,8 @@ class TestHealthCheckEndpoint:
         mock_redis.ping.return_value = True
         mock_redis.get.return_value = None  # no heartbeats
 
-        with patch("webgui.app.config") as mock_config, \
+        with patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}), \
+             patch("webgui.app.config") as mock_config, \
              patch("webgui.app.socket") as mock_socket, \
              patch("webgui.app._agent_registry") as mock_registry:
 
@@ -250,7 +251,8 @@ class TestHealthCheckEndpoint:
         mock_redis.ping.return_value = True
         mock_redis.get.return_value = None
 
-        with patch("webgui.app.config") as mock_config, \
+        with patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}), \
+             patch("webgui.app.config") as mock_config, \
              patch("webgui.app.socket") as mock_socket, \
              patch("webgui.app._agent_registry") as mock_registry:
 
@@ -283,7 +285,8 @@ class TestHealthCheckEndpoint:
         mock_agent = Mock()
         mock_agent.name = "QA Manager"
 
-        with patch("webgui.app.config") as mock_config, \
+        with patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}), \
+             patch("webgui.app.config") as mock_config, \
              patch("webgui.app.socket") as mock_socket, \
              patch("webgui.app._agent_registry") as mock_registry:
 

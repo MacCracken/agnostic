@@ -1,10 +1,17 @@
 """Tests for credential provisioning via MCP tools and A2A protocol."""
 
+import sys
 import time
-from unittest.mock import AsyncMock, patch
+import types
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+
+# Ensure litellm is importable (may not be installed in test venv)
+if "litellm" not in sys.modules:
+    sys.modules["litellm"] = types.ModuleType("litellm")
+    sys.modules["litellm"].completion = MagicMock()
 
 from config.credential_store import CredentialStore, ProvisionedCredential
 

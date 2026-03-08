@@ -886,6 +886,7 @@ class PerformanceProfilingTool(BaseTool):
 
 
 class TestTraceabilityTool(BaseTool):
+    __test__ = False  # Not a pytest test class
     name: str = "Test Traceability & Coverage"
     description: str = "Maps requirements to tests, links defects, generates coverage matrices, and identifies testing gaps"
 
@@ -2448,6 +2449,7 @@ async def main():
     # Apply AGNOS environment profile (dev/staging/prod defaults)
     try:
         from config.agnos_environment import apply_agnos_profile
+
         apply_agnos_profile()
     except Exception:
         pass

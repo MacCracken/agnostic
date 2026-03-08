@@ -41,7 +41,8 @@ x-agnos-env: &agnos-env
   AGNOS_PROFILE: ${AGNOS_PROFILE:-}
 
 x-worker-common: &worker-common
-  image: agnostic-agent:latest
+  image: agnostic:latest
+  entrypoint: ["/app/agent-entrypoint.sh"]
   restart: unless-stopped
   profiles: ["workers"]
   networks:
@@ -78,9 +79,10 @@ services:
   # Agnostic (always started)
   # ---------------------------------------------------------------------------
   webgui:
+    image: agnostic:latest
     build:
       context: .
-      dockerfile: webgui/Dockerfile
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     environment:

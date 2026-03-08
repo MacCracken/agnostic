@@ -44,7 +44,7 @@ requires-python = ">=3.11,<3.14"
 
 dependencies = [
     # NOTE: crewai 1.x drops LangChain in favour of litellm for LLM routing.
-    # Production containers use Python 3.11 (docker/Dockerfile.base) which satisfies
+    # Production containers use Python 3.13 (Dockerfile) which satisfies
     # crewai 1.x's requires-python (<3.14,>=3.10). The local dev .venv runs Python 3.14
     # where crewai 1.x cannot be installed (chromadb→pydantic.v1 broken on 3.14);
     # see docs/development/dependency-watch.md for tracking details.

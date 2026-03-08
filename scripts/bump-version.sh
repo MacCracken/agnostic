@@ -2,8 +2,9 @@
 # Bump the project version everywhere.
 #
 # Usage:
-#   ./scripts/bump-version.sh 2026.3.7
-#   ./scripts/bump-version.sh          # defaults to today's date (YYYY.M.D)
+#   ./scripts/bump-version.sh 2026.3.8-1  # same-day patch
+#   ./scripts/bump-version.sh 2026.3.9    # new day
+#   ./scripts/bump-version.sh             # defaults to today's date (YYYY.M.D)
 #
 # Updates:
 #   VERSION                              (source of truth)
@@ -55,7 +56,7 @@ fi
 # 3. Docker README example tag
 DOCKER_README="$PROJECT_ROOT/docker/README.md"
 if [[ -f "$DOCKER_README" ]]; then
-    sed -i "s/agnostic-qa-base:${OLD_VERSION}/agnostic-qa-base:${NEW_VERSION}/g" "$DOCKER_README"
+    sed -i "s/agnostic:${OLD_VERSION}/agnostic:${NEW_VERSION}/g" "$DOCKER_README"
     echo "  Updated docker/README.md"
 fi
 
@@ -64,13 +65,6 @@ ADR022="$PROJECT_ROOT/docs/adr/022-agnosticos-agent-hud.md"
 if [[ -f "$ADR022" ]]; then
     sed -i "s/\"version\": \"${OLD_VERSION}\"/\"version\": \"${NEW_VERSION}\"/g" "$ADR022"
     echo "  Updated docs/adr/022-agnosticos-agent-hud.md"
-fi
-
-# 5. build-release.sh usage comment
-BUILD_RELEASE="$PROJECT_ROOT/scripts/build-release.sh"
-if [[ -f "$BUILD_RELEASE" ]]; then
-    sed -i "s|build-release.sh ${OLD_VERSION}|build-release.sh ${NEW_VERSION}|g" "$BUILD_RELEASE"
-    echo "  Updated scripts/build-release.sh"
 fi
 
 echo ""

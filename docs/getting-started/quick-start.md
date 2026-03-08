@@ -36,29 +36,19 @@ PRIMARY_MODEL_PROVIDER=openai
 
 ### 3. Launch Services
 
-**Option A: Optimized Build (Recommended - 99% faster)**
-
 ```bash
-# Build base image first (one-time, ~5 minutes)
-./scripts/build-docker.sh --base-only
+# Build the image
+./scripts/build-docker.sh
 
-# Build all agent images (~30 seconds)
-./scripts/build-docker.sh --agents-only
+# Start (on AGNOS host — webgui only)
+docker compose up -d
 
-# Start everything
-docker-compose up -d
-```
-
-**Option B: Traditional Build**
-
-```bash
-# Build and start all services (first build takes 10-15 minutes)
-docker-compose up --build -d
+# Or start with dev infrastructure
+docker compose --profile dev up -d
 ```
 
 **Access URLs:**
 - **WebGUI**: http://localhost:8000
-- **RabbitMQ Management**: http://localhost:15672 (guest/guest)
 
 ### 4. Verify Installation
 
@@ -250,10 +240,9 @@ docker-compose logs redis
 
 ```bash
 # Clean and rebuild
-docker-compose down -v
+docker compose down -v
 docker system prune -a
-./scripts/build-docker.sh --base-only
-./scripts/build-docker.sh --agents-only
+./scripts/build-docker.sh
 ```
 
 ## 📚 Next Steps

@@ -492,6 +492,7 @@ async def main():
     # Apply AGNOS environment profile (dev/staging/prod defaults)
     try:
         from config.agnos_environment import apply_agnos_profile
+
         apply_agnos_profile()
     except Exception:
         pass

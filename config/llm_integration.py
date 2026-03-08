@@ -49,14 +49,14 @@ class LLMIntegrationService:
         # When AGNOS LLM Gateway is enabled, route all calls through it.
         # The gateway exposes an OpenAI-compatible API; litellm treats it
         # as an "openai/" model with a custom base_url.
-        gateway_enabled = os.getenv(
-            "AGNOS_LLM_GATEWAY_ENABLED", ""
-        ).lower() in ("true", "1", "yes")
+        gateway_enabled = os.getenv("AGNOS_LLM_GATEWAY_ENABLED", "").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
 
         if gateway_enabled:
-            gateway_url = os.getenv(
-                "AGNOS_LLM_GATEWAY_URL", "http://localhost:8088"
-            )
+            gateway_url = os.getenv("AGNOS_LLM_GATEWAY_URL", "http://localhost:8088")
             gateway_model = os.getenv("AGNOS_LLM_GATEWAY_MODEL", "default")
             # litellm routes "openai/<model>" to base_url/v1/chat/completions
             self.model_name = f"openai/{gateway_model}"
@@ -66,7 +66,8 @@ class LLMIntegrationService:
             self._extra_headers = {"x-agent-id": agent_name}
             logger.info(
                 "LLM service routing through AGNOS Gateway at %s (agent=%s)",
-                gateway_url, agent_name,
+                gateway_url,
+                agent_name,
             )
         else:
             self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o")

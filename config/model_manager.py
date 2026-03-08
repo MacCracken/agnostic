@@ -187,9 +187,7 @@ class AnthropicProvider(BaseModelProvider):
 
         try:
             session = await self._get_session()
-            async with session.post(
-                url, headers=headers, json=payload
-            ) as response:
+            async with session.post(url, headers=headers, json=payload) as response:
                 if response.status == 200:
                     result = await response.json()
                     return {
@@ -572,8 +570,7 @@ class ModelManager:
                 if gateway_enabled and "agnos_gateway" in self.providers:
                     self.primary_provider = "agnos_gateway"
                     self.fallback_providers = [
-                        p for p in self.fallback_providers
-                        if p != "agnos_gateway"
+                        p for p in self.fallback_providers if p != "agnos_gateway"
                     ]
                     logger.info(
                         "AGNOS LLM Gateway set as primary provider — "
@@ -680,7 +677,9 @@ class ModelManager:
             if target_provider == "agnos_gateway":
                 preferred_provider = "agnos_gateway"
             else:
-                preferred_provider = agent_config.get("preferred_provider", target_provider)
+                preferred_provider = agent_config.get(
+                    "preferred_provider", target_provider
+                )
 
             # Use agent-specific temperature and tokens if specified
             if "temperature" in agent_config:

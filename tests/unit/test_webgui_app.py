@@ -127,7 +127,8 @@ class TestHealthCheck:
         _mock_redis.ping.side_effect = None
         _mock_redis.ping.return_value = True
         _mock_redis.get.return_value = None
-        with patch("socket.create_connection", side_effect=Exception("refused")):
+        with patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}), \
+             patch("socket.create_connection", side_effect=Exception("refused")):
             response = client.get("/health")
         data = response.json()
         assert data["rabbitmq"] == "error"
@@ -150,7 +151,8 @@ class TestHealthCheck:
             "status": "idle",
         }
         _mock_redis.get.return_value = json.dumps(agent_status).encode()
-        with patch("socket.create_connection") as mock_sock:
+        with patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}), \
+             patch("socket.create_connection") as mock_sock:
             mock_sock.return_value = MagicMock()
             response = client.get("/health")
         data = response.json()

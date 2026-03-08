@@ -77,6 +77,9 @@ rich>=13.0.0
 tenacity>=8.2.0
 tqdm>=4.66.0
 
+# --- Scheduling ---
+pytz>=2024.1
+
 # --- Testing (used by agents at runtime) ---
 pytest>=9.0.0
 Faker>=40.0.0

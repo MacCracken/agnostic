@@ -4,8 +4,31 @@ All notable changes to the Agentic QA Team System are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versions use **YYYY.M.D** (calendar versioning) for git tags and releases.
-Build artifacts use **agnostic_qa_YYYY_MM_DD** (underscore format).
+Same-day patches use **YYYY.M.D-N** suffix (e.g. `2026.3.8-1`, `2026.3.8-2`).
+Build artifacts use **agnostic_qa_YYYY_MM_DD[-N]** (underscore format).
 See `scripts/build-release.sh` for the build-and-rename workflow.
+
+---
+
+## [2026.3.8-1]
+
+### Changed
+
+- **AGNOS compose is now the primary `docker-compose.yml`** — renamed `docker-compose.agnos.yml` to `docker-compose.yml`; old standalone compose moved to `docker-compose.old-style.yml`
+- **AGNOS deployment guide updated** — reflects profile-based structure (production: webgui only, `--profile dev` for infra, `--profile workers` for distributed agents)
+- **README updated** — AGNOS listed as primary deployment option, standalone moved to secondary
+- **Removed CLAUDE.md** — all content already covered by `docs/development/setup.md` and `README.md`
+
+### Fixed
+
+- **Health check treats unconfigured RabbitMQ as acceptable** — `not_configured` no longer triggers `degraded` status; RabbitMQ is optional (only needed with `--profile workers`)
+- **Credential provisioning tests** — added `litellm` module stub for test venvs without litellm installed
+- **Health check tests** — set `RABBITMQ_HOST` env var in tests that expect rabbitmq connectivity checks
+- **Ruff formatting** — auto-formatted 13 files across agents/, config/, shared/, webgui/
+
+### Added
+
+- **Same-day patch versioning** — version format now supports `YYYY.M.D-N` suffix for same-day patches (e.g. `2026.3.8-1`); `build-release.sh` handles patch suffix in artifact naming
 
 ---
 
