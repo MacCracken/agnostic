@@ -67,7 +67,7 @@ Agnostic already has client modules for all AGNOS services. This section tracks 
 | Item | Effort | Status | Description |
 |------|--------|--------|-------------|
 | Create `docker/Dockerfile.agnos` | 2 hr | Done | AGNOS-aware base layer with all integration env vars pre-set |
-| `docker-compose.agnos.yml` | 2 hr | Done | Full compose: hoosh + daimon + webgui + redis + postgres + 6 workers (profile) |
+| `docker-compose.yml` (AGNOS primary) | 2 hr | Done | Primary compose: webgui only (production), `--profile dev` for infra, `--profile workers` for distributed agents |
 | E2E gateway round-trip test | 4 hr | Done | `tests/e2e/test_agnos_gateway.py` — health, gateway round-trip, agent registration, no-key validation |
 | Deployment guide | 2 hr | Done | `docs/deployment/agnos.md` — architecture, env vars, networking, troubleshooting |
 

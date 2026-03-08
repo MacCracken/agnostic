@@ -5,7 +5,7 @@
 #
 # Usage:
 #   docker build -f docker/Dockerfile.agnos -t agnostic-qa-base:agnos .
-#   IMAGE=agnostic-qa-base:agnos docker compose -f docker-compose.agnos.yml up -d
+#   IMAGE=agnostic-qa-base:agnos docker compose up -d
 
 FROM agnostic-qa-base:latest
 

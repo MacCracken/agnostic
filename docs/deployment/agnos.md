@@ -20,13 +20,13 @@ cp .env.example .env
 # Edit .env — set POSTGRES_PASSWORD, provider API keys, etc.
 
 # 3a. Production (on AGNOS host — only webgui)
-docker compose -f docker-compose.agnos.yml up -d
+docker compose up -d
 
 # 3b. Development (simulate AGNOS with containers)
-docker compose -f docker-compose.agnos.yml --profile dev up -d
+docker compose --profile dev up -d
 
 # 3c. Development with distributed workers
-docker compose -f docker-compose.agnos.yml --profile dev --profile workers up -d
+docker compose --profile dev --profile workers up -d
 ```
 
 ## Compose Profiles
@@ -76,7 +76,7 @@ Dev (containerized):
 | `POSTGRES_PASSWORD` | PostgreSQL password |
 | `OPENAI_API_KEY` | LLM provider key — consumed by **hoosh** (not Agnostic) |
 
-### AGNOS Integration (set automatically by `docker-compose.agnos.yml`)
+### AGNOS Integration (set automatically by `docker-compose.yml`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -108,7 +108,7 @@ Dev (containerized):
 
 ```bash
 # All services
-docker compose -f docker-compose.agnos.yml --profile dev ps
+docker compose --profile dev ps
 
 # Individual service health
 curl http://localhost:8000/health      # webgui
@@ -132,7 +132,7 @@ All services communicate on the `qa-network` Docker bridge. Service names resolv
 
 ## Standalone vs AGNOS Mode
 
-| Feature | Standalone (`docker-compose.yml`) | AGNOS (`docker-compose.agnos.yml`) |
+| Feature | Standalone (`docker-compose.old-style.yml`) | AGNOS (`docker-compose.yml`) |
 |---------|-----------------------------------|------------------------------------|
 | LLM keys | In Agnostic's `.env` | In hoosh only |
 | LLM routing | Direct to provider | Through hoosh gateway |
@@ -155,7 +155,7 @@ All services communicate on the `qa-network` Docker bridge. Service names resolv
 
 ```bash
 # Start dev stack
-docker compose -f docker-compose.agnos.yml --profile dev up -d
+docker compose --profile dev up -d
 
 # Run E2E gateway tests
 pytest tests/e2e/test_agnos_gateway.py -v

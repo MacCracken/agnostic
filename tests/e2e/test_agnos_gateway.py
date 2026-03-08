@@ -3,8 +3,8 @@
 Validates that when AGNOS_LLM_GATEWAY_ENABLED=true, LLM calls route through
 hoosh and agents register/heartbeat with daimon.
 
-Requires Docker Compose services (docker-compose.agnos.yml) to be running:
-    docker compose -f docker-compose.agnos.yml up -d
+Requires Docker Compose services (docker compose --profile dev) to be running:
+    docker compose -f docker compose --profile dev up -d
 
 Run with: pytest tests/e2e/test_agnos_gateway.py -v -m e2e
 """
@@ -29,7 +29,7 @@ def hoosh_client():
         except httpx.ConnectError:
             pytest.skip(
                 f"hoosh unreachable at {HOOSH_URL} -- "
-                "start docker-compose.agnos.yml before running these tests"
+                "start docker compose --profile dev before running these tests"
             )
         yield client
 
@@ -43,7 +43,7 @@ def daimon_client():
         except httpx.ConnectError:
             pytest.skip(
                 f"daimon unreachable at {DAIMON_URL} -- "
-                "start docker-compose.agnos.yml before running these tests"
+                "start docker compose --profile dev before running these tests"
             )
         yield client
 

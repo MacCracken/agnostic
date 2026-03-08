@@ -74,13 +74,31 @@ Performance & Resilience Agent      ─┘
 
 ## Deployment Options
 
-### Docker Compose (Recommended for Local)
+### AGNOS (Primary)
+
+Agnostic is designed to run on [AGNOS](https://github.com/MacCracken/agnosticos). The default `docker-compose.yml` starts only the webgui — hoosh, daimon, Redis, and PostgreSQL are AGNOS system services.
 
 ```bash
-# Optimized build (99% faster)
+# Production (on AGNOS host)
+docker compose up -d
+
+# Development (simulate AGNOS with containers)
+docker compose --profile dev up -d
+
+# Development + distributed workers
+docker compose --profile dev --profile workers up -d
+```
+
+[AGNOS Deployment Guide →](docs/deployment/agnos.md)
+
+### Docker Compose (Standalone)
+
+For running without AGNOS, use the standalone compose file which bundles all infrastructure:
+
+```bash
 ./scripts/build-docker.sh --base-only  # One-time (~5 min)
 ./scripts/build-docker.sh --agents-only  # Rebuilds (~30 sec)
-docker compose up -d
+docker compose -f docker-compose.old-style.yml up -d
 ```
 
 [Docker Deployment Guide →](docs/deployment/docker-compose.md)
