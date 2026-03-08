@@ -5,6 +5,7 @@ FROM agnostic-qa-base:latest
 COPY --chown=appuser:appuser agents/senior/ ./agents/senior/
 COPY --chown=appuser:appuser advanced_testing/ ./advanced_testing/
 COPY --chown=appuser:appuser config/ ./config/
+COPY --chown=appuser:appuser shared/ ./shared/
 
 # Set agent-specific environment variable
 ENV AGENT_ROLE=senior

@@ -5,6 +5,7 @@ FROM agnostic-qa-base:latest
 COPY --chown=appuser:appuser agents/junior/ ./agents/junior/
 COPY --chown=appuser:appuser examples/ ./examples/
 COPY --chown=appuser:appuser config/ ./config/
+COPY --chown=appuser:appuser shared/ ./shared/
 
 # Set agent-specific environment variable
 ENV AGENT_ROLE=junior

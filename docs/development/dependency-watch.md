@@ -10,23 +10,18 @@ This document tracks third-party dependencies that are currently blocking upgrad
 
 | | |
 |---|---|
-| **Affected dep** | `crewai` (all 1.x releases through 1.10.1) |
+| **Affected dep** | `crewai` (all releases through 1.10.1) |
 | **Blocker for** | Python 3.14 dev environment |
 | **Since** | 2026-02-22 |
-| **Status** | Unresolved — every crewai 1.x release has `Requires-Python: >=3.10,<3.14` |
+| **Status** | Unresolved — `Requires-Python: >=3.10,<3.14` |
 
-**Problem:** crewai's `pyproject.toml` sets `requires-python = ">=3.10,<3.14"`. pip refuses to install any 1.x release on Python 3.14, regardless of whether dependencies would work. This is the **primary** blocker — even if chromadb were fixed, crewai won't install.
+**Problem:** crewai sets `requires-python = ">=3.10,<3.14"`. pip refuses to install on Python 3.14. The dev venv (Python 3.14.2) has crewai 0.11.2 force-installed but it fails at import time due to pydantic v1 incompatibility in its chromadb dependency.
 
-**Why they set the bound:** crewai depends on chromadb, which uses `pydantic.v1.BaseSettings` (broken on 3.14). crewai PR [#2325](https://github.com/crewAIInc/crewAI/pull/2325) made chromadb optional, but the `requires-python` upper bound has not been relaxed in any release yet.
-
-**Fix needed (upstream):** crewai must:
-1. Ship a release where chromadb is truly optional (PR #2325 merged but not in a release that relaxes the Python bound)
-2. Update `requires-python` to `>=3.10,<3.15` (or remove the upper bound)
+**Docker status:** Docker containers use Python 3.13 with crewai 1.10.1 and are unaffected by this blocker.
 
 **What to watch:**
 - crewai releases: https://github.com/crewAIInc/crewAI/releases
 - crewai issues/PRs mentioning "Python 3.14" or "requires-python"
-- When a release allows `>=3.14`, test install + import in our dev venv
 
 ---
 
@@ -39,56 +34,98 @@ This document tracks third-party dependencies that are currently blocking upgrad
 | **Since** | 2026-02-22 |
 | **Status** | Unresolved — tracked in [chroma-core/chroma#5996](https://github.com/chroma-core/chroma/issues/5996) |
 
-**Problem:** `chromadb/config.py` defines its `Settings` class by inheriting from `pydantic.v1.BaseSettings`. On Python 3.14 the `pydantic.v1` compatibility shim fails at class-definition time because `ForwardRef._evaluate` was removed, raising:
+**Problem:** `chromadb/config.py` inherits from `pydantic.v1.BaseSettings`. On Python 3.14 the `pydantic.v1` compatibility shim fails because `ForwardRef._evaluate` was removed.
 
-```
-pydantic.v1.errors.ConfigError: unable to infer type for attribute "chroma_server_nofile"
-```
-
-**Why it blocks us:** If crewai relaxes its `requires-python` bound before chromadb is fixed, importing chromadb will still fail at runtime on Python 3.14. However, since we don't use chromadb directly and crewai PR #2325 makes it optional, this becomes a non-issue once crewai ships a release without the hard chromadb requirement.
-
-**Note:** chromadb is currently installed in our dev venv but is orphaned — nothing in our code imports it and `pip show chromadb` shows no reverse dependencies. It can be safely uninstalled from dev environments.
-
-**Fix needed (upstream):** `chromadb/config.py` must replace:
-```python
-# current (broken on 3.14)
-from pydantic.v1 import BaseSettings, validator
-```
-with:
-```python
-# correct pydantic v2 native equivalent
-from pydantic_settings import BaseSettings
-from pydantic import field_validator
-```
+**Note:** chromadb is installed in our dev venv but is orphaned — nothing in our code imports it. It can be safely uninstalled from dev environments.
 
 **What to watch:**
-- [chroma-core/chroma#5996](https://github.com/chroma-core/chroma/issues/5996) — Python 3.14 tracking issue
+- [chroma-core/chroma#5996](https://github.com/chroma-core/chroma/issues/5996)
 - chromadb releases: https://github.com/chroma-core/chroma/releases
-- When resolved, re-test `crewai` import on Python 3.14 and update `pyproject.toml`'s `requires-python` upper bound
 
 ---
 
-### crewai / LangChain — API upgrade (0.11.x → 1.x)
+### Agent code — import / runtime errors
 
 | | |
 |---|---|
-| **Affected dep** | `crewai`, `langchain`, `langchain-openai`, `langchain-community` |
-| **Resolved in** | 2026-02-28 |
-| **Status** | **Resolved** — moved to Resolved section below |
+| **Affected** | All 6 agent containers |
+| **Blocker for** | Agent container startup |
+| **Since** | 2026-03-07 |
+| **Status** | Unresolved — agents crash on startup with import errors |
 
----
+**Problem:** Several agent modules have import issues that prevent startup on the current Docker image (Python 3.13 + crewai 1.10.1):
 
-### chainlit — FastAPI version conflict
+1. **`config.llm_integration`** — agents import `llm_service` which is not exported from this module
+2. **`junior_qa.py`** — `import pytest` at module level; pytest is a dev dep not in the Docker image
+3. **`shared.crewai_compat`** — agents import `BaseTool` from this module; needs verification against crewai 1.10.1 API
 
-| | |
-|---|---|
-| **Affected dep** | `chainlit`, `fastapi` |
-| **Resolved in** | 2026-03-03 |
-| **Status** | **Resolved** — moved to Resolved section below |
+**Impact:** WebGUI, Redis, PostgreSQL, and RabbitMQ containers run normally. Senior QA agent starts successfully.
+
+**Fix needed:** Audit agent imports against crewai 1.10.1 API and fix module-level imports of dev dependencies.
 
 ---
 
 ## Resolved
+
+### crewai 1.10.1 available on PyPI — Docker upgraded
+
+| | |
+|---|---|
+| **Resolved** | 2026-03-07 |
+| **Resolved by** | Upgrading Docker containers to `crewai[litellm]==1.10.1` on Python 3.13 |
+
+**Problem:** crewai had confusing version history on PyPI — versions appeared to reset. The agent code was written for a version that exported `crewai.LLM`, which wasn't in the 0.11.x releases visible to Python 3.14.
+
+**Resolution:** crewai 1.10.1 exists on PyPI with `Requires-Python: >=3.10,<3.14`. Docker containers now use Python 3.13 where it installs cleanly. crewai 1.10.1 has dropped langchain entirely and uses direct openai/litellm, eliminating the tiktoken version conflict.
+
+**Changes made:**
+- `docker/Dockerfile.base`: `FROM python:3.13-slim` (was `python:3.11-slim`)
+- `requirements-docker.txt`: `crewai[litellm]==1.10.1`; removed langchain stack; uses minimum version pins instead of exact pins to avoid transitive conflicts
+- Removed `--no-deps` litellm workaround (no longer needed)
+
+---
+
+### Docker dependency split — requirements-docker.txt
+
+| | |
+|---|---|
+| **Resolved** | 2026-03-07 |
+| **Resolved by** | Creating `requirements-docker.txt` with runtime-only deps |
+
+**Problem:** `requirements.txt` was generated from a Python 3.14 venv via `pip freeze`. It included dev/test/lint tools (`bandit`, `safety`, `mypy`, `ruff`, `pytest`, etc.) that caused cascading version conflicts on the Docker Python version.
+
+**Changes made:**
+- Created `requirements-docker.txt` — runtime deps only, minimum version pins
+- `docker/Dockerfile.base`: installs from `requirements-docker.txt` instead of `requirements.txt`
+
+---
+
+### Docker base image — Python 3.11 → 3.13
+
+| | |
+|---|---|
+| **Resolved** | 2026-03-07 |
+| **Resolved by** | Updating `docker/Dockerfile.base` to `python:3.13-slim` |
+
+**Changes made:**
+- `docker/Dockerfile.base`: `FROM python:3.11-slim` → `FROM python:3.13-slim`
+- `requirements-docker.txt`: added `audioop-lts>=0.2.0` (audioop removed from stdlib in 3.13)
+- `.github/workflows/ci-cd.yml`: added GHCR login + push steps with lowercase owner enforcement
+
+---
+
+### litellm / crewai — tiktoken version conflict
+
+| | |
+|---|---|
+| **Resolved** | 2026-03-07 |
+| **Resolved by** | Upgrading to crewai 1.10.1 which dropped langchain |
+
+**Problem:** `crewai==0.11.2` → `langchain-openai>=0.0.5,<0.0.6` → `tiktoken<0.6.0`, but `litellm>=1.74.9` required `tiktoken>=0.7.0`.
+
+**Resolution:** crewai 1.10.1 no longer depends on langchain or langchain-openai. tiktoken is only an optional dep (`crewai[embeddings]`). Conflict eliminated.
+
+---
 
 ### chainlit 2.x upgrade — FastAPI conflict resolved
 
@@ -101,8 +138,6 @@ from pydantic import field_validator
 - `pyproject.toml`: `chainlit>=2.0.0,<3.0.0` (was `>=1.1.304,<2.0.0`); `fastapi>=0.116.1` (was `>=0.115.0`); `uvicorn>=0.35.0` (was `>=0.32.0`)
 - `webgui/Dockerfile`: `CHAINLIT_SERVER_ROOT` renamed to `CHAINLIT_ROOT_PATH` (2.x canonical name)
 - `webgui/app.py`: migrated deprecated `@app.on_event("startup"/"shutdown")` to `lifespan` async context manager (required by starlette >=0.47 pulled in by chainlit 2.x)
-
-**Note:** Chainlit APIs used by this project (`@cl.on_chat_start`, `@cl.on_message`, `@cl.on_chat_end`, `cl.Message`, `cl.user_session`) are fully compatible with chainlit 2.x and required no code changes. Chainlit 2.x supports Python `>=3.10,<4.0.0`.
 
 ---
 
@@ -119,8 +154,6 @@ from pydantic import field_validator
 - `config/universal_llm_adapter.py`: replaced `langchain.llms.base.LLM` subclass with `crewai.LLM` factory
 - All 6 agent files: `from langchain_openai import ChatOpenAI` → `from crewai import LLM`; `ChatOpenAI(...)` → `LLM(...)`
 - `agents/performance/qa_performance.py`: `from langchain.tools import BaseTool` → `from shared.crewai_compat import BaseTool`
-
-**Note:** crewai 1.x still requires `Python <3.14` (see active blocker above). The dev venv runs crewai 0.11.2 as the latest version pip can resolve on Python 3.14. Production Docker containers (Python 3.11) use crewai 1.x and are unaffected.
 
 ---
 

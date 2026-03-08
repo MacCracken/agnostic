@@ -4,6 +4,7 @@ FROM agnostic-qa-base:latest
 # Copy agent-specific code (all dependencies already installed in base)
 COPY --chown=appuser:appuser agents/analyst/ ./agents/analyst/
 COPY --chown=appuser:appuser config/ ./config/
+COPY --chown=appuser:appuser shared/ ./shared/
 
 # Set agent-specific environment variable
 ENV AGENT_ROLE=analyst
