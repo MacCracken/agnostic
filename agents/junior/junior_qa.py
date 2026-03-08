@@ -6,7 +6,7 @@ import random  # nosec B311
 import sys
 import traceback
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 import aiohttp
 from crewai import LLM, Agent, Crew, Process, Task
@@ -553,10 +553,14 @@ class SyntheticDataGeneratorTool(BaseTool):
     name: str = "Synthetic Data Generator"
     description: str = "Generates realistic test data for various scenarios"
 
-    def __init__(self):
-        super().__init__()
-        self.faker = Faker()
-        self.faker.seed(42)  # For reproducible test data
+    _faker: ClassVar[Any] = None
+
+    @property
+    def faker(self) -> Any:
+        if SyntheticDataGeneratorTool._faker is None:
+            SyntheticDataGeneratorTool._faker = Faker()
+            SyntheticDataGeneratorTool._faker.seed(42)
+        return SyntheticDataGeneratorTool._faker
 
     def _run(self, data_spec: dict[str, Any], count: int = 10) -> dict[str, Any]:
         """Generate synthetic test data based on specification"""
@@ -906,12 +910,9 @@ class TestExecutionOptimizerTool(BaseTool):
 class FlakyTestDetectionTool(BaseTool):
     name: str = "Flaky Test Detection & Management"
     description: str = "Detects flaky tests using statistical analysis, implements quarantine mechanisms, and auto-retry strategies"
-
-    def __init__(self):
-        super().__init__()
-        self.flaky_threshold = 0.3  # 30% failure rate threshold
-        self.min_executions = 5  # Minimum executions before classification
-        self.quarantine_duration = 7  # Days in quarantine
+    flaky_threshold: ClassVar[float] = 0.3  # 30% failure rate threshold
+    min_executions: ClassVar[int] = 5  # Minimum executions before classification
+    quarantine_duration: ClassVar[int] = 7  # Days in quarantine
 
     def _run(
         self,
@@ -2211,7 +2212,7 @@ class MobileAppTestingTool(BaseTool):
     name: str = "Mobile App Testing"
     description: str = "Comprehensive mobile application testing for iOS and Android using Appium - covers functional, UI, performance, and compatibility testing"
 
-    PLATFORM_CONFIGS = {
+    PLATFORM_CONFIGS: ClassVar[dict] = {
         "ios": {
             "platform": "iOS",
             "browser_name": "Safari",
@@ -2226,7 +2227,7 @@ class MobileAppTestingTool(BaseTool):
         },
     }
 
-    DEVICE_PROFILES = [
+    DEVICE_PROFILES: ClassVar[list] = [
         {
             "name": "iPhone 15 Pro",
             "platform": "ios",
@@ -2461,7 +2462,7 @@ class DesktopAppTestingTool(BaseTool):
     name: str = "Desktop App Testing"
     description: str = "Comprehensive desktop application testing for Windows, macOS, and Linux - covers Electron apps, native apps, and cross-platform compatibility"
 
-    PLATFORM_CONFIGS = {
+    PLATFORM_CONFIGS: ClassVar[dict] = {
         "windows": {
             "platform": "Windows",
             "os_versions": ["10", "11"],
@@ -2479,7 +2480,7 @@ class DesktopAppTestingTool(BaseTool):
         },
     }
 
-    DESKTOP_PROFILES = [
+    DESKTOP_PROFILES: ClassVar[list] = [
         {
             "name": "Windows 11",
             "platform": "windows",

@@ -77,7 +77,9 @@ rich>=13.0.0
 tenacity>=8.2.0
 tqdm>=4.66.0
 
-# --- Playwright (browser testing) ---
+# --- Testing (used by agents at runtime) ---
+pytest>=9.0.0
+Faker>=40.0.0
 playwright>=1.40.0
 
 # --- Python 3.13 compat ---

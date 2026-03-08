@@ -401,3 +401,7 @@ class LLMIntegrationService:
             "sla_impact": f"Grade {grade} performance - {'within' if grade in ['A', 'B'] else 'below'} SLA expectations",
             "capacity_insights": "Monitor load patterns for capacity planning",
         }
+
+
+# Module-level singleton for agent imports
+llm_service = LLMIntegrationService()

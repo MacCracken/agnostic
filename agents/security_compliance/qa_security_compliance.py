@@ -6,7 +6,7 @@ import socket
 import ssl
 import sys
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from crewai import LLM, Agent, Crew, Process, Task
 
@@ -27,7 +27,7 @@ class ComprehensiveSecurityAssessmentTool(BaseTool):
     name: str = "Comprehensive Security Assessment"
     description: str = "Complete security analysis including headers, TLS, OWASP indicators, CORS, and information disclosure"
 
-    EXPECTED_HEADERS = [
+    EXPECTED_HEADERS: ClassVar[list] = [
         "Content-Security-Policy",
         "Strict-Transport-Security",
         "X-Frame-Options",

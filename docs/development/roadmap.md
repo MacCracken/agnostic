@@ -21,7 +21,7 @@ Blocked on AGNOS base image availability.
 
 | Item | Blocker |
 |------|---------|
-| Python 3.14 support | crewai `requires-python` upper bound, chromadb pydantic v1 — see [Dependency Watch](dependency-watch.md) |
+| Python 3.14 support | crewai `requires-python <3.14`, chromadb pydantic v1 — see [Dependency Watch](dependency-watch.md) |
 
 ---
 
@@ -41,4 +41,4 @@ Blocked on AGNOS base image availability.
 
 ---
 
-*Last Updated: 2026-03-06 · Test count: 726 (unit) + 25 (e2e) · Backlog: 0 items · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-07 · Test count: 726 (unit) + 25 (e2e) · Backlog: 0 items · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

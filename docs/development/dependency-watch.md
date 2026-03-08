@@ -44,28 +44,23 @@ This document tracks third-party dependencies that are currently blocking upgrad
 
 ---
 
-### Agent code — import / runtime errors
+## Resolved
+
+### Agent code — import / runtime errors fixed
 
 | | |
 |---|---|
-| **Affected** | All 6 agent containers |
-| **Blocker for** | Agent container startup |
-| **Since** | 2026-03-07 |
-| **Status** | Unresolved — agents crash on startup with import errors |
+| **Resolved** | 2026-03-07 |
+| **Resolved by** | Adding `llm_service` singleton, pytest to Docker deps, ClassVar annotations, Faker property pattern |
 
-**Problem:** Several agent modules have import issues that prevent startup on the current Docker image (Python 3.13 + crewai 1.10.1):
-
-1. **`config.llm_integration`** — agents import `llm_service` which is not exported from this module
-2. **`junior_qa.py`** — `import pytest` at module level; pytest is a dev dep not in the Docker image
-3. **`shared.crewai_compat`** — agents import `BaseTool` from this module; needs verification against crewai 1.10.1 API
-
-**Impact:** WebGUI, Redis, PostgreSQL, and RabbitMQ containers run normally. Senior QA agent starts successfully.
-
-**Fix needed:** Audit agent imports against crewai 1.10.1 API and fix module-level imports of dev dependencies.
+**Changes made:**
+- `config/llm_integration.py`: added `llm_service = LLMIntegrationService()` singleton
+- `requirements-docker.txt`: added `pytest` and `Faker` (used at runtime by junior QA agent)
+- All 7 Dockerfiles: added `COPY shared/ ./shared/`
+- Agent BaseTool subclasses: added `ClassVar` annotations for class-level attributes (pydantic v2 requirement)
+- `SyntheticDataGeneratorTool`: converted `faker` from instance attribute to lazy ClassVar + property
 
 ---
-
-## Resolved
 
 ### crewai 1.10.1 available on PyPI — Docker upgraded
 

@@ -9,6 +9,30 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ---
 
+## [2026.3.7]
+
+### Changed
+
+- **Docker base image upgraded to Python 3.13** — `docker/Dockerfile.base` now uses `python:3.13-slim` (was `python:3.11-slim`), enabling crewai 1.10.1 and modern package versions
+- **crewai upgraded to 1.10.1** — drops langchain dependency entirely; uses direct openai/litellm; resolves tiktoken version conflict; all 6 agents now start successfully
+- **Separate Docker requirements file** — created `requirements-docker.txt` with runtime-only minimum version pins; eliminates dev tool conflicts (safety/typer, bandit, pytest pinning) that blocked the Docker build
+- **GHCR container registry support** — CI workflow now logs in to `ghcr.io`, tags images as `ghcr.io/maccracken/agnostic-<service>`, and pushes on main/tag push; owner name forced lowercase via `tr` to prevent GHCR rejection
+- **K8s manifests updated for GHCR** — all static manifests (`k8s/manifests/`) and Helm values (`k8s/helm/agentic-qa/values.yaml`) now reference `ghcr.io/maccracken/agnostic-*` images
+- **Git remote and URLs normalized** — remote, README badge, and `pyproject.toml` URLs updated to `MacCracken/agnostic` (lowercase)
+- **Docker postgres port remapped** — `docker-compose.yml` postgres host port changed from 5432 to 5433 to avoid conflict with local postgres
+
+### Fixed
+
+- **Missing `shared/` module in Docker containers** — added `COPY shared/ ./shared/` to all 7 Dockerfiles (webgui + 6 agents); agents and webgui were crashing with `ModuleNotFoundError: No module named 'shared'`
+- **Missing `llm_service` singleton** — added module-level `llm_service = LLMIntegrationService()` to `config/llm_integration.py`; 3 agents (manager, analyst, performance) were failing to import it
+- **Pydantic v2 ClassVar annotations** — added `ClassVar` type annotations to un-annotated class attributes in BaseTool subclasses (`PLATFORM_CONFIGS`, `DEVICE_PROFILES`, `DESKTOP_PROFILES`, `EXPECTED_HEADERS`, `flaky_threshold`, `min_executions`, `quarantine_duration`); pydantic v2 (via crewai 1.10.1) rejects unannotated attributes
+- **Pydantic v2 Faker instance attribute** — converted `SyntheticDataGeneratorTool.faker` from `__init__` instance attribute to lazy `ClassVar` + property to avoid pydantic's `__setattr__` validation
+- **Chainlit `CHAINLIT_ROOT_PATH=/` crash** — changed to empty string; FastAPI rejects prefix ending with `/`
+- **pytest missing in Docker runtime** — added `pytest` and `Faker` to `requirements-docker.txt`; junior QA agent uses pytest programmatically at runtime to execute tests
+- **CI workflow Python version** — updated `PYTHON_VERSION` env var reference for consistency
+
+---
+
 ## [2026.3.6]
 
 ### Security
@@ -287,6 +311,7 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ---
 
+[2026.3.7]: https://github.com/MacCracken/agnostic/compare/2026.3.6...2026.3.7
 [2026.3.6]: https://github.com/MacCracken/agnostic/compare/2026.3.5...2026.3.6
 [2026.3.5]: https://github.com/MacCracken/agnostic/compare/2026.2.28...2026.3.5
 [2026.2.28]: https://github.com/MacCracken/agnostic/compare/2026.2.16...2026.2.28

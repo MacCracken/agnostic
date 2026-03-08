@@ -1,4 +1,4 @@
-name: CI/CD Pipeline for QA System 2026.3.6
+name: CI/CD Pipeline for QA System 2026.3.7
 on:
   push:
     branches: [main, develop]
