@@ -152,6 +152,8 @@ jobs:
         run: pytest tests/e2e/ -v -m e2e --tb=short
       - name: Teardown
         if: always()
+        env:
+          POSTGRES_PASSWORD: test_password
         run: |
           docker compose --profile dev logs --tail=50
           docker compose --profile dev down -v || true
