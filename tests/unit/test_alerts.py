@@ -10,19 +10,12 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import shared.alerts as alerts_module
 from shared.alerts import (
     AlertManager,
     AlertSeverity,
     AlertType,
     HealthMonitor,
 )
-
-
-@pytest.fixture()
-def _enable_alerts(monkeypatch):
-    """Enable alerts for the duration of a test."""
-    monkeypatch.setattr(alerts_module, "ALERTS_ENABLED", True)
 
 
 # ---------------------------------------------------------------------------
@@ -41,10 +34,9 @@ class TestAlertManager:
         assert AlertSeverity.INFO == "info"
 
     @pytest.mark.asyncio
-    async def test_fire_disabled(self, monkeypatch):
-        """Alerts suppressed when ALERTS_ENABLED is false."""
-        monkeypatch.setattr(alerts_module, "ALERTS_ENABLED", False)
-        mgr = AlertManager()
+    async def test_fire_disabled(self):
+        """Alerts suppressed when enabled=False."""
+        mgr = AlertManager(enabled=False)
         result = await mgr.fire(
             AlertType.HEALTH_DEGRADED,
             AlertSeverity.WARNING,
@@ -54,10 +46,9 @@ class TestAlertManager:
         assert result is None
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_enable_alerts")
     async def test_fire_enabled_no_channels(self):
         """Fire succeeds with empty results when no channels configured."""
-        mgr = AlertManager()
+        mgr = AlertManager(enabled=True)
         mgr.webhook_url = ""
         mgr.slack_webhook_url = ""
         mgr.email_recipients = []
@@ -70,10 +61,9 @@ class TestAlertManager:
         assert result == {}
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_enable_alerts")
     async def test_cooldown_suppresses_duplicate(self):
         """Second alert of same type within cooldown is suppressed."""
-        mgr = AlertManager()
+        mgr = AlertManager(enabled=True)
         mgr.cooldown_seconds = 600
         mgr.webhook_url = ""
         mgr.slack_webhook_url = ""
@@ -97,10 +87,9 @@ class TestAlertManager:
         assert r2 is None  # suppressed
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_enable_alerts")
     async def test_cooldown_allows_different_context(self):
         """Alerts with different context are not suppressed."""
-        mgr = AlertManager()
+        mgr = AlertManager(enabled=True)
         mgr.cooldown_seconds = 600
         mgr.webhook_url = ""
         mgr.slack_webhook_url = ""
@@ -123,10 +112,9 @@ class TestAlertManager:
         assert r2 is not None
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_enable_alerts")
     async def test_webhook_delivery(self):
         """Webhook delivery posts JSON with HMAC signature."""
-        mgr = AlertManager()
+        mgr = AlertManager(enabled=True)
         mgr.webhook_url = "https://example.com/hook"
         mgr.webhook_secret = "test-secret"
         mgr.slack_webhook_url = ""

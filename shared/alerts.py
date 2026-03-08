@@ -65,7 +65,8 @@ _COOLDOWN_EVICT_AGE = 7200  # Remove entries older than 2 hours
 class AlertManager:
     """Manages alert delivery with cooldown throttling."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, enabled: bool | None = None) -> None:
+        self.enabled = enabled if enabled is not None else ALERTS_ENABLED
         self.webhook_url = os.getenv(
             "ALERT_WEBHOOK_URL", os.getenv("REPORT_WEBHOOK_URL", "")
         )
@@ -130,7 +131,7 @@ class AlertManager:
 
         Returns delivery results dict, or None if suppressed by cooldown.
         """
-        if not ALERTS_ENABLED:
+        if not self.enabled:
             return None
 
         # Cooldown check
