@@ -1063,57 +1063,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.warning(f"Agent deregistration failed: {e}")
 
 
-# FastAPI application with health check and REST API
+# FastAPI application with health check and REST API (standalone mode)
 app = FastAPI(lifespan=lifespan)
 
-# ---------------------------------------------------------------------------
-# P7 — CORS middleware
-# ---------------------------------------------------------------------------
-_cors_origins_raw = os.getenv(
-    "CORS_ALLOWED_ORIGINS",
-    "http://localhost:18789,http://localhost:3001",
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in _cors_origins_raw.split(",")],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Correlation-ID"],
-)
 
-app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(RateLimitMiddleware)
-app.add_middleware(CorrelationIdMiddleware)
+def _configure_app(target_app: FastAPI) -> None:
+    """Add middleware, routes, and WebSocket endpoints to a FastAPI app."""
+    _cors_origins_raw = os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:18789,http://localhost:3001",
+    )
+    target_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in _cors_origins_raw.split(",")],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Correlation-ID"],
+    )
 
-app.include_router(api_router)
+    target_app.add_middleware(SecurityHeadersMiddleware)
+    target_app.add_middleware(RateLimitMiddleware)
+    target_app.add_middleware(CorrelationIdMiddleware)
 
-
-@app.websocket("/ws/realtime")
-async def websocket_endpoint(websocket):
-    """WebSocket endpoint for real-time dashboard updates."""
-    from webgui.auth import auth_manager
-
-    # Authenticate via token query param
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=1008, reason="Missing authentication token")
-        return
-
-    payload = await auth_manager.verify_token(token)
-    if not payload:
-        await websocket.close(code=1008, reason="Invalid or expired token")
-        return
-
-    user_id = payload.get("user_id", "anonymous")
-    await websocket_handler.handle_websocket(websocket, user_id)
+    target_app.include_router(api_router)
 
 
+# Configure the standalone app (used by uvicorn.run in __main__)
+_configure_app(app)
+
+# Also configure Chainlit's app so routes work under `chainlit run`
 # ---------------------------------------------------------------------------
 # P6 — Enhanced health check
 # ---------------------------------------------------------------------------
 
 
-@app.get("/health")
 async def health_check() -> dict[str, Any]:
     """Return infrastructure and agent liveness status."""
     status_details: dict[str, Any] = {
@@ -1227,6 +1210,40 @@ async def health_check() -> dict[str, Any]:
 
     status_details["status"] = overall
     return status_details
+
+
+async def _websocket_endpoint(websocket):
+    """WebSocket endpoint for real-time dashboard updates."""
+    from webgui.auth import auth_manager
+
+    # Authenticate via token query param
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=1008, reason="Missing authentication token")
+        return
+
+    payload = await auth_manager.verify_token(token)
+    if not payload:
+        await websocket.close(code=1008, reason="Invalid or expired token")
+        return
+
+    user_id = payload.get("user_id", "anonymous")
+    await websocket_handler.handle_websocket(websocket, user_id)
+
+
+# Register health + websocket on standalone app
+app.get("/health")(health_check)
+app.websocket("/ws/realtime")(_websocket_endpoint)
+
+# Also register on Chainlit's app so routes work under `chainlit run`
+try:
+    from chainlit.server import app as chainlit_app
+
+    _configure_app(chainlit_app)
+    chainlit_app.get("/health")(health_check)
+    chainlit_app.websocket("/ws/realtime")(_websocket_endpoint)
+except Exception:
+    pass  # Not running under Chainlit
 
 
 if __name__ == "__main__":

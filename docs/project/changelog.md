@@ -9,6 +9,20 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ---
 
+## [2026.3.8]
+
+### Fixed
+
+- **GHCR push "installation not allowed to Create organization package"** — added `org.opencontainers.image.source` OCI labels to all Dockerfiles (`docker/Dockerfile.base`, `docker/Dockerfile.agent`, `webgui/Dockerfile`); GHCR requires this label to link packages to the repository so `GITHUB_TOKEN` can create them
+- **CI workflow permissions** — added workflow-level `permissions: packages: write` to `ci-cd.yml` (matching agnosticos pattern); ensures all jobs inherit GHCR push capability
+- **E2E API routes returning HTML** — API routes were only registered on the standalone FastAPI app, not on Chainlit's app; created `_configure_app()` helper in `webgui/app.py` that registers middleware + routes on both apps; `/health`, `/ws/realtime`, and all API routes now work under `chainlit run`
+
+### Changed
+
+- **OCI metadata on all container images** — `org.opencontainers.image.source`, `description`, and `licenses` labels added to base, agent, and webgui Dockerfiles for GHCR discoverability and repo linking
+
+---
+
 ## [2026.3.7]
 
 ### Changed
@@ -20,6 +34,17 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 - **K8s manifests updated for GHCR** — all static manifests (`k8s/manifests/`) and Helm values (`k8s/helm/agentic-qa/values.yaml`) now reference `ghcr.io/maccracken/agnostic-*` images
 - **Git remote and URLs normalized** — remote, README badge, and `pyproject.toml` URLs updated to `MacCracken/agnostic` (lowercase)
 - **Docker postgres port remapped** — `docker-compose.yml` postgres host port changed from 5432 to 5433 to avoid conflict with local postgres
+- **Unified `VERSION` file as single source of truth** — project version read from a single `VERSION` file; `pyproject.toml` uses `dynamic = ["version"]`; `shared/version.py` module provides `VERSION` constant for all Python code; `scripts/bump-version.sh` updates all static references in one command
+- **Unified agent Docker image** — replaced 6 per-agent Dockerfiles with single `docker/Dockerfile.agent` + `docker/agent-entrypoint.sh`; `AGENT_ROLE` env var selects which agent module to run; reduces image count from 7 to 2 (agent + webgui)
+- **Docker Compose lean defaults** — `docker compose up -d` now starts 3 containers (redis, postgres, webgui) with agents running in-process; 6 agent workers + rabbitmq available via `--profile workers`; YAML anchors (`x-worker-common`) eliminate config duplication
+- **Docker Compose file consolidation** — rewrote `docker-compose.dev.yml`, `docker-compose.prod.yml`, `docker-compose.tls.yml` as thin overrides; deleted stale `agentic/docker-compose.prod.yml` duplicate; fixed YAML errors in prod and dev compose files
+- **CI/CD shared composite action** — `.github/actions/setup-python-env/action.yml` extracts repeated Python setup (version read, Python install, pip extras) into reusable composite action; all CI jobs use it
+- **CI Python version upgraded to 3.13** — composite action default changed from `3.11` to `3.13`
+- **CI tag format support** — CI/CD pipeline now triggers on both `v*` and `YYYY.M.D` bare calver tags
+- **CI GitHub Release job** — new `release` job creates GitHub Release with artifacts on tag push; generates release notes with GHCR pull commands
+- **GHCR image reduction** — CI pushes 2 images (agent, webgui) instead of 7 separate per-agent images
+- **Docker BuildKit compatibility** — `scripts/build-docker.sh` uses `--load` flag to ensure images are in local daemon store; CI uses `driver: docker` for BuildKit to avoid image store isolation issues
+- **RabbitMQ credentials use safe defaults** — `docker-compose.yml` and `docker-compose.test.yml` use `${VAR:-default}` instead of `${VAR:?required}` for rabbitmq vars; prevents parse failure when workers profile is not active
 
 ### Fixed
 
@@ -30,6 +55,24 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 - **Chainlit `CHAINLIT_ROOT_PATH=/` crash** — changed to empty string; FastAPI rejects prefix ending with `/`
 - **pytest missing in Docker runtime** — added `pytest` and `Faker` to `requirements-docker.txt`; junior QA agent uses pytest programmatically at runtime to execute tests
 - **CI workflow Python version** — updated `PYTHON_VERSION` env var reference for consistency
+- **Alert cooldown false suppression on fresh VMs** — `AlertManager._last_fired` default changed from `0.0` to `None`; `time.monotonic()` returns small values on freshly booted systems, causing `now - 0.0 < cooldown_seconds` to suppress every first alert (`shared/alerts.py`)
+- **AlertManager enabled flag** — `enabled` parameter added to `AlertManager.__init__()` as instance attribute; `fire()` checks `self.enabled` instead of module-level `ALERTS_ENABLED` constant
+- **Bandit B104/B108 false positives** — `nosec` comments on intentional `host="0.0.0.0"` and `/tmp` fallback (`webgui/app.py`, `webgui/auth/__init__.py`)
+- **Ruff I001 import sort** — `shared.version` import moved to first-party block (`webgui/routes/dashboard.py`)
+- **CI Trivy SARIF output** — corrected Trivy action parameters; upgraded CodeQL to v4 with `security-events: write` permission
+- **CI Helm lint nil pointer** — added missing `metrics` section with defaults to `k8s/helm/agentic-qa/values.yaml`
+- **CI unit test optional deps** — added `database` extra to CI install; `importorskip` for `sqlalchemy`, `faker`, `prometheus_client` in test files
+- **CI test_crewai_compat.py** — fixed pydantic v2 field override annotations
+- **CI pytest asyncio mode** — added `asyncio_mode = "auto"` to `pyproject.toml`
+- **CI integration test env vars** — added correct ports and credentials for test compose (6380, 5673)
+- **CI build-release BuildKit image isolation** — `driver: docker` + `--load` flag ensures base image visibility
+- **CI `docker-compose` v1 → `docker compose` v2** — `run_tests.py` updated to use `docker compose` (plugin syntax); v1 standalone binary not available on CI runners
+- **build-docker.sh version parsing** — reads from `VERSION` file instead of `pyproject.toml`
+
+### Tests
+
+- **725 unit tests passing** (7 skipped) + 19 E2E tests
+- Tests skip gracefully when optional deps (faker, prometheus_client, sqlalchemy) not installed
 
 ---
 

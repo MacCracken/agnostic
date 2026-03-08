@@ -21,4 +21,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 EXPOSE 8000
 
 # Run the web GUI
+LABEL org.opencontainers.image.source="https://github.com/MacCracken/agnostic"
+LABEL org.opencontainers.image.description="Agnostic QA Platform - webgui"
+LABEL org.opencontainers.image.licenses="GPL-3.0"
+
 CMD ["chainlit", "run", "webgui/app.py", "--host", "0.0.0.0", "--port", "8000"]

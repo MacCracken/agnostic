@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./scripts/build-release.sh          # uses version from pyproject.toml
-#   ./scripts/build-release.sh 2026.3.7 # explicit version
+#   ./scripts/build-release.sh 2026.3.8 # explicit version
 #
 # Git tags/releases use YYYY.M.D (PEP 440).
 # Build artifacts use agnostic_qa_YYYY_MM_DD (underscore format).

@@ -13,7 +13,7 @@ image:
   registry: ghcr.io/maccracken
   repository: agnostic
   pullPolicy: IfNotPresent
-  tag: "2026.3.7"
+  tag: "2026.3.8"
 
 # Common annotations and labels
 commonLabels: {}

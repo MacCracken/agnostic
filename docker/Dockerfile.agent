@@ -28,4 +28,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Entrypoint script resolves AGENT_ROLE to the correct module
 COPY --chown=appuser:appuser docker/agent-entrypoint.sh /app/agent-entrypoint.sh
+LABEL org.opencontainers.image.source="https://github.com/MacCracken/agnostic"
+LABEL org.opencontainers.image.description="Agnostic QA Platform - agent"
+LABEL org.opencontainers.image.licenses="GPL-3.0"
+
 ENTRYPOINT ["/app/agent-entrypoint.sh"]

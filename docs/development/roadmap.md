@@ -6,13 +6,51 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 
 ---
 
+## CI/CD Pipeline Stabilization (In Progress)
+
+Remaining items from the CI/CD overhaul:
+
+| Item | Status | Description |
+|------|--------|-------------|
+| Unit tests green | Done | 725 passing, 7 skipped; optional deps skip gracefully |
+| Code quality green | Done | Ruff lint + format, Bandit nosec annotations |
+| Security scan green | Done | Trivy SARIF + CodeQL v4 + Bandit |
+| Helm lint green | Done | Added missing `metrics` values |
+| Integration tests | Done | `docker compose` v2 fix; env vars for test compose |
+| E2E tests | Done | BuildKit `driver: docker` + `--load`; Chainlit route mounting fix |
+| Build release | Done | OCI labels for GHCR repo linking; workflow-level `packages: write` |
+
+---
+
+## SecureYeoman Integration (Complete)
+
+All SecureYeoman integration features are **implemented and tested**. No code blockers — all modules are feature-gated and disabled by default.
+
+| Feature | Module | Status |
+|---------|--------|--------|
+| A2A Protocol (delegate, status, results) | `shared/yeoman_a2a_client.py` | Done |
+| MCP Server (25 tools) | `webgui/routes/mcp.py` | Done |
+| MCP Auto-Registration | `shared/yeoman_mcp_server.py` | Done |
+| JWT Validation (RS256/ES256/HS256 + OIDC) | `shared/yeoman_jwt.py` | Done |
+| Webhook Receiver (6 event types + HMAC) | `webgui/routes/yeoman_webhooks.py` | Done |
+| SSE Event Streaming | `webgui/routes/yeoman_webhooks.py` | Done |
+| Outbound Event Push | `shared/yeoman_event_stream.py` | Done |
+| Embeddable Widget | `webgui/routes/dashboard.py` | Done |
+| WebSocket Real-Time Updates | `webgui/realtime.py` | Done |
+| Structured Result Schemas | `shared/yeoman_schemas.py` | Done |
+| Vector Store Client | `shared/agnos_vector_client.py` | Done |
+
+**Activation:** Set env vars in `.env` — see `.env.example` for all `YEOMAN_*` variables.
+
+---
+
 ## AGNOS — Dockerfile Migration (Q3 2026, blocked)
 
 Blocked on AGNOS base image availability.
 
 | Item | Effort | Priority | Description |
 |------|--------|----------|-------------|
-| Migrate per-agent Dockerfiles | 3 days | P2 | Replace 6 per-agent Dockerfiles + `docker/Dockerfile.base` with AGNOS base image |
+| Migrate per-agent Dockerfiles | 3 days | P2 | Replace `docker/Dockerfile.base` with AGNOS base image |
 | Remove redundant middleware | 2 days | P3 | Post-migration: remove `RateLimitMiddleware`, `CorrelationIdMiddleware`, docker-compose resource limits (AGNOS handles these) |
 
 ---
@@ -22,6 +60,7 @@ Blocked on AGNOS base image availability.
 | Item | Blocker |
 |------|---------|
 | Python 3.14 support | crewai `requires-python <3.14`, chromadb pydantic v1 — see [Dependency Watch](dependency-watch.md) |
+| Unified Docker Compose (AGNOS + YEOMAN + Agnostic) | AGNOS base image; `docker-compose.unified.yml` exists but not yet activated |
 
 ---
 
@@ -41,4 +80,4 @@ Blocked on AGNOS base image availability.
 
 ---
 
-*Last Updated: 2026-03-07 · Test count: 726 (unit) + 25 (e2e) · Backlog: 0 items · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-08 · Version: 2026.3.8 · Test count: 725 (unit) + 19 (e2e) · Backlog: 2 blocked items · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

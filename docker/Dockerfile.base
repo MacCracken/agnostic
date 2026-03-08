@@ -82,6 +82,8 @@ USER appuser
 LABEL maintainer="Agentic QA Team"
 LABEL description="Base image for all QA agent containers"
 LABEL version="2026.3"
+LABEL org.opencontainers.image.source="https://github.com/MacCracken/agnostic"
+LABEL org.opencontainers.image.licenses="GPL-3.0"
 
 # Default command
 CMD ["python", "--version"]

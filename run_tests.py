@@ -37,7 +37,7 @@ def setup_test_environment():
     
     # Start test services
     if not run_command([
-        "docker-compose", "-f", "docker-compose.test.yml", 
+        "docker", "compose", "-f", "docker-compose.test.yml", 
         "up", "-d", "redis-test", "rabbitmq-test"
     ], "Start test services"):
         return False
@@ -53,7 +53,7 @@ def teardown_test_environment():
     """Tear down test environment"""
     print("Tearing down test environment...")
     run_command([
-        "docker-compose", "-f", "docker-compose.test.yml", 
+        "docker", "compose", "-f", "docker-compose.test.yml", 
         "down", "-v"
     ], "Stop test services")
 
