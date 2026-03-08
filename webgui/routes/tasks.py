@@ -202,31 +202,65 @@ async def _run_task_async(
     try:
         await _update_task("running")
 
-        # Lazy-import to avoid startup overhead
-        try:
-            from agents.manager.qa_manager_optimized import OptimizedQAManager
+        # Run agent import + execution in a thread so import-time failures
+        # (crewai init, Redis/Celery singletons, missing deps) cannot corrupt
+        # the main event loop.
+        def _run_agent_sync() -> Any:
+            """Import and execute the agent manager synchronously."""
+            try:
+                from agents.manager.qa_manager_optimized import OptimizedQAManager
 
-            manager = OptimizedQAManager()
+                manager = OptimizedQAManager()
+                return manager  # return manager for async orchestration
+            except ImportError:
+                from agents.manager.qa_manager import QAManagerAgent
+
+                return QAManagerAgent()
+
+        try:
+            manager = await loop.run_in_executor(None, _run_agent_sync)
+        except BaseException as import_err:
+            logger.error(
+                "Task %s: agent import failed: %s", task_id, import_err, exc_info=True
+            )
+            final_record = await _update_task(
+                "failed", {"error": f"Agent runtime unavailable: {import_err}"}
+            )
+            if callback_url and final_record:
+                await _fire_webhook(callback_url, callback_secret, final_record)
+            return
+
+        # Orchestrate — the manager is already instantiated safely
+        if hasattr(manager, "orchestrate_qa_session"):
             result = await manager.orchestrate_qa_session(
                 {"session_id": session_id, **requirements}
             )
-        except ImportError:
-            from agents.manager.qa_manager import QAManagerAgent
-
-            manager = QAManagerAgent()
+        else:
             result = await manager.process_requirements(
                 {"session_id": session_id, **requirements}
             )
 
         final_record = await _update_task("completed", result)
 
-    except Exception as e:
-        logger.error(f"Task {task_id} failed: {e}")
-        final_record = await _update_task("failed", {"error": str(e)})
+    except BaseException as e:
+        logger.error("Task %s failed: %s", task_id, e, exc_info=True)
+        try:
+            final_record = await _update_task("failed", {"error": str(e)})
+        except Exception:
+            logger.exception("Task %s: failed to update status to 'failed'", task_id)
 
     # P3 — Webhook callback on completion
     if callback_url and final_record:
         await _fire_webhook(callback_url, callback_secret, final_record)
+
+
+def _task_done_callback(task: asyncio.Task) -> None:  # type: ignore[type-arg]
+    """Log unhandled exceptions from fire-and-forget task coroutines."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Background task crashed: %s", exc, exc_info=exc)
 
 
 # ---------------------------------------------------------------------------
@@ -300,8 +334,8 @@ async def submit_task(
 
     redis_client.setex(task_redis_key, 86400, json.dumps(task_record))
 
-    # Fire-and-forget async execution
-    asyncio.create_task(
+    # Fire-and-forget async execution with crash containment
+    task = asyncio.create_task(
         _run_task_async(
             task_id=task_id,
             session_id=session_id,
@@ -312,6 +346,7 @@ async def submit_task(
             tenant_id=tenant_id,
         )
     )
+    task.add_done_callback(_task_done_callback)
 
     audit_log(
         AuditAction.TASK_SUBMITTED,
