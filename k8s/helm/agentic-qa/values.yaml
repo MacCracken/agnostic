@@ -256,6 +256,12 @@ resourceQuota:
   configmaps: "20"
   persistentvolumeclaims: "10"
 
+# Prometheus ServiceMonitor / PodMonitor
+metrics:
+  enabled: false
+  prometheus: "prometheus"
+  scrapeInterval: "30s"
+
 # Startup probe configuration
 startupProbe:
   enabled: true

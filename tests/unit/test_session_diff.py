@@ -8,6 +8,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+sqlalchemy = pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed")
+
 from shared.database.repository import TestResultRepository
 
 

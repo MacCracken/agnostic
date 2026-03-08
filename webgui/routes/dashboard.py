@@ -6,12 +6,11 @@ import os
 from dataclasses import asdict
 from typing import Any
 
-from shared.version import VERSION
-
 from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from shared.version import VERSION
 from webgui.routes.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)

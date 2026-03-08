@@ -63,7 +63,7 @@ class AuthManager:
             # In development, persist the auto-generated key so tokens
             # survive app restarts within the same environment.
             _dev_key_path = os.path.join(
-                os.getenv("HOME", "/tmp"), ".agnostic_dev_secret_key"
+                os.getenv("HOME", "/tmp"), ".agnostic_dev_secret_key"  # nosec B108
             )
             try:
                 with open(_dev_key_path) as f:
