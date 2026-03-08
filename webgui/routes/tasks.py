@@ -499,14 +499,14 @@ async def receive_a2a_message(
         # Only YEOMAN JWT or admin can provision
         auth_source = user.get("auth_source", "")
         role = user.get("role", "")
-        if auth_source not in ("yeoman_jwt",) and role not in ("admin", "super_admin"):
+        if auth_source not in ("yeoman_jwt",) and role not in ("admin", "super_admin", "api_user"):
             audit_log(
                 AuditAction.PERMISSION_DENIED,
                 actor=user.get("user_id", "unknown"),
                 resource_type="credential",
                 detail={"reason": "insufficient_privileges", "via": "a2a"},
             )
-            raise HTTPException(status_code=403, detail="Credential provisioning requires YEOMAN JWT or admin role")
+            raise HTTPException(status_code=403, detail="Credential provisioning requires YEOMAN JWT, admin, or API key")
 
         expires_in = msg.payload.get("expires_in_seconds")
         credential_store.put(
@@ -534,8 +534,8 @@ async def receive_a2a_message(
 
         auth_source = user.get("auth_source", "")
         role = user.get("role", "")
-        if auth_source not in ("yeoman_jwt",) and role not in ("admin", "super_admin"):
-            raise HTTPException(status_code=403, detail="Credential revocation requires YEOMAN JWT or admin role")
+        if auth_source not in ("yeoman_jwt",) and role not in ("admin", "super_admin", "api_user"):
+            raise HTTPException(status_code=403, detail="Credential revocation requires YEOMAN JWT, admin, or API key")
 
         provider = msg.payload.get("provider", "*")
         actor = user.get("user_id", msg.fromPeerId)
