@@ -25,10 +25,17 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 - **Credential provisioning tests** — added `litellm` module stub for test venvs without litellm installed
 - **Health check tests** — set `RABBITMQ_HOST` env var in tests that expect rabbitmq connectivity checks
 - **Ruff formatting** — auto-formatted 13 files across agents/, config/, shared/, webgui/
+- **CI workflow split** — replaced monolithic `ci-cd.yml` with separate `ci.yml` (test/lint/build) and `release.yml` (tag-triggered publish)
+- **E2E test task submit endpoint** — fixed URL (`/api/v1/tasks/submit` → `/api/tasks`) and payload fields (`type`/`requirements` → `title`/`description`) in `test_agnos_gateway.py`
+- **E2E teardown missing env var** — added `POSTGRES_PASSWORD` to CI teardown step; Docker Compose requires it even for `logs`/`down` commands
+- **E2E smoke test fixes** — corrected assertions and endpoint paths in `test_smoke.py`
+- **Helm chart fixes** — corrected label selectors, HPA/PDB apiVersions, network policy ports, ingress annotations, and container image references across templates and manifests
+- **K8s manifest alignment** — updated kustomization overlays, webgui deployment probes, and agent resource definitions to match Helm chart changes
 
 ### Added
 
 - **Same-day patch versioning** — version format now supports `YYYY.M.D-N` suffix for same-day patches (e.g. `2026.3.8-1`); `build-release.sh` handles patch suffix in artifact naming
+- **AGNOS gateway E2E tests** — new `tests/e2e/test_agnos_gateway.py` covering hoosh/daimon health, LLM gateway round-trip, agent registration, and credential-free operation
 
 ---
 
