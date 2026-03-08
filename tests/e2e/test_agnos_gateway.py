@@ -76,7 +76,7 @@ def test_gateway_llm_round_trip(http_client: httpx.Client, api_headers: dict):
     This validates the full path: webgui → LLMIntegrationService → litellm
     → hoosh gateway → upstream provider → response.
     """
-    resp = http_client.get("/v1/health")
+    resp = http_client.get("/health")
     data = resp.json()
 
     # If gateway isn't configured, skip
@@ -132,7 +132,7 @@ def test_agents_registered_with_daimon(
 
 def test_webgui_health_shows_gateway(http_client: httpx.Client):
     """Health endpoint should reflect AGNOS gateway status when enabled."""
-    resp = http_client.get("/v1/health")
+    resp = http_client.get("/health")
     assert resp.status_code == 200
     data = resp.json()
     # The health check should at minimum be reachable
@@ -149,7 +149,7 @@ def test_no_openai_key_needed_with_gateway(http_client: httpx.Client, api_header
 
     hoosh holds the provider keys — Agnostic only needs AGNOS_LLM_GATEWAY_API_KEY.
     """
-    resp = http_client.get("/v1/health")
+    resp = http_client.get("/health")
     if resp.json().get("status") == "unhealthy":
         pytest.skip("webgui unhealthy")
 
