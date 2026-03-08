@@ -6,6 +6,8 @@ import os
 from dataclasses import asdict
 from typing import Any
 
+from shared.version import VERSION
+
 from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -228,7 +230,7 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
 
     return {
         "provider": "agnostic-qa",
-        "version": os.getenv("AGNOSTIC_VERSION", "2026.3.6"),
+        "version": os.getenv("AGNOSTIC_VERSION", VERSION),
         "agents": agents_summary,
         "sessions": {
             "active": active_sessions,

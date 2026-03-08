@@ -16,6 +16,8 @@ from typing import Any
 
 import requests
 
+from shared.version import VERSION
+
 logger = logging.getLogger(__name__)
 
 
@@ -280,7 +282,7 @@ class AgentRegistryClient:
         )
         self.base_url = os.getenv("AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090")
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
-        self.version = os.getenv("AGNOSTIC_VERSION", "2026.3.6")
+        self.version = os.getenv("AGNOSTIC_VERSION", VERSION)
         self._session = None
         self._registered_agents: dict[str, bool] = {}
         self._capabilities_advertised: bool = False

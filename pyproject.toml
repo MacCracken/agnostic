@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agnostic-qa"
-version = "2026.3.6"
+dynamic = ["version"]
 description = "Agentic QA Team System - Containerized, multi-agent QA platform powered by CrewAI"
 readme = "README.md"
 license = {text = "MIT"}
@@ -53,6 +53,9 @@ dependencies = [
     "celery>=5.4.0",
     "pytest>=8.3.2",
 ]
+
+[tool.setuptools.dynamic]
+version = {file = "VERSION"}
 
 [tool.setuptools.packages.find]
 where = ["."]

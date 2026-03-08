@@ -17,6 +17,8 @@ import logging
 import os
 from typing import Any
 
+from shared.version import VERSION
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -129,7 +131,7 @@ class YeomanMcpRegistration:
             "enabled": True,
             "metadata": {
                 "provider": "agnostic-qa",
-                "version": os.getenv("AGNOSTIC_VERSION", "2026.3.6"),
+                "version": os.getenv("AGNOSTIC_VERSION", VERSION),
                 "capabilities": [
                     "security-audit",
                     "performance-test",

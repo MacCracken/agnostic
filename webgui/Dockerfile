@@ -2,6 +2,7 @@
 FROM agnostic-qa-base:latest
 
 # Copy web GUI code (all dependencies already installed in base)
+COPY --chown=appuser:appuser VERSION ./VERSION
 COPY --chown=appuser:appuser webgui/ ./webgui/
 COPY --chown=appuser:appuser agents/ ./agents/
 COPY --chown=appuser:appuser config/ ./config/

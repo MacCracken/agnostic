@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./scripts/build-release.sh          # uses version from pyproject.toml
-#   ./scripts/build-release.sh 2026.3.6 # explicit version
+#   ./scripts/build-release.sh 2026.3.7 # explicit version
 #
 # Git tags/releases use YYYY.M.D (PEP 440).
 # Build artifacts use agnostic_qa_YYYY_MM_DD (underscore format).
@@ -19,15 +19,16 @@ if [[ ! -x "$PYTHON" ]]; then
     PYTHON="$(command -v python3 || command -v python)"
 fi
 
-# Read version from pyproject.toml or CLI arg
+# Read version from VERSION file or CLI arg
 if [[ $# -ge 1 ]]; then
     PEP_VERSION="$1"
 else
-    PEP_VERSION=$("$PYTHON" -c "
-import re, pathlib
-m = re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('$PROJECT_ROOT/pyproject.toml').read_text(), re.M)
-print(m.group(1))
-")
+    VERSION_FILE="$PROJECT_ROOT/VERSION"
+    if [[ ! -f "$VERSION_FILE" ]]; then
+        echo "ERROR: VERSION file not found at $VERSION_FILE" >&2
+        exit 1
+    fi
+    PEP_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
 fi
 
 # Convert YYYY.M.D -> YYYY_MM_DD

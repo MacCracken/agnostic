@@ -2,6 +2,7 @@
 FROM agnostic-qa-base:latest
 
 # Copy agent-specific code (all dependencies already installed in base)
+COPY --chown=appuser:appuser VERSION ./VERSION
 COPY --chown=appuser:appuser ./agents/security_compliance/qa_security_compliance.py /app/qa_security_compliance.py
 COPY --chown=appuser:appuser shared/ ./shared/
 

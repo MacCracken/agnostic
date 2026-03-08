@@ -16,9 +16,14 @@ echo -e "${BLUE}Agentic QA Team - Docker Build Script${NC}"
 echo -e "${BLUE}===========================================${NC}"
 echo ""
 
-# Pull version from pyproject.toml
+# Read version from VERSION file
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION=$(grep '^version = ' "$SCRIPT_DIR/../pyproject.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
+VERSION_FILE="$SCRIPT_DIR/../VERSION"
+if [[ ! -f "$VERSION_FILE" ]]; then
+    echo -e "${RED}Error: VERSION file not found at $VERSION_FILE${NC}"
+    exit 1
+fi
+VERSION=$(tr -d '[:space:]' < "$VERSION_FILE")
 echo -e "${BLUE}Version: ${VERSION}${NC}"
 echo ""
 

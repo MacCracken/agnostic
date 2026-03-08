@@ -2,6 +2,7 @@
 FROM agnostic-qa-base:latest
 
 # Copy agent-specific code (all dependencies already installed in base)
+COPY --chown=appuser:appuser VERSION ./VERSION
 COPY --chown=appuser:appuser agents/junior/ ./agents/junior/
 COPY --chown=appuser:appuser examples/ ./examples/
 COPY --chown=appuser:appuser config/ ./config/
