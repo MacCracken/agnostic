@@ -230,11 +230,11 @@ assert request.headers["X-Signature"] == f"sha256={expected}"
 
 ### Agents
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/agents` | All agent statuses |
-| `GET` | `/api/agents/queues` | Queue depths |
-| `GET` | `/api/agents/{agent_name}` | Agent metrics |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/agents` | Yes | All agent statuses |
+| `GET` | `/api/agents/queues` | Yes | Queue depths |
+| `GET` | `/api/agents/{agent_name}` | Yes | Agent metrics |
 
 ---
 

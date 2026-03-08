@@ -129,7 +129,7 @@ helm install agentic-qa ./k8s/helm/agentic-qa \
 
 ```bash
 # Get LoadBalancer IP (if using cloud provider)
-kubectl get service webgui-service -n agentic-qa
+kubectl get service agnostic-service -n agentic-qa
 
 # Or use port forwarding for local access
 kubectl port-forward service/agnostic-service 8000:8000 -n agentic-qa

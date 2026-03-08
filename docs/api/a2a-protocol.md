@@ -9,7 +9,7 @@ AGNOSTIC implements the A2A protocol for bidirectional communication with Secure
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/api/v1/a2a/receive` | Yes | Receive an A2A message from a peer |
-| GET | `/api/v1/a2a/capabilities` | Yes | Advertise capabilities to peers |
+| GET | `/api/v1/a2a/capabilities` | No | Advertise capabilities to peers |
 
 Both endpoints return HTTP 503 when `YEOMAN_A2A_ENABLED=false`.
 

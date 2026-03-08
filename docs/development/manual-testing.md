@@ -231,7 +231,7 @@ echo $TASK | jq .
 TASK_ID=$(echo $TASK | jq -r .task_id)
 ```
 
-**Pass:** HTTP 200, `status` is `"pending"`, `task_id` is a UUID.
+**Pass:** HTTP 201, `status` is `"pending"`, `task_id` is a UUID.
 
 ```bash
 # Poll for status

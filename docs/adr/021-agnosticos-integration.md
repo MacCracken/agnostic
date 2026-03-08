@@ -1,6 +1,6 @@
 # ADR-021: AGNOS OS Integration
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-02-22
 **Authors**: AGNOS / Agnostic teams
 
