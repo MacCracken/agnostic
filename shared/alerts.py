@@ -137,8 +137,8 @@ class AlertManager:
         # Cooldown check
         cooldown_key = f"{alert_type}:{json.dumps(context or {}, sort_keys=True)}"
         now = time.monotonic()
-        last = self._last_fired.get(cooldown_key, 0.0)
-        if now - last < self.cooldown_seconds:
+        last = self._last_fired.get(cooldown_key)
+        if last is not None and (now - last) < self.cooldown_seconds:
             logger.debug("Alert suppressed (cooldown): %s", alert_type)
             return None
 
