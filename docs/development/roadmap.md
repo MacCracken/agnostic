@@ -55,6 +55,18 @@ Blocked on AGNOS base image availability.
 
 ---
 
+## Bugs — Docker Compose Integration (Found 2026-03-08)
+
+Issues discovered during SecureYeoman `--profile full-dev` integration testing with `ghcr.io/maccracken/agnostic-webgui:2026.3.8`.
+
+| Issue | Severity | File(s) | Description |
+|-------|----------|---------|-------------|
+| Redis `localhost` hardcode | **High** | Health check + task submission | `REDIS_URL` env var is set to `redis://agnostic-redis:6379/0` but health check and task creation still connect to `localhost:6379`. Causes 500 on POST `/api/tasks` and false `"redis": "error"` in `/health` response when running in Docker Compose |
+| OpenAPI generation crash | Medium | `webgui/app.py` | `OAuth2PasswordBearerWithCookie` missing `.model` attribute — `AttributeError` on `/openapi.json` endpoint. FastAPI / Python 3.13 compatibility issue |
+| RabbitMQ health check noise | Low | `webgui/app.py` | Health endpoint attempts RabbitMQ connection even when workers profile is not active. Logs `[Errno -2] Name or service not known` every 30s. Should skip RabbitMQ check when `RABBITMQ_URL` is unset |
+
+---
+
 ## Long-term / Blocked
 
 | Item | Blocker |
