@@ -20,6 +20,8 @@ from shared.version import VERSION
 
 logger = logging.getLogger(__name__)
 
+AGNOS_PATH_PREFIX = os.getenv("AGNOS_PATH_PREFIX", "/v1")
+
 
 AGNOSTIC_AGENTS = {
     "qa-manager": {
@@ -306,17 +308,26 @@ class AgentRegistryClient:
 
         agent_config = AGNOSTIC_AGENTS[agent_key].copy()
         agent_config["version"] = self.version
+        # daimon expects "name", not "agent_name"
+        if "agent_name" in agent_config and "name" not in agent_config:
+            agent_config["name"] = agent_config.pop("agent_name")
 
         try:
             response = self.session.post(
-                f"{self.base_url}/api/v1/agents/register",
+                f"{self.base_url}{AGNOS_PATH_PREFIX}/agents/register",
                 json=agent_config,
                 timeout=5,
             )
             response.raise_for_status()
-            self._registered_agents[agent_key] = True
-            logger.info(f"Registered agent with agnosticos: {agent_key}")
-            return {"status": "registered", "agent_id": agent_config["agent_id"]}
+            result = response.json()
+            # daimon returns a UUID; store it for heartbeats
+            daimon_id = result.get("id", agent_config["agent_id"])
+            self._registered_agents[agent_key] = daimon_id
+            logger.info(
+                "Registered agent with agnosticos: %s (daimon_id=%s)",
+                agent_key, daimon_id,
+            )
+            return {"status": "registered", "agent_id": agent_config["agent_id"], "daimon_id": daimon_id}
         except requests.exceptions.RequestException as e:
             logger.warning(f"Failed to register agent {agent_key}: {e}")
             return {"status": "error", "message": str(e)}
@@ -330,14 +341,16 @@ class AgentRegistryClient:
             return {"status": "error", "message": "Unknown agent"}
 
         try:
-            agent_id = AGNOSTIC_AGENTS[agent_key]["agent_id"]
+            daimon_id = self._registered_agents.get(agent_key)
+            if not daimon_id:
+                return {"status": "skipped", "message": "Not registered"}
             response = self.session.delete(
-                f"{self.base_url}/api/v1/agents/{agent_id}", timeout=5
+                f"{self.base_url}{AGNOS_PATH_PREFIX}/agents/{daimon_id}", timeout=5
             )
             response.raise_for_status()
-            self._registered_agents[agent_key] = False
+            self._registered_agents[agent_key] = None
             logger.info(f"Deregistered agent from agnosticos: {agent_key}")
-            return {"status": "deregistered", "agent_id": agent_id}
+            return {"status": "deregistered", "daimon_id": daimon_id}
         except requests.exceptions.RequestException as e:
             logger.warning(f"Failed to deregister agent {agent_key}: {e}")
             return {"status": "error", "message": str(e)}
@@ -353,15 +366,14 @@ class AgentRegistryClient:
             return {"status": "error", "message": "Unknown agent"}
 
         try:
-            agent_id = AGNOSTIC_AGENTS[agent_key]["agent_id"]
+            daimon_id = self._registered_agents[agent_key]
             payload = {
-                "agent_id": agent_id,
                 "status": status,
                 "timestamp": datetime.now(UTC).isoformat(),
                 "metadata": metadata or {},
             }
             response = self.session.post(
-                f"{self.base_url}/api/v1/agents/{agent_id}/heartbeat",
+                f"{self.base_url}{AGNOS_PATH_PREFIX}/agents/{daimon_id}/heartbeat",
                 json=payload,
                 timeout=5,
             )
@@ -394,7 +406,7 @@ class AgentRegistryClient:
 
         try:
             response = self.session.post(
-                f"{self.base_url}/api/v1/capabilities/advertise",
+                f"{self.base_url}{AGNOS_PATH_PREFIX}/capabilities/advertise",
                 json=payload,
                 timeout=10,
             )
@@ -420,7 +432,7 @@ class AgentRegistryClient:
 
         try:
             response = self.session.delete(
-                f"{self.base_url}/api/v1/capabilities/agnostic-qa",
+                f"{self.base_url}{AGNOS_PATH_PREFIX}/capabilities/agnostic-qa",
                 timeout=5,
             )
             response.raise_for_status()

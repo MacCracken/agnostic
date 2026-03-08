@@ -2445,6 +2445,13 @@ class QAAnalystAgent:
 
 async def main():
     """Main entry point for QA Analyst agent with Celery worker"""
+    # Apply AGNOS environment profile (dev/staging/prod defaults)
+    try:
+        from config.agnos_environment import apply_agnos_profile
+        apply_agnos_profile()
+    except Exception:
+        pass
+
     analyst = QAAnalystAgent()
 
     logger.info("Starting QA Analyst Celery worker...")

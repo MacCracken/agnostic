@@ -1755,6 +1755,13 @@ class SecurityComplianceAgent:
 
 async def main():
     """Main entry point for Security & Compliance agent with Celery worker"""
+    # Apply AGNOS environment profile (dev/staging/prod defaults)
+    try:
+        from config.agnos_environment import apply_agnos_profile
+        apply_agnos_profile()
+    except Exception:
+        pass
+
     agent = SecurityComplianceAgent()
 
     logger.info("Starting Security & Compliance Celery worker...")

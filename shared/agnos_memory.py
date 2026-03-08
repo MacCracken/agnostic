@@ -16,6 +16,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+AGNOS_PATH_PREFIX = os.getenv("AGNOS_PATH_PREFIX", "/v1")
+
 try:
     import httpx
 
@@ -78,7 +80,7 @@ class AgnosMemoryClient:
         try:
             client = self._get_client()
             response = await client.put(
-                f"/api/v1/memory/{agent_id}/{namespace}/{key}",
+                f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}/{key}",
                 json={"value": value},
             )
             response.raise_for_status()
@@ -97,7 +99,7 @@ class AgnosMemoryClient:
             return None
         try:
             client = self._get_client()
-            response = await client.get(f"/api/v1/memory/{agent_id}/{namespace}/{key}")
+            response = await client.get(f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}/{key}")
             response.raise_for_status()
             self._record_success()
             data = response.json()
@@ -113,7 +115,7 @@ class AgnosMemoryClient:
             return []
         try:
             client = self._get_client()
-            response = await client.get(f"/api/v1/memory/{agent_id}/{namespace}")
+            response = await client.get(f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}")
             response.raise_for_status()
             self._record_success()
             return response.json().get("keys", [])
@@ -129,7 +131,7 @@ class AgnosMemoryClient:
         try:
             client = self._get_client()
             response = await client.delete(
-                f"/api/v1/memory/{agent_id}/{namespace}/{key}"
+                f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}/{key}"
             )
             response.raise_for_status()
             self._record_success()
@@ -148,7 +150,7 @@ class AgnosMemoryClient:
         try:
             client = self._get_client()
             response = await client.post(
-                f"/api/v1/memory/{agent_id}/{namespace}/batch",
+                f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}/batch",
                 json={"keys": keys},
             )
             response.raise_for_status()

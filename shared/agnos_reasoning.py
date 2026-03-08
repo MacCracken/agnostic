@@ -18,6 +18,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+AGNOS_PATH_PREFIX = os.getenv("AGNOS_PATH_PREFIX", "/v1")
+
 try:
     import httpx
 
@@ -127,7 +129,7 @@ class AgnosReasoningClient:
             client = self._get_client()
             payload = asdict(trace)
             response = await client.post(
-                "/api/v1/reasoning/traces",
+                f"{AGNOS_PATH_PREFIX}/reasoning/traces",
                 json=payload,
                 headers=self._correlation_headers(),
             )
@@ -147,7 +149,7 @@ class AgnosReasoningClient:
         try:
             client = self._get_client()
             response = await client.post(
-                f"/api/v1/reasoning/traces/{trace_id}/steps",
+                f"{AGNOS_PATH_PREFIX}/reasoning/traces/{trace_id}/steps",
                 json=asdict(step),
                 headers=self._correlation_headers(),
             )
@@ -168,7 +170,7 @@ class AgnosReasoningClient:
         try:
             client = self._get_client()
             response = await client.put(
-                f"/api/v1/reasoning/traces/{trace_id}/verdict",
+                f"{AGNOS_PATH_PREFIX}/reasoning/traces/{trace_id}/verdict",
                 json={"verdict": verdict, "confidence": confidence},
                 headers=self._correlation_headers(),
             )

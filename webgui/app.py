@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -900,17 +901,50 @@ from webgui.realtime import realtime_manager, websocket_handler  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
+_HEARTBEAT_INTERVAL = int(os.getenv("AGNOS_HEARTBEAT_INTERVAL_SECONDS", "30"))
+
+
+async def _agent_heartbeat_loop(registry_client: Any) -> None:
+    """Periodically send heartbeats for all registered agents."""
+    from config.agnos_agent_registration import AGNOSTIC_AGENTS
+
+    while True:
+        await asyncio.sleep(_HEARTBEAT_INTERVAL)
+        for agent_key in AGNOSTIC_AGENTS:
+            try:
+                await registry_client.send_heartbeat(agent_key, status="idle")
+            except Exception:
+                pass  # heartbeat failures are logged inside send_heartbeat
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown."""
     # --- startup ---
+
+    # Apply AGNOS environment profile first (sets env var defaults for dev/staging/prod)
+    try:
+        from config.agnos_environment import apply_agnos_profile
+
+        profile = apply_agnos_profile()
+        if profile:
+            logger.info("Applied AGNOS environment profile: %s", profile)
+    except Exception as e:
+        logger.debug("AGNOS profile not applied: %s", e)
+
     await realtime_manager.initialize()
     logger.info("Realtime manager initialized")
 
-    from webgui.scheduled_reports import scheduled_report_manager
+    scheduled_report_manager = None
+    try:
+        from webgui.scheduled_reports import scheduled_report_manager
 
-    await scheduled_report_manager.initialize()
-    logger.info("Scheduled reports initialized")
+        await scheduled_report_manager.initialize()
+        logger.info("Scheduled reports initialized")
+    except ImportError:
+        logger.debug("Scheduled reports not available (missing pytz)")
+    except Exception as e:
+        logger.warning("Scheduled reports initialization failed: %s", e)
 
     if os.getenv("DATABASE_ENABLED", "false").lower() == "true":
         try:
@@ -921,12 +955,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.warning(f"Database initialization failed: {e}")
 
+    heartbeat_task = None
     if os.getenv("AGNOS_AGENT_REGISTRATION_ENABLED", "false").lower() == "true":
         try:
             from config.agnos_agent_registration import agent_registry_client
 
             await agent_registry_client.register_all_agents()
             logger.info("Registered agents with agnosticos")
+
+            # Start periodic heartbeat loop
+            heartbeat_task = asyncio.create_task(
+                _agent_heartbeat_loop(agent_registry_client)
+            )
         except Exception as e:
             logger.warning(f"Agent registration failed: {e}")
 
@@ -954,13 +994,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     # --- shutdown ---
+    if heartbeat_task is not None:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Agent heartbeat loop stopped")
+
     await health_monitor.stop()
     logger.info("Health monitor stopped")
     await realtime_manager.cleanup()
     logger.info("Realtime manager cleaned up")
 
-    await scheduled_report_manager.shutdown()
-    logger.info("Scheduled reports shutdown")
+    if scheduled_report_manager is not None:
+        await scheduled_report_manager.shutdown()
+        logger.info("Scheduled reports shutdown")
 
     # Close webhook delivery httpx client
     try:
@@ -1285,6 +1334,7 @@ try:
         pass
 
     _configure_app(chainlit_app)
+    chainlit_app.router.lifespan_context = lifespan
     chainlit_app.get("/health")(health_check)
     chainlit_app.websocket("/ws/realtime")(_websocket_endpoint)
 

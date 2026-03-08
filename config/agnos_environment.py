@@ -16,6 +16,8 @@ import os
 
 logger = logging.getLogger(__name__)
 
+AGNOS_PATH_PREFIX = os.getenv("AGNOS_PATH_PREFIX", "/v1")
+
 PROFILES: dict[str, dict[str, str]] = {
     "dev": {
         "LOG_LEVEL": "DEBUG",
@@ -68,7 +70,7 @@ def _fetch_remote_overrides(profile_name: str) -> dict[str, str]:
 
         with httpx.Client(timeout=5.0) as client:
             response = client.get(
-                f"{url}/api/v1/profiles/{profile_name}",
+                f"{url}{AGNOS_PATH_PREFIX}/profiles/{profile_name}",
                 headers={"X-API-Key": api_key} if api_key else {},
             )
             response.raise_for_status()

@@ -1,0 +1,47 @@
+# Agnostic QA Platform — AGNOS-integrated base image
+#
+# Identical to Dockerfile.base but sets AGNOS defaults so all containers
+# route LLM calls through hoosh and register with daimon out of the box.
+#
+# Usage:
+#   docker build -f docker/Dockerfile.agnos -t agnostic-qa-base:agnos .
+#   IMAGE=agnostic-qa-base:agnos docker compose -f docker-compose.agnos.yml up -d
+
+FROM agnostic-qa-base:latest
+
+# ── AGNOS integration defaults ──────────────────────────────────────────
+# These can all be overridden per-service in docker-compose.agnos.yml.
+
+# LLM Gateway (hoosh) — all LLM calls route through this
+ENV AGNOS_LLM_GATEWAY_ENABLED=true
+ENV AGNOS_LLM_GATEWAY_URL=http://hoosh:8088
+ENV AGNOS_LLM_GATEWAY_MODEL=default
+
+# Agent Runtime (daimon) — registration + heartbeat
+ENV AGNOS_AGENT_REGISTRATION_ENABLED=true
+ENV AGNOS_AGENT_REGISTRY_URL=http://daimon:8090
+ENV AGNOS_HEARTBEAT_INTERVAL_SECONDS=30
+
+# Path prefix for AGNOS REST APIs
+ENV AGNOS_PATH_PREFIX=/v1
+
+# Audit forwarding
+ENV AGNOS_AUDIT_ENABLED=true
+ENV AGNOS_AUDIT_URL=http://daimon:8090
+
+# Dashboard bridge
+ENV AGNOS_DASHBOARD_BRIDGE_ENABLED=true
+ENV AGNOS_DASHBOARD_URL=http://daimon:8090
+
+# Reasoning traces
+ENV AGNOS_REASONING_ENABLED=true
+ENV AGNOS_REASONING_URL=http://daimon:8090
+
+# Token budget
+ENV AGNOS_TOKEN_BUDGET_ENABLED=true
+ENV AGNOS_TOKEN_BUDGET_URL=http://hoosh:8088
+
+# Environment profile (set AGNOS_PROFILE=dev|staging|prod to activate)
+ENV AGNOS_PROFILE=
+
+LABEL org.opencontainers.image.description="Agnostic QA Platform - AGNOS-integrated base"

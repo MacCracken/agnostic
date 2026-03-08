@@ -15,6 +15,8 @@ import os
 
 logger = logging.getLogger(__name__)
 
+AGNOS_PATH_PREFIX = os.getenv("AGNOS_PATH_PREFIX", "/v1")
+
 try:
     import httpx
 
@@ -60,7 +62,7 @@ class AgnosTokenBudgetClient:
         return headers
 
     def _pool_url(self, path: str) -> str:
-        return f"{self.base_url}/api/v1/budget/pools/{self.pool}{path}"
+        return f"{self.base_url}{AGNOS_PATH_PREFIX}/budget/pools/{self.pool}{path}"
 
     def _get_client(self) -> httpx.AsyncClient:
         """Return (and lazily create) a shared httpx client."""

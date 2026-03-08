@@ -3411,6 +3411,13 @@ class JuniorQAAgent:
 
 async def main():
     """Main entry point for Junior QA agent with Celery worker"""
+    # Apply AGNOS environment profile (dev/staging/prod defaults)
+    try:
+        from config.agnos_environment import apply_agnos_profile
+        apply_agnos_profile()
+    except Exception:
+        pass
+
     junior_agent = JuniorQAAgent()
 
     # Start Celery worker for task processing

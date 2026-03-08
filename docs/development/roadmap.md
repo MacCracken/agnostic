@@ -6,9 +6,9 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 
 ---
 
-## CI/CD Pipeline Stabilization (In Progress)
+## CI/CD Pipeline Stabilization (Complete)
 
-Remaining items from the CI/CD overhaul:
+All items from the CI/CD overhaul:
 
 | Item | Status | Description |
 |------|--------|-------------|
@@ -29,7 +29,7 @@ All SecureYeoman integration features are **implemented and tested**. No code bl
 | Feature | Module | Status |
 |---------|--------|--------|
 | A2A Protocol (delegate, status, results) | `shared/yeoman_a2a_client.py` | Done |
-| MCP Server (25 tools) | `webgui/routes/mcp.py` | Done |
+| MCP Server (27 tools) | `webgui/routes/mcp.py` | Done |
 | MCP Auto-Registration | `shared/yeoman_mcp_server.py` | Done |
 | JWT Validation (RS256/ES256/HS256 + OIDC) | `shared/yeoman_jwt.py` | Done |
 | Webhook Receiver (6 event types + HMAC) | `webgui/routes/yeoman_webhooks.py` | Done |
@@ -44,15 +44,40 @@ All SecureYeoman integration features are **implemented and tested**. No code bl
 
 ---
 
-## AGNOS — Dockerfile Migration (Q3 2026, blocked)
+## AGNOS Deep Integration (In Progress)
 
-Blocked on AGNOS base image availability.
+Agnostic already has client modules for all AGNOS services. This section tracks wiring them into production use.
 
-| Item | Effort | Priority | Description |
-|------|--------|----------|-------------|
-| Migrate per-agent Dockerfiles | 3 days | P2 | Replace `docker/Dockerfile.base` with AGNOS base image |
-| Remove redundant middleware | 2 days | P3 | Post-migration: remove `RateLimitMiddleware`, `CorrelationIdMiddleware`, docker-compose resource limits (AGNOS handles these) |
-| Remove YEOMAN credential provisioning | 1 day | P3 | Post-migration: remove `config/credential_store.py`, MCP/A2A provisioning endpoints, `CREDENTIAL_PROVISIONING_ENABLED` env var, and related tests. All LLM calls will route through the AGNOS LLM Gateway (`AGNOS_LLM_GATEWAY_ENABLED=true`) — runtime key provisioning becomes unnecessary. See [ADR-028](../adr/028-credential-provisioning.md). |
+### P1 — Quick Wins (no AGNOS changes needed)
+
+| Item | Effort | Status | Description |
+|------|--------|--------|-------------|
+| Call `apply_agnos_profile()` on startup | 1 hr | Done | `webgui/app.py` lifespan calls profile setup before any config is read |
+| Agent heartbeat loop | 2 hr | Done | Background `asyncio` task in lifespan, configurable via `AGNOS_HEARTBEAT_INTERVAL_SECONDS` (default 30s) |
+| Wire `apply_agnos_profile()` in agents | 1 hr | Done | All 6 agent `main()` functions call profile setup before agent instantiation |
+
+### P2 — Path Prefix Alignment
+
+| Item | Effort | Status | Description |
+|------|--------|--------|-------------|
+| Align AGNOS client paths | 2 hr | Done | All 8 client modules use `AGNOS_PATH_PREFIX` env var (default `/v1`); tests updated |
+
+### P3 — Containerization & Testing
+
+| Item | Effort | Status | Description |
+|------|--------|--------|-------------|
+| Create `docker/Dockerfile.agnos` | 2 hr | Done | AGNOS-aware base layer with all integration env vars pre-set |
+| `docker-compose.agnos.yml` | 2 hr | Done | Full compose: hoosh + daimon + webgui + redis + postgres + 6 workers (profile) |
+| E2E gateway round-trip test | 4 hr | Done | `tests/e2e/test_agnos_gateway.py` — health, gateway round-trip, agent registration, no-key validation |
+| Deployment guide | 2 hr | Done | `docs/deployment/agnos.md` — architecture, env vars, networking, troubleshooting |
+
+### P4 — Post-Migration Cleanup
+
+| Item | Effort | Status | Description |
+|------|--------|--------|-------------|
+| Migrate to AGNOS base image | 3 days | Blocked | Replace `docker/Dockerfile.base` with AGNOS Python base image once `.ark` packages are published |
+| Remove redundant middleware | 2 days | Not started | Post-migration: remove `RateLimitMiddleware`, `CorrelationIdMiddleware`, docker-compose resource limits (AGNOS handles these) |
+| Remove YEOMAN credential provisioning | 1 day | Not started | Post-migration: remove `config/credential_store.py`, MCP/A2A provisioning endpoints, `CREDENTIAL_PROVISIONING_ENABLED` env var, and related tests. All LLM calls route through AGNOS LLM Gateway. See [ADR-028](../adr/028-credential-provisioning.md) |
 
 ---
 
@@ -73,7 +98,7 @@ Issues discovered during SecureYeoman `--profile full-dev` integration testing �
 | Item | Blocker |
 |------|---------|
 | Python 3.14 support | crewai `requires-python <3.14`, chromadb pydantic v1 — see [Dependency Watch](dependency-watch.md) |
-| Unified Docker Compose (AGNOS + YEOMAN + Agnostic) | AGNOS base image; `docker-compose.unified.yml` exists but not yet activated |
+| AGNOS base image migration | `.ark` Python packages not yet published — see AGNOS roadmap (Docker Base Images section) |
 
 ---
 
@@ -93,4 +118,4 @@ Issues discovered during SecureYeoman `--profile full-dev` integration testing �
 
 ---
 
-*Last Updated: 2026-03-08 · Version: 2026.3.8 · Test count: 725 (unit) + 24 (e2e) · Backlog: 2 blocked items · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-08 · Version: 2026.3.8 · Test count: 772 (unit) + 24 (e2e) · Backlog: 1 blocked item · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

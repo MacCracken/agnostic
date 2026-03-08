@@ -174,6 +174,7 @@ class TestAgentRegistryClientRegister:
     async def test_register_success(self, enabled_client):
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"id": "uuid-1234", "name": "QA Manager", "status": "registered"}
         mock_session = MagicMock()
         mock_session.post.return_value = mock_response
         mock_session.headers = MagicMock()
@@ -183,7 +184,7 @@ class TestAgentRegistryClientRegister:
 
         assert result["status"] == "registered"
         assert result["agent_id"] == "agnostic-qa-manager"
-        assert enabled_client._registered_agents["qa-manager"] is True
+        assert enabled_client._registered_agents["qa-manager"] == "uuid-1234"
 
     @pytest.mark.asyncio
     async def test_register_http_error(self, enabled_client):
@@ -211,7 +212,7 @@ class TestAgentRegistryClientRegister:
 
     @pytest.mark.asyncio
     async def test_deregister_success(self, enabled_client):
-        enabled_client._registered_agents["qa-manager"] = True
+        enabled_client._registered_agents["qa-manager"] = "uuid-1234"
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
@@ -223,14 +224,13 @@ class TestAgentRegistryClientRegister:
         result = await enabled_client.deregister_agent("qa-manager")
 
         assert result["status"] == "deregistered"
-        assert result["agent_id"] == "agnostic-qa-manager"
-        assert enabled_client._registered_agents["qa-manager"] is False
+        assert enabled_client._registered_agents["qa-manager"] is None
 
     @pytest.mark.asyncio
     async def test_deregister_http_error(self, enabled_client):
         import requests
 
-        enabled_client._registered_agents["qa-manager"] = True
+        enabled_client._registered_agents["qa-manager"] = "uuid-1234"
 
         mock_session = MagicMock()
         mock_session.delete.side_effect = requests.exceptions.Timeout("timeout")
@@ -280,13 +280,13 @@ class TestAgentRegistryClientHeartbeat:
 
     @pytest.mark.asyncio
     async def test_heartbeat_unknown_agent(self, client):
-        client._registered_agents["nonexistent"] = True
+        client._registered_agents["nonexistent"] = "uuid-bad"
         result = await client.send_heartbeat("nonexistent")
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_heartbeat_success(self, client):
-        client._registered_agents["qa-manager"] = True
+        client._registered_agents["qa-manager"] = "uuid-1234"
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
@@ -299,14 +299,15 @@ class TestAgentRegistryClientHeartbeat:
 
         assert result["status"] == "ok"
         call_args = mock_session.post.call_args
+        # URL should contain daimon UUID, not agent_id string
+        assert "uuid-1234" in call_args[0][0]
         payload = call_args[1]["json"]
-        assert payload["agent_id"] == "agnostic-qa-manager"
         assert payload["status"] == "busy"
         assert "timestamp" in payload
 
     @pytest.mark.asyncio
     async def test_heartbeat_with_metadata(self, client):
-        client._registered_agents["qa-manager"] = True
+        client._registered_agents["qa-manager"] = "uuid-1234"
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
@@ -364,9 +365,9 @@ class TestAgentRegistryClientBulkOperations:
     async def test_deregister_all_agents(self, client):
         from config.agnos_agent_registration import AGNOSTIC_AGENTS
 
-        # Mark all as registered
-        for key in AGNOSTIC_AGENTS:
-            client._registered_agents[key] = True
+        # Mark all as registered with UUIDs
+        for i, key in enumerate(AGNOSTIC_AGENTS):
+            client._registered_agents[key] = f"uuid-{i}"
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
@@ -383,7 +384,7 @@ class TestAgentRegistryClientBulkOperations:
     @pytest.mark.asyncio
     async def test_deregister_skips_unregistered(self, client):
         # Only mark one as registered
-        client._registered_agents["qa-manager"] = True
+        client._registered_agents["qa-manager"] = "uuid-1234"
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
@@ -423,9 +424,9 @@ class TestGetRegistrationStatus:
         from config.agnos_agent_registration import AgentRegistryClient
 
         client = AgentRegistryClient()
-        client._registered_agents["qa-manager"] = True
-        client._registered_agents["senior-qa"] = True
+        client._registered_agents["qa-manager"] = "uuid-1234"
+        client._registered_agents["senior-qa"] = "uuid-5678"
 
         status = client.get_registration_status()
-        assert status["registered_agents"]["qa-manager"] is True
-        assert status["registered_agents"]["senior-qa"] is True
+        assert status["registered_agents"]["qa-manager"] == "uuid-1234"
+        assert status["registered_agents"]["senior-qa"] == "uuid-5678"

@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+AGNOS_PATH_PREFIX = os.getenv("AGNOS_PATH_PREFIX", "/v1")
+
 # Optional httpx import — the bridge degrades gracefully without it.
 try:
     import httpx
@@ -166,7 +168,7 @@ class AgnosDashboardBridge:
             "agents": agents,
         }
         return await self._post(
-            "/api/v1/dashboard/providers/agnostic-qa/agents",
+            f"{AGNOS_PATH_PREFIX}/dashboard/providers/agnostic-qa/agents",
             payload,
         )
 
@@ -185,7 +187,7 @@ class AgnosDashboardBridge:
             "sessions": sessions,
         }
         return await self._post(
-            "/api/v1/dashboard/providers/agnostic-qa/sessions",
+            f"{AGNOS_PATH_PREFIX}/dashboard/providers/agnostic-qa/sessions",
             payload,
         )
 
@@ -204,7 +206,7 @@ class AgnosDashboardBridge:
             "metrics": metrics,
         }
         return await self._post(
-            "/api/v1/dashboard/providers/agnostic-qa/metrics",
+            f"{AGNOS_PATH_PREFIX}/dashboard/providers/agnostic-qa/metrics",
             payload,
         )
 
@@ -238,7 +240,7 @@ class AgnosDashboardBridge:
         try:
             client = self._get_client()
             response = await client.get(
-                "/api/v1/dashboard/fleet/status",
+                f"{AGNOS_PATH_PREFIX}/dashboard/fleet/status",
                 headers=self._headers(),
             )
             response.raise_for_status()
@@ -265,7 +267,7 @@ class AgnosDashboardBridge:
         try:
             client = self._get_client()
             response = await client.get(
-                f"/api/v1/dashboard/providers/{provider}/metrics",
+                f"{AGNOS_PATH_PREFIX}/dashboard/providers/{provider}/metrics",
                 headers=self._headers(),
             )
             response.raise_for_status()

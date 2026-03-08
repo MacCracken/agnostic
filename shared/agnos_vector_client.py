@@ -21,6 +21,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+AGNOS_PATH_PREFIX = os.getenv("AGNOS_PATH_PREFIX", "/v1")
+
 try:
     import httpx
 
@@ -146,7 +148,7 @@ class AgnosVectorClient:
         try:
             client = self._get_client()
             resp = await client.post(
-                f"/api/v1/vectors/{coll}/search",
+                f"{AGNOS_PATH_PREFIX}/vectors/{coll}/search",
                 json=payload,
             )
             resp.raise_for_status()
@@ -231,7 +233,7 @@ class AgnosVectorClient:
             return []
         try:
             client = self._get_client()
-            resp = await client.get("/api/v1/vectors/collections")
+            resp = await client.get(f"{AGNOS_PATH_PREFIX}/vectors/collections")
             resp.raise_for_status()
             self._record_success()
             return resp.json().get("collections", [])

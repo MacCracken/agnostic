@@ -20,6 +20,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+AGNOS_PATH_PREFIX = os.getenv("AGNOS_PATH_PREFIX", "/v1")
+
 try:
     import httpx
 
@@ -129,7 +131,7 @@ class AgnosAuditForwarder:
                 headers["X-Correlation-ID"] = correlation_id
 
             response = await client.post(
-                "/api/v1/audit/events/batch",
+                f"{AGNOS_PATH_PREFIX}/audit/events/batch",
                 json={"events": batch},
                 headers=headers,
             )

@@ -489,6 +489,13 @@ class QAPerformanceAgent:
 
 async def main():
     """Main entry point for Performance & Resilience agent with Celery worker"""
+    # Apply AGNOS environment profile (dev/staging/prod defaults)
+    try:
+        from config.agnos_environment import apply_agnos_profile
+        apply_agnos_profile()
+    except Exception:
+        pass
+
     agent = QAPerformanceAgent()
 
     logger.info("Starting Performance & Resilience Celery worker...")

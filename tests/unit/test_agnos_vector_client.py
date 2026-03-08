@@ -130,7 +130,7 @@ class TestAgnosVectorClient:
 
         mock_client.post.assert_called_once()
         call_args = mock_client.post.call_args
-        assert "/api/v1/vectors/agnostic-qa/search" in call_args[0][0]
+        assert "/v1/vectors/agnostic-qa/search" in call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_search_with_filters(self):
@@ -158,7 +158,7 @@ class TestAgnosVectorClient:
         )
 
         call_args = mock_client.post.call_args
-        assert "/api/v1/vectors/custom-coll/search" in call_args[0][0]
+        assert "/v1/vectors/custom-coll/search" in call_args[0][0]
         payload = call_args[1]["json"]
         assert payload["min_score"] == 0.5
         assert payload["filters"]["project"] == "myapp"
@@ -184,7 +184,7 @@ class TestAgnosVectorClient:
         await client.search_qa_findings("XSS", project="frontend")
 
         call_args = mock_client.post.call_args
-        assert "/api/v1/vectors/qa-findings/search" in call_args[0][0]
+        assert "/v1/vectors/qa-findings/search" in call_args[0][0]
         payload = call_args[1]["json"]
         assert payload["filters"]["project"] == "frontend"
 
@@ -209,7 +209,7 @@ class TestAgnosVectorClient:
         await client.search_code("error handling", language="python")
 
         call_args = mock_client.post.call_args
-        assert "/api/v1/vectors/code/search" in call_args[0][0]
+        assert "/v1/vectors/code/search" in call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_search_handles_network_error(self):
