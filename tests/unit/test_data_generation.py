@@ -8,6 +8,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+faker = pytest.importorskip("faker", reason="faker not installed")
+
 # Patch config before importing module under test
 _mock_redis = MagicMock()
 _mock_celery = MagicMock()

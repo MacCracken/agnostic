@@ -4,6 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
+prometheus_client = pytest.importorskip("prometheus_client", reason="prometheus_client not installed")
+
 
 class TestGetAgentMetrics:
     """Tests for get_agent_metrics."""

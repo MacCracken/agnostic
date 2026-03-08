@@ -95,7 +95,7 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-python-env
         with:
-          extras: 'dev,test,web'
+          extras: 'dev,test,web,database'
 
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short --cov=agents --cov=config --cov=shared --cov=webgui --cov-report=xml
@@ -117,7 +117,7 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup-python-env
         with:
-          extras: 'dev,test,web'
+          extras: 'dev,test,web,database'
 
       - name: Start test services
         run: |
@@ -147,7 +147,7 @@ jobs:
         id: setup
         uses: ./.github/actions/setup-python-env
         with:
-          extras: 'dev,test,web'
+          extras: 'dev,test,web,database'
 
       - name: Build and start full stack
         run: |
