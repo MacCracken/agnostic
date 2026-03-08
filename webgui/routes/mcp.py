@@ -308,6 +308,45 @@ MCP_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    # --- Credential provisioning ---
+    {
+        "name": "agnostic_provision_credentials",
+        "description": "Provision LLM API credentials for orchestrated mode (YEOMAN/AGNOS)",
+        "category": "system",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "enum": [
+                        "openai", "anthropic", "google",
+                        "ollama", "lm_studio", "custom_local", "agnos_gateway",
+                    ],
+                },
+                "api_key": {"type": "string"},
+                "base_url": {"type": "string"},
+                "model": {"type": "string"},
+                "expires_in_seconds": {"type": "integer"},
+                "metadata": {"type": "object"},
+            },
+            "required": ["provider", "api_key"],
+        },
+    },
+    {
+        "name": "agnostic_revoke_credentials",
+        "description": "Revoke provisioned LLM credentials for a provider (or all)",
+        "category": "system",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "description": "Provider to revoke, or '*' for all",
+                },
+            },
+            "required": ["provider"],
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -341,6 +380,8 @@ _TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "agnostic_a2a_heartbeat": ("POST", "/api/v1/a2a/receive"),
     "agnostic_subscribe_webhook": ("POST", "/api/v1/tasks"),
     "agnostic_event_stream": ("GET", "/api/v1/events/stream"),
+    "agnostic_provision_credentials": ("POST", "/internal/credentials"),
+    "agnostic_revoke_credentials": ("DELETE", "/internal/credentials"),
 }
 
 
@@ -627,6 +668,93 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
 
         return {"metrics": get_metrics_text()}
 
+    # Credential provisioning
+    if tool_name == "agnostic_provision_credentials":
+        return _dispatch_provision_credentials(arguments, user)
+
+    if tool_name == "agnostic_revoke_credentials":
+        return _dispatch_revoke_credentials(arguments, user)
+
     raise HTTPException(
         status_code=404, detail=f"Tool dispatch not implemented: {tool_name}"
     )
+
+
+def _require_credential_permission(user: dict) -> None:
+    """Only YEOMAN JWT or super_admin can provision credentials."""
+    auth_source = user.get("auth_source", "")
+    role = user.get("role", "")
+    if auth_source not in ("yeoman_jwt",) and role not in ("admin", "super_admin"):
+        from shared.audit import AuditAction, audit_log
+
+        audit_log(
+            AuditAction.PERMISSION_DENIED,
+            actor=user.get("user_id", "unknown"),
+            resource_type="credential",
+            detail={"reason": "insufficient_privileges"},
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Credential provisioning requires YEOMAN JWT or admin role",
+        )
+
+
+def _dispatch_provision_credentials(arguments: dict[str, Any], user: dict) -> dict:
+    """Handle agnostic_provision_credentials MCP tool."""
+    import time
+
+    from config.credential_store import (
+        CREDENTIAL_PROVISIONING_ENABLED,
+        ProvisionedCredential,
+        credential_store,
+    )
+
+    if not CREDENTIAL_PROVISIONING_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="Credential provisioning not enabled. Set CREDENTIAL_PROVISIONING_ENABLED=true",
+        )
+    _require_credential_permission(user)
+
+    expires_in = arguments.get("expires_in_seconds")
+    credential_store.put(
+        ProvisionedCredential(
+            provider=arguments["provider"],
+            api_key=arguments["api_key"],
+            base_url=arguments.get("base_url"),
+            model=arguments.get("model"),
+            provisioned_by=user.get("user_id", "unknown"),
+            provisioned_at=time.monotonic(),
+            expires_at=time.monotonic() + expires_in if expires_in else None,
+            metadata=arguments.get("metadata", {}),
+        )
+    )
+    return {
+        "status": "provisioned",
+        "provider": arguments["provider"],
+        "has_expiry": expires_in is not None,
+    }
+
+
+def _dispatch_revoke_credentials(arguments: dict[str, Any], user: dict) -> dict:
+    """Handle agnostic_revoke_credentials MCP tool."""
+    from config.credential_store import (
+        CREDENTIAL_PROVISIONING_ENABLED,
+        credential_store,
+    )
+
+    if not CREDENTIAL_PROVISIONING_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="Credential provisioning not enabled. Set CREDENTIAL_PROVISIONING_ENABLED=true",
+        )
+    _require_credential_permission(user)
+
+    provider = arguments["provider"]
+    actor = user.get("user_id", "unknown")
+    if provider == "*":
+        count = credential_store.revoke_all(actor)
+        return {"status": "revoked_all", "count": count}
+    else:
+        removed = credential_store.revoke(provider, actor)
+        return {"status": "revoked" if removed else "not_found", "provider": provider}

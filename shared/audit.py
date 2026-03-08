@@ -59,6 +59,12 @@ class AuditAction(StrEnum):
     TOOL_INVOKED = "integration.tool_invoked"
     WEBHOOK_RECEIVED = "integration.webhook_received"
 
+    # Credentials
+    CREDENTIAL_PROVISIONED = "credential.provisioned"
+    CREDENTIAL_ROTATED = "credential.rotated"
+    CREDENTIAL_REVOKED = "credential.revoked"
+    CREDENTIAL_EXPIRED = "credential.expired"
+
     # System
     RATE_LIMIT_EXCEEDED = "system.rate_limit"
     PERMISSION_DENIED = "system.permission_denied"

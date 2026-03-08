@@ -41,6 +41,22 @@ class BaseModelProvider(ABC):
             await self._session.close()
             self._session = None
 
+    def _resolve_api_key(self) -> str:
+        """Return provisioned credential if available, else config-time key."""
+        try:
+            from config.credential_store import credential_store
+
+            provider_key = (
+                self.config.get("provider_type")
+                or self.config.get("type", "unknown").lower()
+            )
+            cred = credential_store.get(provider_key)
+            if cred:
+                return cred.api_key
+        except ImportError:
+            pass
+        return self.api_key
+
     @abstractmethod
     async def chat_completion(
         self, messages: list[dict[str, str]], **kwargs: Any
@@ -79,8 +95,12 @@ class OpenAIProvider(BaseModelProvider):
             "max_tokens": kwargs.get("max_tokens", self.max_tokens),
         }
 
-        # Propagate agent-id header for AGNOS gateway per-agent token accounting
-        headers = dict(self.headers)
+        # Resolve API key at call time (supports runtime provisioning)
+        resolved_key = self._resolve_api_key()
+        headers = {
+            "Authorization": f"Bearer {resolved_key}",
+            "Content-Type": "application/json",
+        }
         agent_role = kwargs.get("agent_role")
         if self.is_gateway and agent_role:
             headers["x-agent-id"] = agent_role
@@ -157,10 +177,18 @@ class AnthropicProvider(BaseModelProvider):
         if system_message:
             payload["system"] = system_message
 
+        # Resolve API key at call time (supports runtime provisioning)
+        resolved_key = self._resolve_api_key()
+        headers = {
+            "x-api-key": resolved_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+
         try:
             session = await self._get_session()
             async with session.post(
-                url, headers=self.headers, json=payload
+                url, headers=headers, json=payload
             ) as response:
                 if response.status == 200:
                     result = await response.json()
@@ -537,6 +565,21 @@ class ModelManager:
                 self.primary_provider = config.get("primary_provider")
                 self.fallback_providers = config.get("fallback_providers", [])
 
+                # When AGNOS gateway is enabled, promote it to primary so all
+                # LLM calls route through the gateway automatically.  The
+                # gateway handles model selection, token budgets, and provider
+                # keys internally — Agnostic never needs direct provider keys.
+                if gateway_enabled and "agnos_gateway" in self.providers:
+                    self.primary_provider = "agnos_gateway"
+                    self.fallback_providers = [
+                        p for p in self.fallback_providers
+                        if p != "agnos_gateway"
+                    ]
+                    logger.info(
+                        "AGNOS LLM Gateway set as primary provider — "
+                        "all LLM calls will route through the gateway"
+                    )
+
                 self._raw_config = config
                 logger.info(f"Loaded {len(self.providers)} model providers")
                 logger.info(f"Primary provider: {self.primary_provider}")
@@ -629,7 +672,15 @@ class ModelManager:
         agent_role = kwargs.get("agent_role")
         if agent_role and "agent_specific_models" in config:
             agent_config = config["agent_specific_models"].get(agent_role, {})
-            preferred_provider = agent_config.get("preferred_provider", target_provider)
+
+            # When AGNOS gateway is primary, all agents route through it.
+            # The gateway uses the agent's preferred model internally via
+            # the x-agent-id header, so we keep temperature/token overrides
+            # but skip the provider override.
+            if target_provider == "agnos_gateway":
+                preferred_provider = "agnos_gateway"
+            else:
+                preferred_provider = agent_config.get("preferred_provider", target_provider)
 
             # Use agent-specific temperature and tokens if specified
             if "temperature" in agent_config:

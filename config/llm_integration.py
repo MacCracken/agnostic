@@ -42,15 +42,66 @@ class LLMIntegrationService:
         agent_name: str = "unknown",
     ):
         """Initialize LLM service with specified model."""
-        self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o")
         self.temperature = temperature
         self.max_tokens = 2000
         self._agent_name = agent_name
-        self._api_key = os.getenv("OPENAI_API_KEY")
-        if self._api_key:
-            logger.info(f"Initialized LLM service with model: {self.model_name}")
+
+        # When AGNOS LLM Gateway is enabled, route all calls through it.
+        # The gateway exposes an OpenAI-compatible API; litellm treats it
+        # as an "openai/" model with a custom base_url.
+        gateway_enabled = os.getenv(
+            "AGNOS_LLM_GATEWAY_ENABLED", ""
+        ).lower() in ("true", "1", "yes")
+
+        if gateway_enabled:
+            gateway_url = os.getenv(
+                "AGNOS_LLM_GATEWAY_URL", "http://localhost:8088"
+            )
+            gateway_model = os.getenv("AGNOS_LLM_GATEWAY_MODEL", "default")
+            # litellm routes "openai/<model>" to base_url/v1/chat/completions
+            self.model_name = f"openai/{gateway_model}"
+            self._api_key = os.getenv("AGNOS_LLM_GATEWAY_API_KEY", "")
+            self._base_url = f"{gateway_url}/v1"
+            self._provider_name = "agnos_gateway"
+            self._extra_headers = {"x-agent-id": agent_name}
+            logger.info(
+                "LLM service routing through AGNOS Gateway at %s (agent=%s)",
+                gateway_url, agent_name,
+            )
         else:
-            logger.warning("OPENAI_API_KEY not set — LLM calls will use fallbacks")
+            self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o")
+            self._api_key = os.getenv("OPENAI_API_KEY")
+            self._base_url = None
+            self._provider_name = self._detect_provider(self.model_name)
+            self._extra_headers = {}
+            if self._api_key:
+                logger.info(f"Initialized LLM service with model: {self.model_name}")
+            else:
+                logger.warning("OPENAI_API_KEY not set — LLM calls will use fallbacks")
+
+    @staticmethod
+    def _detect_provider(model_name: str) -> str:
+        """Derive the credential-store provider key from a litellm model string."""
+        model_lower = model_name.lower()
+        if model_lower.startswith("anthropic/") or "claude" in model_lower:
+            return "anthropic"
+        if model_lower.startswith("gemini/") or model_lower.startswith("google/"):
+            return "google"
+        if model_lower.startswith("ollama/"):
+            return "ollama"
+        return "openai"
+
+    def _resolve_api_key(self) -> str | None:
+        """Return the best available API key: provisioned store, then env var."""
+        try:
+            from config.credential_store import credential_store
+
+            cred = credential_store.get(self._provider_name)
+            if cred:
+                return cred.api_key
+        except ImportError:
+            pass
+        return self._api_key
 
     async def _llm_call(
         self,
@@ -64,7 +115,9 @@ class LLMIntegrationService:
 
         Returns parsed JSON response or fallback value on failure.
         """
-        if not self._api_key or not _llm_circuit.can_execute():
+        # Resolve credential: provisioned store first, then env var
+        api_key = self._resolve_api_key()
+        if not api_key or not _llm_circuit.can_execute():
             return fallback
 
         # --- AGNOS token budget: check & reserve -------------------------
@@ -88,16 +141,21 @@ class LLMIntegrationService:
             with trace_llm_call(
                 method_name, model=self.model_name, agent=self._agent_name
             ) as span:
-                response = await litellm.acompletion(
-                    model=self.model_name,
-                    messages=[
+                call_kwargs: dict[str, Any] = {
+                    "model": self.model_name,
+                    "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    api_key=self._api_key,
-                )
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                    "api_key": api_key,
+                }
+                if self._base_url:
+                    call_kwargs["base_url"] = self._base_url
+                if self._extra_headers:
+                    call_kwargs["extra_headers"] = self._extra_headers
+                response = await litellm.acompletion(**call_kwargs)
 
                 content = str(response.choices[0].message.content).strip()
                 if content.startswith("```json") and content.endswith("```"):

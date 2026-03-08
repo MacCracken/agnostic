@@ -33,6 +33,7 @@ This directory contains Architecture Decision Records (ADRs) for the Agentic QA 
 | [ADR-025](025-test-result-persistence.md) | Test Result Persistence (PostgreSQL) | Accepted |
 | [ADR-026](026-scheduled-report-enhancements.md) | Scheduled Report Enhancements — Email & Persistent Job Store | Accepted |
 | [ADR-027](027-audit-logging-agent-metrics.md) | Audit Logging & Agent Metrics Dashboard | Accepted |
+| [ADR-028](028-credential-provisioning.md) | Runtime LLM Credential Provisioning | Accepted |
 
 ## ADR Template
 

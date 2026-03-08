@@ -52,6 +52,7 @@ Blocked on AGNOS base image availability.
 |------|--------|----------|-------------|
 | Migrate per-agent Dockerfiles | 3 days | P2 | Replace `docker/Dockerfile.base` with AGNOS base image |
 | Remove redundant middleware | 2 days | P3 | Post-migration: remove `RateLimitMiddleware`, `CorrelationIdMiddleware`, docker-compose resource limits (AGNOS handles these) |
+| Remove YEOMAN credential provisioning | 1 day | P3 | Post-migration: remove `config/credential_store.py`, MCP/A2A provisioning endpoints, `CREDENTIAL_PROVISIONING_ENABLED` env var, and related tests. All LLM calls will route through the AGNOS LLM Gateway (`AGNOS_LLM_GATEWAY_ENABLED=true`) — runtime key provisioning becomes unnecessary. See [ADR-028](../adr/028-credential-provisioning.md). |
 
 ---
 
