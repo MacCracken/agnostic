@@ -127,7 +127,7 @@ jobs:
         run: |
           docker compose --profile dev up -d
           echo "Waiting for services to be healthy..."
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
               echo "Services healthy after ${i}s"
               break
@@ -136,8 +136,15 @@ jobs:
           done
         env:
           AGNOSTIC_API_KEY: test-e2e-key
-          OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-fake-for-ci}
+          REDIS_URL: redis://redis:6379/0
+          DATABASE_URL: postgresql+asyncpg://agnostic:test_password@postgres:5432/agnostic
           POSTGRES_PASSWORD: test_password
+          AGNOS_LLM_GATEWAY_ENABLED: "false"
+          AGNOS_AGENT_REGISTRATION_ENABLED: "false"
+          AGNOS_AUDIT_ENABLED: "false"
+          AGNOS_DASHBOARD_BRIDGE_ENABLED: "false"
+          AGNOS_REASONING_ENABLED: "false"
+          AGNOS_TOKEN_BUDGET_ENABLED: "false"
       - name: Run E2E tests
         env:
           E2E_BASE_URL: http://localhost:8000
@@ -148,6 +155,7 @@ jobs:
         run: |
           docker compose --profile dev logs --tail=50
           docker compose --profile dev down -v || true
+          docker compose -f docker-compose.old-style.yml down -v || true
 
   helm-lint:
     runs-on: ubuntu-latest

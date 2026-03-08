@@ -16,55 +16,36 @@ For development without an AGNOS host, use `--profile dev` to spin up these serv
 
 # 2. Configure
 cp .env.example .env
-# Edit .env — set POSTGRES_PASSWORD, provider API keys, etc.
+# Edit .env — set provider API keys, etc.
 
-# 3a. Production (on AGNOS host — only webgui)
+# 3. Production (on AGNOS host)
 docker compose up -d
-
-# 3b. Development (simulate AGNOS with containers)
-docker compose --profile dev up -d
-
-# 3c. Development with distributed workers
-docker compose --profile dev --profile workers up -d
 ```
 
-## Compose Profiles
+On AGNOS, hoosh, daimon, Redis, and PostgreSQL are system services. The `docker-compose.yml` starts the agnostic container which connects to them on localhost.
 
-| Profile | Services | Use Case |
-|---------|----------|----------|
-| (none) | `webgui` | Production on AGNOS host |
-| `dev` | `webgui` + `agnos` + `redis` + `postgres` | Local development |
-| `dev` + `workers` | All above + `rabbitmq` + 6 agent workers | Full distributed stack |
+For development without an AGNOS host, use `--profile dev` to spin up redis and postgres as containers:
+
+```bash
+docker compose --profile dev up -d
+```
+
+For standalone deployment (no AGNOS at all), use `docker-compose.old-style.yml` which bundles all infrastructure including rabbitmq and workers.
 
 ## Architecture
 
 ```
-Production (on AGNOS host):
+On AGNOS host:
 ┌──────────────┐
-│   webgui     │──▶ hoosh (system service :8088) ──▶ LLM providers
+│  agnostic    │──▶ hoosh (system service :8088) ──▶ LLM providers
 │  :8000       │──▶ daimon (system service :8090)
 │  agents      │──▶ Redis (system service :6379)
 │  (in-proc)   │──▶ Postgres (system service :5432)
 └──────────────┘
-
-Dev (containerized):
-┌──────────────┐     ┌─────────────┐
-│   webgui     │────▶│   agnos     │──▶ OpenAI / Anthropic / Google
-│  :8000       │     │  hoosh:8088 │
-│              │     │  daimon:8090│
-│  agents      │     └─────────────┘
-│  (in-proc)   │
-└──────────────┘
-       │
-  ┌─────────┐  ┌──────────┐
-  │  Redis  │  │ Postgres │
-  │  :6379  │  │  :5433   │
-  └─────────┘  └──────────┘
 ```
 
 - **hoosh** (port 8088): LLM Gateway. Holds all provider API keys. Exposes OpenAI-compatible `/v1/chat/completions`. Agnostic routes all LLM calls through it via litellm.
 - **daimon** (port 8090): Agent Runtime. Receives agent registration, heartbeats, audit events, reasoning traces, and dashboard data.
-- **agnos container** (dev only): Runs both hoosh and daimon in a single process via the `daemon` entrypoint.
 
 ## Environment Variables
 
@@ -80,11 +61,11 @@ Dev (containerized):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AGNOS_LLM_GATEWAY_ENABLED` | `true` | Route LLM calls through hoosh |
-| `AGNOS_LLM_GATEWAY_URL` | `http://agnos:8088` | hoosh endpoint (override to `http://localhost:8088` on AGNOS host) |
+| `AGNOS_LLM_GATEWAY_URL` | `http://localhost:8088` | hoosh endpoint |
 | `AGNOS_LLM_GATEWAY_MODEL` | `default` | Model alias in hoosh |
 | `AGNOS_LLM_GATEWAY_API_KEY` | (empty) | API key for hoosh (if required) |
 | `AGNOS_AGENT_REGISTRATION_ENABLED` | `true` | Register agents with daimon |
-| `AGNOS_AGENT_REGISTRY_URL` | `http://agnos:8090` | daimon endpoint (override to `http://localhost:8090` on AGNOS host) |
+| `AGNOS_AGENT_REGISTRY_URL` | `http://localhost:8090` | daimon endpoint |
 | `AGNOS_HEARTBEAT_INTERVAL_SECONDS` | `30` | Agent heartbeat frequency |
 | `AGNOS_PATH_PREFIX` | `/v1` | REST path prefix for AGNOS APIs |
 | `AGNOS_AUDIT_ENABLED` | `true` | Forward audit events to daimon |
@@ -106,11 +87,10 @@ Dev (containerized):
 ## Health Checks
 
 ```bash
-# All services
-docker compose --profile dev ps
+# Agnostic
+curl http://localhost:8000/health
 
-# Individual service health
-curl http://localhost:8000/health      # webgui
+# AGNOS system services
 curl http://localhost:8088/v1/health   # hoosh
 curl http://localhost:8090/v1/health   # daimon
 
@@ -118,33 +98,11 @@ curl http://localhost:8090/v1/health   # daimon
 curl http://localhost:8000/api/v1/agents/status
 ```
 
-## Networking
-
-All services communicate on the `qa-network` Docker bridge. Service names resolve via Docker DNS. In production on AGNOS, override `AGNOS_*_URL` env vars to point at `http://localhost:PORT`.
-
-| Service | Internal Port | External Port |
-|---------|---------------|---------------|
-| webgui | 8000 | 8000 |
-| agnos (dev) | 8088, 8090 | 8088, 8090 |
-| redis (dev) | 6379 | 6379 |
-| postgres (dev) | 5432 | 5433 |
-
-## Standalone vs AGNOS Mode
-
-| Feature | Standalone (`docker-compose.old-style.yml`) | AGNOS (`docker-compose.yml`) |
-|---------|-----------------------------------|------------------------------------|
-| LLM keys | In Agnostic's `.env` | In hoosh only |
-| LLM routing | Direct to provider | Through hoosh gateway |
-| Agent registration | None | Registers with daimon |
-| Heartbeats | None | Every 30s to daimon |
-| Audit forwarding | Local only | Forwarded to daimon |
-| Token budgets | None | Enforced by hoosh |
-
 ## Troubleshooting
 
-**webgui can't reach hoosh/daimon**: In production, override URLs to localhost: `AGNOS_LLM_GATEWAY_URL=http://localhost:8088`. In dev, ensure `--profile dev` is set.
+**Can't reach hoosh/daimon**: Verify AGNOS system services are running. Check `AGNOS_LLM_GATEWAY_URL` and `AGNOS_AGENT_REGISTRY_URL` env vars (default `http://localhost:8088` and `http://localhost:8090`).
 
-**LLM calls return fallbacks**: Verify hoosh has valid provider keys. Check logs: `docker logs agnostic-agnos-1`.
+**LLM calls return fallbacks**: Verify hoosh has valid provider keys.
 
 **Agent registration fails**: Check daimon logs. Registration failure is non-fatal — Agnostic continues to work without it.
 
@@ -153,13 +111,9 @@ All services communicate on the `qa-network` Docker bridge. Service names resolv
 ## E2E Testing
 
 ```bash
-# Start dev stack
-docker compose --profile dev up -d
+# Start agnostic
+docker compose up -d
 
 # Run E2E gateway tests
 pytest tests/e2e/test_agnos_gateway.py -v
-
-# Override URLs if needed
-HOOSH_URL=http://localhost:8088 DAIMON_URL=http://localhost:8090 \
-  pytest tests/e2e/test_agnos_gateway.py -v
 ```

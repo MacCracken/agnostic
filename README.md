@@ -76,17 +76,14 @@ Performance & Resilience Agent      ─┘
 
 ### AGNOS (Primary)
 
-Agnostic is designed to run on [AGNOS](https://github.com/MacCracken/agnosticos). The default `docker-compose.yml` starts only the webgui — hoosh, daimon, Redis, and PostgreSQL are AGNOS system services.
+Agnostic is designed to run on [AGNOS](https://github.com/MacCracken/agnosticos). The default `docker-compose.yml` starts the agnostic container — hoosh, daimon, Redis, and PostgreSQL are AGNOS system services.
 
 ```bash
 # Production (on AGNOS host)
 docker compose up -d
 
-# Development (simulate AGNOS with containers)
+# Development (redis + postgres as containers)
 docker compose --profile dev up -d
-
-# Development + distributed workers
-docker compose --profile dev --profile workers up -d
 ```
 
 [AGNOS Deployment Guide →](docs/deployment/agnos.md)
