@@ -11,13 +11,13 @@ Get the Agentic QA Team System running in 5 minutes with this step-by-step guide
 - **OpenAI API Key** for LLM capabilities
 - **Git** (optional, for cloning)
 
-## 🚀 Quick Start (Docker)
+## Quick Start (Docker)
 
 ### 1. Clone and Setup
 
 ```bash
 # Clone repository
-git clone <repository-url>
+git clone https://github.com/MacCracken/agnostic
 cd agnostic
 
 # Copy environment template
@@ -40,34 +40,33 @@ PRIMARY_MODEL_PROVIDER=openai
 # Build the image
 ./scripts/build-docker.sh
 
-# Start (on AGNOS host — webgui only)
+# Production (on AGNOS host)
 docker compose up -d
 
-# Or start with dev infrastructure
+# Or development (adds redis + postgres containers)
 docker compose --profile dev up -d
 ```
 
-**Access URLs:**
-- **WebGUI**: http://localhost:8000
+**Access:** http://localhost:8000
 
 ### 4. Verify Installation
 
 ```bash
-# Check all containers are running
-docker-compose ps
+# Check container status
+docker compose ps
 
-# View WebGUI logs
-docker-compose logs -f webgui
+# View logs
+docker compose logs -f agnostic
 
-# Access WebGUI
-open http://localhost:8000
+# Health check
+curl http://localhost:8000/health
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 The system uses a 6-agent architecture. For full details, see the [Development Setup Guide](../development/setup.md#architecture).
 
-## 📋 First Test Task
+## First Test Task
 
 ### Submit via WebGUI
 
@@ -91,11 +90,11 @@ The system uses a 6-agent architecture. For full details, see the [Development S
 
 Results are displayed in the WebGUI with comprehensive reports.
 
-## 🛠️ Development Setup
+## Development Setup
 
 For full local development setup (without Docker), environment variables, and advanced configuration, see the [Development Setup Guide](../development/setup.md).
 
-## 🧪 Running Tests
+## Running Tests
 
 ```bash
 # All tests with mocks
@@ -111,58 +110,23 @@ python run_tests.py --mode integration --env docker
 python run_tests.py --mode coverage
 ```
 
-## 📊 Monitoring
-
-### Check Agent Status
+## Monitoring
 
 ```bash
-# Docker - all agents
-docker-compose ps
+# Health check
+curl http://localhost:8000/health
 
-# Docker - specific agent logs
-docker-compose logs qa-manager
-docker-compose logs senior-qa
-docker-compose logs junior-qa
+# Agent status API
+curl http://localhost:8000/api/agents/status
+
+# Container logs
+docker compose logs -f agnostic
 
 # Kubernetes
 kubectl get pods -n agentic-qa
 ```
 
-### View System Health
-
-```bash
-# WebGUI API
-curl http://localhost:8000/api/agents/status
-
-# Redis
-docker-compose logs redis
-
-# RabbitMQ Management Console
-open http://localhost:15672  # guest/guest
-```
-
-## 🔧 Common Tasks
-
-### Restart a Single Agent
-
-```bash
-# Restart specific agent
-docker-compose restart qa-manager
-
-# Or rebuild and restart
-docker-compose up --build -d qa-manager
-```
-
-### Add Custom Test Data
-
-```bash
-# Option 1: Place files in shared/data directory
-mkdir -p shared/data
-cp my_test_data.csv shared/data/
-
-# Option 2: Upload via WebGUI
-# Navigate to http://localhost:8000 → Upload Data
-```
+## Common Tasks
 
 ### Configure New LLM Provider
 
@@ -180,7 +144,7 @@ Edit `config/models.json`:
 }
 ```
 
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Port Conflicts
 
@@ -191,23 +155,6 @@ netstat -tulpn | grep -E ':8000|:6379|:5672'
 # Change ports in .env if needed
 WEBGUI_PORT=8001
 REDIS_PORT=6380
-RABBITMQ_PORT=5673
-```
-
-### Agent Not Responding
-
-```bash
-# Check agent logs
-docker-compose logs qa-manager
-
-# Verify RabbitMQ connection
-docker-compose logs rabbitmq
-
-# Restart the agent
-docker-compose restart qa-manager
-
-# Check if RabbitMQ is healthy
-curl http://localhost:15672/api/overview -u guest:guest
 ```
 
 ### LLM Errors
@@ -216,24 +163,8 @@ curl http://localhost:15672/api/overview -u guest:guest
 # Verify API key is set
 echo $OPENAI_API_KEY
 
-# Test LLM connection
-python -c "from openai import OpenAI; OpenAI().models.list()"
-
-# Check agent logs for errors
-docker-compose logs webgui | grep -i error
-```
-
-### Redis Connection Issues
-
-```bash
-# Check Redis is running
-docker-compose ps redis
-
-# Test Redis connection
-docker-compose exec redis redis-cli ping
-
-# View Redis logs
-docker-compose logs redis
+# Check logs for errors
+docker compose logs agnostic | grep -i error
 ```
 
 ### Build Issues
@@ -245,18 +176,18 @@ docker system prune -a
 ./scripts/build-docker.sh
 ```
 
-## 📚 Next Steps
+## Next Steps
 
 1. **Read the full documentation**:
    - [Development Setup](../development/setup.md) - Development guidelines
    - [Agent Specifications](../agents/index.md) - Agent architecture details
-   - [Docker Deployment](../deployment/docker-compose.md) - Production deployment
+   - [Docker Deployment](../deployment/docker-compose.md) - Deployment options
    - [Kubernetes Deployment](../deployment/kubernetes.md) - K8s deployment
 
 2. **Review API documentation**:
-   - [Agent APIs](../../docs/api/agents.md)
-   - [WebGUI APIs](../../docs/api/webgui.md)
-   - [LLM Integration](../../docs/api/llm_integration.md)
+   - [Agent APIs](../api/agents.md)
+   - [WebGUI APIs](../api/webgui.md)
+   - [LLM Integration](../api/llm_integration.md)
 
 3. **Explore advanced features**:
    - Self-healing UI selectors
@@ -265,21 +196,20 @@ docker system prune -a
    - Security compliance testing
    - Performance profiling
 
-## 🎯 Success Metrics
+## Success Metrics
 
 Your system is working correctly when:
 
-- ✅ All 6 agents show "active" status: `docker-compose ps`
-- ✅ WebGUI loads at http://localhost:8000
-- ✅ Test tasks complete with reports
-- ✅ Redis/RabbitMQ show healthy connections
-- ✅ LLM calls return structured responses
-- ✅ No error messages in agent logs
+- `docker compose ps` shows agnostic container healthy
+- WebGUI loads at http://localhost:8000
+- Test tasks complete with reports
+- LLM calls return structured responses
+- No error messages in logs
 
-## 📖 Additional Resources
+## Additional Resources
 
-- [Architecture Decision Records (ADRs)](../../docs/adr/) - System design decisions
-- [Docker Build Optimization](../../docker/README.md) - Build system details
+- [Architecture Decision Records (ADRs)](../adr/) - System design decisions
+- [Docker Build](../../docker/README.md) - Build system details
 - [Contributing Guidelines](../development/contributing.md) - How to contribute
 
 Welcome to the Agentic QA Team System!

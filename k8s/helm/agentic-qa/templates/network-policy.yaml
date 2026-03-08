@@ -18,7 +18,7 @@ spec:
             component: agent
       - podSelector:
           matchLabels:
-            app: webgui
+            app: agnostic
       - namespaceSelector:
           matchLabels:
             name: ingress-nginx
@@ -84,7 +84,7 @@ spec:
             component: agent
       - podSelector:
           matchLabels:
-            app: webgui
+            app: agnostic
       ports:
       - protocol: TCP
         port: 6379
@@ -109,7 +109,7 @@ spec:
             component: agent
       - podSelector:
           matchLabels:
-            app: webgui
+            app: agnostic
       ports:
       - protocol: TCP
         port: 5672
@@ -120,12 +120,12 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: webgui-network-policy
+  name: agnostic-network-policy
   namespace: {{ .Values.namespace.name }}
 spec:
   podSelector:
     matchLabels:
-      app: webgui
+      app: agnostic
   policyTypes:
     - Ingress
     - Egress

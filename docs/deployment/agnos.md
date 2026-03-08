@@ -78,9 +78,6 @@ On AGNOS host:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGNOS_IMAGE` | `agnos:latest` | AGNOS container image (dev profile only) |
-| `HOOSH_PORT` | `8088` | Host port for hoosh (dev profile only) |
-| `DAIMON_PORT` | `8090` | Host port for daimon (dev profile only) |
 | `AGNOS_AGENT_API_KEY` | (empty) | API key for daimon registration |
 | `AGNOS_TOKEN_BUDGET_POOL` | `agnostic-qa` | Token budget pool name |
 

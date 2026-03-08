@@ -10,7 +10,7 @@ replicas:
   qaAnalyst: 3
   securityCompliance: 3
   performance: 3
-  webgui: 3
+  agnostic: 3
 
 image:
   tag: latest

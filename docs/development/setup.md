@@ -39,8 +39,8 @@ pip install -e ".[dev,test,ml,observability]"
 ### 3. Start infrastructure services
 
 ```bash
-docker-compose up -d redis rabbitmq
-docker-compose ps   # verify both are healthy
+docker compose up -d redis rabbitmq
+docker compose ps   # verify both are healthy
 ```
 
 ### 4. Run agents in development mode
@@ -71,17 +71,14 @@ python -m webgui.app
 # Build the single image
 ./scripts/build-docker.sh
 
-# Production (on AGNOS host — webgui only)
+# Production (on AGNOS host)
 docker compose up -d
 
-# Development (simulate AGNOS with containers)
+# Development (adds redis + postgres containers)
 docker compose --profile dev up -d
 
-# Development + distributed workers
-docker compose --profile dev --profile workers up -d
-
 # View logs
-docker compose logs -f webgui
+docker compose logs -f agnostic
 ```
 
 **Access URLs (Docker):**
@@ -265,7 +262,7 @@ The **Plugin Architecture** ([ADR-013](../adr/013-plugin-architecture.md)) means
 
 1. **Create `agents/<name>/`** — implement an agent class using `crewai.Agent`; extend `BaseTool` (from `shared.crewai_compat`) for custom tools.
 2. **Register in `config/team_config.json`** — add an entry with `role`, `celery_task`, `celery_queue`, and `redis_prefix` fields. `AgentRegistry` picks it up automatically.
-3. **Add worker service to `docker-compose.yml`** — use the `x-worker-common` anchor with `AGENT_ROLE: <name>`. All workers share the single `agnostic:latest` image.
+3. **Add worker service to `docker-compose.old-style.yml`** — use the `x-worker-common` anchor with `AGENT_ROLE: <name>`. All workers share the single `agnostic:latest` image.
 4. **Add K8s manifest** — add to `k8s/manifests/` or extend the Helm chart.
 
 The `AgentRegistry` in `config/agent_registry.py` routes tasks via `registry.route_task()` and the WebGUI welcome message regenerates dynamically from `registry.get_agents_for_team()`.
@@ -342,9 +339,8 @@ alembic downgrade base
 ## Common Tasks
 
 ```bash
-# Restart a single container
-docker-compose restart qa-manager
-docker-compose up --build -d qa-manager
+# Restart the agnostic container
+docker compose restart agnostic
 
 # Add custom LLM provider (edit config/models.json)
 # Add test data

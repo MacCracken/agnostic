@@ -88,14 +88,14 @@
 ## Quick Deployment
 
 ```bash
-# Start core services
-docker-compose up -d redis rabbitmq
+# Production (on AGNOS host)
+docker compose up -d
 
-# Start agents + manager
-docker-compose up -d qa-manager senior-qa junior-qa qa-analyst security-compliance-agent performance-agent
+# Development (adds redis + postgres containers)
+docker compose --profile dev up -d
 
-# Start WebGUI
-docker-compose up -d webgui
+# Standalone with distributed workers
+docker compose -f docker-compose.old-style.yml --profile workers up -d
 ```
 
 ---

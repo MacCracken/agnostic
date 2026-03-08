@@ -218,7 +218,7 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: performance-agent-hpa
+  name: performance-hpa
   namespace: {{ .Values.namespace.name }}
   labels:
     {{- include "agentic-qa.labels" . | nindent 4 }}
@@ -226,7 +226,7 @@ spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: performance-agent
+    name: performance
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:
@@ -261,7 +261,7 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: webgui-hpa
+  name: agnostic-hpa
   namespace: {{ .Values.namespace.name }}
   labels:
     {{- include "agentic-qa.labels" . | nindent 4 }}
@@ -269,7 +269,7 @@ spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: webgui
+    name: agnostic
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.webguiMaxReplicas }}
   metrics:

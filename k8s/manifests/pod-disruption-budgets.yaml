@@ -67,10 +67,10 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: webgui-pdb
+  name: agnostic-pdb
   namespace: agentic-qa
 spec:
   minAvailable: 1
   selector:
     matchLabels:
-      app: webgui
+      app: agnostic

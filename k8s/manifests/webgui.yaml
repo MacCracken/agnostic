@@ -1,27 +1,27 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: webgui
+  name: agnostic
   namespace: agentic-qa
   labels:
-    app: webgui
+    app: agnostic
     component: frontend
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: webgui
+      app: agnostic
   template:
     metadata:
       labels:
-        app: webgui
+        app: agnostic
         component: frontend
     spec:
       securityContext:
         fsGroup: 1000
         runAsNonRoot: true
       containers:
-      - name: webgui
+      - name: agnostic
         image: ghcr.io/maccracken/agnostic:latest
         imagePullPolicy: IfNotPresent
         securityContext:
@@ -76,14 +76,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: webgui-service
+  name: agnostic-service
   namespace: agentic-qa
   labels:
-    app: webgui
+    app: agnostic
     component: frontend
 spec:
   selector:
-    app: webgui
+    app: agnostic
   ports:
   - name: http
     port: 8000

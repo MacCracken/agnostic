@@ -34,8 +34,8 @@ ENVIRONMENT=development
 ### Services running
 
 ```bash
-docker-compose up -d
-docker-compose ps   # all 9 services should show "Up"
+docker compose -f docker-compose.old-style.yml --profile workers up -d
+docker compose -f docker-compose.old-style.yml ps   # all services should show "Up"
 ```
 
 ### Test tools
@@ -61,22 +61,23 @@ export BASE=http://localhost:8000
 ### 1.1 All containers up
 
 ```bash
-docker-compose ps
+docker compose ps
 ```
 
 **Pass:** every service shows `Up` (no `Exit` or `Restarting`). Expected services:
 
 | Service | Port(s) |
 |---------|---------|
+| agnostic (webgui) | 8000 |
 | redis | 6379 |
-| rabbitmq | 5672, 15672 |
-| qa-manager | — |
-| senior-qa | — |
-| junior-qa | — |
-| qa-analyst | — |
-| security-compliance-agent | — |
-| performance-agent | — |
-| webgui | 8000 |
+| postgres | 5433 |
+| rabbitmq (workers profile) | 5672, 15672 |
+| qa-manager (workers profile) | — |
+| senior-qa (workers profile) | — |
+| junior-qa (workers profile) | — |
+| qa-analyst (workers profile) | — |
+| security-compliance-agent (workers profile) | — |
+| performance-agent (workers profile) | — |
 
 ### 1.2 Health endpoint
 
@@ -102,7 +103,7 @@ Example passing response:
 ```
 
 **Fail indicators:**
-- `"redis": "error"` — check `docker-compose logs redis`
+- `"redis": "error"` — check `docker compose logs redis`
 - `"rabbitmq": "error"` — check `RABBITMQ_USER`/`RABBITMQ_PASSWORD` in `.env`
 - HTTP 502 — webgui container not yet started; wait 10 s and retry
 
@@ -395,14 +396,14 @@ curl -s -X POST $BASE/api/v1/a2a/receive \
 ### 2.18 Redis connectivity — direct verification
 
 ```bash
-docker-compose exec redis redis-cli ping
+docker compose exec redis redis-cli ping
 ```
 
 **Pass:** `PONG`
 
 ```bash
 # Verify task record was written
-docker-compose exec redis redis-cli get "task:${TASK_ID}" | jq .status
+docker compose exec redis redis-cli get "task:${TASK_ID}" | jq .status
 ```
 
 **Pass:** `"completed"` or `"failed"` (confirms the task lifecycle wrote to Redis).
@@ -554,7 +555,7 @@ Check that only the security agent is used:
 
 ```bash
 # After completion, verify session data in Redis
-docker-compose exec redis redis-cli keys "security_compliance:*" | head -5
+docker compose exec redis redis-cli keys "security_compliance:*" | head -5
 ```
 
 **Pass:** keys exist in the `security_compliance:*` namespace (confirms the security agent wrote results).
@@ -682,7 +683,7 @@ Use agnostic_generate_report for session <session_id from 3.7.3> with type execu
 
 | Test area | Pass condition | Common failure cause |
 |-----------|----------------|----------------------|
-| All containers up | 9 services `Up` | Credential missing, port conflict |
+| All containers up | All services `Up` | Credential missing, port conflict |
 | Health endpoint | `status: healthy` or `degraded` | Redis/RabbitMQ not ready |
 | JWT login | `200` + `access_token` | Admin user not seeded |
 | Static API key | `200` + correct user | `AGNOSTIC_API_KEY` not set in `.env` |
@@ -703,39 +704,39 @@ Use agnostic_generate_report for session <session_id from 3.7.3> with type execu
 ## 5. What to Check in Logs When Tests Fail
 
 ```bash
-# WebGUI / API layer
-docker-compose logs --tail=100 webgui | grep -iE "error|exception|traceback"
+# Agnostic / API layer
+docker compose logs --tail=100 agnostic | grep -iE "error|exception|traceback"
 
 # QA Manager (task orchestration)
-docker-compose logs --tail=100 qa-manager | grep -iE "error|failed"
+docker compose logs --tail=100 qa-manager | grep -iE "error|failed"
 
 # Security agent
-docker-compose logs --tail=100 security-compliance-agent | grep -iE "error"
+docker compose logs --tail=100 security-compliance-agent | grep -iE "error"
 
 # Performance agent
-docker-compose logs --tail=100 performance-agent | grep -iE "error"
+docker compose logs --tail=100 performance-agent | grep -iE "error"
 
 # Redis (connectivity issues)
-docker-compose logs --tail=50 redis
+docker compose logs --tail=50 redis
 
 # RabbitMQ (auth issues show up here)
-docker-compose logs --tail=50 rabbitmq | grep -iE "error|refused|denied"
+docker compose logs --tail=50 rabbitmq | grep -iE "error|refused|denied"
 ```
 
 Redis key inspection:
 
 ```bash
 # List all tasks
-docker-compose exec redis redis-cli keys "task:*"
+docker compose exec redis redis-cli keys "task:*"
 
 # Inspect a specific task
-docker-compose exec redis redis-cli get "task:<task_id>" | python3 -m json.tool
+docker compose exec redis redis-cli get "task:<task_id>" | python3 -m json.tool
 
 # List session keys
-docker-compose exec redis redis-cli keys "session:*"
+docker compose exec redis redis-cli keys "session:*"
 
 # List all agent result keys for a session
-docker-compose exec redis redis-cli keys "*:<session_id>:*"
+docker compose exec redis redis-cli keys "*:<session_id>:*"
 ```
 
 ---
@@ -744,15 +745,16 @@ docker-compose exec redis redis-cli keys "*:<session_id>:*"
 
 ```bash
 # Flush all Redis test data (non-destructive to config)
-docker-compose exec redis redis-cli flushdb
+docker compose exec redis redis-cli flushdb
 
 # Full restart with clean state
-docker-compose down
-docker-compose up -d
+docker compose down
+docker compose up -d
 
 # Reset to a known good build
-docker-compose down -v
-docker-compose up --build -d
+docker compose down -v
+./scripts/build-docker.sh
+docker compose up -d
 ```
 
 ---

@@ -8,7 +8,7 @@ global:
   imagePullSecrets: []
   storageClass: ""
 
-# Image configuration
+# Image configuration — single image for all deployments (agents differentiated by AGENT_ROLE env var)
 image:
   registry: ghcr.io/maccracken
   repository: agnostic

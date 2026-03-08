@@ -28,7 +28,7 @@ spec:
         pathType: Prefix
         backend:
           service:
-            name: webgui-service
+            name: agnostic-service
             port:
               number: {{ .Values.webgui.service.port }}
 {{- end }}

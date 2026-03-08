@@ -10,7 +10,7 @@ replicas:
   qaAnalyst: 1
   securityCompliance: 1
   performance: 1
-  webgui: 1
+  agnostic: 1
 
 image:
   tag: dev

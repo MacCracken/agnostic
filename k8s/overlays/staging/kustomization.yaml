@@ -10,7 +10,7 @@ replicas:
   qaAnalyst: 2
   securityCompliance: 2
   performance: 2
-  webgui: 2
+  agnostic: 2
 
 image:
   tag: staging

@@ -42,8 +42,8 @@ This directory contains the Helm chart for deploying the Agentic QA Team System 
    # Check services
    kubectl get services -n agentic-qa
    
-   # Check webgui access
-   kubectl port-forward service/webgui-service 8000:8000 -n agentic-qa
+   # Access the web interface
+   kubectl port-forward service/agnostic-service 8000:8000 -n agentic-qa
    ```
 
 ## Chart Templates
@@ -58,13 +58,13 @@ The chart includes templates for all system components:
 | `qa-analyst.yaml` | QA Analyst agent deployment + service |
 | `security-compliance.yaml` | Security & Compliance agent deployment + service |
 | `performance.yaml` | Performance & Resilience agent deployment + service |
-| `webgui.yaml` | Chainlit WebGUI deployment + service |
+| `webgui.yaml` | Agnostic (Chainlit WebGUI) deployment + service |
 | `rabbitmq.yaml` | RabbitMQ deployment + PVC + service |
 | `redis.yaml` | Redis deployment + PVC + service |
 | `serviceaccount.yaml` | ServiceAccount for pod identity |
 | `ingress.yaml` | Ingress for external WebGUI access |
 | `network-policy.yaml` | NetworkPolicies for least-privilege traffic isolation |
-| `hpa.yaml` | HorizontalPodAutoscalers for all agents + WebGUI |
+| `hpa.yaml` | HorizontalPodAutoscalers for all agents + Agnostic |
 | `pdb.yaml` | PodDisruptionBudgets for HA during node maintenance |
 | `resource-quota.yaml` | Namespace-level resource quota (opt-in) |
 | `configmap.yaml` | Shared environment configuration |
@@ -103,7 +103,7 @@ helm upgrade agentic-qa ./k8s/helm/agentic-qa \
 
 ## Monitoring
 
-- Check logs: `kubectl logs -f deployment/webgui -n agentic-qa`
+- Check logs: `kubectl logs -f deployment/agnostic -n agentic-qa`
 - Monitor resource usage: `kubectl top pods -n agentic-qa`
 - Access RabbitMQ management: `kubectl port-forward service/rabbitmq-service 15672:15672 -n agentic-qa`
 

@@ -3,16 +3,16 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "agentic-qa.fullname" . }}-webgui
+  name: {{ include "agentic-qa.fullname" . }}-agnostic
   namespace: {{ .Values.namespace.name }}
   labels:
     {{- include "agentic-qa.labels" . | nindent 4 }}
-    app: webgui
+    app: agnostic
     release: {{ .Values.metrics.prometheus | default "prometheus" }}
 spec:
   selector:
     matchLabels:
-      app: webgui
+      app: agnostic
       component: frontend
   endpoints:
   - port: http

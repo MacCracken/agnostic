@@ -3,32 +3,32 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: webgui
+  name: agnostic
   namespace: {{ .Values.namespace.name }}
   labels:
     {{- include "agentic-qa.labels" . | nindent 4 }}
-    app: webgui
+    app: agnostic
     component: frontend
 spec:
   replicas: {{ .Values.webgui.replicaCount }}
   selector:
     matchLabels:
-      app: webgui
+      app: agnostic
   template:
     metadata:
       labels:
         {{- include "agentic-qa.selectorLabels" . | nindent 8 }}
-        app: webgui
+        app: agnostic
         component: frontend
     spec:
       serviceAccountName: {{ include "agentic-qa.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-      - name: webgui
+      - name: agnostic
         securityContext:
           {{- toYaml .Values.securityContext | nindent 10 }}
-        image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}-webgui:{{ .Values.image.tag }}"
+        image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         env:
         - name: REDIS_URL
@@ -97,11 +97,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: webgui-service
+  name: agnostic-service
   namespace: {{ .Values.namespace.name }}
   labels:
     {{- include "agentic-qa.labels" . | nindent 4 }}
-    app: webgui
+    app: agnostic
     component: frontend
 spec:
   type: {{ .Values.webgui.service.type }}
@@ -111,5 +111,5 @@ spec:
     targetPort: {{ .Values.webgui.service.targetPort }}
     protocol: TCP
   selector:
-    app: webgui
+    app: agnostic
 {{- end }}

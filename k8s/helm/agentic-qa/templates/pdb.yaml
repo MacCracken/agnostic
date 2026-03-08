@@ -78,7 +78,7 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: performance-agent-pdb
+  name: performance-pdb
   namespace: {{ .Values.namespace.name }}
   labels:
     {{- include "agentic-qa.labels" . | nindent 4 }}
@@ -93,7 +93,7 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: webgui-pdb
+  name: agnostic-pdb
   namespace: {{ .Values.namespace.name }}
   labels:
     {{- include "agentic-qa.labels" . | nindent 4 }}
@@ -101,6 +101,6 @@ spec:
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels:
-      app: webgui
+      app: agnostic
 {{- end }}
 {{- end }}

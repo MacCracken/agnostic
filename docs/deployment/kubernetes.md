@@ -46,13 +46,15 @@ kubectl apply -f k8s/manifests/redis.yaml
 kubectl apply -f k8s/manifests/rabbitmq.yaml
 ```
 
-### Step 3: Deploy Agents and WebGUI
+### Step 3: Deploy Agents and Agnostic
+
+All deployments use the single `ghcr.io/maccracken/agnostic:latest` image. Agent workers are differentiated by the `AGENT_ROLE` environment variable.
 
 ```bash
 # Deploy all agents and web interface
 kubectl apply -f k8s/manifests/qa-manager.yaml
 kubectl apply -f k8s/manifests/qa-agents-1.yaml  # All 5 non-manager agents
-kubectl apply -f k8s/manifests/webgui.yaml
+kubectl apply -f k8s/manifests/webgui.yaml        # Agnostic frontend
 
 # Optional: Add ingress for external access
 kubectl apply -f k8s/manifests/ingress.yaml
@@ -79,7 +81,7 @@ kubectl get services -n agentic-qa
 kubectl get pvc -n agentic-qa
 
 # Access WebGUI (port forwarding)
-kubectl port-forward service/webgui-service 8000:8000 -n agentic-qa
+kubectl port-forward service/agnostic-service 8000:8000 -n agentic-qa
 # Open http://localhost:8000
 
 # Access RabbitMQ Management
@@ -130,7 +132,7 @@ helm install agentic-qa ./k8s/helm/agentic-qa \
 kubectl get service webgui-service -n agentic-qa
 
 # Or use port forwarding for local access
-kubectl port-forward service/webgui-service 8000:8000 -n agentic-qa
+kubectl port-forward service/agnostic-service 8000:8000 -n agentic-qa
 ```
 
 ## Configuration Options
@@ -197,7 +199,7 @@ kubectl get pods -n agentic-qa -o wide
 
 # View pod logs
 kubectl logs -f deployment/qa-manager -n agentic-qa
-kubectl logs -f deployment/webgui -n agentic-qa
+kubectl logs -f deployment/agnostic -n agentic-qa
 
 # Check events
 kubectl get events -n agentic-qa --sort-by=.metadata.creationTimestamp
@@ -298,10 +300,10 @@ NetworkPolicies enforce least-privilege traffic between pods:
 
 | Policy | Allows Ingress From | Allows Egress To |
 |---|---|---|
-| `qa-agents-network-policy` | Other agents, WebGUI, ingress-nginx | Redis, RabbitMQ, DNS, public internet (LLM APIs) |
-| `redis-network-policy` | Agents, WebGUI | None |
-| `rabbitmq-network-policy` | Agents, WebGUI | None |
-| `webgui-network-policy` | ingress-nginx | Redis, RabbitMQ, agents (health), DNS, public internet |
+| `qa-agents-network-policy` | Other agents, Agnostic, ingress-nginx | Redis, RabbitMQ, DNS, public internet (LLM APIs) |
+| `redis-network-policy` | Agents, Agnostic | None |
+| `rabbitmq-network-policy` | Agents, Agnostic | None |
+| `agnostic-network-policy` | ingress-nginx | Redis, RabbitMQ, agents (health), DNS, public internet |
 
 ```bash
 # View network policies
@@ -382,7 +384,7 @@ kubectl scale deployment --all --replicas=0 -n agentic-qa
 
 # Scale back up
 kubectl scale deployment qa-manager --replicas=1 -n agentic-qa
-kubectl scale deployment webgui --replicas=1 -n agentic-qa
+kubectl scale deployment agnostic --replicas=1 -n agentic-qa
 # ... other deployments
 ```
 
