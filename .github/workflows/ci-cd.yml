@@ -148,6 +148,7 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     needs: [unit-tests]
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -158,10 +159,26 @@ jobs:
         with:
           extras: 'dev,test,web,database'
 
-      - name: Build and start full stack
+      - name: Cache base image
+        id: cache-base
+        uses: actions/cache@v4
+        with:
+          path: /tmp/agnostic-qa-base.tar
+          key: docker-base-${{ hashFiles('requirements-docker.txt', 'docker/Dockerfile.base') }}
+
+      - name: Load or build base image
         run: |
-          ./scripts/build-docker.sh --base-only
-          docker compose up -d
+          if [ -f /tmp/agnostic-qa-base.tar ]; then
+            echo "Loading cached base image..."
+            docker load -i /tmp/agnostic-qa-base.tar
+          else
+            echo "Building base image (first run or deps changed)..."
+            ./scripts/build-docker.sh --base-only
+            docker save agnostic-qa-base:latest -o /tmp/agnostic-qa-base.tar
+          fi
+
+      - name: Build and start full stack
+        run: docker compose up -d
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'sk-test-placeholder' }}
           POSTGRES_PASSWORD: test_password
@@ -216,10 +233,12 @@ jobs:
       - name: Template Helm chart
         run: helm template agentic-qa k8s/helm/agentic-qa/ --debug
 
-  # Build Release Artifacts + Container
+  # Build Release Artifacts + Container (tags only)
   build-release:
     runs-on: ubuntu-latest
     needs: [code-quality, unit-tests, security-code-scan, helm-lint]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -251,8 +270,14 @@ jobs:
         with:
           driver: docker
 
+      - name: Cache base image
+        id: cache-base
+        uses: actions/cache@v4
+        with:
+          path: /tmp/agnostic-qa-base.tar
+          key: docker-base-${{ hashFiles('requirements-docker.txt', 'docker/Dockerfile.base') }}
+
       - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -277,7 +302,14 @@ jobs:
 
       - name: Build containers
         run: |
-          ./scripts/build-docker.sh --base-only
+          if [ -f /tmp/agnostic-qa-base.tar ]; then
+            echo "Loading cached base image..."
+            docker load -i /tmp/agnostic-qa-base.tar
+          else
+            echo "Building base image..."
+            ./scripts/build-docker.sh --base-only
+            docker save agnostic-qa-base:latest -o /tmp/agnostic-qa-base.tar
+          fi
           ./scripts/build-docker.sh --agents-only
         env:
           OPENAI_API_KEY: sk-test-placeholder
@@ -297,7 +329,6 @@ jobs:
           POSTGRES_PASSWORD: ci_password
 
       - name: Tag and push to GHCR
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         run: |
           REGISTRY="${{ steps.meta.outputs.registry }}"
           TAG="${{ steps.meta.outputs.tag }}"
