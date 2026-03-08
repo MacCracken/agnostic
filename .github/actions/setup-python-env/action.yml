@@ -1,5 +1,5 @@
 name: 'Setup Python Environment'
-description: 'Checkout code, set up Python, and install project dependencies'
+description: 'Set up Python and install project dependencies (repo must already be checked out)'
 
 inputs:
   python-version:
@@ -19,9 +19,6 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
     - name: Read project version
       id: version
       shell: bash
