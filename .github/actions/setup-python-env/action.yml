@@ -1,0 +1,42 @@
+name: 'Setup Python Environment'
+description: 'Checkout code, set up Python, and install project dependencies'
+
+inputs:
+  python-version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+  extras:
+    description: 'Comma-separated pip extras to install (e.g. "dev,test,web"). Empty string skips install.'
+    required: false
+    default: 'dev'
+
+outputs:
+  project-version:
+    description: 'Project version read from VERSION file'
+    value: ${{ steps.version.outputs.version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Read project version
+      id: version
+      shell: bash
+      run: |
+        VERSION=$(tr -d '[:space:]' < VERSION)
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "Project version: ${VERSION}"
+
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      if: inputs.extras != ''
+      shell: bash
+      run: pip install -e ".[${{ inputs.extras }}]"

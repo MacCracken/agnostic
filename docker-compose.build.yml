@@ -1,4 +1,4 @@
-# Docker Compose file for building the base image
+# Build the base image only.
 # Usage: docker compose -f docker-compose.build.yml build base
 
 services:
@@ -6,9 +6,5 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.base
-      tags:
-        - agnostic-qa-base:latest
-        - agnostic-qa-base:2026.3.7
     image: agnostic-qa-base:latest
-    # This service is only for building, not running
     command: echo "Base image built successfully"

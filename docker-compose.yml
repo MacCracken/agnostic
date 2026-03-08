@@ -1,4 +1,54 @@
+# Agnostic QA Platform
+#
+# Default:  docker compose up -d
+#           Starts webgui + redis + postgres (3 containers).
+#           Agents run in-process inside webgui.
+#
+# Workers:  docker compose --profile workers up -d
+#           Also starts 6 agent Celery workers + rabbitmq for distributed mode.
+#
+# Overrides:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile workers up -d
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+
+x-worker-common: &worker-common
+  image: agnostic-agent:latest
+  restart: unless-stopped
+  profiles: ["workers"]
+  networks:
+    - qa-network
+  environment: &worker-env
+    REDIS_URL: redis://redis:6379/0
+    RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+    OPENAI_API_KEY: ${OPENAI_API_KEY}
+  depends_on:
+    - redis
+    - rabbitmq
+  volumes: &worker-volumes
+    - ./logs:/app/logs
+  logging: &default-logging
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+  deploy: &worker-deploy
+    resources:
+      limits:
+        memory: 2G
+        cpus: '1.5'
+      reservations:
+        memory: 1G
+        cpus: '0.75'
+  healthcheck:
+    test: ["CMD", "python", "-c", "import redis; r = redis.Redis(host='redis', port=6379); r.ping()"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+
 services:
+  # ---------------------------------------------------------------------------
+  # Core (always started)
+  # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
     ports:
@@ -44,8 +94,51 @@ services:
       timeout: 5s
       retries: 5
 
+  webgui:
+    build:
+      context: .
+      dockerfile: webgui/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      WEBGUI_HOST: "0.0.0.0"
+      WEBGUI_PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agnostic}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agnostic}
+      DATABASE_ENABLED: ${DATABASE_ENABLED:-false}
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - qa-network
+    volumes:
+      - ./agents:/app/agents
+      - ./config:/app/config
+      - ./logs:/app/logs
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # Workers (--profile workers)
+  # All use the same docker/Dockerfile.agent image, differentiated by AGENT_ROLE.
+  # ---------------------------------------------------------------------------
   rabbitmq:
     image: rabbitmq:3-management-alpine
+    profiles: ["workers"]
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -67,23 +160,10 @@ services:
     restart: unless-stopped
 
   qa-manager:
-    build:
-      context: .
-      dockerfile: agents/manager/Dockerfile
+    <<: *worker-common
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      - AGENT_ROLE=manager
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
-    volumes:
-      - ./agents:/app/agents
-      - ./config:/app/config
-      - ./logs:/app/logs
+      <<: *worker-env
+      AGENT_ROLE: manager
     deploy:
       resources:
         limits:
@@ -92,38 +172,12 @@ services:
         reservations:
           memory: 1G
           cpus: '1.0'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r = redis.Redis(host='redis', port=6379); r.ping()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   senior-qa:
-    build:
-      context: .
-      dockerfile: agents/senior/Dockerfile
+    <<: *worker-common
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      - AGENT_ROLE=senior
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
-    volumes:
-      - ./agents:/app/agents
-      - ./config:/app/config
-      - ./advanced_testing:/app/advanced_testing
-      - ./logs:/app/logs
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        labels: "service=senior-qa"
+      <<: *worker-env
+      AGENT_ROLE: senior
     deploy:
       resources:
         limits:
@@ -132,143 +186,30 @@ services:
         reservations:
           memory: 1.5G
           cpus: '1.0'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r = redis.Redis(host='redis', port=6379); r.ping()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   junior-qa:
-    build:
-      context: .
-      dockerfile: agents/junior/Dockerfile
+    <<: *worker-common
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      - AGENT_ROLE=junior
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
-    volumes:
-      - ./agents:/app/agents
-      - ./config:/app/config
-      - ./examples:/app/examples
-      - ./logs:/app/logs
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        labels: "service=junior-qa"
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1.5'
-        reservations:
-          memory: 1G
-          cpus: '0.75'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r = redis.Redis(host='redis', port=6379); r.ping()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      <<: *worker-env
+      AGENT_ROLE: junior
 
   qa-analyst:
-    build:
-      context: .
-      dockerfile: agents/analyst/Dockerfile
+    <<: *worker-common
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      - AGENT_ROLE=analyst
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
-    volumes:
-      - ./agents:/app/agents
-      - ./config:/app/config
-      - ./logs:/app/logs
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        labels: "service=qa-analyst"
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1.5'
-        reservations:
-          memory: 1G
-          cpus: '0.75'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r = redis.Redis(host='redis', port=6379); r.ping()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      <<: *worker-env
+      AGENT_ROLE: analyst
 
   security-compliance-agent:
-    build:
-      context: .
-      dockerfile: agents/security_compliance/Dockerfile
+    <<: *worker-common
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      - AGENT_ROLE=security_compliance
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
-    volumes:
-      - ./agents:/app/agents
-      - ./config:/app/config
-      - ./logs:/app/logs
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1.5'
-        reservations:
-          memory: 1G
-          cpus: '0.75'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r = redis.Redis(host='redis', port=6379); r.ping()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      <<: *worker-env
+      AGENT_ROLE: security_compliance
 
   performance-agent:
-    build:
-      context: .
-      dockerfile: agents/performance/Dockerfile
+    <<: *worker-common
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      - AGENT_ROLE=performance
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
-    volumes:
-      - ./agents:/app/agents
-      - ./config:/app/config
-      - ./logs:/app/logs
+      <<: *worker-env
+      AGENT_ROLE: performance
     deploy:
       resources:
         limits:
@@ -277,62 +218,6 @@ services:
         reservations:
           memory: 1.5G
           cpus: '1.0'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r = redis.Redis(host='redis', port=6379); r.ping()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  webgui:
-    build:
-      context: .
-      dockerfile: webgui/Dockerfile
-    ports:
-      - "8000:8000"
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      - WEBGUI_HOST=0.0.0.0
-      - WEBGUI_PORT=8000
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-agnostic}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agnostic}
-      - DATABASE_ENABLED=${DATABASE_ENABLED:-false}
-    depends_on:
-      - redis
-      - postgres
-      - qa-manager
-      - senior-qa
-      - junior-qa
-      - qa-analyst
-      - security-compliance-agent
-      - performance-agent
-    networks:
-      - qa-network
-    volumes:
-      - ./agents:/app/agents
-      - ./config:/app/config
-      - ./logs:/app/logs
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        labels: "service=qa-manager"
-    deploy:
-      resources:
-        limits:
-          memory: 1.5G
-          cpus: '1.0'
-        reservations:
-          memory: 512M
-          cpus: '0.5'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
 networks:
   qa-network:

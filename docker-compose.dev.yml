@@ -1,190 +1,30 @@
-# Docker Compose Development Override
-# Use with: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Development overrides — security hardening and debug settings.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
-version: '3.8'
-
-# Security hardening for development
-x-common-security: &common-security
+x-dev-security: &dev-security
   security_opt:
     - no-new-privileges:true
+  read_only: true
   tmpfs:
     - /tmp
-  deploy:
-    resources:
-      limits:
-        cpus: '1.0'
-        memory: 1G
-      reservations:
-        cpus: '0.25'
-        memory: 256M
 
 services:
   redis:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: redis
+    <<: *dev-security
     command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-    read_only: true
     deploy:
-      <<: *common-security.deploy
       resources:
         limits:
           cpus: '0.5'
           memory: 256M
 
-  rabbitmq:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}
-
   webgui:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: webgui
+    <<: *dev-security
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-    tmpfs:
-      - /tmp
-      - /app/logs
-    deploy:
-      <<: *common-security.deploy
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
-
-  qa-manager:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: qa-manager
-    environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672/
-    user: "1000:1000"
-    tmpfs:
-      - /tmp
-      - /app/logs
-
-  senior-qa:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: senior-qa
-    environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672/
-    user: "1000:1000"
-    tmpfs:
-      - /tmp
-      - /app/logs
-
-  junior-qa:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: junior-qa
-    environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672/
-    user: "1000:1000"
-    tmpfs:
-      - /tmp
-      - /app/logs
-
-  qa-analyst:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: qa-analyst
-    environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672/
-    user: "1000:1000"
-    tmpfs:
-      - /tmp
-      - /app/logs
-
-  sre-agent:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: sre-agent
-    environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672/
-    user: "1000:1000"
-    tmpfs:
-      - /tmp
-      - /app/logs
-
-  accessibility-agent:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: accessibility-agent
-    environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672/
-    user: "1000:1000"
-    tmpfs:
-      - /tmp
-      - /app/logs
-
-  api-agent:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: api-agent
-    environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672/
-    user: "1000:1000"
-    tmpfs:
-      - /tmp
-      - /app/logs
-
-  mobile-agent:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: mobile-agent
-    environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672/
-    user: "1000:1000"
-    tmpfs:
-      - /tmp
-      - /app/logs
-
-  compliance-agent:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: compliance-agent
-    environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672/
-    user: "1000:1000"
-    tmpfs:
-      - /tmp
-      - /app/logs
-
-  chaos-agent:
-    <<: *common-security
-    extends:
-      file: docker-compose.yml
-      service: chaos-agent
-    environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672/
-    user: "1000:1000"
-    tmpfs:
-      - /tmp
-      - /app/logs
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      WEBGUI_HOST: "0.0.0.0"
+      WEBGUI_PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agnostic}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agnostic}
+      DATABASE_ENABLED: ${DATABASE_ENABLED:-false}
+      LOG_LEVEL: DEBUG

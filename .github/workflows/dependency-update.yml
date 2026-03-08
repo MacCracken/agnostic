@@ -8,19 +8,16 @@ jobs:
   check-updates:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Setup environment
+        uses: ./.github/actions/setup-python-env
         with:
-          python-version: '3.11'
+          extras: ''
 
       - name: Check for outdated dependencies
         run: |
           pip install pip-tools
           pip-compile --upgrade requirements.in
-          
+
           # Check if requirements.txt changed
           if git diff --quiet requirements.txt; then
             echo "No dependency updates found"
@@ -37,20 +34,20 @@ jobs:
           commit-message: 'chore: update dependencies'
           title: 'chore: update Python dependencies'
           body: |
-            ## 🤖 Automated Dependency Update
-            
+            ## Automated Dependency Update
+
             This PR updates Python dependencies to their latest versions.
-            
-            ### 📦 Updated Packages
+
+            ### Updated Packages
             <!-- Updated packages will be listed here -->
-            
-            ### ✅ Checklist
+
+            ### Checklist
             - [ ] Review updated dependencies
             - [ ] Run full test suite
             - [ ] Verify no breaking changes
-            
+
             ---
-            
+
             *This PR was created automatically by the Dependency Update workflow*
           branch: dependency-updates
           delete-branch: true

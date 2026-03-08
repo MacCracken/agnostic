@@ -1,11 +1,18 @@
+# TLS override — switches Redis/RabbitMQ to encrypted connections, adds cert volumes.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+# With workers: docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile workers up -d
+
+x-tls-env: &tls-env
+  REDIS_URL: rediss://redis:6380/0
+  REDIS_CA_CERT: /certs/ca.pem
+  RABBITMQ_URL: amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
+  RABBITMQ_CA_CERT: /certs/ca.pem
+
 services:
   redis:
-    image: redis:7-alpine
     ports:
       - "6379:6379"
       - "6380:6380"
-    networks:
-      - qa-network
     volumes:
       - redis_data:/data
       - ./certs:/certs:ro
@@ -16,310 +23,101 @@ services:
       --tls-key-file /certs/redis-key.pem
       --tls-ca-cert-file /certs/ca.pem
       --tls-auth-clients no
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
-        reservations:
-          memory: 256M
-          cpus: '0.25'
-    restart: unless-stopped
 
   rabbitmq:
-    image: rabbitmq:3-management-alpine
     ports:
       - "5672:5672"
       - "5673:5673"
       - "15672:15672"
-      - "15673:15673"
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
-    networks:
-      - qa-network
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
       - ./certs:/certs:ro
       - ./tls/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: '1.0'
-        reservations:
-          memory: 512M
-          cpus: '0.5'
-    restart: unless-stopped
 
-  qa-manager:
-    build:
-      context: .
-      dockerfile: agents/manager/Dockerfile
+  webgui:
+    ports:
+      - "8000:8000"
+      - "8443:8443"
     environment:
-      - REDIS_URL=rediss://redis:6380/0
-      - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
-      - RABBITMQ_CA_CERT=/certs/ca.pem
-      - AGENT_ROLE=manager
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
+      <<: *tls-env
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      WEBGUI_HOST: "0.0.0.0"
+      WEBGUI_PORT: "8000"
+      WEBGUI_TLS_PORT: "8443"
+      WEBGUI_CERT_FILE: /certs/webgui.pem
+      WEBGUI_KEY_FILE: /certs/webgui-key.pem
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agnostic}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agnostic}
+      DATABASE_ENABLED: ${DATABASE_ENABLED:-false}
     volumes:
       - ./agents:/app/agents
       - ./config:/app/config
       - ./logs:/app/logs
       - ./certs:/certs:ro
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '2.0'
-        reservations:
-          memory: 1G
-          cpus: '1.0'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; import pika; print('healthy')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+
+  qa-manager:
+    environment:
+      <<: *tls-env
+      AGENT_ROLE: manager
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    volumes:
+      - ./agents:/app/agents
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./certs:/certs:ro
 
   senior-qa:
-    build:
-      context: .
-      dockerfile: agents/senior/Dockerfile
     environment:
-      - REDIS_URL=rediss://redis:6380/0
-      - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
-      - RABBITMQ_CA_CERT=/certs/ca.pem
-      - AGENT_ROLE=senior
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
+      <<: *tls-env
+      AGENT_ROLE: senior
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     volumes:
       - ./agents:/app/agents
       - ./config:/app/config
       - ./advanced_testing:/app/advanced_testing
       - ./logs:/app/logs
       - ./certs:/certs:ro
-    deploy:
-      resources:
-        limits:
-          memory: 3G
-          cpus: '2.0'
-        reservations:
-          memory: 1.5G
-          cpus: '1.0'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; import pika; print('healthy')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   junior-qa:
-    build:
-      context: .
-      dockerfile: agents/junior/Dockerfile
     environment:
-      - REDIS_URL=rediss://redis:6380/0
-      - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
-      - RABBITMQ_CA_CERT=/certs/ca.pem
-      - AGENT_ROLE=junior
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
+      <<: *tls-env
+      AGENT_ROLE: junior
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     volumes:
       - ./agents:/app/agents
       - ./config:/app/config
       - ./examples:/app/examples
       - ./logs:/app/logs
       - ./certs:/certs:ro
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1.5'
-        reservations:
-          memory: 1G
-          cpus: '0.75'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; import pika; print('healthy')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   qa-analyst:
-    build:
-      context: .
-      dockerfile: agents/analyst/Dockerfile
     environment:
-      - REDIS_URL=rediss://redis:6380/0
-      - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
-      - RABBITMQ_CA_CERT=/certs/ca.pem
-      - AGENT_ROLE=analyst
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
+      <<: *tls-env
+      AGENT_ROLE: analyst
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     volumes:
       - ./agents:/app/agents
       - ./config:/app/config
       - ./logs:/app/logs
       - ./certs:/certs:ro
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1.5'
-        reservations:
-          memory: 1G
-          cpus: '0.75'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; import pika; print('healthy')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   security-compliance-agent:
-    build:
-      context: .
-      dockerfile: agents/security_compliance/Dockerfile
     environment:
-      - REDIS_URL=rediss://redis:6380/0
-      - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
-      - RABBITMQ_CA_CERT=/certs/ca.pem
-      - AGENT_ROLE=security_compliance
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
+      <<: *tls-env
+      AGENT_ROLE: security_compliance
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     volumes:
       - ./agents:/app/agents
       - ./config:/app/config
       - ./logs:/app/logs
       - ./certs:/certs:ro
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1.5'
-        reservations:
-          memory: 1G
-          cpus: '0.75'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; import pika; print('healthy')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   performance-agent:
-    build:
-      context: .
-      dockerfile: agents/performance/Dockerfile
     environment:
-      - REDIS_URL=rediss://redis:6380/0
-      - REDIS_CA_CERT=/certs/ca.pem
-      - RABBITMQ_URL=amqps://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5673/
-      - RABBITMQ_CA_CERT=/certs/ca.pem
-      - AGENT_ROLE=performance
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - rabbitmq
-    networks:
-      - qa-network
+      <<: *tls-env
+      AGENT_ROLE: performance
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     volumes:
       - ./agents:/app/agents
       - ./config:/app/config
       - ./logs:/app/logs
       - ./certs:/certs:ro
-    deploy:
-      resources:
-        limits:
-          memory: 3G
-          cpus: '2.0'
-        reservations:
-          memory: 1.5G
-          cpus: '1.0'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import redis; import pika; print('healthy')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  webgui:
-    build:
-      context: .
-      dockerfile: webgui/Dockerfile
-    ports:
-      - "8000:8000"
-      - "8443:8443"
-    environment:
-      - REDIS_URL=rediss://redis:6380/0
-      - REDIS_CA_CERT=/certs/ca.pem
-      - WEBGUI_HOST=0.0.0.0
-      - WEBGUI_PORT=8000
-      - WEBGUI_TLS_PORT=8443
-      - WEBGUI_CERT_FILE=/certs/webgui.pem
-      - WEBGUI_KEY_FILE=/certs/webgui-key.pem
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - redis
-      - qa-manager
-      - senior-qa
-      - junior-qa
-      - qa-analyst
-      - security-compliance-agent
-      - performance-agent
-    networks:
-      - qa-network
-    volumes:
-      - ./webgui:/app/webgui
-      - ./agents:/app/agents
-      - ./logs:/app/logs
-      - ./certs:/certs:ro
-    deploy:
-      resources:
-        limits:
-          memory: 1.5G
-          cpus: '1.0'
-        reservations:
-          memory: 512M
-          cpus: '0.5'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-networks:
-  qa-network:
-    driver: bridge
-
-volumes:
-  redis_data:
-  rabbitmq_data:

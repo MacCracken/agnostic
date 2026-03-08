@@ -1,0 +1,31 @@
+# Unified agent Dockerfile — one image for all 6 agent roles.
+#
+# Usage:
+#   docker build -f docker/Dockerfile.agent --build-arg AGENT_ROLE=manager .
+#   docker build -f docker/Dockerfile.agent --build-arg AGENT_ROLE=senior .
+#
+# The AGENT_ROLE env var selects which agent module to run at startup.
+# All agent code, config, and shared libs are included in every image so
+# that a single image can be reused across roles via env var override.
+
+FROM agnostic-qa-base:latest
+
+# Copy everything agents need (small — code only, deps are in base image)
+COPY --chown=appuser:appuser VERSION ./VERSION
+COPY --chown=appuser:appuser agents/ ./agents/
+COPY --chown=appuser:appuser config/ ./config/
+COPY --chown=appuser:appuser shared/ ./shared/
+COPY --chown=appuser:appuser advanced_testing/ ./advanced_testing/
+COPY --chown=appuser:appuser examples/ ./examples/
+
+# Default role (overridden by docker-compose environment or --build-arg)
+ARG AGENT_ROLE=manager
+ENV AGENT_ROLE=${AGENT_ROLE}
+
+# Health check — validates Redis connectivity
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import redis; r = redis.Redis(host='redis', port=6379); r.ping()" || exit 1
+
+# Entrypoint script resolves AGENT_ROLE to the correct module
+COPY --chown=appuser:appuser docker/agent-entrypoint.sh /app/agent-entrypoint.sh
+ENTRYPOINT ["/app/agent-entrypoint.sh"]

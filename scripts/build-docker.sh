@@ -58,23 +58,22 @@ build_base() {
     echo ""
 }
 
-# Function to build agent images
+# Function to build agent + webgui images
 build_agents() {
-    echo -e "${YELLOW}Building agent images...${NC}"
+    echo -e "${YELLOW}Building agent + webgui images...${NC}"
     echo ""
-    
-    # Build all services except infrastructure (redis, rabbitmq)
-    # These will use the cached base image
-    docker compose build \
-        qa-manager \
-        senior-qa \
-        junior-qa \
-        qa-analyst \
-        security-compliance-agent \
-        performance-agent \
-        webgui
-    
-    echo -e "${GREEN}✓ All agent images built successfully${NC}"
+
+    # Build unified agent image (used by all 6 worker roles)
+    docker build \
+        --tag "agnostic-agent:latest" \
+        --tag "agnostic-agent:${VERSION}" \
+        --file docker/Dockerfile.agent \
+        .
+
+    # Build webgui image
+    docker compose build webgui
+
+    echo -e "${GREEN}✓ All images built successfully${NC}"
     echo ""
 }
 
