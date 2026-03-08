@@ -10,8 +10,8 @@ global:
 
 # Image configuration
 image:
-  registry: docker.io
-  repository: agentic-qa
+  registry: ghcr.io/maccracken
+  repository: agnostic
   pullPolicy: IfNotPresent
   tag: "2026.3.6"
 

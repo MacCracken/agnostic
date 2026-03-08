@@ -26,7 +26,7 @@ spec:
         runAsNonRoot: true
       containers:
       - name: senior-qa
-        image: agentic-qa/senior-qa:latest
+        image: ghcr.io/maccracken/agnostic-senior-qa:latest
         imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false
@@ -115,7 +115,7 @@ spec:
         runAsNonRoot: true
       containers:
       - name: junior-qa
-        image: agentic-qa/junior-qa:latest
+        image: ghcr.io/maccracken/agnostic-junior-qa:latest
         imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false
@@ -204,7 +204,7 @@ spec:
         runAsNonRoot: true
       containers:
       - name: qa-analyst
-        image: agentic-qa/qa-analyst:latest
+        image: ghcr.io/maccracken/agnostic-qa-analyst:latest
         imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false
@@ -293,7 +293,7 @@ spec:
         runAsNonRoot: true
       containers:
       - name: security-compliance
-        image: agentic-qa/security-compliance:latest
+        image: ghcr.io/maccracken/agnostic-security-compliance:latest
         imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false
@@ -382,7 +382,7 @@ spec:
         runAsNonRoot: true
       containers:
       - name: performance-agent
-        image: agentic-qa/performance-agent:latest
+        image: ghcr.io/maccracken/agnostic-performance:latest
         imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false

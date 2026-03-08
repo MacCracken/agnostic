@@ -5,11 +5,12 @@ FROM agnostic-qa-base:latest
 COPY --chown=appuser:appuser webgui/ ./webgui/
 COPY --chown=appuser:appuser agents/ ./agents/
 COPY --chown=appuser:appuser config/ ./config/
+COPY --chown=appuser:appuser shared/ ./shared/
 
 # Set environment variables
 ENV CHAINLIT_HOST=0.0.0.0
 ENV CHAINLIT_PORT=8000
-ENV CHAINLIT_ROOT_PATH=/
+ENV CHAINLIT_ROOT_PATH=
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

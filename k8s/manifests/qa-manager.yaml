@@ -24,7 +24,7 @@ spec:
         runAsNonRoot: true
       containers:
       - name: qa-manager
-        image: agentic-qa/qa-manager:latest
+        image: ghcr.io/maccracken/agnostic-qa-manager:latest
         imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false

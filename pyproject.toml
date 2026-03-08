@@ -116,10 +116,10 @@ database = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/agnostic-qa-system"
-Documentation = "https://agnostic-qa-system.readthedocs.io/"
-Repository = "https://github.com/your-org/agnostic-qa-system"
-"Bug Tracker" = "https://github.com/your-org/agnostic-qa-system/issues"
+Homepage = "https://github.com/MacCracken/agnostic"
+Documentation = "https://github.com/MacCracken/agnostic/tree/main/docs"
+Repository = "https://github.com/MacCracken/agnostic"
+"Bug Tracker" = "https://github.com/MacCracken/agnostic/issues"
 
 [tool.pytest.ini_options]
 minversion = "6.0"

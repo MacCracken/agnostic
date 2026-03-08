@@ -1,7 +1,7 @@
 # Agentic QA Team System - Base Docker Image
 # Contains all common dependencies to speed up agent container builds
 
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
@@ -48,13 +48,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Copy and install all Python dependencies
+# Copy and install runtime Python dependencies (dev tools excluded)
 # This layer will be cached and reused by all agent containers
-COPY requirements.txt /tmp/requirements.txt
+COPY requirements-docker.txt /tmp/requirements.txt
 
 # Install Python dependencies with pip cache mount for speed
+# Two-pass install: litellm's tiktoken>=0.7.0 conflicts with crewai's
+# langchain-openai<0.0.6 → tiktoken<0.6.0. litellm works fine at runtime
+# with tiktoken 0.5.x, so install it separately with --no-deps.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r /tmp/requirements.txt
+    pip install --no-cache-dir -r /tmp/requirements.txt && \
+    pip install --no-cache-dir --no-deps litellm==1.74.9
 
 # Create app user with home directory (needed for Playwright browsers)
 RUN groupadd -r appuser && useradd -r -m -g appuser appuser
@@ -81,7 +85,7 @@ USER appuser
 # Metadata
 LABEL maintainer="Agentic QA Team"
 LABEL description="Base image for all QA agent containers"
-LABEL version="2026.3.5"
+LABEL version="2026.3.7"
 
 # Default command
 CMD ["python", "--version"]
