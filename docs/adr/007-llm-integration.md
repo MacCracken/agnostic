@@ -28,6 +28,6 @@ Implement a hierarchical LLM provider system with:
 
 ## Implementation
 - `config/model_manager.py` handles provider selection and fallback logic
-- `config/universal_llm_adapter.py` provides CrewAI compatibility layer
+- `config/llm_integration.py` provides direct LLM calls via litellm for tool implementations
 - `config/models.json` defines routing rules and provider configurations
 - Agents specify model requirements through environment variables

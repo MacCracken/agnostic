@@ -962,6 +962,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await scheduled_report_manager.shutdown()
     logger.info("Scheduled reports shutdown")
 
+    # Close webhook delivery httpx client
+    try:
+        from webgui.routes.tasks import _webhook_http_client
+
+        if _webhook_http_client is not None and not _webhook_http_client.is_closed:
+            await _webhook_http_client.aclose()
+            logger.info("Webhook HTTP client closed")
+    except Exception as e:
+        logger.warning(f"Webhook HTTP client shutdown failed: {e}")
+
     # Close AGNOS dashboard bridge (httpx client + periodic task)
     try:
         from shared.agnos_dashboard_bridge import agnos_dashboard_bridge
@@ -1120,14 +1130,19 @@ async def health_check() -> dict[str, Any]:
         status_details["redis"] = "error"
 
     # 2. RabbitMQ TCP connect (lightweight — avoids heavy pika import)
-    rabbitmq_host = os.getenv("RABBITMQ_HOST", "rabbitmq")
-    rabbitmq_port = int(os.getenv("RABBITMQ_PORT", "5672"))
-    try:
-        sock = socket.create_connection((rabbitmq_host, rabbitmq_port), timeout=2)
-        sock.close()
-    except Exception as e:
-        logger.warning(f"Health check: RabbitMQ error: {e}")
-        status_details["rabbitmq"] = "error"
+    rabbitmq_url = os.getenv("RABBITMQ_URL")
+    rabbitmq_host = os.getenv("RABBITMQ_HOST")
+    if rabbitmq_url or rabbitmq_host:
+        rabbitmq_host = rabbitmq_host or "rabbitmq"
+        rabbitmq_port = int(os.getenv("RABBITMQ_PORT", "5672"))
+        try:
+            sock = socket.create_connection((rabbitmq_host, rabbitmq_port), timeout=2)
+            sock.close()
+        except Exception as e:
+            logger.warning(f"Health check: RabbitMQ error: {e}")
+            status_details["rabbitmq"] = "error"
+    else:
+        status_details["rabbitmq"] = "not_configured"
 
     # 3. Agent liveness via Redis heartbeats
     stale_threshold = int(os.getenv("AGENT_STALE_THRESHOLD_SECONDS", "300"))
@@ -1248,6 +1263,26 @@ app.websocket("/ws/realtime")(_websocket_endpoint)
 # is to insert our routes *before* the catch-all in the route list.
 try:
     from chainlit.server import app as chainlit_app
+
+    # Chainlit's OAuth2PasswordBearerWithCookie is missing the `model` attribute
+    # that FastAPI ≥0.115 needs for OpenAPI schema generation, causing an
+    # AttributeError on /openapi.json.  Patch it once at import time.
+    try:
+        from chainlit.auth import OAuth2PasswordBearerWithCookie
+        from fastapi.openapi.models import OAuth2 as OAuth2Model
+        from fastapi.openapi.models import OAuthFlowPassword, OAuthFlows
+
+        if not hasattr(OAuth2PasswordBearerWithCookie, "model"):
+            OAuth2PasswordBearerWithCookie.model = OAuth2Model(
+                flows=OAuthFlows(
+                    password=OAuthFlowPassword(tokenUrl="auth/login", scopes={})
+                )
+            )
+            OAuth2PasswordBearerWithCookie.scheme_name = (
+                "OAuth2PasswordBearerWithCookie"
+            )
+    except ImportError:
+        pass
 
     _configure_app(chainlit_app)
     chainlit_app.get("/health")(health_check)

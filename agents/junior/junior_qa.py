@@ -3448,34 +3448,41 @@ async def main():
     async def redis_task_listener():
         """Listen for tasks from Redis pub/sub"""
         pubsub = junior_agent.redis_client.pubsub()
-        pubsub.subscribe("junior_qa:tasks")
+        try:
+            pubsub.subscribe("junior_qa:tasks")
 
-        logger.info("Junior QA Redis task listener started")
+            logger.info("Junior QA Redis task listener started")
 
-        for message in pubsub.listen():
-            if message["type"] == "message":
-                try:
-                    task_data = json.loads(message["data"])
-                    task_type = task_data.get("task_type", "regression")
+            for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        task_data = json.loads(message["data"])
+                        task_type = task_data.get("task_type", "regression")
 
-                    logger.info(
-                        f"Received {task_type} task via Redis: {task_data.get('scenario', {}).get('name', 'Unknown')}"
-                    )
+                        logger.info(
+                            f"Received {task_type} task via Redis: {task_data.get('scenario', {}).get('name', 'Unknown')}"
+                        )
 
-                    # Route to appropriate handler
-                    if task_type == "regression":
-                        result = await junior_agent.execute_regression_test(task_data)
-                    elif task_type == "data_generation":
-                        result = await junior_agent.generate_test_data(task_data)
-                    else:
-                        result = await junior_agent.execute_regression_test(
-                            task_data
-                        )  # Default
+                        # Route to appropriate handler
+                        if task_type == "regression":
+                            result = await junior_agent.execute_regression_test(
+                                task_data
+                            )
+                        elif task_type == "data_generation":
+                            result = await junior_agent.generate_test_data(task_data)
+                        else:
+                            result = await junior_agent.execute_regression_test(
+                                task_data
+                            )  # Default
 
-                    logger.info(f"Task completed: {result.get('status', 'unknown')}")
+                        logger.info(
+                            f"Task completed: {result.get('status', 'unknown')}"
+                        )
 
-                except Exception as e:
-                    logger.error(f"Redis task processing failed: {e}")
+                    except Exception as e:
+                        logger.error(f"Redis task processing failed: {e}")
+        finally:
+            pubsub.close()
 
     # Run both Celery worker and Redis listener
     import threading

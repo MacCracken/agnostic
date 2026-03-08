@@ -1775,20 +1775,23 @@ async def main():
     async def redis_task_listener():
         """Listen for tasks from Redis pub/sub"""
         pubsub = agent.redis_client.pubsub()
-        pubsub.subscribe("security_compliance:tasks")
+        try:
+            pubsub.subscribe("security_compliance:tasks")
 
-        logger.info("Security & Compliance Redis task listener started")
+            logger.info("Security & Compliance Redis task listener started")
 
-        for message in pubsub.listen():
-            if message["type"] == "message":
-                try:
-                    task_data = json.loads(message["data"])
-                    result = await agent.run_security_compliance_audit(task_data)
-                    logger.info(
-                        f"Security & Compliance task completed: {result.get('status', 'unknown')}"
-                    )
-                except Exception as e:
-                    logger.error(f"Redis task processing failed: {e}")
+            for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        task_data = json.loads(message["data"])
+                        result = await agent.run_security_compliance_audit(task_data)
+                        logger.info(
+                            f"Security & Compliance task completed: {result.get('status', 'unknown')}"
+                        )
+                    except Exception as e:
+                        logger.error(f"Redis task processing failed: {e}")
+        finally:
+            pubsub.close()
 
     import threading
 

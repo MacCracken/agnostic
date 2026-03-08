@@ -2,13 +2,13 @@
 
 Detailed instructions for setting up a local development environment for the Agentic QA Team System.
 
-> **Note on Python versions:** Production containers run **Python 3.11-slim**. The local `.venv` may run a newer version; Python 3.14 cannot install the full stack due to upstream blockers — see [Dependency Watch](dependency-watch.md).
+> **Note on Python versions:** Production containers run **Python 3.13-slim**. The local `.venv` may run a newer version; Python 3.14 cannot install the full stack due to upstream blockers — see [Dependency Watch](dependency-watch.md).
 
 ---
 
 ## Prerequisites
 
-- Python 3.11–3.13 (3.11 recommended; 3.14 blocked upstream)
+- Python 3.11–3.13 (3.13 in production; 3.14 blocked upstream)
 - Docker 20.10+ and Docker Compose
 - Git
 - 4 GB+ RAM for parallel agent execution
@@ -157,13 +157,10 @@ Performance & Resilience Agent      ─┘
 |--------|---------|
 | `config/agent_registry.py` | Config-driven `AgentRegistry` + `AgentDefinition`; reads `team_config.json` |
 | `config/model_manager.py` | Multi-provider LLM manager (OpenAI, Anthropic, Google, Ollama, LM Studio) with fallback chains |
-| `config/universal_llm_adapter.py` | Returns `crewai.LLM` instances for agent constructors |
 | `config/models.json` | Provider routing strategy, retries, timeouts |
 | `config/llm_integration.py` | Direct LLM calls via litellm for tool implementations (scenario gen, fuzzy verification, etc.) |
 | `config/environment.py` | `Config` class — env vars, Redis client factory, Celery app factory |
 | `config/team_config_loader.py` | Lean / Standard / Large team preset loading |
-| `advanced_testing/self_healing_fuzzy_verification.py` | CV-based selector detection, semantic repair, fuzzy matching |
-| `advanced_testing/risk_prioritization_exploratory.py` | ML-driven risk scoring, code-change analysis, exploratory test generation |
 | `shared/metrics.py` | Prometheus metrics with no-op fallback; `get_metrics_text()` |
 | `shared/logging_config.py` | Structured logging — JSON via structlog or stdlib text |
 | `shared/resilience.py` | `CircuitBreaker`, `retry_async` decorator, `GracefulShutdown` |
@@ -183,7 +180,7 @@ Performance & Resilience Agent      ─┘
 |-------|---------|---------|
 | Agent framework | crewai | `>=1.0.0,<2.0.0` |
 | LLM routing | litellm | (via crewai) |
-| Web UI | Chainlit + FastAPI | `>=1.1.304,<2.0.0` / `>=0.115.0` |
+| Web UI | Chainlit + FastAPI | `>=2.0.0,<3.0.0` / `>=0.116.1` |
 | Messaging | Redis + Celery + RabbitMQ | `>=5.0.8` / `>=5.4.0` |
 | Browser automation | Playwright | `>=1.45.0` |
 | ML / CV | scikit-learn, OpenCV, NumPy, Pandas | `>=1.5.1` / `>=4.10.0` |

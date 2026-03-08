@@ -1,7 +1,7 @@
 [![CI/CD](https://img.shields.io/github/actions/workflow/status/MacCracken/agnostic/ci-cd.yml?branch=main&label=CI/CD)](https://github.com/MacCracken/agnostic/actions/workflows/ci-cd.yml)
 ![Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.11+-blue)
+![Python](https://img.shields.io/badge/python-3.11--3.13-blue)
 ![Docker](https://img.shields.io/badge/docker-ready-blue)
 
 # Agentic QA Team System
@@ -64,7 +64,7 @@ Performance & Resilience Agent      ─┘
 
 ### Additional Resources
 
-- [Architecture Decision Records](docs/adr/) — 27 ADRs documenting system design decisions
+- [Architecture Decision Records](docs/adr/) — 28 ADRs documenting system design decisions
 - [API Documentation](docs/api/) — Agent, WebGUI, LLM APIs
 - [Tenant Provisioning](docs/api/tenant-provisioning.md) — Multi-tenant setup and isolation
 - [Security Assessment](docs/security/assessment.md) — Security findings
@@ -132,7 +132,7 @@ result = await manager.orchestrate_qa_session({
 
 - **Agents**: CrewAI 1.x + litellm (LangChain removed)
 - **LLMs**: OpenAI, Anthropic, Google Gemini, Ollama, LM Studio
-- **Web UI**: Chainlit 1.1+ / 2.x compatible + FastAPI
+- **Web UI**: Chainlit 2.x + FastAPI
 - **Messaging**: Redis 5.0+ + RabbitMQ + Celery
 - **Database**: PostgreSQL (optional, async via SQLAlchemy + asyncpg) + Alembic migrations
 - **Scheduling**: APScheduler with Redis or PostgreSQL job store
@@ -142,11 +142,11 @@ result = await manager.orchestrate_qa_session({
 
 **Python**: 3.11–3.13 (production); 3.14 not yet supported (see [Dependency Watch](docs/development/dependency-watch.md))
 
-**Tests**: 465 unit + 19 E2E (CI via GitHub Actions)
+**Tests**: 725 unit + 24 E2E (CI via GitHub Actions)
 
 ## YEOMAN Integration
 
-Agnostic can be orchestrated by [SecureYeoman](https://github.com/MacCracken/secureyeoman) via 10 MCP bridge tools (`agnostic_*`). The integration is production-ready — Priorities P1–P4 are fully implemented.
+Agnostic can be orchestrated by [SecureYeoman](https://github.com/MacCracken/secureyeoman) via MCP bridge tools (`agnostic_*`). The integration is production-ready — see [SecureYeoman Integration](docs/development/roadmap.md#secureyeoman-integration-complete) for full status.
 
 ### Quick setup
 
@@ -160,7 +160,7 @@ AGNOSTIC_URL=http://127.0.0.1:8000
 AGNOSTIC_API_KEY=your-api-key      # preferred (P2 implemented)
 ```
 
-### Available MCP tools
+### Available MCP tools (25 total)
 
 | Tool | Purpose |
 |------|---------|
@@ -173,7 +173,15 @@ AGNOSTIC_API_KEY=your-api-key      # preferred (P2 implemented)
 | `agnostic_generate_report` | Generate exec/security/perf report |
 | `agnostic_submit_qa` | Submit a QA task (REST, webhook-ready) |
 | `agnostic_task_status` | Poll task status |
-| `agnostic_delegate_a2a` | Delegate via A2A protocol (requires P8) |
+| `agnostic_delegate_a2a` | Delegate via A2A protocol |
+| `agnostic_session_diff` | Compare two sessions |
+| `agnostic_structured_results` | Structured test execution results |
+| `agnostic_quality_trends` | Quality trend analysis |
+| `agnostic_security_findings` | Security scan results |
+| `agnostic_qa_orchestrate` | Full QA orchestration |
+| `agnostic_quality_dashboard` | Quality dashboard widget |
+
+Plus 9 `agnostic_proxy_*` tools for passthrough access to sessions, tasks, agents, reports, alerts, and LLM gateway.
 
 See the [Roadmap](docs/development/roadmap.md) for pending work and the [Changelog](docs/project/changelog.md) for completed work.
 
@@ -187,4 +195,4 @@ MIT License - see [LICENSE](LICENSE) file.
 
 ---
 
-*Last Updated: 2026-03-05* | [Documentation](docs/README.md) | [Changelog](docs/project/changelog.md) | [Roadmap](docs/development/roadmap.md)
+*Last Updated: 2026-03-08* | [Documentation](docs/README.md) | [Changelog](docs/project/changelog.md) | [Roadmap](docs/development/roadmap.md)

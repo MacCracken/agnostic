@@ -185,6 +185,9 @@ def _verify_webhook_signature(body: bytes, signature_header: str | None) -> bool
     If a secret IS configured, the signature MUST be present and valid.
     """
     if not YEOMAN_WEBHOOK_SECRET:
+        logger.warning(
+            "Webhook signature verification disabled — YEOMAN_WEBHOOK_SECRET not set"
+        )
         return True  # No secret configured — skip verification
 
     if not signature_header:

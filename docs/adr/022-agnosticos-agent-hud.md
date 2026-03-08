@@ -1,6 +1,6 @@
 # ADR-022: AGNOS OS Phase 2 - Agent HUD Registration
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-03-02
 **Authors**: Agnostic team
 

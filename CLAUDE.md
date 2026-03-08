@@ -9,17 +9,17 @@ AI assistant guidance for Claude Code. Full project documentation lives in [docs
 cp .env.example .env             # configure OPENAI_API_KEY, RABBITMQ_USER, RABBITMQ_PASSWORD
 ./scripts/build-docker.sh --base-only   # one-time base build (~5 min)
 ./scripts/build-docker.sh --agents-only # subsequent rebuilds (~30 sec)
-docker-compose up -d
+docker compose up -d
 
 # Tests
-pytest tests/unit/ -v
-python run_tests.py --mode all --env mock
+.venv/bin/python -m pytest tests/unit/ -v
+.venv/bin/python run_tests.py --mode all --env mock
 
 # Code quality
-ruff check agents/ config/ shared/ webgui/
-ruff format agents/ config/ shared/ webgui/
-mypy agents/ config/ shared/
-bandit -r agents/ config/ shared/
+.venv/bin/ruff check agents/ config/ shared/ webgui/
+.venv/bin/ruff format agents/ config/ shared/ webgui/
+.venv/bin/mypy agents/ config/ shared/
+.venv/bin/bandit -r agents/ config/ shared/ webgui/
 ```
 
 ## Key Files
@@ -28,9 +28,9 @@ bandit -r agents/ config/ shared/
 |---------|------|
 | REST API endpoints | `webgui/api.py` |
 | Chainlit app + middleware | `webgui/app.py` |
-| JWT + OAuth2 + API key auth | `webgui/auth.py` |
+| JWT + OAuth2 + API key auth | `webgui/auth/` (package) |
 | Agent registry (plugin arch) | `config/agent_registry.py` |
-| LLM routing | `config/universal_llm_adapter.py` |
+| LLM routing | `config/model_manager.py` |
 | Tool LLM calls (litellm) | `config/llm_integration.py` |
 | Provider config | `config/models.json` |
 | Resilience primitives | `shared/resilience.py` |
@@ -51,4 +51,4 @@ bandit -r agents/ config/ shared/
 | ADRs | [docs/adr/](docs/adr/) |
 
 ## currentDate
-Today's date is 2026-02-28.
+Today's date is 2026-03-08.

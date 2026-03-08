@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from webgui.auth.models import AuthProvider, AuthToken, Permission, User, UserRole
 
-SECRET = "test-secret-key"
+SECRET = "test-secret-key-minimum-32-bytes!"
 
 
 def _make_user(**overrides):

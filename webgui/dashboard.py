@@ -121,7 +121,10 @@ class DashboardManager:
             )
 
             for key in session_keys:
-                session_id = key.decode().split(":")[1]
+                parts = key.decode(errors="replace").split(":")
+                if len(parts) < 2:
+                    continue
+                session_id = parts[1]
                 session_data = self.redis_client.get(key)
 
                 if session_data:
@@ -177,7 +180,10 @@ class DashboardManager:
             agent_keys = list(self.redis_client.scan_iter("agent:*:status", count=200))
 
             for key in agent_keys:
-                agent_name = key.decode().split(":")[1]
+                parts = key.decode(errors="replace").split(":")
+                if len(parts) < 2:
+                    continue
+                agent_name = parts[1]
                 status_data = self.redis_client.get(key)
 
                 if status_data:

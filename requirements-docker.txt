@@ -60,7 +60,6 @@ onnxruntime>=1.18.0
 
 # --- Scheduling / infra ---
 APScheduler>=3.10.0
-kubernetes>=29.0.0
 
 # --- Serialization / config ---
 pydantic>=2.10.0

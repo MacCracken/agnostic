@@ -507,20 +507,23 @@ async def main():
     async def redis_task_listener():
         """Listen for tasks from Redis pub/sub"""
         pubsub = agent.redis_client.pubsub()
-        pubsub.subscribe("performance:tasks")
+        try:
+            pubsub.subscribe("performance:tasks")
 
-        logger.info("Performance Redis task listener started")
+            logger.info("Performance Redis task listener started")
 
-        for message in pubsub.listen():
-            if message["type"] == "message":
-                try:
-                    task_data = json.loads(message["data"])
-                    result = await agent.run_performance_suite(task_data)
-                    logger.info(
-                        f"Performance task completed: {result.get('suite_type', 'unknown')}"
-                    )
-                except Exception as e:
-                    logger.error(f"Redis task processing failed: {e}")
+            for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        task_data = json.loads(message["data"])
+                        result = await agent.run_performance_suite(task_data)
+                        logger.info(
+                            f"Performance task completed: {result.get('suite_type', 'unknown')}"
+                        )
+                    except Exception as e:
+                        logger.error(f"Redis task processing failed: {e}")
+        finally:
+            pubsub.close()
 
     import threading
 

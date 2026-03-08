@@ -108,7 +108,10 @@ class HistoryManager:
             session_keys = self.redis_client.keys("session:*:info")
 
             for key in session_keys:
-                session_id = key.decode().split(":")[1]
+                parts = key.decode(errors="replace").split(":")
+                if len(parts) < 2:
+                    continue
+                session_id = parts[1]
                 session_data = self.redis_client.get(key)
 
                 if session_data:

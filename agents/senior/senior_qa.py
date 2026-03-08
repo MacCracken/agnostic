@@ -1669,24 +1669,29 @@ async def main():
     async def redis_task_listener():
         """Listen for tasks from Redis pub/sub"""
         pubsub = senior_agent.redis_client.pubsub()
-        pubsub.subscribe("senior_qa:tasks")
+        try:
+            pubsub.subscribe("senior_qa:tasks")
 
-        logger.info("Senior QA Redis task listener started")
+            logger.info("Senior QA Redis task listener started")
 
-        for message in pubsub.listen():
-            if message["type"] == "message":
-                try:
-                    task_data = json.loads(message["data"])
-                    logger.info(
-                        f"Received task via Redis: {task_data.get('scenario', {}).get('name', 'Unknown')}"
-                    )
+            for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        task_data = json.loads(message["data"])
+                        logger.info(
+                            f"Received task via Redis: {task_data.get('scenario', {}).get('name', 'Unknown')}"
+                        )
 
-                    # Process task asynchronously
-                    result = await senior_agent.handle_complex_scenario(task_data)
-                    logger.info(f"Task completed: {result.get('status', 'unknown')}")
+                        # Process task asynchronously
+                        result = await senior_agent.handle_complex_scenario(task_data)
+                        logger.info(
+                            f"Task completed: {result.get('status', 'unknown')}"
+                        )
 
-                except Exception as e:
-                    logger.error(f"Redis task processing failed: {e}")
+                    except Exception as e:
+                        logger.error(f"Redis task processing failed: {e}")
+        finally:
+            pubsub.close()
 
     # Run both Celery worker and Redis listener
     import threading

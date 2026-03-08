@@ -48,7 +48,7 @@ class TenantUserInvite(BaseModel):
 @router.get("/tenants")
 async def list_tenants(
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
 ):
     """List tenants (admin only)."""
@@ -207,7 +207,7 @@ async def delete_tenant(
 async def list_tenant_users(
     tenant_id: str,
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
 ):
     """List users in a tenant."""

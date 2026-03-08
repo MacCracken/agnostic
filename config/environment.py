@@ -73,13 +73,22 @@ class Config:
             redis_url = kwargs.get("url", self.redis_url)
             parsed = urlparse(redis_url)
 
+            host = parsed.hostname or self.redis_host
+            port = parsed.port or self.redis_port
+            db = int(parsed.path.lstrip("/") or self.redis_db)
+            password = parsed.password or self.redis_password
+
             redis_kwargs = {
-                "host": parsed.hostname or self.redis_host,
-                "port": parsed.port or self.redis_port,
-                "db": parsed.path.lstrip("/") if parsed.path else self.redis_db,
-                "password": parsed.password or self.redis_password,
+                "host": host,
+                "port": port,
+                "db": db,
+                "password": password,
                 "decode_responses": True,
                 "connection_pool": redis.ConnectionPool(
+                    host=host,
+                    port=port,
+                    db=db,
+                    password=password,
                     max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "50")),
                     retry_on_timeout=True,
                     socket_keepalive=True,
@@ -95,6 +104,10 @@ class Config:
                 "password": self.redis_password,
                 "decode_responses": True,
                 "connection_pool": redis.ConnectionPool(
+                    host=self.redis_host,
+                    port=self.redis_port,
+                    db=self.redis_db,
+                    password=self.redis_password,
                     max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "50")),
                     retry_on_timeout=True,
                     socket_keepalive=True,

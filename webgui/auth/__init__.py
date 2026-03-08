@@ -11,6 +11,7 @@ import os
 import secrets
 import sys
 from dataclasses import asdict
+from datetime import datetime as _dt
 from typing import Any
 
 # Add config path for imports
@@ -195,6 +196,12 @@ class AuthManager:
 
             user_dict = json.loads(user_data)
 
+            # Validate required fields to avoid KeyError on corrupt data
+            for field in ("user_id", "email", "name", "role", "auth_provider"):
+                if field not in user_dict:
+                    logger.warning("Corrupt user data in Redis: missing '%s'", field)
+                    return None
+
             return User(
                 user_id=user_dict["user_id"],
                 email=user_dict["email"],
@@ -203,12 +210,8 @@ class AuthManager:
                 auth_provider=AuthProvider(user_dict["auth_provider"]),
                 organization_id=user_dict.get("organization_id"),
                 team_id=user_dict.get("team_id"),
-                created_at=__import__("datetime").datetime.fromisoformat(
-                    user_dict["created_at"]
-                ),
-                last_login=__import__("datetime").datetime.fromisoformat(
-                    user_dict["last_login"]
-                )
+                created_at=_dt.fromisoformat(user_dict["created_at"]),
+                last_login=_dt.fromisoformat(user_dict["last_login"])
                 if user_dict.get("last_login")
                 else None,
                 is_active=user_dict.get("is_active", True),

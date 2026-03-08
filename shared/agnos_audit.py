@@ -73,7 +73,9 @@ class AgnosAuditForwarder:
 
         # Enforce hard cap on buffer size to prevent unbounded memory growth
         if len(self._buffer) >= self._MAX_BUFFER_SIZE:
-            dropped = len(self._buffer) - self._MAX_BUFFER_SIZE + self.batch_size
+            dropped = max(
+                1, len(self._buffer) - self._MAX_BUFFER_SIZE + self.batch_size
+            )
             self._buffer = self._buffer[dropped:]
             logger.warning(
                 "AGNOS audit buffer exceeded %d entries, dropped %d oldest events",

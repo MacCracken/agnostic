@@ -73,7 +73,6 @@ services:
     volumes:
       - ./agents:/app/agents
       - ./config:/app/config
-      - ./advanced_testing:/app/advanced_testing
       - ./logs:/app/logs
       - ./certs:/certs:ro
 

@@ -27,6 +27,12 @@ This directory contains Architecture Decision Records (ADRs) for the Agentic QA 
 | [ADR-019](019-a2a-protocol.md) | A2A Protocol Integration | Accepted |
 | [ADR-020](020-kubernetes-production-readiness.md) | Kubernetes Production Readiness | Accepted |
 | [ADR-021](021-agnosticos-integration.md) | AGNOS OS Integration | Proposed |
+| [ADR-022](022-agnosticos-agent-hud.md) | AGNOS OS Phase 2 — Agent HUD Registration | Accepted |
+| [ADR-023](023-yeoman-websocket-bridge.md) | YEOMAN MCP Bridge WebSocket Support | Accepted |
+| [ADR-024](024-structured-result-schemas.md) | Structured Result Schemas for YEOMAN | Accepted |
+| [ADR-025](025-test-result-persistence.md) | Test Result Persistence (PostgreSQL) | Accepted |
+| [ADR-026](026-scheduled-report-enhancements.md) | Scheduled Report Enhancements — Email & Persistent Job Store | Accepted |
+| [ADR-027](027-audit-logging-agent-metrics.md) | Audit Logging & Agent Metrics Dashboard | Accepted |
 
 ## ADR Template
 

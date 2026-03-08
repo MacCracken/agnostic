@@ -100,7 +100,7 @@ class LLMIntegrationService:
                 )
 
                 content = str(response.choices[0].message.content).strip()
-                if content.startswith("```json"):
+                if content.startswith("```json") and content.endswith("```"):
                     content = content[7:-3].strip()
 
                 parsed = json.loads(content)

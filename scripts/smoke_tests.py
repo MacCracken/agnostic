@@ -32,7 +32,12 @@ def test_redis_connection() -> bool:
     """Test Redis connection."""
     try:
         import redis
-        client = redis.Redis(host='localhost', port=6379, db=0, socket_connect_timeout=5)
+        client = redis.Redis(
+            host=os.getenv('REDIS_HOST', 'localhost'),
+            port=int(os.getenv('REDIS_PORT', '6379')),
+            db=0,
+            socket_connect_timeout=5,
+        )
         client.ping()
         print("✓ Redis connection test passed")
         return True

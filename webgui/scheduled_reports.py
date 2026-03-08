@@ -261,7 +261,7 @@ class ScheduledReportManager:
         logger.info("Using Redis job store")
         return {
             "default": RedisJobStore(
-                host=os.getenv("REDIS_HOST", "localhost"),
+                host=os.getenv("REDIS_HOST", "redis"),
                 port=int(os.getenv("REDIS_PORT", "6379")),
                 db=int(os.getenv("REDIS_SCHEDULER_DB", "1")),
                 prefix="scheduled_reports",

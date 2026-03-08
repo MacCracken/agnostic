@@ -5,7 +5,7 @@
 The WebGUI exposes a Chainlit-based chat interface **and** a full REST API for machine-to-machine access. All REST routes are mounted under `/api`.
 
 - **Base URL (local):** `http://localhost:8000`
-- **Framework:** Chainlit 1.1.304 + FastAPI
+- **Framework:** Chainlit 2.x + FastAPI
 - **Authentication:** `Authorization: Bearer <JWT>` or `X-API-Key: <key>`
 - **Interactive docs:** `http://localhost:8000/docs` (Swagger UI), `/redoc`
 - **OpenAPI schema:** `http://localhost:8000/openapi.json`

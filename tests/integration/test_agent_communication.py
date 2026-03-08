@@ -194,7 +194,7 @@ class TestRedisCommunication:
         """Test Redis connection if Redis is available"""
         try:
             # Try to connect to Redis (might not be available in CI)
-            redis_client = redis.Redis(host='localhost', port=6379, db=0, socket_connect_timeout=2)
+            redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=int(os.getenv('REDIS_PORT', '6379')), db=0, socket_connect_timeout=2)
             redis_client.ping()
             
             # If we get here, Redis is available
@@ -202,13 +202,13 @@ class TestRedisCommunication:
             
         except (redis.ConnectionError, redis.TimeoutError, socket.timeout):
             pytest.skip("Redis not available for integration testing")
-        except:
+        except Exception:
             pytest.skip("Redis not configured for testing")
 
     def test_redis_pubsub_basic(self):
         """Test basic Redis pub/sub functionality"""
         try:
-            redis_client = redis.Redis(host='localhost', port=6379, db=0, socket_connect_timeout=2)
+            redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=int(os.getenv('REDIS_PORT', '6379')), db=0, socket_connect_timeout=2)
             
             # Test pub/sub
             pubsub = redis_client.pubsub()

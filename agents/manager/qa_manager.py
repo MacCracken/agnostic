@@ -39,7 +39,15 @@ class TestPlanDecompositionTool(BaseTool):
         try:
             scenarios = llm_service.generate_test_scenarios(requirements)
             if asyncio.iscoroutine(scenarios):
-                scenarios = asyncio.run(scenarios)
+                try:
+                    asyncio.get_running_loop()
+                    # Event loop already running — run coroutine in a new thread
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        scenarios = pool.submit(asyncio.run, scenarios).result()
+                except RuntimeError:
+                    scenarios = asyncio.run(scenarios)
             logger.info(f"Generated {len(scenarios)} test scenarios using LLM")
             return scenarios
         except Exception as e:
@@ -57,7 +65,14 @@ class TestPlanDecompositionTool(BaseTool):
         try:
             criteria = llm_service.extract_acceptance_criteria(requirements)
             if asyncio.iscoroutine(criteria):
-                criteria = asyncio.run(criteria)
+                try:
+                    asyncio.get_running_loop()
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        criteria = pool.submit(asyncio.run, criteria).result()
+                except RuntimeError:
+                    criteria = asyncio.run(criteria)
             logger.info(f"Generated {len(criteria)} acceptance criteria using LLM")
             return criteria
         except Exception as e:
@@ -74,7 +89,14 @@ class TestPlanDecompositionTool(BaseTool):
         try:
             risks = llm_service.identify_test_risks(requirements)
             if asyncio.iscoroutine(risks):
-                risks = asyncio.run(risks)
+                try:
+                    asyncio.get_running_loop()
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        risks = pool.submit(asyncio.run, risks).result()
+                except RuntimeError:
+                    risks = asyncio.run(risks)
             logger.info(f"Identified {len(risks)} test risks using LLM")
             return risks
         except Exception as e:
@@ -490,72 +512,75 @@ async def main():
     async def redis_task_listener():
         """Listen for tasks from Redis pub/sub"""
         pubsub = manager.redis_client.pubsub()
-        pubsub.subscribe("qa_manager:tasks")
+        try:
+            pubsub.subscribe("qa_manager:tasks")
 
-        logger.info("QA Manager Redis task listener started")
+            logger.info("QA Manager Redis task listener started")
 
-        for message in pubsub.listen():
-            if message["type"] == "message":
-                try:
-                    task_data = json.loads(message["data"])
-                    task_type = task_data.get("task_type", "requirements")
+            for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        task_data = json.loads(message["data"])
+                        task_type = task_data.get("task_type", "requirements")
 
-                    if task_type == "requirements":
-                        requirements = task_data.get("requirements", {})
-                        logger.info(
-                            f"Processing requirements: {requirements.get('title', 'Unknown')}"
-                        )
-                        await manager.process_requirements(requirements)
-                    elif task_type == "session_status":
-                        session_id = task_data.get("session_id")
-                        manager.get_session_status(session_id)
-                    else:
-                        logger.warning(f"Unknown task type: {task_type}")
-                        continue
+                        if task_type == "requirements":
+                            requirements = task_data.get("requirements", {})
+                            logger.info(
+                                f"Processing requirements: {requirements.get('title', 'Unknown')}"
+                            )
+                            await manager.process_requirements(requirements)
+                        elif task_type == "session_status":
+                            session_id = task_data.get("session_id")
+                            manager.get_session_status(session_id)
+                        else:
+                            logger.warning(f"Unknown task type: {task_type}")
+                            continue
 
-                    logger.info("Task completed successfully")
+                        logger.info("Task completed successfully")
 
-                except Exception as e:
-                    logger.error(f"Redis task processing failed: {e}")
+                    except Exception as e:
+                        logger.error(f"Redis task processing failed: {e}")
+        finally:
+            pubsub.close()
 
     # Monitor agent coordination and orchestration
     async def orchestration_monitor():
         """Monitor and coordinate between agents"""
         logger.info("QA Manager orchestration monitor started")
 
-        while True:
-            try:
-                # Check for completed tasks and coordinate next steps
-                # Monitor Redis for agent notifications
-                pubsub = manager.redis_client.pubsub()
-                pubsub.psubscribe("manager:*:notifications")
+        pubsub = manager.redis_client.pubsub()
+        pubsub.psubscribe("manager:*:notifications")
 
-                for message in pubsub.listen():
-                    if message["type"] == "pmessage":
-                        try:
-                            notification = json.loads(message["data"])
-                            session_id = notification.get("session_id")
-                            agent = notification.get("agent")
+        try:
+            while True:
+                try:
+                    for message in pubsub.listen():
+                        if message["type"] == "pmessage":
+                            try:
+                                notification = json.loads(message["data"])
+                                session_id = notification.get("session_id")
+                                agent = notification.get("agent")
 
-                            logger.info(
-                                f"Received notification from {agent} for session {session_id}"
-                            )
+                                logger.info(
+                                    f"Received notification from {agent} for session {session_id}"
+                                )
 
-                            # Trigger next steps based on agent completion
-                            await manager._coordinate_next_steps(
-                                session_id, notification
-                            )
+                                await manager._coordinate_next_steps(
+                                    session_id, notification
+                                )
 
-                        except Exception as e:
-                            logger.error(
-                                f"Orchestration notification processing failed: {e}"
-                            )
+                            except Exception as e:
+                                logger.error(
+                                    f"Orchestration notification processing failed: {e}"
+                                )
 
-                await asyncio.sleep(5)  # Brief pause before next monitoring cycle
+                    await asyncio.sleep(5)
 
-            except Exception as e:
-                logger.error(f"Orchestration monitor error: {e}")
-                await asyncio.sleep(10)  # Wait longer on error
+                except Exception as e:
+                    logger.error(f"Orchestration monitor error: {e}")
+                    await asyncio.sleep(10)
+        finally:
+            pubsub.close()
 
     # Run both Celery worker and Redis listeners
     import threading

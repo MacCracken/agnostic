@@ -2495,33 +2495,36 @@ async def main():
     async def redis_task_listener():
         """Listen for tasks from Redis pub/sub"""
         pubsub = analyst.redis_client.pubsub()
-        pubsub.subscribe("qa_analyst:tasks")
+        try:
+            pubsub.subscribe("qa_analyst:tasks")
 
-        logger.info("QA Analyst Redis task listener started")
+            logger.info("QA Analyst Redis task listener started")
 
-        for message in pubsub.listen():
-            if message["type"] == "message":
-                try:
-                    task_data = json.loads(message["data"])
-                    task_type = task_data.get("task_type", "report")
+            for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        task_data = json.loads(message["data"])
+                        task_type = task_data.get("task_type", "report")
 
-                    if task_type == "security":
-                        result = await analyst.run_security_assessment(task_data)
-                    elif task_type == "performance":
-                        result = await analyst.profile_performance(task_data)
-                    elif task_type == "comprehensive_report":
-                        session_id = task_data.get("session_id")
-                        result = await analyst.generate_comprehensive_report(
-                            str(session_id)
+                        if task_type == "security":
+                            result = await analyst.run_security_assessment(task_data)
+                        elif task_type == "performance":
+                            result = await analyst.profile_performance(task_data)
+                        elif task_type == "comprehensive_report":
+                            session_id = task_data.get("session_id")
+                            result = await analyst.generate_comprehensive_report(
+                                str(session_id)
+                            )
+                        else:
+                            result = await analyst.analyze_and_report(task_data)
+
+                        logger.info(
+                            f"Analyst task completed: {result.get('status', 'unknown')}"
                         )
-                    else:
-                        result = await analyst.analyze_and_report(task_data)
-
-                    logger.info(
-                        f"Analyst task completed: {result.get('status', 'unknown')}"
-                    )
-                except Exception as e:
-                    logger.error(f"Redis task processing failed: {e}")
+                    except Exception as e:
+                        logger.error(f"Redis task processing failed: {e}")
+        finally:
+            pubsub.close()
 
     import threading
 

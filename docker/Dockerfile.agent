@@ -15,8 +15,6 @@ COPY --chown=appuser:appuser VERSION ./VERSION
 COPY --chown=appuser:appuser agents/ ./agents/
 COPY --chown=appuser:appuser config/ ./config/
 COPY --chown=appuser:appuser shared/ ./shared/
-COPY --chown=appuser:appuser advanced_testing/ ./advanced_testing/
-COPY --chown=appuser:appuser examples/ ./examples/
 
 # Default role (overridden by docker-compose environment or --build-arg)
 ARG AGENT_ROLE=manager
@@ -30,6 +28,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 COPY --chown=appuser:appuser docker/agent-entrypoint.sh /app/agent-entrypoint.sh
 LABEL org.opencontainers.image.source="https://github.com/MacCracken/agnostic"
 LABEL org.opencontainers.image.description="Agnostic QA Platform - agent"
-LABEL org.opencontainers.image.licenses="GPL-3.0"
+LABEL org.opencontainers.image.licenses="MIT"
 
 ENTRYPOINT ["/app/agent-entrypoint.sh"]

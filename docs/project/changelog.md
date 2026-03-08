@@ -71,7 +71,7 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ### Tests
 
-- **725 unit tests passing** (7 skipped) + 19 E2E tests
+- **725 unit tests passing** (7 skipped) + 24 E2E tests
 - Tests skip gracefully when optional deps (faker, prometheus_client, sqlalchemy) not installed
 
 ---

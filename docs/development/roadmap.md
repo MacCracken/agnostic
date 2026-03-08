@@ -55,15 +55,15 @@ Blocked on AGNOS base image availability.
 
 ---
 
-## Bugs — Docker Compose Integration (Found 2026-03-08)
+## Bugs — Docker Compose Integration (Found 2026-03-08, **Fixed** 2026-03-08)
 
-Issues discovered during SecureYeoman `--profile full-dev` integration testing with `ghcr.io/maccracken/agnostic-webgui:2026.3.8`.
+Issues discovered during SecureYeoman `--profile full-dev` integration testing — all resolved.
 
-| Issue | Severity | File(s) | Description |
-|-------|----------|---------|-------------|
-| Redis `localhost` hardcode | **High** | Health check + task submission | `REDIS_URL` env var is set to `redis://agnostic-redis:6379/0` but health check and task creation still connect to `localhost:6379`. Causes 500 on POST `/api/tasks` and false `"redis": "error"` in `/health` response when running in Docker Compose |
-| OpenAPI generation crash | Medium | `webgui/app.py` | `OAuth2PasswordBearerWithCookie` missing `.model` attribute — `AttributeError` on `/openapi.json` endpoint. FastAPI / Python 3.13 compatibility issue |
-| RabbitMQ health check noise | Low | `webgui/app.py` | Health endpoint attempts RabbitMQ connection even when workers profile is not active. Logs `[Errno -2] Name or service not known` every 30s. Should skip RabbitMQ check when `RABBITMQ_URL` is unset |
+| Issue | Severity | File(s) | Status |
+|-------|----------|---------|--------|
+| Redis `localhost` hardcode | **High** | `config/environment.py` | **Fixed** — `ConnectionPool` now receives host/port/db/password matching parsed `REDIS_URL` |
+| OpenAPI generation crash | Medium | `webgui/app.py` | **Fixed** — monkey-patch adds `.model` attribute to Chainlit's `OAuth2PasswordBearerWithCookie` |
+| RabbitMQ health check noise | Low | `webgui/app.py` | **Fixed** — skips RabbitMQ check when neither `RABBITMQ_URL` nor `RABBITMQ_HOST` is set |
 
 ---
 
@@ -92,4 +92,4 @@ Issues discovered during SecureYeoman `--profile full-dev` integration testing w
 
 ---
 
-*Last Updated: 2026-03-08 · Version: 2026.3.8 · Test count: 725 (unit) + 19 (e2e) · Backlog: 2 blocked items · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-08 · Version: 2026.3.8 · Test count: 725 (unit) + 24 (e2e) · Backlog: 2 blocked items · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

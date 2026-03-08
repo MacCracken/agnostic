@@ -99,40 +99,42 @@ def _fetch_oidc_config() -> dict[str, Any] | None:
         if _oidc_jwks is not None and (now - _oidc_jwks_fetched_at) < _OIDC_CACHE_TTL:
             return _oidc_jwks
 
-    try:
-        with _httpx.Client(timeout=10.0) as client:
-            # Fetch discovery document
-            disco_resp = client.get(_OIDC_DISCOVERY_URL)
-            disco_resp.raise_for_status()
-            disco = disco_resp.json()
+        # Hold lock during entire fetch to prevent duplicate concurrent fetches
+        try:
+            with _httpx.Client(timeout=10.0) as client:
+                # Fetch discovery document
+                disco_resp = client.get(_OIDC_DISCOVERY_URL)
+                disco_resp.raise_for_status()
+                disco = disco_resp.json()
 
-            jwks_uri = disco.get("jwks_uri")
-            if not jwks_uri:
-                logger.warning("OIDC discovery missing jwks_uri")
-                return None
+                jwks_uri = disco.get("jwks_uri")
+                if not jwks_uri:
+                    logger.warning("OIDC discovery missing jwks_uri")
+                    return None
 
-            # Fetch JWKS
-            jwks_resp = client.get(jwks_uri)
-            jwks_resp.raise_for_status()
-            jwks = jwks_resp.json()
+                # Fetch JWKS
+                jwks_resp = client.get(jwks_uri)
+                jwks_resp.raise_for_status()
+                jwks = jwks_resp.json()
 
-        with _oidc_lock:
             _oidc_jwks = jwks
             _oidc_jwks_fetched_at = time.monotonic()
             _oidc_issuer = disco.get("issuer")
 
-        logger.info(
-            "Fetched OIDC JWKS from %s (%d keys)",
-            jwks_uri,
-            len(jwks.get("keys", [])),
-        )
-        return jwks
+            logger.info(
+                "Fetched OIDC JWKS from %s (%d keys)",
+                jwks_uri,
+                len(jwks.get("keys", [])),
+            )
+            return jwks
 
-    except Exception as exc:
-        logger.warning(
-            "Failed to fetch OIDC configuration from %s: %s", _OIDC_DISCOVERY_URL, exc
-        )
-        return None
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch OIDC configuration from %s: %s",
+                _OIDC_DISCOVERY_URL,
+                exc,
+            )
+            return None
 
 
 def _validate_with_oidc(token: str) -> dict[str, Any] | None:

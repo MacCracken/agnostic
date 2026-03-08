@@ -62,7 +62,7 @@ class TestMetricsQuery(BaseModel):
 async def get_test_sessions(
     status: str | None = None,
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
 ):
     """Get test sessions."""
@@ -142,7 +142,7 @@ async def get_test_results(
     session_id: str | None = None,
     status: str | None = None,
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
 ):
     """Get test results."""

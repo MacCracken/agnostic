@@ -44,10 +44,8 @@ services:
       DATABASE_ENABLED: ${DATABASE_ENABLED:-true}
       ENVIRONMENT: production
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      ENABLE_AUTHENTICATION: "true"
-      ENABLE_RATE_LIMITING: "true"
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
-      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      WEBGUI_SECRET_KEY: ${WEBGUI_SECRET_KEY:?WEBGUI_SECRET_KEY must be set}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
 
   # --- Worker overrides (prod env vars) -------------------------------------
   qa-manager:

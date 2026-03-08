@@ -65,8 +65,8 @@ async def login(req: LoginRequest):
             )
     except HTTPException:
         raise
-    except Exception:
-        pass  # Allow login if Redis is unavailable
+    except Exception as e:
+        logger.warning("Login rate limiting unavailable (Redis): %s", e)
 
     user = await auth_manager.authenticate_user(email=req.email, password=req.password)
     if user is None:

@@ -19,7 +19,7 @@ class SessionCompareRequest(BaseModel):
 async def get_sessions(
     user_id: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
 ):
     from webgui.history import history_manager
