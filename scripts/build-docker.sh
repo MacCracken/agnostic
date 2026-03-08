@@ -46,12 +46,13 @@ build_base() {
     export DOCKER_BUILDKIT=1
     export COMPOSE_DOCKER_CLI_BUILD=1
     
-    # Build base image with BuildKit
+    # Build base image with BuildKit (--load ensures image is in local daemon store)
     docker build \
         --tag agnostic-qa-base:latest \
         --tag "agnostic-qa-base:${VERSION}" \
         --file docker/Dockerfile.base \
         --progress=plain \
+        --load \
         .
     
     echo -e "${GREEN}✓ Base image built successfully${NC}"
@@ -68,6 +69,7 @@ build_agents() {
         --tag "agnostic-agent:latest" \
         --tag "agnostic-agent:${VERSION}" \
         --file docker/Dockerfile.agent \
+        --load \
         .
 
     # Build webgui image
