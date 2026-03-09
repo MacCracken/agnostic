@@ -69,7 +69,7 @@ python -m webgui.app
 
 ```bash
 # Build the single image
-./scripts/build-docker.sh
+docker build -t agnostic:latest .
 
 # Production (on AGNOS host)
 docker compose up -d
@@ -90,18 +90,16 @@ docker compose logs -f agnostic
 
 ```bash
 # All tests with mocks (no external services needed)
-python run_tests.py --mode all --env mock
+.venv/bin/python -m pytest tests/ -v
 
 # Unit tests only
-python run_tests.py --mode unit
-pytest tests/unit/ -v
+.venv/bin/python -m pytest tests/unit/ -v
 
 # Integration tests (requires Docker services)
-python run_tests.py --mode integration --env docker
-pytest tests/integration/ -m integration
+.venv/bin/python -m pytest tests/integration/ -m integration
 
 # Coverage report
-python run_tests.py --mode coverage
+.venv/bin/python -m pytest --cov=agents --cov=webgui --cov=config
 ```
 
 **Test structure:**
@@ -262,7 +260,7 @@ The **Plugin Architecture** ([ADR-013](../adr/013-plugin-architecture.md)) means
 
 1. **Create `agents/<name>/`** — implement an agent class using `crewai.Agent`; extend `BaseTool` (from `shared.crewai_compat`) for custom tools.
 2. **Register in `config/team_config.json`** — add an entry with `role`, `celery_task`, `celery_queue`, and `redis_prefix` fields. `AgentRegistry` picks it up automatically.
-3. **Add worker service to `docker-compose.old-style.yml`** — use the `x-worker-common` anchor with `AGENT_ROLE: <name>`. All workers share the single `agnostic:latest` image.
+3. **Add worker service to `docker-compose.yml`** — use the `x-worker-common` anchor with `AGENT_ROLE: <name>`. All workers share the single `agnostic:latest` image.
 4. **Add K8s manifest** — add to `k8s/manifests/` or extend the Helm chart.
 
 The `AgentRegistry` in `config/agent_registry.py` routes tasks via `registry.route_task()` and the WebGUI welcome message regenerates dynamically from `registry.get_agents_for_team()`.

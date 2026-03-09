@@ -72,7 +72,7 @@ class AuthManager:
                     secret_key = f.read().strip()
                 if not secret_key:
                     raise ValueError("empty key file")
-            except (FileNotFoundError, ValueError):
+            except (FileNotFoundError, ValueError, PermissionError):
                 secret_key = secrets.token_urlsafe(32)
                 try:
                     with open(_dev_key_path, "w") as f:

@@ -12,7 +12,7 @@ For development without an AGNOS host, use `--profile dev` to spin up these serv
 
 ```bash
 # 1. Build the image
-./scripts/build-docker.sh
+docker build -t agnostic:latest .
 
 # 2. Configure
 cp .env.example .env
@@ -30,7 +30,7 @@ For development without an AGNOS host, use `--profile dev` to spin up redis and 
 docker compose --profile dev up -d
 ```
 
-For standalone deployment (no AGNOS at all), use `docker-compose.old-style.yml` which bundles all infrastructure including rabbitmq and workers.
+For standalone deployment (no AGNOS at all), the same `docker-compose.yml` handles everything — embedded services run in production mode, and `--profile dev` adds local infrastructure containers.
 
 ## Architecture
 

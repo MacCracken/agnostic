@@ -1,14 +1,26 @@
 # Agnostic QA Platform
 #
-# Production (on AGNOS): hoosh, daimon, redis, postgres are system services.
+# Production (on AGNOS): embedded Redis + PostgreSQL inside the container.
 #
 #   docker compose up -d
 #
-# Dev: spin up redis + postgres as containers alongside agnostic.
-# Override REDIS_URL and DATABASE_URL to point at container service names.
+# Production with external HA services:
 #
-#   REDIS_URL=redis://redis:6379/0 \
-#   DATABASE_URL=postgresql+asyncpg://agnostic:secret@postgres:5432/agnostic \
+#   REDIS_URL=redis://my-redis-cluster:6379/0 \
+#   DATABASE_URL=postgresql+asyncpg://user:pass@my-pg:5432/agnostic \
+#   docker compose up -d
+#
+# Standalone with TLS (provided certs):
+#
+#   TLS_ENABLED=true TLS_CERT_PATH=/certs/cert.pem TLS_KEY_PATH=/certs/key.pem \
+#   docker compose up -d
+#
+# Standalone with auto-HTTPS (public domain):
+#
+#   TLS_ENABLED=true TLS_DOMAIN=qa.example.com docker compose up -d
+#
+# Dev: spin up redis + postgres as separate containers.
+#
 #   docker compose --profile dev up -d
 
 services:
@@ -19,15 +31,27 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+      - "${TLS_HTTPS_PORT:-443}:443"
+      - "${TLS_HTTP_PORT:-80}:80"
     environment:
-      REDIS_URL: ${REDIS_URL:-redis://localhost:6379/0}
+      # Embedded services: leave defaults for built-in Redis/Postgres.
+      # Set external URLs to skip embedded and use HA infrastructure.
+      REDIS_URL: ${REDIS_URL:-redis://127.0.0.1:6379/0}
+      DATABASE_URL: ${DATABASE_URL:-}
+      DATABASE_ENABLED: ${DATABASE_ENABLED:-true}
+      POSTGRES_USER: ${POSTGRES_USER:-agnostic}
+      POSTGRES_DB: ${POSTGRES_DB:-agnostic}
+      # TLS — set TLS_ENABLED=true for standalone HTTPS.
+      # Provide certs (TLS_CERT_PATH + TLS_KEY_PATH) or a domain (TLS_DOMAIN) for auto-HTTPS.
+      TLS_ENABLED: ${TLS_ENABLED:-false}
+      TLS_CERT_PATH: ${TLS_CERT_PATH:-}
+      TLS_KEY_PATH: ${TLS_KEY_PATH:-}
+      TLS_DOMAIN: ${TLS_DOMAIN:-}
       AGNOSTIC_API_KEY: ${AGNOSTIC_API_KEY:-}
       YEOMAN_A2A_ENABLED: ${YEOMAN_A2A_ENABLED:-true}
       MCP_SERVER_ENABLED: ${MCP_SERVER_ENABLED:-true}
       WEBGUI_HOST: "0.0.0.0"
       WEBGUI_PORT: "8000"
-      DATABASE_URL: ${DATABASE_URL:-}
-      DATABASE_ENABLED: ${DATABASE_ENABLED:-false}
       # LLM Gateway (hoosh) — AGNOS system service
       AGNOS_LLM_GATEWAY_ENABLED: ${AGNOS_LLM_GATEWAY_ENABLED:-true}
       AGNOS_LLM_GATEWAY_URL: ${AGNOS_LLM_GATEWAY_URL:-http://localhost:8088}
@@ -57,6 +81,8 @@ services:
       - ./agents:/app/agents
       - ./config:/app/config
       - ./logs:/app/logs
+      - ./certs:/app/certs:ro
+      - agnostic_data:/data
     logging:
       driver: "json-file"
       options:
@@ -79,7 +105,8 @@ services:
 
   # ---------------------------------------------------------------------------
   # Dev infrastructure (--profile dev)
-  # On AGNOS these are system services; in dev we containerize them.
+  # Separate containers for isolated development and testing.
+  # Override REDIS_URL and DATABASE_URL to point at these services.
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
@@ -127,5 +154,6 @@ networks:
     driver: bridge
 
 volumes:
+  agnostic_data:
   redis_data:
   postgres_data:

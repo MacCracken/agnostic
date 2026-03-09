@@ -22,20 +22,20 @@ class TestDataOrganizationReportingTool:
         assert tool.name == "Data Organization & Reporting"
         assert "Aggregates test results" in tool.description
 
-    @patch('qa_analyst.redis.Redis')
-    def test_run_with_valid_data(self, mock_redis_class, sample_test_results):
+    @patch('config.environment.config.get_redis_client')
+    def test_run_with_valid_data(self, mock_get_redis, sample_test_results):
         """Test _run method with valid sample data"""
         # Setup mock Redis client
         mock_redis = Mock()
-        mock_redis_class.return_value = mock_redis
-        
+        mock_get_redis.return_value = mock_redis
+
         # Mock the method calls that would interact with Redis
         mock_redis.lrange.side_effect = [
             ['{"agent": "senior", "status": "passed"}'],
             ['{"agent": "junior", "status": "failed"}']
         ]
         mock_redis.hgetall.return_value = {}
-        
+
         tool = DataOrganizationReportingTool()
         result = tool._run("test-session-123", sample_test_results)
         
@@ -130,14 +130,15 @@ class TestDataOrganizationReportingTool:
 
     def test_run_with_empty_data(self):
         """Test _run with empty results"""
-        with patch('qa_analyst.redis.Redis') as mock_redis_class:
+        with patch('config.environment.config.get_redis_client') as mock_get_redis:
             mock_redis = Mock()
-            mock_redis_class.return_value = mock_redis
+            mock_get_redis.return_value = mock_redis
             mock_redis.lrange.return_value = []
-            
+            mock_redis.hgetall.return_value = {}
+
             tool = DataOrganizationReportingTool()
             result = tool._run("empty-session", {})
-            
+
             # Should still return valid structure
             assert "findings" in result
             assert "metrics" in result

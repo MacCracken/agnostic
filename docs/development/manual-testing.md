@@ -34,8 +34,9 @@ ENVIRONMENT=development
 ### Services running
 
 ```bash
-docker compose -f docker-compose.old-style.yml --profile workers up -d
-docker compose -f docker-compose.old-style.yml ps   # all services should show "Up"
+docker compose up -d
+docker compose --profile dev up -d   # adds redis + postgres containers for local dev
+docker compose ps   # all services should show "Up"
 ```
 
 ### Test tools
@@ -753,7 +754,7 @@ docker compose up -d
 
 # Reset to a known good build
 docker compose down -v
-./scripts/build-docker.sh
+docker build -t agnostic:latest .
 docker compose up -d
 ```
 

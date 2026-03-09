@@ -7,12 +7,13 @@ We welcome contributions! This document provides guidelines for developers who w
 1. **Fork and Clone**
    ```bash
    git clone <your-fork>
-   cd agentic-qa
+   cd agnostic
    ```
 
 2. **Install Dependencies**
    ```bash
-   pip install -e .[dev,test,web,ml,browser]
+   python -m venv .venv
+   .venv/bin/pip install -r requirements.txt
    ```
 
 3. **Environment Setup**
@@ -44,22 +45,19 @@ We welcome contributions! This document provides guidelines for developers who w
 
 ### Running Tests
 ```bash
-# All tests
-python run_tests.py --mode all
+# Unit tests
+.venv/bin/python -m pytest tests/unit/ -q
 
-# Unit tests only
-pytest tests/unit/ -m unit
+# E2E tests (requires running containers)
+.venv/bin/python -m pytest tests/e2e/ -q
 
-# Integration tests
-pytest tests/integration/ -m integration
-
-# Coverage report
-pytest --cov=agents --cov=webgui --cov=config
+# With coverage
+.venv/bin/python -m pytest tests/unit/ --cov=agents --cov=webgui --cov=config
 ```
 
 ### Test Structure
-- `tests/unit/` - Unit tests for individual components
-- `tests/integration/` - Integration tests for agent communication
+- `tests/unit/` - Unit tests for individual components (816 tests)
+- `tests/e2e/` - End-to-end tests requiring Docker services (24 tests)
 
 ## Pull Request Process
 
@@ -77,8 +75,7 @@ pytest --cov=agents --cov=webgui --cov=config
    ```bash
    ruff check .
    ruff format .
-   mypy .
-   python run_tests.py --mode all
+   .venv/bin/python -m pytest tests/unit/ -q
    ```
 
 4. **Submit PR**
@@ -88,12 +85,11 @@ pytest --cov=agents --cov=webgui --cov=config
 
 ## Adding New Agents
 
-1. **Create Agent Directory**
+1. **Create Agent Module**
    ```
    agents/new_agent/
    ├── __init__.py
    ├── qa_new_agent.py
-   ├── Dockerfile
    └── README.md
    ```
 
@@ -103,8 +99,7 @@ pytest --cov=agents --cov=webgui --cov=config
    - Add configuration validation
 
 3. **Add Service Configuration**
-   - Update `docker-compose.yml`
-   - Add Kubernetes manifests
+   - Register in `config/agent_registry.py`
    - Update WebGUI routing
 
 4. **Add Tests**

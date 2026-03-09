@@ -155,7 +155,10 @@ _init_lock = asyncio.Lock()
 
 
 def get_database_url() -> str:
-    """Get database URL from environment or use default."""
+    """Get database URL from DATABASE_URL env var or build from components."""
+    url = os.getenv("DATABASE_URL")
+    if url:
+        return url
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     user = os.getenv("POSTGRES_USER", "postgres")

@@ -2,48 +2,47 @@
 
 ## Overview
 
-Get the Agentic QA Team System running in 5 minutes with this step-by-step guide.
+Get the Agentic QA Team System running in 5 minutes. The production image bundles Redis, PostgreSQL, and optionally Caddy TLS — no external infrastructure needed.
 
 ## Prerequisites
 
-- **Docker** 20.10+ and Docker Compose
+- **Docker** 20.10+ and Docker Compose v2
 - **4GB+ RAM** for parallel agent execution
-- **OpenAI API Key** for LLM capabilities
-- **Git** (optional, for cloning)
+- **LLM access**: OpenAI API key, or AGNOS LLM Gateway
 
-## Quick Start (Docker)
+## Quick Start
 
 ### 1. Clone and Setup
 
 ```bash
-# Clone repository
 git clone https://github.com/MacCracken/agnostic
 cd agnostic
-
-# Copy environment template
 cp .env.example .env
 ```
 
 ### 2. Configure Environment
 
-Edit `.env` and set your API key:
+Edit `.env` and set your LLM provider:
 
 ```bash
+# Option A: Direct API key
 OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o
-PRIMARY_MODEL_PROVIDER=openai
+
+# Option B: AGNOS LLM Gateway (no API keys needed in Agnostic)
+AGNOS_LLM_GATEWAY_ENABLED=true
+AGNOS_LLM_GATEWAY_URL=http://localhost:8088
 ```
 
-### 3. Launch Services
+### 3. Build and Launch
 
 ```bash
 # Build the image
-./scripts/build-docker.sh
+docker build -t agnostic:latest .
 
-# Production (on AGNOS host)
+# Production (embedded Redis + PostgreSQL)
 docker compose up -d
 
-# Or development (adds redis + postgres containers)
+# Or development (separate Redis + PostgreSQL containers)
 docker compose --profile dev up -d
 ```
 
@@ -55,16 +54,16 @@ docker compose --profile dev up -d
 # Check container status
 docker compose ps
 
-# View logs
-docker compose logs -f agnostic
-
 # Health check
 curl http://localhost:8000/health
+
+# View logs
+docker compose logs -f agnostic
 ```
 
 ## Architecture
 
-The system uses a 6-agent architecture. For full details, see the [Development Setup Guide](../development/setup.md#architecture).
+The system uses a 6-agent architecture with embedded Redis and PostgreSQL managed by supervisord. For full details, see the [Development Setup Guide](../development/setup.md#architecture).
 
 ## First Test Task
 
@@ -88,26 +87,17 @@ The system uses a 6-agent architecture. For full details, see the [Development S
 - **Security & Compliance Agent** validates OWASP compliance
 - **Performance & Resilience Agent** profiles response times
 
-Results are displayed in the WebGUI with comprehensive reports.
-
-## Development Setup
-
-For full local development setup (without Docker), environment variables, and advanced configuration, see the [Development Setup Guide](../development/setup.md).
-
 ## Running Tests
 
 ```bash
-# All tests with mocks
-python run_tests.py --mode all --env mock
+# Unit tests
+.venv/bin/python -m pytest tests/unit/ -q
 
-# Unit tests only
-python run_tests.py --mode unit
+# E2E tests (requires running containers)
+.venv/bin/python -m pytest tests/e2e/ -q
 
-# Integration tests (requires Docker)
-python run_tests.py --mode integration --env docker
-
-# With coverage report
-python run_tests.py --mode coverage
+# With coverage
+.venv/bin/python -m pytest tests/unit/ --cov=agents --cov=webgui --cov=config
 ```
 
 ## Monitoring
@@ -116,32 +106,25 @@ python run_tests.py --mode coverage
 # Health check
 curl http://localhost:8000/health
 
-# Agent status API
-curl http://localhost:8000/api/agents/status
+# Agent status
+curl http://localhost:8000/api/agents
 
 # Container logs
 docker compose logs -f agnostic
 
-# Kubernetes
-kubectl get pods -n agentic-qa
+# Supervisord process status
+docker exec agnostic supervisorctl status
 ```
 
-## Common Tasks
+## TLS (Standalone HTTPS)
 
-### Configure New LLM Provider
+```bash
+# With provided certs (place in ./certs/)
+TLS_ENABLED=true TLS_CERT_PATH=/app/certs/cert.pem TLS_KEY_PATH=/app/certs/key.pem \
+  docker compose up -d
 
-Edit `config/models.json`:
-
-```json
-{
-  "providers": {
-    "anthropic": {
-      "api_base": "https://api.anthropic.com",
-      "models": ["claude-3-opus-20240229"],
-      "auth": {"api_key": "${ANTHROPIC_API_KEY}"}
-    }
-  }
-}
+# With auto-HTTPS (public domain)
+TLS_ENABLED=true TLS_DOMAIN=qa.example.com docker compose up -d
 ```
 
 ## Troubleshooting
@@ -149,12 +132,11 @@ Edit `config/models.json`:
 ### Port Conflicts
 
 ```bash
-# Check what's using required ports
-netstat -tulpn | grep -E ':8000|:6379|:5672'
+# Check what's using port 8000
+ss -tlnp | grep 8000
 
-# Change ports in .env if needed
+# Change port in docker-compose.yml or .env
 WEBGUI_PORT=8001
-REDIS_PORT=6380
 ```
 
 ### LLM Errors
@@ -163,53 +145,30 @@ REDIS_PORT=6380
 # Verify API key is set
 echo $OPENAI_API_KEY
 
+# Or check AGNOS LLM Gateway
+curl http://localhost:8088/v1/health
+
 # Check logs for errors
 docker compose logs agnostic | grep -i error
 ```
 
-### Build Issues
+### Clean Rebuild
 
 ```bash
-# Clean and rebuild
 docker compose down -v
-docker system prune -a
-./scripts/build-docker.sh
+docker build --no-cache -t agnostic:latest .
+docker compose up -d
 ```
 
 ## Next Steps
 
-1. **Read the full documentation**:
-   - [Development Setup](../development/setup.md) - Development guidelines
-   - [Agent Specifications](../agents/index.md) - Agent architecture details
-   - [Docker Deployment](../deployment/docker-compose.md) - Deployment options
-   - [Kubernetes Deployment](../deployment/kubernetes.md) - K8s deployment
+- [Docker Deployment Guide](../deployment/docker-compose.md) — Production, TLS, HA, dev modes
+- [AGNOS Deployment](../deployment/agnos.md) — AGNOS-specific setup
+- [Development Setup](../development/setup.md) — Local development without Docker
+- [Agent Documentation](../agents/index.md) — Agent architecture details
+- [API Documentation](../api/webgui.md) — REST API reference
+- [Contributing](../development/contributing.md) — How to contribute
 
-2. **Review API documentation**:
-   - [Agent APIs](../api/agents.md)
-   - [WebGUI APIs](../api/webgui.md)
-   - [LLM Integration](../api/llm_integration.md)
+---
 
-3. **Explore advanced features**:
-   - Self-healing UI selectors
-   - Fuzzy verification
-   - Risk-based test prioritization
-   - Security compliance testing
-   - Performance profiling
-
-## Success Metrics
-
-Your system is working correctly when:
-
-- `docker compose ps` shows agnostic container healthy
-- WebGUI loads at http://localhost:8000
-- Test tasks complete with reports
-- LLM calls return structured responses
-- No error messages in logs
-
-## Additional Resources
-
-- [Architecture Decision Records (ADRs)](../adr/) - System design decisions
-- [Docker Build](../../docker/README.md) - Build system details
-- [Contributing Guidelines](../development/contributing.md) - How to contribute
-
-Welcome to the Agentic QA Team System!
+*Last Updated: 2026-03-09*

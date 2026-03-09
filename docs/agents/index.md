@@ -94,8 +94,8 @@ docker compose up -d
 # Development (adds redis + postgres containers)
 docker compose --profile dev up -d
 
-# Standalone with distributed workers
-docker compose -f docker-compose.old-style.yml --profile workers up -d
+# Standalone (same compose file handles everything)
+docker compose up -d
 ```
 
 ---

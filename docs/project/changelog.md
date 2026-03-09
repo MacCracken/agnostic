@@ -10,6 +10,36 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ---
 
+## [2026.3.9]
+
+### Added
+
+- **Embedded Redis** — `redis-server` installed in production image, managed by supervisord. Skipped when `REDIS_URL` points to an external host
+- **Embedded PostgreSQL 17** — auto-`initdb` on first run, skipped when `DATABASE_URL` points to an external host. `/data/postgres` persisted via Docker volume
+- **Caddy TLS reverse proxy** — production-grade TLS termination. Two modes: provided certs (`TLS_CERT_PATH`/`TLS_KEY_PATH`) or auto-HTTPS via ACME (`TLS_DOMAIN`). HTTP→HTTPS redirect, HSTS, security headers. Skipped when `TLS_ENABLED!=true`
+- **Supervisord process management** — `docker/supervisord.conf` manages Redis, PostgreSQL, Caddy, and Chainlit app with conditional autostart based on environment
+- **`DATABASE_URL` env var support** — `get_database_url()` in `shared/database/models.py` now checks `DATABASE_URL` first before building from individual `POSTGRES_*` components
+- **Certs volume mount** — `./certs:/app/certs:ro` in docker-compose, matching SecureYeoman's cert pattern
+
+### Fixed
+
+- **Auth `PermissionError` under supervisord** — `webgui/auth/__init__.py` now catches `PermissionError` when `appuser` cannot read `/root/.agnostic_dev_secret_key`; generates ephemeral key instead
+- **Flaky `test_qa_analyst_tools.py`** — tests were patching `qa_analyst.redis.Redis` but the tool uses `config.get_redis_client()` (cached singleton). Fixed by patching `config.environment.config.get_redis_client`
+- **Test warnings** — added `filterwarnings` to `pyproject.toml` to suppress third-party noise (crewai DeprecationWarning, aiohttp/asyncio ResourceWarning, importlib ImportWarning)
+
+### Changed
+
+- **`Dockerfile` rebuilt** — now installs `redis-server`, `postgresql-17`, `supervisor`, and `caddy`. Entrypoint changed from `CMD chainlit` to `ENTRYPOINT ["/app/docker/entrypoint.sh"]` (supervisord)
+- **`docker-compose.yml` updated** — `DATABASE_ENABLED` defaults to `true`, added `agnostic_data` volume for persistence, added TLS env vars (`TLS_ENABLED`, `TLS_CERT_PATH`, `TLS_KEY_PATH`, `TLS_DOMAIN`), exposed ports 80/443
+- **Test count** — 816 unit tests passing (was 725), 0 warnings (was 8)
+
+### Dependency Updates
+
+- **chromadb 1.1.1** — no longer blocked on Python 3.13; dropped pydantic v1 dependency, `requires-python: >=3.9` (no upper bound). Removed from Active Blockers in dependency-watch
+- **Python 3.14 blocker** — sole remaining blocker is crewai 1.10.1 `requires-python: <3.14`
+
+---
+
 ## [2026.3.8-1]
 
 ### Changed

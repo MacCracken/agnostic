@@ -1,48 +1,44 @@
 # Documentation Index
 
-Welcome to the Agentic QA Team System documentation. This directory contains comprehensive guides for deployment, development, and usage.
+Welcome to the Agentic QA Team System documentation.
 
-## Quick Navigation
+## Getting Started
+- [Quick Start Guide](getting-started/quick-start.md) — Get running in 5 minutes
 
-### Getting Started
-- [Quick Start Guide](getting-started/quick-start.md) - Get running in 5 minutes
+## Deployment
+- [Docker Compose](deployment/docker-compose.md) — Production, TLS, HA, and dev modes
+- [AGNOS Deployment](deployment/agnos.md) — Running on AGNOS with LLM Gateway
+- [Kubernetes](deployment/kubernetes.md) — Production K8s with Helm
 
-### Deployment
-- [Docker Compose Deployment](deployment/docker-compose.md) - Local and production Docker deployment
-- [Kubernetes Deployment](deployment/kubernetes.md) - Production Kubernetes deployment with Helm
+## Development
+- [Development Setup](development/setup.md) — Local environment setup
+- [Contributing](development/contributing.md) — How to contribute
+- [Manual Testing](development/manual-testing.md) — Smoke, integration & E2E test sweep
+- [Dependency Watch](development/dependency-watch.md) — Upstream blockers
 
-### Development
-- [Contributing Guidelines](development/contributing.md) - How to contribute to the project
-- [Development Setup](development/setup.md) - Local development environment setup
+## Architecture
+- [Agent Documentation](agents/index.md) — 6-agent architecture details
+- [ADR Index](adr/README.md) — 28 architecture decision records
 
-### Agents
-- [Agent Documentation](agents/index.md) - Complete agent architecture reference
+## API Reference
+- [WebGUI REST API](api/webgui.md) — Endpoints, auth, task submission
+- [A2A Protocol](api/a2a-protocol.md) — Agent-to-agent delegation
+- [Agent APIs](api/agents.md) — Agent status and communication
+- [LLM Integration](api/llm_integration.md) — LLM provider configuration
+- [Tenant Provisioning](api/tenant-provisioning.md) — Multi-tenant setup
 
-### Project
-- [Roadmap](project/roadmap.md) - Future plans and strategic direction
-- [Changelog](project/changelog.md) - Version history and changes
+## Security
+- [Security Policy](SECURITY.md) — Reporting vulnerabilities
+- [Security Assessment](security/assessment.md) — Security findings
 
-### Security
-- [Security Assessment](security/assessment.md) - Security findings and recommendations
+## Project
+- [Roadmap](development/roadmap.md) — Pending work and priorities
+- [Changelog](project/changelog.md) — Version history
 
-## External Documentation
-
-### API Documentation
-- [Agent APIs](api/agents.md)
-- [WebGUI APIs](api/webgui.md)
-- [Tenant Provisioning](api/tenant-provisioning.md)
-- [LLM Integration](api/llm_integration.md)
-
-### Architecture Decision Records
-- [ADR Index](adr/README.md) - System design decisions
-
-### Additional Guides
-- [Docker Build Optimization](../docker/README.md)
-- [Helm Chart](../k8s/helm/agentic-qa/README.md)
-
-### YEOMAN Integration
-- [Roadmap](development/roadmap.md) — pending work and priorities
+## Additional
+- [Docker Build](../docker/README.md) — Build optimization
+- [Helm Chart](../k8s/helm/agentic-qa/README.md) — K8s chart reference
 
 ---
 
-For the latest updates, see the [Changelog](project/changelog.md).
+*Version 2026.3.9* | [Changelog](project/changelog.md) | [Roadmap](development/roadmap.md)

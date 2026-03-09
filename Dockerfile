@@ -1,14 +1,19 @@
 # Agnostic QA Platform
 #
-# Single image for webgui (default) and distributed workers (via AGENT_ROLE).
+# Production image with embedded Redis + PostgreSQL (managed by supervisord).
+# Optional TLS termination via Caddy for standalone deployments.
+# External services can be used instead by setting REDIS_URL / DATABASE_URL.
 #
 # Build:
 #   docker build -t agnostic:latest .
 #
 # Run:
-#   docker compose up -d                          # webgui on AGNOS
-#   docker compose --profile dev up -d            # dev with infra containers
-#   docker compose --profile dev --profile workers up -d  # + workers
+#   docker compose up -d                          # production (embedded services)
+#   docker compose --profile dev up -d            # dev with separate containers
+#
+# TLS (standalone):
+#   TLS_ENABLED=true TLS_CERT_PATH=/certs/cert.pem TLS_KEY_PATH=/certs/key.pem docker compose up -d
+#   TLS_ENABLED=true TLS_DOMAIN=qa.example.com docker compose up -d   # auto-HTTPS
 
 FROM python:3.13-slim
 
@@ -32,7 +37,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
     # Health check
     netcat-openbsd \
+    # Embedded services (skipped at runtime if external URLs provided)
+    redis-server \
+    postgresql-17 postgresql-client-17 \
+    supervisor \
     && rm -rf /var/lib/apt/lists/* && apt-get clean
+
+# Caddy — production TLS reverse proxy (skipped at runtime if TLS_ENABLED!=true)
+RUN curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64" -o /usr/local/bin/caddy \
+    && chmod +x /usr/local/bin/caddy
 
 # Python dependencies
 COPY requirements-docker.txt /tmp/requirements.txt
@@ -48,6 +61,11 @@ USER appuser
 RUN playwright install chromium
 USER root
 
+# Persistent data directories for embedded services
+RUN mkdir -p /data/redis /data/postgres /data/caddy /var/log/supervisor \
+    && chown -R appuser:appuser /data/redis \
+    && chown -R postgres:postgres /data/postgres
+
 # Application code
 COPY --chown=appuser:appuser VERSION ./VERSION
 COPY --chown=appuser:appuser webgui/ ./webgui/
@@ -56,19 +74,29 @@ COPY --chown=appuser:appuser config/ ./config/
 COPY --chown=appuser:appuser shared/ ./shared/
 COPY --chown=appuser:appuser docker/agent-entrypoint.sh ./agent-entrypoint.sh
 
+# Supervisord config and entrypoint
+COPY docker/supervisord.conf /etc/supervisor/conf.d/agnostic.conf
+COPY docker/entrypoint.sh /app/docker/entrypoint.sh
+COPY docker/pg-init.sh /app/docker/pg-init.sh
+RUN chmod +x /app/docker/entrypoint.sh /app/docker/pg-init.sh
+
 # WebGUI defaults
 ENV CHAINLIT_HOST=0.0.0.0
 ENV CHAINLIT_PORT=8000
 
-USER appuser
+# Caddy data/config persistence
+ENV XDG_DATA_HOME=/data/caddy
+ENV XDG_CONFIG_HOME=/data/caddy/config
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-EXPOSE 8000
+EXPOSE 8000 443 80
 
 LABEL org.opencontainers.image.source="https://github.com/MacCracken/agnostic"
 LABEL org.opencontainers.image.description="Agnostic QA Platform"
 LABEL org.opencontainers.image.licenses="MIT"
 
-CMD ["chainlit", "run", "webgui/app.py", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/app/docker/entrypoint.sh"]

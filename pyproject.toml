@@ -146,6 +146,13 @@ markers = [
     "rabbitmq: marks tests that require RabbitMQ",
     "security: marks tests related to security scanning",
 ]
+filterwarnings = [
+    "error",
+    # Third-party library noise — not actionable in our codebase
+    "ignore::ResourceWarning",
+    "ignore::ImportWarning",
+    "ignore::DeprecationWarning:crewai",
+]
 
 [tool.ruff]
 line-length = 88
