@@ -75,7 +75,7 @@ Agnostic already has client modules for all AGNOS services. This section tracks 
 
 | Item | Effort | Status | Description |
 |------|--------|--------|-------------|
-| Migrate to AGNOS base image | 3 days | Blocked | Replace root `Dockerfile` with AGNOS Python base image once `.ark` packages are published |
+| Migrate to AGNOS base image | 3 days | Done | Root `Dockerfile` uses AGNOS Python base image |
 | Remove redundant middleware | 2 days | Not started | Post-migration: remove `RateLimitMiddleware`, `CorrelationIdMiddleware`, docker-compose resource limits (AGNOS handles these) |
 | Remove YEOMAN credential provisioning | 1 day | Not started | Post-migration: remove `config/credential_store.py`, MCP/A2A provisioning endpoints, `CREDENTIAL_PROVISIONING_ENABLED` env var, and related tests. All LLM calls route through AGNOS LLM Gateway. See [ADR-028](../adr/028-credential-provisioning.md) |
 
@@ -98,7 +98,7 @@ Issues discovered during SecureYeoman `--profile full-dev` integration testing �
 | Item | Blocker |
 |------|---------|
 | Python 3.14 support | crewai `requires-python <3.14`, chromadb pydantic v1 — see [Dependency Watch](dependency-watch.md) |
-| AGNOS base image migration | `.ark` Python packages not yet published — see AGNOS roadmap (Docker Base Images section) |
+| ~~AGNOS base image migration~~ | Done — migrated to AGNOS base image |
 
 ---
 
