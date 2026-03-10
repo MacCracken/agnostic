@@ -9,7 +9,7 @@ to the appropriate agent capability handler.
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from webgui.routes.dependencies import get_current_user
@@ -61,7 +61,10 @@ _METHOD_TO_CAPABILITY: dict[str, str] = {
 
 
 @router.post("/handle", response_model=RpcCallResponse)
-async def handle_rpc_call(request: RpcCallRequest) -> dict[str, Any]:
+async def handle_rpc_call(
+    request: RpcCallRequest,
+    _user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
     """Handle an inbound RPC call routed by daimon.
 
     Daimon forwards ``POST /v1/rpc/call`` requests to this endpoint when the
@@ -116,7 +119,7 @@ async def handle_rpc_call(request: RpcCallRequest) -> dict[str, Any]:
 
 
 @router.get("/methods")
-async def list_local_methods() -> dict[str, Any]:
+async def list_local_methods(_user: dict = Depends(get_current_user)) -> dict[str, Any]:
     """List RPC methods this Agnostic instance can handle."""
     return {
         "methods": list(_METHOD_TO_CAPABILITY.keys()),

@@ -337,10 +337,16 @@ class TestRpcHandlerRoute:
         except ImportError:
             pytest.skip("fastapi not available")
 
+        from webgui.routes.dependencies import get_current_user
         from webgui.routes.rpc import router
 
         app = FastAPI()
         app.include_router(router, prefix="/api")
+
+        async def override_auth():
+            return {"user_id": "test-user", "role": "admin", "permissions": []}
+
+        app.dependency_overrides[get_current_user] = override_auth
 
         return TestClient(app)
 

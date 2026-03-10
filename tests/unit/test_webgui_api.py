@@ -81,13 +81,18 @@ class TestAuthEndpoints:
         resp = client.post("/api/auth/login", json={})
         assert resp.status_code == 422  # validation error
 
-    @patch("webgui.api.auth_manager")
-    def test_login_invalid_credentials(self, mock_auth, client):
-        mock_auth.authenticate_user = AsyncMock(return_value=None)
-        resp = client.post(
-            "/api/auth/login",
-            json={"email": "bad@example.com", "password": "wrong"},
-        )
+    def test_login_invalid_credentials(self, client):
+        mock_redis = MagicMock()
+        mock_redis.incr.return_value = 1
+        mock_redis.expire.return_value = True
+        mock_auth_manager = MagicMock()
+        mock_auth_manager.authenticate_user = AsyncMock(return_value=None)
+        with patch("config.environment.config.get_redis_client", return_value=mock_redis), \
+             patch("webgui.routes.auth.auth_manager", mock_auth_manager):
+            resp = client.post(
+                "/api/auth/login",
+                json={"email": "bad@example.com", "password": "wrong"},
+            )
         assert resp.status_code == 401
 
     def test_me_unauthenticated(self, client):

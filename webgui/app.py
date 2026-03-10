@@ -7,7 +7,6 @@ import sys
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,8 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# Correlation ID context var — available to all code in the request
-correlation_id_ctx: ContextVar[str | None] = ContextVar("correlation_id", default=None)
+from shared.context import correlation_id_ctx
 
 # Add config path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -719,81 +717,12 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
         ).send()
 
 
-# @cl.on_file_upload - Commented out due to Chainlit compatibility issue
-# async def on_file_upload(files: List[cl.File]) -> Dict[str, Any]:
-#     """Handle file uploads"""
-#     session_id = cl.user_session.get("session_id")
-#     gui_instance = cl.user_session.get("gui")
-#
-#     if not session_id or not gui_instance:
-#         await cl.Message(
-#             content="❌ Session error. Please restart the chat."
-#         ).send()
-#         return
-#
-#     for file in files:
-#         try:
-#             # Read file content
-#             content = file.content.decode('utf-8')
-#
-#             await cl.Message(
-#                 content=f"📄 Processing uploaded file: {file.name}"
-#             ).send()
-#
-#             # Parse requirements from file content
-#             requirements = {
-#                 "title": f"Testing from {file.name}",
-#                 "description": content[:1000] + "..." if len(content) > 1000 else content,
-#                 "business_goals": "Ensure quality based on uploaded document",
-#                 "constraints": "Requirements from uploaded file",
-#                 "priority": "high",
-#                 "submitted_by": "web_upload",
-#                 "file_name": file.name,
-#                 "submitted_at": datetime.now().isoformat()
-#             }
-#
-#             # Submit to QA Manager
-#             result = await gui_instance.submit_requirements(session_id, requirements)
-#
-#             if "error" in result:
-#                 await cl.Message(
-#                     content=f"❌ Error processing file: {result['error']}"
-#                 ).send()
-#             else:
-#                 await cl.Message(
-#                     content=f"✅ Successfully processed {file.name} and created test plan!"
-#                 ).send()
-#
-#                 # Show summary (similar to text input)
-#                 test_plan = result.get("test_plan", {})
-#                 response = f"📋 **Test Plan from {file.name}**\n\n"
-#
-#                 if test_plan.get("scenarios"):
-#                     response += "**Test Scenarios:**\n"
-#                     for scenario in test_plan["scenarios"][:5]:  # Show first 5
-#                         priority_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(scenario.get("priority"), "⚪")
-#                         response += f"{priority_emoji} **{scenario.get('name')}**\n"
-#
-#                 await cl.Message(content=response).send()
-#
-#         except Exception as e:
-#             await cl.Message(
-#                 content=f"❌ Error processing {file.name}: {str(e)}"
-#             ).send()
-
-
 @cl.on_chat_end
 async def on_chat_end() -> dict[str, Any]:
     """Clean up when chat ends"""
     session_id = cl.user_session.get("session_id")
     if session_id:
         logger.info(f"Ending session: {session_id}")
-
-
-# ---------------------------------------------------------------------------
-# Middleware removed — AGNOS handles correlation IDs, rate limiting, and
-# security headers at the gateway layer.  See roadmap post-migration cleanup.
-# ---------------------------------------------------------------------------
 
 
 from webgui.api import api_router  # noqa: E402
@@ -934,14 +863,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ("shared.agnos_rag_client", "agnos_rag"),
         ("shared.agnos_screen_client", "agnos_screen"),
         ("shared.agnos_recording_client", "agnos_recording"),
+        ("shared.agnos_memory", "agnos_memory"),
+        ("shared.agnos_reasoning", "agnos_reasoning"),
         ("shared.yeoman_mcp_server", "daimon_mcp_registration"),
     ]:
         try:
             mod = __import__(client_path, fromlist=[client_attr])
             client = getattr(mod, client_attr)
             await client.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to close %s.%s: %s", client_path, client_attr, e)
     logger.info("AGNOS clients closed")
 
     # Close AGNOS dashboard bridge (httpx client + periodic task)

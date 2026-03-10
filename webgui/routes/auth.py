@@ -3,7 +3,7 @@
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from webgui.auth import Permission, auth_manager
@@ -31,9 +31,6 @@ class LoginRequest(BaseModel):
 class RefreshRequest(BaseModel):
     refresh_token: str
 
-
-class LogoutRequest(BaseModel):
-    access_token: str
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -67,6 +64,10 @@ async def login(req: LoginRequest):
         raise
     except Exception as e:
         logger.warning("Login rate limiting unavailable (Redis): %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Service temporarily unavailable. Try again later.",
+        )
 
     user = await auth_manager.authenticate_user(email=req.email, password=req.password)
     if user is None:
@@ -94,8 +95,13 @@ async def refresh(req: RefreshRequest):
 
 
 @router.post("/auth/logout")
-async def logout(req: LogoutRequest, user: dict = Depends(get_current_user)):
-    success = await auth_manager.logout(user["user_id"], req.access_token)
+async def logout(request: Request, user: dict = Depends(get_current_user)):
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        access_token = auth_header[len("Bearer "):]
+    else:
+        raise HTTPException(status_code=400, detail="Missing Bearer token in Authorization header")
+    success = await auth_manager.logout(user["user_id"], access_token)
     if not success:
         raise HTTPException(status_code=500, detail="Logout failed")
     return {"status": "logged_out"}

@@ -9,12 +9,13 @@ definitions so native AGNOS agents can discover and request QA services
 without direct AGNOSTIC knowledge.
 """
 
+import asyncio
 import logging
 import os
 from datetime import UTC, datetime
 from typing import Any
 
-import requests
+import httpx
 
 from shared.version import VERSION
 
@@ -285,16 +286,20 @@ class AgentRegistryClient:
         self.base_url = os.getenv("AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090")
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
         self.version = os.getenv("AGNOSTIC_VERSION", VERSION)
-        self._session = None
+        self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
         self._registered_agents: dict[str, bool] = {}
         self._capabilities_advertised: bool = False
 
-    @property
-    def session(self) -> requests.Session:
-        if self._session is None:
-            self._session = requests.Session()
-            self._session.headers.update({"X-API-Key": self.api_key})
-        return self._session
+    async def _get_client(self) -> httpx.AsyncClient:
+        async with self._client_lock:
+            if self._client is None or self._client.is_closed:
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers={"X-API-Key": self.api_key} if self.api_key else {},
+                    timeout=10.0,
+                )
+        return self._client
 
     async def register_agent(self, agent_key: str) -> dict[str, Any]:
         """Register an agent with agnosticos."""
@@ -313,10 +318,10 @@ class AgentRegistryClient:
             agent_config["name"] = agent_config.pop("agent_name")
 
         try:
-            response = self.session.post(
-                f"{self.base_url}{AGNOS_PATH_PREFIX}/agents/register",
+            client = await self._get_client()
+            response = await client.post(
+                f"{AGNOS_PATH_PREFIX}/agents/register",
                 json=agent_config,
-                timeout=5,
             )
             response.raise_for_status()
             result = response.json()
@@ -333,7 +338,7 @@ class AgentRegistryClient:
                 "agent_id": agent_config["agent_id"],
                 "daimon_id": daimon_id,
             }
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.warning(f"Failed to register agent {agent_key}: {e}")
             return {"status": "error", "message": str(e)}
 
@@ -349,14 +354,15 @@ class AgentRegistryClient:
             daimon_id = self._registered_agents.get(agent_key)
             if not daimon_id:
                 return {"status": "skipped", "message": "Not registered"}
-            response = self.session.delete(
-                f"{self.base_url}{AGNOS_PATH_PREFIX}/agents/{daimon_id}", timeout=5
+            client = await self._get_client()
+            response = await client.delete(
+                f"{AGNOS_PATH_PREFIX}/agents/{daimon_id}",
             )
             response.raise_for_status()
             self._registered_agents[agent_key] = None
             logger.info(f"Deregistered agent from agnosticos: {agent_key}")
             return {"status": "deregistered", "daimon_id": daimon_id}
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.warning(f"Failed to deregister agent {agent_key}: {e}")
             return {"status": "error", "message": str(e)}
 
@@ -377,14 +383,14 @@ class AgentRegistryClient:
                 "timestamp": datetime.now(UTC).isoformat(),
                 "metadata": metadata or {},
             }
-            response = self.session.post(
-                f"{self.base_url}{AGNOS_PATH_PREFIX}/agents/{daimon_id}/heartbeat",
+            client = await self._get_client()
+            response = await client.post(
+                f"{AGNOS_PATH_PREFIX}/agents/{daimon_id}/heartbeat",
                 json=payload,
-                timeout=5,
             )
             response.raise_for_status()
             return {"status": "ok"}
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.debug(f"Heartbeat failed for {agent_key}: {e}")
             return {"status": "error", "message": str(e)}
 
@@ -410,10 +416,10 @@ class AgentRegistryClient:
         }
 
         try:
-            response = self.session.post(
-                f"{self.base_url}{AGNOS_PATH_PREFIX}/capabilities/advertise",
+            client = await self._get_client()
+            response = await client.post(
+                f"{AGNOS_PATH_PREFIX}/capabilities/advertise",
                 json=payload,
-                timeout=10,
             )
             response.raise_for_status()
             self._capabilities_advertised = True
@@ -426,7 +432,7 @@ class AgentRegistryClient:
                 "capabilities": list(CAPABILITY_DEFINITIONS.keys()),
                 "count": len(CAPABILITY_DEFINITIONS),
             }
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.warning(f"Failed to advertise capabilities: {e}")
             return {"status": "error", "message": str(e)}
 
@@ -436,15 +442,15 @@ class AgentRegistryClient:
             return {"status": "disabled"}
 
         try:
-            response = self.session.delete(
-                f"{self.base_url}{AGNOS_PATH_PREFIX}/capabilities/agnostic-qa",
-                timeout=5,
+            client = await self._get_client()
+            response = await client.delete(
+                f"{AGNOS_PATH_PREFIX}/capabilities/agnostic-qa",
             )
             response.raise_for_status()
             self._capabilities_advertised = False
             logger.info("Withdrew capabilities from AGNOS")
             return {"status": "withdrawn"}
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.warning(f"Failed to withdraw capabilities: {e}")
             return {"status": "error", "message": str(e)}
 
@@ -500,9 +506,11 @@ class AgentRegistryClient:
 
     async def register_all_agents(self) -> dict[str, dict[str, Any]]:
         """Register all Agnostic agents, advertise capabilities, and register RPC methods."""
-        results: dict[str, dict[str, Any]] = {}
-        for agent_key in AGNOSTIC_AGENTS:
-            results[agent_key] = await self.register_agent(agent_key)
+        agent_keys = list(AGNOSTIC_AGENTS.keys())
+        agent_results = await asyncio.gather(
+            *[self.register_agent(k) for k in agent_keys]
+        )
+        results: dict[str, dict[str, Any]] = dict(zip(agent_keys, agent_results))
 
         # After all agents are registered, advertise capabilities
         results["capabilities"] = await self.advertise_capabilities()
@@ -537,10 +545,19 @@ class AgentRegistryClient:
         if self._capabilities_advertised:
             results["capabilities"] = await self.withdraw_capabilities()
 
-        for agent_key in AGNOSTIC_AGENTS:
-            if self._registered_agents.get(agent_key):
-                results[agent_key] = await self.deregister_agent(agent_key)
+        keys_to_deregister = [
+            k for k in AGNOSTIC_AGENTS if self._registered_agents.get(k)
+        ]
+        deregister_results = await asyncio.gather(
+            *[self.deregister_agent(k) for k in keys_to_deregister]
+        )
+        results.update(dict(zip(keys_to_deregister, deregister_results)))
         return results
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
 
     def get_registration_status(self) -> dict[str, Any]:
         """Get registration status for all agents."""

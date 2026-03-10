@@ -168,7 +168,7 @@ class AlertManager:
 
         # Attach correlation ID if available
         try:
-            from webgui.app import correlation_id_ctx
+            from shared.context import correlation_id_ctx
 
             cid = correlation_id_ctx.get()
             if cid:

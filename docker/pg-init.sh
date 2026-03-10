@@ -10,6 +10,7 @@ fi
 
 PG_USER="${POSTGRES_USER:-agnostic}"
 PG_DB="${POSTGRES_DB:-agnostic}"
+PG_PASSWORD="${POSTGRES_PASSWORD:-}"
 
 echo "[pg-init] Waiting for PostgreSQL to accept connections..."
 for i in $(seq 1 30); do
@@ -21,5 +22,8 @@ done
 
 echo "[pg-init] Creating user '${PG_USER}' and database '${PG_DB}'..."
 su -s /bin/bash - postgres -c "createuser -s ${PG_USER} 2>/dev/null || true"
+if [ -n "$PG_PASSWORD" ]; then
+    su -s /bin/bash - postgres -c "psql -c \"ALTER USER ${PG_USER} WITH PASSWORD '${PG_PASSWORD}';\"" 2>/dev/null || true
+fi
 su -s /bin/bash - postgres -c "createdb -O ${PG_USER} ${PG_DB} 2>/dev/null || true"
 echo "[pg-init] Done"

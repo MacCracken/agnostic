@@ -10,6 +10,7 @@ Configure via:
 - AGNOS_REASONING_API_KEY: API key for AGNOS reasoning API
 """
 
+import asyncio
 import logging
 import os
 from dataclasses import asdict, dataclass, field
@@ -74,6 +75,7 @@ class AgnosReasoningClient:
         self.base_url = os.getenv("AGNOS_REASONING_URL", "http://localhost:8090")
         self.api_key = os.getenv("AGNOS_REASONING_API_KEY", "")
         self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
 
         try:
             from shared.resilience import CircuitBreaker
@@ -84,13 +86,14 @@ class AgnosReasoningClient:
         except ImportError:
             self._circuit = None
 
-    def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers={"X-API-Key": self.api_key},
-                timeout=5.0,
-            )
+    async def _get_client(self) -> httpx.AsyncClient:
+        async with self._client_lock:
+            if self._client is None or self._client.is_closed:
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers={"X-API-Key": self.api_key},
+                    timeout=5.0,
+                )
         return self._client
 
     def _can_execute(self) -> bool:
@@ -112,7 +115,7 @@ class AgnosReasoningClient:
         """Include X-Correlation-ID if available."""
         headers: dict[str, str] = {}
         try:
-            from webgui.app import correlation_id_ctx
+            from shared.context import correlation_id_ctx
 
             cid = correlation_id_ctx.get()
             if cid:
@@ -126,7 +129,7 @@ class AgnosReasoningClient:
         if not self._can_execute():
             return False
         try:
-            client = self._get_client()
+            client = await self._get_client()
             payload = asdict(trace)
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/reasoning/traces",
@@ -147,7 +150,7 @@ class AgnosReasoningClient:
         if not self._can_execute():
             return False
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/reasoning/traces/{trace_id}/steps",
                 json=asdict(step),
@@ -168,7 +171,7 @@ class AgnosReasoningClient:
         if not self._can_execute():
             return False
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.put(
                 f"{AGNOS_PATH_PREFIX}/reasoning/traces/{trace_id}/verdict",
                 json={"verdict": verdict, "confidence": confidence},

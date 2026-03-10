@@ -401,8 +401,8 @@ class RealtimeManager:
                     if ws:
                         try:
                             await ws.close(code=1000, reason="Idle timeout")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Failed to close WebSocket %s: %s", cid, e)
                     await self.remove_connection(cid)
                 if stale:
                     logger.info(f"Pruned {len(stale)} stale WebSocket connections")

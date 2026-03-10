@@ -16,7 +16,6 @@ from shared.crewai_compat import BaseTool
 # Add config path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import pytest
 from faker import Faker
 from playwright.async_api import async_playwright
 
@@ -403,6 +402,12 @@ class RegressionTestingTool(BaseTool):
                     )
 
                 # Run pytest and capture results
+                try:
+                    import pytest
+                except ImportError:
+                    pytest = None  # type: ignore[assignment]
+                if pytest is None:
+                    raise ImportError("pytest is not installed")
                 pytest_result = pytest.main(pytest_args)
 
                 if pytest_result == 0:

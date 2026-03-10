@@ -187,8 +187,8 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
             }
             for a in agents
         ]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Failed to get agent status for dashboard: %s", e)
 
     # Active session count
     try:
@@ -207,8 +207,8 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
         from shared.agent_metrics import get_agent_metrics
 
         agent_metrics = get_agent_metrics()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Failed to get agent metrics for dashboard: %s", e)
 
     # Compute pass/fail rates from agent metrics
     total_passed = (

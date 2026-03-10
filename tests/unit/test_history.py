@@ -19,11 +19,14 @@ def _patch_redis(monkeypatch):
     _mock_redis.reset_mock()
     _mock_redis.get.reset_mock()
     _mock_redis.keys.reset_mock()
+    _mock_redis.scan_iter.reset_mock()
     _mock_redis.exists.reset_mock()
     _mock_redis.get.return_value = None
     _mock_redis.get.side_effect = None
     _mock_redis.keys.return_value = []
     _mock_redis.keys.side_effect = None
+    _mock_redis.scan_iter.return_value = []
+    _mock_redis.scan_iter.side_effect = None
     _mock_redis.exists.return_value = False
     _mock_redis.exists.side_effect = None
 
@@ -203,6 +206,7 @@ class TestGetSessionHistory:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_sessions(self):
         _mock_redis.keys.return_value = []
+        _mock_redis.scan_iter.return_value = []
         mgr = _make_manager()
         sessions = await mgr.get_session_history()
         assert sessions == []
@@ -220,6 +224,7 @@ class TestGetSessionHistory:
             "environment": "dev",
         }
         _mock_redis.keys.return_value = [b"session:s1:info"]
+        _mock_redis.scan_iter.return_value = [b"session:s1:info"]
         _mock_redis.get.side_effect = [
             json.dumps(session_data).encode(),  # session info
             None,  # verification
@@ -242,6 +247,7 @@ class TestGetSessionHistory:
         }
         encoded = json.dumps(session_data).encode()
         _mock_redis.keys.return_value = [f"session:s{i}:info".encode() for i in range(5)]
+        _mock_redis.scan_iter.return_value = [f"session:s{i}:info".encode() for i in range(5)]
         _mock_redis.get.return_value = encoded
         _mock_redis.exists.return_value = False
         mgr = _make_manager()

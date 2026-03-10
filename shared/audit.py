@@ -98,7 +98,7 @@ def audit_log(
 
     # Attach correlation ID if present
     try:
-        from webgui.app import correlation_id_ctx
+        from shared.context import correlation_id_ctx
 
         cid = correlation_id_ctx.get()
         if cid:

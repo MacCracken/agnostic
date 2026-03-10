@@ -401,7 +401,7 @@ async def list_mcp_tools(
 
 
 @router.get("/v1/mcp/server-info")
-async def mcp_server_info():
+async def mcp_server_info(_user: dict = Depends(get_current_user)):
     """MCP server metadata for auto-registration handshake."""
     _require_mcp_enabled()
     return {

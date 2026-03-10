@@ -10,6 +10,7 @@ Configure via:
 - AGNOS_MEMORY_API_KEY: API key for AGNOS memory store
 """
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -37,6 +38,7 @@ class AgnosMemoryClient:
         self.base_url = os.getenv("AGNOS_MEMORY_URL", "http://localhost:8090")
         self.api_key = os.getenv("AGNOS_MEMORY_API_KEY", "")
         self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
 
         try:
             from shared.resilience import CircuitBreaker
@@ -47,13 +49,14 @@ class AgnosMemoryClient:
         except ImportError:
             self._circuit = None
 
-    def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers={"X-API-Key": self.api_key},
-                timeout=5.0,
-            )
+    async def _get_client(self) -> httpx.AsyncClient:
+        async with self._client_lock:
+            if self._client is None or self._client.is_closed:
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers={"X-API-Key": self.api_key},
+                    timeout=5.0,
+                )
         return self._client
 
     def _can_execute(self) -> bool:
@@ -78,7 +81,7 @@ class AgnosMemoryClient:
         if not self._can_execute():
             return False
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.put(
                 f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}/{key}",
                 json={"value": value},
@@ -98,7 +101,7 @@ class AgnosMemoryClient:
         if not self._can_execute():
             return None
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.get(
                 f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}/{key}"
             )
@@ -116,7 +119,7 @@ class AgnosMemoryClient:
         if not self._can_execute():
             return []
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.get(
                 f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}"
             )
@@ -133,7 +136,7 @@ class AgnosMemoryClient:
         if not self._can_execute():
             return False
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.delete(
                 f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}/{key}"
             )
@@ -152,7 +155,7 @@ class AgnosMemoryClient:
         if not self._can_execute() or not keys:
             return []
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/memory/{agent_id}/{namespace}/batch",
                 json={"keys": keys},

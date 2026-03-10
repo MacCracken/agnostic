@@ -48,6 +48,7 @@ class AgnosAuditForwarder:
         self._buffer: list[dict[str, Any]] = []
         self._flush_task: asyncio.Task | None = None
         self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
 
         # Circuit breaker
         try:
@@ -59,13 +60,14 @@ class AgnosAuditForwarder:
         except ImportError:
             self._circuit = None
 
-    def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers={"X-API-Key": self.api_key},
-                timeout=5.0,
-            )
+    async def _get_client(self) -> httpx.AsyncClient:
+        async with self._client_lock:
+            if self._client is None or self._client.is_closed:
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers={"X-API-Key": self.api_key},
+                    timeout=5.0,
+                )
         return self._client
 
     def queue_event(self, event: dict[str, Any]) -> None:
@@ -124,7 +126,7 @@ class AgnosAuditForwarder:
             return
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             correlation_id = batch[0].get("correlation_id") if batch else None
             headers: dict[str, str] = {}
             if correlation_id:

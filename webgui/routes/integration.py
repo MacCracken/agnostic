@@ -127,4 +127,4 @@ async def get_structured_results(
 
     except Exception as e:
         logger.error(f"Error generating structured results: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e

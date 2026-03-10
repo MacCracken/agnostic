@@ -4,11 +4,12 @@ import hashlib
 import json
 import logging
 import os
+import uuid
 from datetime import datetime
 from typing import Any
 
+import httpx
 import jwt
-import requests
 from jwt import PyJWKClient
 
 from webgui.auth.models import AuthProvider, Permission, User, UserRole
@@ -155,52 +156,50 @@ class OAuthProviderFactory:
                 logger.error("OAUTH2_GITHUB_CLIENT_ID/SECRET not configured")
                 return None
 
-            token_resp = requests.post(
-                "https://github.com/login/oauth/access_token",
-                json={
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "code": auth_code,
-                },
-                headers={"Accept": "application/json"},
-                timeout=10,
-            )
-            token_resp.raise_for_status()
-            token_data = token_resp.json()
-
-            access_token = token_data.get("access_token")
-            if not access_token:
-                logger.error(
-                    f"GitHub token exchange failed: {token_data.get('error_description', 'unknown error')}"
+            async with httpx.AsyncClient(timeout=10) as client:
+                token_resp = await client.post(
+                    "https://github.com/login/oauth/access_token",
+                    json={
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "code": auth_code,
+                    },
+                    headers={"Accept": "application/json"},
                 )
-                return None
+                token_resp.raise_for_status()
+                token_data = token_resp.json()
 
-            user_resp = requests.get(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/vnd.github+json",
-                },
-                timeout=10,
-            )
-            user_resp.raise_for_status()
-            github_user = user_resp.json()
+                access_token = token_data.get("access_token")
+                if not access_token:
+                    logger.error(
+                        f"GitHub token exchange failed: {token_data.get('error_description', 'unknown error')}"
+                    )
+                    return None
 
-            email = github_user.get("email")
-            if not email:
-                emails_resp = requests.get(
-                    "https://api.github.com/user/emails",
+                user_resp = await client.get(
+                    "https://api.github.com/user",
                     headers={
                         "Authorization": f"Bearer {access_token}",
                         "Accept": "application/vnd.github+json",
                     },
-                    timeout=10,
                 )
-                emails_resp.raise_for_status()
-                for email_obj in emails_resp.json():
-                    if email_obj.get("primary") and email_obj.get("verified"):
-                        email = email_obj["email"]
-                        break
+                user_resp.raise_for_status()
+                github_user = user_resp.json()
+
+                email = github_user.get("email")
+                if not email:
+                    emails_resp = await client.get(
+                        "https://api.github.com/user/emails",
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Accept": "application/vnd.github+json",
+                        },
+                    )
+                    emails_resp.raise_for_status()
+                    for email_obj in emails_resp.json():
+                        if email_obj.get("primary") and email_obj.get("verified"):
+                            email = email_obj["email"]
+                            break
 
             if not email:
                 logger.error("Could not retrieve verified email from GitHub")
@@ -215,7 +214,7 @@ class OAuthProviderFactory:
                 provider_id=str(github_user["id"]),
             )
 
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"GitHub API request failed: {e}")
             return None
         except Exception as e:
@@ -311,7 +310,7 @@ class OAuthProviderFactory:
                 )
 
             # Create new user
-            user_id = f"user_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hashlib.sha256(email.encode()).hexdigest()[:8]}"
+            user_id = f"user_{uuid.uuid4().hex}"
 
             default_role = UserRole.VIEWER
 

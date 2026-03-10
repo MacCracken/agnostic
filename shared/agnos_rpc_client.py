@@ -10,6 +10,7 @@ Configure via:
 - AGNOS_AGENT_API_KEY: API key for daimon (shared with agent registration)
 """
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -78,6 +79,7 @@ class AgnosRpcClient:
         )
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
         self._client: "httpx.AsyncClient | None" = None
+        self._client_lock = asyncio.Lock()
         self._registered_methods: dict[str, list[str]] = {}
 
         try:
@@ -89,13 +91,14 @@ class AgnosRpcClient:
         except ImportError:
             self._circuit = None
 
-    def _get_client(self) -> "httpx.AsyncClient":
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers={"X-API-Key": self.api_key} if self.api_key else {},
-                timeout=10.0,
-            )
+    async def _get_client(self) -> "httpx.AsyncClient":
+        async with self._client_lock:
+            if self._client is None or self._client.is_closed:
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers={"X-API-Key": self.api_key} if self.api_key else {},
+                    timeout=10.0,
+                )
         return self._client
 
     def _can_execute(self) -> bool:
@@ -133,7 +136,7 @@ class AgnosRpcClient:
             return {"status": "disabled"}
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/rpc/register",
                 json={"agent_id": agent_daimon_id, "methods": methods},
@@ -177,14 +180,21 @@ class AgnosRpcClient:
         if not self._can_execute():
             return {"status": "disabled"}
 
-        results: dict[str, Any] = {}
-        for agent_key, daimon_id in registered_agents.items():
-            if not daimon_id:
-                continue
-            methods = AGENT_RPC_METHODS.get(agent_key, [])
-            if not methods:
-                continue
-            results[agent_key] = await self.register_methods(daimon_id, methods)
+        import asyncio
+
+        eligible = [
+            (agent_key, daimon_id)
+            for agent_key, daimon_id in registered_agents.items()
+            if daimon_id and AGENT_RPC_METHODS.get(agent_key)
+        ]
+        if not eligible:
+            return {}
+        keys, ids = zip(*eligible)
+        method_lists = [AGENT_RPC_METHODS[k] for k in keys]
+        gathered = await asyncio.gather(
+            *[self.register_methods(did, methods) for did, methods in zip(ids, method_lists)]
+        )
+        results: dict[str, Any] = dict(zip(keys, gathered))
 
         total = sum(
             r.get("count", 0) for r in results.values() if r.get("status") == "registered"
@@ -235,7 +245,7 @@ class AgnosRpcClient:
             payload["sender_id"] = sender_id
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/rpc/call",
                 json=payload,
@@ -270,7 +280,7 @@ class AgnosRpcClient:
             return []
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             path = f"{AGNOS_PATH_PREFIX}/rpc/methods"
             if agent_id:
                 path = f"{path}/{agent_id}"

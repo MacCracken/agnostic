@@ -11,6 +11,7 @@ Configure via:
 - AGNOS_AGENT_API_KEY: API key for daimon
 """
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -40,6 +41,7 @@ class AgnosScreenClient:
         )
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
         self._client: "httpx.AsyncClient | None" = None
+        self._client_lock = asyncio.Lock()
 
         try:
             from shared.resilience import CircuitBreaker
@@ -50,13 +52,14 @@ class AgnosScreenClient:
         except ImportError:
             self._circuit = None
 
-    def _get_client(self) -> "httpx.AsyncClient":
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers={"X-API-Key": self.api_key} if self.api_key else {},
-                timeout=15.0,
-            )
+    async def _get_client(self) -> "httpx.AsyncClient":
+        async with self._client_lock:
+            if self._client is None or self._client.is_closed:
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers={"X-API-Key": self.api_key} if self.api_key else {},
+                    timeout=15.0,
+                )
         return self._client
 
     def _can_execute(self) -> bool:
@@ -109,7 +112,7 @@ class AgnosScreenClient:
             payload["agent_id"] = agent_id
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/screen/capture",
                 json=payload,
@@ -153,7 +156,7 @@ class AgnosScreenClient:
             payload["agent_id"] = agent_id
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/screen/recording/start",
                 json=payload,
@@ -174,7 +177,7 @@ class AgnosScreenClient:
             return {"status": "disabled"}
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/screen/recording/{recording_id}/stop",
             )
@@ -192,7 +195,7 @@ class AgnosScreenClient:
             return {"status": "disabled"}
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.get(
                 f"{AGNOS_PATH_PREFIX}/screen/recording/{recording_id}/latest",
             )
@@ -212,7 +215,7 @@ class AgnosScreenClient:
             return []
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.get(
                 f"{AGNOS_PATH_PREFIX}/screen/recording/{recording_id}/frames",
                 params={"since": since},
@@ -231,7 +234,7 @@ class AgnosScreenClient:
             return {"status": "disabled"}
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.get(
                 f"{AGNOS_PATH_PREFIX}/screen/recording/{recording_id}",
             )
@@ -249,7 +252,7 @@ class AgnosScreenClient:
             return []
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.get(
                 f"{AGNOS_PATH_PREFIX}/screen/recordings",
             )

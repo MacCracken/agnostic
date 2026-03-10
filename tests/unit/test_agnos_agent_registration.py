@@ -9,6 +9,22 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
+def _make_mock_httpx_client(response_data=None, side_effect=None):
+    """Return an AsyncMock mimicking httpx.AsyncClient."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = response_data or {}
+    mock_client = AsyncMock()
+    if side_effect:
+        mock_client.post.side_effect = side_effect
+        mock_client.delete.side_effect = side_effect
+    else:
+        mock_client.post.return_value = mock_response
+        mock_client.delete.return_value = mock_response
+    mock_client.is_closed = False
+    return mock_client
+
+
 class TestAgnosticAgentsConfig:
     """Tests for the AGNOSTIC_AGENTS configuration dict."""
 
@@ -111,21 +127,18 @@ class TestAgentRegistryClientInit:
             client = AgentRegistryClient()
             assert client.base_url == "http://localhost:8090"
 
-    def test_session_lazy_created(self):
+    def test_client_lazy_created(self):
         from config.agnos_agent_registration import AgentRegistryClient
 
         client = AgentRegistryClient()
-        assert client._session is None
-        _ = client.session
-        assert client._session is not None
+        assert client._client is None
 
-    def test_session_sets_api_key_header(self):
+    def test_api_key_stored(self):
         with patch.dict(os.environ, {"AGNOS_AGENT_API_KEY": "test-key"}, clear=False):
             from config.agnos_agent_registration import AgentRegistryClient
 
             client = AgentRegistryClient()
-            session = client.session
-            assert session.headers.get("X-API-Key") == "test-key"
+            assert client.api_key == "test-key"
 
 
 class TestAgentRegistryClientRegister:
@@ -172,13 +185,10 @@ class TestAgentRegistryClientRegister:
 
     @pytest.mark.asyncio
     async def test_register_success(self, enabled_client):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"id": "uuid-1234", "name": "QA Manager", "status": "registered"}
-        mock_session = MagicMock()
-        mock_session.post.return_value = mock_response
-        mock_session.headers = MagicMock()
-        enabled_client._session = mock_session
+        mock_client = _make_mock_httpx_client(
+            {"id": "uuid-1234", "name": "QA Manager", "status": "registered"}
+        )
+        enabled_client._client = mock_client
 
         result = await enabled_client.register_agent("qa-manager")
 
@@ -188,12 +198,10 @@ class TestAgentRegistryClientRegister:
 
     @pytest.mark.asyncio
     async def test_register_http_error(self, enabled_client):
-        import requests
+        import httpx
 
-        mock_session = MagicMock()
-        mock_session.post.side_effect = requests.exceptions.ConnectionError("refused")
-        mock_session.headers = MagicMock()
-        enabled_client._session = mock_session
+        mock_client = _make_mock_httpx_client(side_effect=httpx.ConnectError("refused"))
+        enabled_client._client = mock_client
 
         result = await enabled_client.register_agent("qa-manager")
 
@@ -214,12 +222,8 @@ class TestAgentRegistryClientRegister:
     async def test_deregister_success(self, enabled_client):
         enabled_client._registered_agents["qa-manager"] = "uuid-1234"
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_session = MagicMock()
-        mock_session.delete.return_value = mock_response
-        mock_session.headers = MagicMock()
-        enabled_client._session = mock_session
+        mock_client = _make_mock_httpx_client({})
+        enabled_client._client = mock_client
 
         result = await enabled_client.deregister_agent("qa-manager")
 
@@ -228,14 +232,12 @@ class TestAgentRegistryClientRegister:
 
     @pytest.mark.asyncio
     async def test_deregister_http_error(self, enabled_client):
-        import requests
+        import httpx
 
         enabled_client._registered_agents["qa-manager"] = "uuid-1234"
 
-        mock_session = MagicMock()
-        mock_session.delete.side_effect = requests.exceptions.Timeout("timeout")
-        mock_session.headers = MagicMock()
-        enabled_client._session = mock_session
+        mock_client = _make_mock_httpx_client(side_effect=httpx.TimeoutException("timeout"))
+        enabled_client._client = mock_client
 
         result = await enabled_client.deregister_agent("qa-manager")
 
@@ -288,17 +290,13 @@ class TestAgentRegistryClientHeartbeat:
     async def test_heartbeat_success(self, client):
         client._registered_agents["qa-manager"] = "uuid-1234"
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_session = MagicMock()
-        mock_session.post.return_value = mock_response
-        mock_session.headers = MagicMock()
-        client._session = mock_session
+        mock_client = _make_mock_httpx_client({})
+        client._client = mock_client
 
         result = await client.send_heartbeat("qa-manager", status="busy")
 
         assert result["status"] == "ok"
-        call_args = mock_session.post.call_args
+        call_args = mock_client.post.call_args
         # URL should contain daimon UUID, not agent_id string
         assert "uuid-1234" in call_args[0][0]
         payload = call_args[1]["json"]
@@ -309,19 +307,15 @@ class TestAgentRegistryClientHeartbeat:
     async def test_heartbeat_with_metadata(self, client):
         client._registered_agents["qa-manager"] = "uuid-1234"
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_session = MagicMock()
-        mock_session.post.return_value = mock_response
-        mock_session.headers = MagicMock()
-        client._session = mock_session
+        mock_client = _make_mock_httpx_client({})
+        client._client = mock_client
 
         result = await client.send_heartbeat(
             "qa-manager", metadata={"active_tasks": 3}
         )
 
         assert result["status"] == "ok"
-        payload = mock_session.post.call_args[1]["json"]
+        payload = mock_client.post.call_args[1]["json"]
         assert payload["metadata"]["active_tasks"] == 3
 
 
@@ -347,12 +341,8 @@ class TestAgentRegistryClientBulkOperations:
     async def test_register_all_agents(self, client):
         from config.agnos_agent_registration import AGNOSTIC_AGENTS
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_session = MagicMock()
-        mock_session.post.return_value = mock_response
-        mock_session.headers = MagicMock()
-        client._session = mock_session
+        mock_client = _make_mock_httpx_client({"id": "uuid-auto", "status": "registered"})
+        client._client = mock_client
 
         results = await client.register_all_agents()
 
@@ -369,12 +359,8 @@ class TestAgentRegistryClientBulkOperations:
         for i, key in enumerate(AGNOSTIC_AGENTS):
             client._registered_agents[key] = f"uuid-{i}"
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_session = MagicMock()
-        mock_session.delete.return_value = mock_response
-        mock_session.headers = MagicMock()
-        client._session = mock_session
+        mock_client = _make_mock_httpx_client({})
+        client._client = mock_client
 
         results = await client.deregister_all_agents()
 
@@ -386,12 +372,8 @@ class TestAgentRegistryClientBulkOperations:
         # Only mark one as registered
         client._registered_agents["qa-manager"] = "uuid-1234"
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_session = MagicMock()
-        mock_session.delete.return_value = mock_response
-        mock_session.headers = MagicMock()
-        client._session = mock_session
+        mock_client = _make_mock_httpx_client({})
+        client._client = mock_client
 
         results = await client.deregister_all_agents()
 

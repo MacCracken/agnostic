@@ -54,7 +54,7 @@ if [ "$POSTGRES_EMBEDDED" = "true" ] && [ ! -f /data/postgres/PG_VERSION ]; then
     echo "[entrypoint] Initializing PostgreSQL data directory..."
     chown -R postgres:postgres /data/postgres
     su -s /bin/bash - postgres -c \
-        "/usr/lib/postgresql/17/bin/initdb -D /data/postgres --auth=trust --no-locale --encoding=UTF8"
+        "/usr/lib/postgresql/17/bin/initdb -D /data/postgres --auth=md5 --no-locale --encoding=UTF8"
     export PG_FIRST_RUN=true
 fi
 
@@ -73,7 +73,8 @@ if [ "$TLS_ENABLED" = "true" ]; then
     if [ -n "$TLS_CERT_PATH" ] && [ -n "$TLS_KEY_PATH" ]; then
         # Mode 1: Provided certs (matches SY pattern, internal CA, etc.)
         echo "[entrypoint] TLS enabled with provided certs: ${TLS_CERT_PATH}"
-        cat > /tmp/Caddyfile <<CADDYEOF
+        mkdir -p /etc/caddy
+        cat > /etc/caddy/Caddyfile <<CADDYEOF
 {
     auto_https off
     admin off
@@ -100,7 +101,8 @@ CADDYEOF
     elif [ -n "$TLS_DOMAIN" ]; then
         # Mode 2: Auto-HTTPS with ACME (standalone, public domain)
         echo "[entrypoint] TLS enabled with auto-HTTPS for domain: ${TLS_DOMAIN}"
-        cat > /tmp/Caddyfile <<CADDYEOF
+        mkdir -p /etc/caddy
+        cat > /etc/caddy/Caddyfile <<CADDYEOF
 {
     admin off
 }

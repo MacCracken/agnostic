@@ -10,6 +10,7 @@ Configure via:
 - AGNOS_AGENT_API_KEY: API key for daimon (shared with agent registration)
 """
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -62,6 +63,7 @@ class AgnosRagClient:
         )
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
         self._client: "httpx.AsyncClient | None" = None
+        self._client_lock = asyncio.Lock()
 
         try:
             from shared.resilience import CircuitBreaker
@@ -72,13 +74,14 @@ class AgnosRagClient:
         except ImportError:
             self._circuit = None
 
-    def _get_client(self) -> "httpx.AsyncClient":
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers={"X-API-Key": self.api_key} if self.api_key else {},
-                timeout=30.0,
-            )
+    async def _get_client(self) -> "httpx.AsyncClient":
+        async with self._client_lock:
+            if self._client is None or self._client.is_closed:
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers={"X-API-Key": self.api_key} if self.api_key else {},
+                    timeout=30.0,
+                )
         return self._client
 
     def _can_execute(self) -> bool:
@@ -118,7 +121,7 @@ class AgnosRagClient:
             return {"status": "disabled"}
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             payload: dict[str, Any] = {"text": text}
             if metadata:
                 payload["metadata"] = metadata
@@ -184,7 +187,7 @@ class AgnosRagClient:
             return []
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/rag/query",
                 json={"query": query, "top_k": top_k},
@@ -220,7 +223,7 @@ class AgnosRagClient:
             return ""
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/rag/query",
                 json={"query": query, "top_k": top_k},

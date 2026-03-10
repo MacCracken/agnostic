@@ -44,6 +44,7 @@ class AgnosRecordingClient:
         )
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
         self._client: "httpx.AsyncClient | None" = None
+        self._client_lock = asyncio.Lock()
         self._active_recordings: dict[str, str] = {}  # session_id → recording_id
 
         try:
@@ -55,13 +56,14 @@ class AgnosRecordingClient:
         except ImportError:
             self._circuit = None
 
-    def _get_client(self) -> "httpx.AsyncClient":
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers={"X-API-Key": self.api_key} if self.api_key else {},
-                timeout=15.0,
-            )
+    async def _get_client(self) -> "httpx.AsyncClient":
+        async with self._client_lock:
+            if self._client is None or self._client.is_closed:
+                self._client = httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers={"X-API-Key": self.api_key} if self.api_key else {},
+                    timeout=15.0,
+                )
         return self._client
 
     def _can_execute(self) -> bool:
@@ -115,7 +117,7 @@ class AgnosRecordingClient:
             payload["agent_id"] = agent_id
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/screen/recording/start",
                 json=payload,
@@ -146,7 +148,7 @@ class AgnosRecordingClient:
             return {"status": "disabled"}
 
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.post(
                 f"{AGNOS_PATH_PREFIX}/screen/recording/{recording_id}/stop",
             )
@@ -186,7 +188,7 @@ class AgnosRecordingClient:
             return
 
         last_sequence = 0
-        client = self._get_client()
+        client = await self._get_client()
 
         while session_id in self._active_recordings:
             try:

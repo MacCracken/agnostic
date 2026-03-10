@@ -22,6 +22,9 @@ async def get_sessions(
     offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
 ):
+    if user_id is not None and user_id != user["user_id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     from webgui.history import history_manager
 
     sessions = await history_manager.get_session_history(

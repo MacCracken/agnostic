@@ -234,9 +234,9 @@ class AgentMonitor:
         try:
             # Get task keys
             if agent_name:
-                task_keys = self.redis_client.keys(f"task:{agent_name}:*")
+                task_keys = list(self.redis_client.scan_iter(f"task:{agent_name}:*", count=100))
             else:
-                task_keys = self.redis_client.keys("task:*")
+                task_keys = list(self.redis_client.scan_iter("task:*", count=100))
 
             for key in task_keys:
                 task_data = self.redis_client.get(key)
@@ -387,7 +387,7 @@ class AgentMonitor:
 
                 # Get recent notifications
                 notif_pattern = f"{agent_name}:*:notifications"
-                notif_keys = self.redis_client.keys(notif_pattern)
+                notif_keys = list(self.redis_client.scan_iter(notif_pattern, count=100))
 
                 for key in notif_keys:
                     notifications = self.redis_client.lrange(key, 0, -1)
@@ -429,7 +429,7 @@ class AgentMonitor:
 
                 # Count pending tasks
                 pending_tasks = 0
-                task_keys = self.redis_client.keys(f"task:{agent_name}:*")
+                task_keys = list(self.redis_client.scan_iter(f"task:{agent_name}:*", count=100))
 
                 for key in task_keys:
                     task_data = self.redis_client.get(key)
@@ -451,7 +451,7 @@ class AgentMonitor:
     def _get_agent_task_count(self, agent_name: str, status: str) -> int:
         """Get count of tasks with specific status for agent"""
         try:
-            task_keys = self.redis_client.keys(f"task:{agent_name}:*")
+            task_keys = list(self.redis_client.scan_iter(f"task:{agent_name}:*", count=100))
             count = 0
 
             for key in task_keys:
@@ -494,7 +494,7 @@ class AgentMonitor:
         tasks = []
 
         try:
-            task_keys = self.redis_client.keys(f"task:{agent_name}:*")
+            task_keys = list(self.redis_client.scan_iter(f"task:{agent_name}:*", count=100))
 
             for key in task_keys:
                 task_data = self.redis_client.get(key)
@@ -526,7 +526,7 @@ class AgentMonitor:
 
         try:
             # Get performance history from Redis
-            perf_keys = self.redis_client.keys(f"perf:{agent_name}:*")
+            perf_keys = list(self.redis_client.scan_iter(f"perf:{agent_name}:*", count=100))
 
             response_times = []
             cpu_usages = []

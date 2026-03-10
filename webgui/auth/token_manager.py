@@ -151,7 +151,7 @@ class TokenManager:
             return self.redis_client.exists(blacklist_key)
         except Exception as e:
             logger.error(f"Error checking token blacklist: {e}")
-            return False
+            return True  # Fail closed — treat as blacklisted if Redis is unavailable
 
     @staticmethod
     def verify_password(password: str, password_hash: str) -> bool:
