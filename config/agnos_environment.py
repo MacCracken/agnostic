@@ -22,8 +22,6 @@ PROFILES: dict[str, dict[str, str]] = {
     "dev": {
         "LOG_LEVEL": "DEBUG",
         "ENVIRONMENT": "development",
-        "RATE_LIMIT_MAX_REQUESTS": "1000",
-        "RATE_LIMIT_WINDOW_SECONDS": "60",
         "AUDIT_LOG_ENABLED": "true",
         "AUDIT_LOG_LEVEL": "DEBUG",
         "WEBSOCKET_ENABLED": "true",
@@ -34,8 +32,6 @@ PROFILES: dict[str, dict[str, str]] = {
     "staging": {
         "LOG_LEVEL": "INFO",
         "ENVIRONMENT": "staging",
-        "RATE_LIMIT_MAX_REQUESTS": "200",
-        "RATE_LIMIT_WINDOW_SECONDS": "60",
         "AUDIT_LOG_ENABLED": "true",
         "AUDIT_LOG_LEVEL": "INFO",
         "WEBSOCKET_ENABLED": "true",
@@ -46,8 +42,6 @@ PROFILES: dict[str, dict[str, str]] = {
     "prod": {
         "LOG_LEVEL": "WARNING",
         "ENVIRONMENT": "production",
-        "RATE_LIMIT_MAX_REQUESTS": "100",
-        "RATE_LIMIT_WINDOW_SECONDS": "60",
         "AUDIT_LOG_ENABLED": "true",
         "AUDIT_LOG_LEVEL": "INFO",
         "WEBSOCKET_ENABLED": "true",

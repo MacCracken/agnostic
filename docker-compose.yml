@@ -88,14 +88,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-          cpus: '2.0'
-        reservations:
-          memory: 1G
-          cpus: '1.0'
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -117,11 +109,6 @@ services:
       - qa-network
     volumes:
       - redis_data:/data
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
     restart: unless-stopped
 
   postgres:
@@ -137,11 +124,6 @@ services:
       - qa-network
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: '1.0'
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agnostic}"]

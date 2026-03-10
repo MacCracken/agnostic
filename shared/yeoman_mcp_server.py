@@ -183,5 +183,111 @@ class YeomanMcpRegistration:
             self._client = None
 
 
-# Module-level singleton
+# ---------------------------------------------------------------------------
+# Daimon MCP tool registration
+# ---------------------------------------------------------------------------
+
+
+class DaimonMcpRegistration:
+    """Registers AGNOSTIC's MCP tools with daimon's MCP server.
+
+    This lets any AGNOS agent discover and invoke QA capabilities via
+    daimon's ``POST /v1/mcp/tools/call`` endpoint.
+    """
+
+    def __init__(self) -> None:
+        self.enabled: bool = os.getenv("DAIMON_MCP_AUTO_REGISTER", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        self.daimon_url: str = os.getenv(
+            "AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090"
+        ).rstrip("/")
+        self.api_key: str | None = os.getenv("AGNOS_AGENT_API_KEY")
+        self.agnostic_url: str = os.getenv(
+            "AGNOSTIC_EXTERNAL_URL", _DEFAULT_AGNOSTIC_URL
+        ).rstrip("/")
+        self._server_id: str | None = None
+        self._client: httpx.AsyncClient | None = None  # type: ignore[name-defined]
+
+    def _get_client(self) -> httpx.AsyncClient:  # type: ignore[name-defined]
+        if not _HTTPX_AVAILABLE:
+            raise RuntimeError("httpx is not installed")
+        if self._client is None or self._client.is_closed:
+            headers: dict[str, str] = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["X-API-Key"] = self.api_key
+            self._client = httpx.AsyncClient(timeout=_REQUEST_TIMEOUT, headers=headers)
+        return self._client
+
+    async def register(self) -> bool:
+        """Register AGNOSTIC MCP tools with daimon.
+
+        POSTs the tool manifest to daimon's MCP server registration endpoint.
+        """
+        if not self.enabled:
+            logger.debug("Daimon MCP auto-registration disabled")
+            return False
+
+        from shared.yeoman_mcp_server import TOOL_MANIFEST
+
+        url = f"{self.daimon_url}{AGNOS_PATH_PREFIX}/mcp/servers"
+        payload = {
+            "name": _SERVER_NAME,
+            "description": _SERVER_DESCRIPTION,
+            "transport": "http",
+            "url": self.agnostic_url,
+            "tools": TOOL_MANIFEST,
+            "enabled": True,
+            "metadata": {
+                "provider": "agnostic-qa",
+                "version": os.getenv("AGNOSTIC_VERSION", VERSION),
+                "tool_count": len(TOOL_MANIFEST),
+            },
+        }
+
+        try:
+            client = self._get_client()
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            self._server_id = data.get("id") or data.get("server_id")
+            logger.info(
+                "Registered %d MCP tools with daimon (id=%s)",
+                len(TOOL_MANIFEST),
+                self._server_id,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("Failed to register MCP tools with daimon: %s", exc)
+            return False
+
+    async def deregister(self) -> bool:
+        """Remove AGNOSTIC MCP tools from daimon."""
+        if not self.enabled or not self._server_id:
+            return False
+
+        url = f"{self.daimon_url}{AGNOS_PATH_PREFIX}/mcp/servers/{self._server_id}"
+        try:
+            client = self._get_client()
+            resp = await client.delete(url)
+            resp.raise_for_status()
+            logger.info("Deregistered MCP tools from daimon (id=%s)", self._server_id)
+            self._server_id = None
+            return True
+        except Exception as exc:
+            logger.warning("Failed to deregister MCP tools from daimon: %s", exc)
+            return False
+
+    async def close(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
+
+AGNOS_PATH_PREFIX = os.getenv("AGNOS_PATH_PREFIX", "/v1")
+
+# Module-level singletons
 yeoman_mcp_registration = YeomanMcpRegistration()
+daimon_mcp_registration = DaimonMcpRegistration()

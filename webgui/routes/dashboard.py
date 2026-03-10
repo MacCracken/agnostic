@@ -247,6 +247,71 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
+# Token budget pool dashboard
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboard/token-budget")
+async def get_token_budget_pools(user: dict = Depends(get_current_user)):
+    """Display AGNOS token budget pool metrics."""
+    try:
+        from config.agnos_token_budget import agnos_token_budget
+
+        if not agnos_token_budget or not agnos_token_budget.enabled:
+            return {"enabled": False, "pools": []}
+
+        client = agnos_token_budget._get_client()
+        response = await client.get(
+            f"{agnos_token_budget._pool_url('')}/../../../tokens/pools",
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Also get per-agent remaining for our pool
+        from config.agnos_agent_registration import AGNOSTIC_AGENTS
+
+        agent_budgets = {}
+        for agent_key, agent_config in AGNOSTIC_AGENTS.items():
+            remaining = await agnos_token_budget.get_remaining(
+                agent_config["agent_id"]
+            )
+            if remaining is not None:
+                agent_budgets[agent_key] = remaining
+
+        return {
+            "enabled": True,
+            "pool": agnos_token_budget.pool,
+            "pools": data.get("pools", []),
+            "agent_budgets": agent_budgets,
+        }
+    except Exception as exc:
+        logger.debug("Token budget pool query failed: %s", exc)
+        return {"enabled": False, "pools": [], "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Video session streaming
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboard/recordings")
+async def get_active_recordings(user: dict = Depends(get_current_user)):
+    """List active screen recording sessions."""
+    try:
+        from shared.agnos_recording_client import agnos_recording
+
+        if not agnos_recording.enabled:
+            return {"enabled": False, "recordings": []}
+
+        return {
+            "enabled": True,
+            "active_sessions": agnos_recording.get_active_sessions(),
+        }
+    except ImportError:
+        return {"enabled": False, "recordings": []}
+
+
+# ---------------------------------------------------------------------------
 # Alert query endpoint
 # ---------------------------------------------------------------------------
 

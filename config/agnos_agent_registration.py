@@ -499,7 +499,7 @@ class AgentRegistryClient:
     # ------------------------------------------------------------------
 
     async def register_all_agents(self) -> dict[str, dict[str, Any]]:
-        """Register all Agnostic agents and advertise capabilities."""
+        """Register all Agnostic agents, advertise capabilities, and register RPC methods."""
         results: dict[str, dict[str, Any]] = {}
         for agent_key in AGNOSTIC_AGENTS:
             results[agent_key] = await self.register_agent(agent_key)
@@ -507,11 +507,31 @@ class AgentRegistryClient:
         # After all agents are registered, advertise capabilities
         results["capabilities"] = await self.advertise_capabilities()
 
+        # Register RPC methods with daimon for cross-agent invocation
+        try:
+            from shared.agnos_rpc_client import agnos_rpc
+
+            rpc_results = await agnos_rpc.register_all_agent_methods(
+                self._registered_agents
+            )
+            results["rpc_methods"] = rpc_results
+        except Exception as e:
+            logger.warning("RPC method registration failed: %s", e)
+            results["rpc_methods"] = {"status": "error", "message": str(e)}
+
         return results
 
     async def deregister_all_agents(self) -> dict[str, dict[str, Any]]:
-        """Deregister all Agnostic agents and withdraw capabilities."""
+        """Deregister all Agnostic agents, withdraw capabilities, and clear RPC methods."""
         results: dict[str, dict[str, Any]] = {}
+
+        # Clear RPC method registrations (daimon auto-deregisters on agent removal)
+        try:
+            from shared.agnos_rpc_client import agnos_rpc
+
+            await agnos_rpc.deregister_all_methods()
+        except Exception as e:
+            logger.debug("RPC method deregistration: %s", e)
 
         # Withdraw capabilities before deregistering agents
         if self._capabilities_advertised:
@@ -524,6 +544,14 @@ class AgentRegistryClient:
 
     def get_registration_status(self) -> dict[str, Any]:
         """Get registration status for all agents."""
+        rpc_registered: dict[str, list[str]] = {}
+        try:
+            from shared.agnos_rpc_client import agnos_rpc
+
+            rpc_registered = agnos_rpc._registered_methods
+        except ImportError:
+            pass
+
         return {
             "enabled": self.enabled,
             "base_url": self.base_url,
@@ -532,6 +560,7 @@ class AgentRegistryClient:
             "capability_advertise_enabled": self.capability_advertise_enabled,
             "capabilities_advertised": self._capabilities_advertised,
             "total_capabilities": len(CAPABILITY_DEFINITIONS),
+            "rpc_methods_registered": rpc_registered,
         }
 
 

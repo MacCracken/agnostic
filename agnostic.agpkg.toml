@@ -1,0 +1,64 @@
+# AGNOS Marketplace Package Manifest
+# Packages AGNOSTIC as an installable marketplace app for AGNOS systems.
+# Built from the AGNOS recipe at agnosticos/recipes/marketplace/agnostic.toml.
+
+[package]
+name = "agnostic"
+version = "2026.3.9"
+description = "Agnostic — AI-driven multi-agent QA platform with 6 specialized agents"
+license = "MIT"
+groups = ["server", "qa", "python"]
+release = 1
+arch = "x86_64"
+
+[marketplace]
+category = "developer-tools"
+runtime = "python-container"
+publisher = "Agnostic"
+tags = [
+    "qa",
+    "testing",
+    "ai-agents",
+    "crewai",
+    "security-compliance",
+    "performance",
+    "self-healing",
+    "regression-testing",
+    "load-testing",
+]
+min_agnos_version = "2026.3.8"
+
+[marketplace.sandbox]
+seccomp_mode = "basic"
+network_access = true
+data_dir = "~/.local/share/agnostic/"
+
+[marketplace.services]
+ports = [8000]
+depends_on = ["llm-gateway", "agent-runtime"]
+
+[marketplace.desktop]
+name = "Agnostic QA"
+icon = "agnostic-qa"
+categories = ["Development", "Testing"]
+
+[marketplace.agents]
+count = 6
+names = [
+    "QA Manager",
+    "Senior QA Engineer",
+    "Junior QA Engineer",
+    "QA Analyst",
+    "Security & Compliance Officer",
+    "Performance & Resilience Engineer",
+]
+
+[marketplace.capabilities]
+mcp_tools = 27
+rpc_methods = 16
+a2a_protocol = true
+webhook_events = 6
+
+[build]
+dockerfile = "docker/Dockerfile.agnos"
+context = "."

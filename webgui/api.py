@@ -23,6 +23,7 @@ from webgui.routes import (
     mcp,
     persistence,
     reports,
+    rpc,
     sessions,
     tasks,
     tenants,
@@ -45,6 +46,7 @@ api_router.include_router(integration.router)
 api_router.include_router(persistence.router)
 api_router.include_router(tenants.router)
 api_router.include_router(mcp.router)
+api_router.include_router(rpc.router)
 api_router.include_router(yeoman_webhooks.router)
 
 # ---------------------------------------------------------------------------

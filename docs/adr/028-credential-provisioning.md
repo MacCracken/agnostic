@@ -1,6 +1,6 @@
 # ADR-028: Runtime LLM Credential Provisioning
 
-**Status**: Accepted
+**Status**: Superseded (removed 2026-03-09 — all LLM calls route through AGNOS LLM Gateway)
 **Date**: 2026-03-08
 **Authors**: Agnostic team
 

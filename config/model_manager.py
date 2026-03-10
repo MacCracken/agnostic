@@ -42,19 +42,7 @@ class BaseModelProvider(ABC):
             self._session = None
 
     def _resolve_api_key(self) -> str:
-        """Return provisioned credential if available, else config-time key."""
-        try:
-            from config.credential_store import credential_store
-
-            provider_key = (
-                self.config.get("provider_type")
-                or self.config.get("type", "unknown").lower()
-            )
-            cred = credential_store.get(provider_key)
-            if cred:
-                return cred.api_key
-        except ImportError:
-            pass
+        """Return the configured API key."""
         return self.api_key
 
     @abstractmethod

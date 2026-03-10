@@ -424,35 +424,6 @@ class TestReportDownloadSecurity:
 
 
 # ---------------------------------------------------------------------------
-# Security: security headers middleware
-# ---------------------------------------------------------------------------
-
-class TestSecurityHeaders:
-    """Verify OWASP security headers are present on API responses."""
-
-    def test_security_headers_on_health(self):
-        try:
-            from webgui.app import app as real_app
-        except ImportError:
-            pytest.skip("webgui.app not importable")
-
-        with patch("webgui.app.config") as mock_cfg, \
-             patch("webgui.app.socket") as mock_sock, \
-             patch("webgui.app._agent_registry") as mock_reg:
-            mock_cfg.get_redis_client.return_value = Mock(ping=Mock(return_value=True))
-            mock_sock.create_connection.return_value = Mock()
-            mock_reg.get_agents_for_team.return_value = []
-
-            client = TestClient(real_app)
-            resp = client.get("/health")
-
-        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
-        assert resp.headers.get("X-Frame-Options") == "DENY"
-        assert resp.headers.get("X-XSS-Protection") == "1; mode=block"
-        assert resp.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
-
-
-# ---------------------------------------------------------------------------
 # SSRF protection tests
 # ---------------------------------------------------------------------------
 

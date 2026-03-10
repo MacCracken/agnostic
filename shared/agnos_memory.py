@@ -190,6 +190,47 @@ class AgnosMemoryClient:
         values = await self.retrieve_batch(agent_id, keys, namespace="risk_models")
         return [v for v in values if isinstance(v, dict)]
 
+    # ------------------------------------------------------------------
+    # Session lifecycle helpers — persistent memory migration
+    # ------------------------------------------------------------------
+
+    async def store_session(
+        self, agent_id: str, session_id: str, session_data: dict
+    ) -> bool:
+        """Persist a QA session to AGNOS memory for cross-restart survival."""
+        return await self.store(
+            agent_id, f"session:{session_id}", session_data, namespace="sessions"
+        )
+
+    async def retrieve_session(
+        self, agent_id: str, session_id: str
+    ) -> dict | None:
+        """Retrieve a persisted QA session from AGNOS memory."""
+        return await self.retrieve(
+            agent_id, f"session:{session_id}", namespace="sessions"
+        )
+
+    async def list_sessions(self, agent_id: str) -> list[str]:
+        """List all persisted session IDs for an agent."""
+        keys = await self.list_keys(agent_id, namespace="sessions")
+        return [k.removeprefix("session:") for k in keys]
+
+    async def delete_session(self, agent_id: str, session_id: str) -> bool:
+        """Remove a persisted session from AGNOS memory."""
+        return await self.delete(
+            agent_id, f"session:{session_id}", namespace="sessions"
+        )
+
+    async def store_agent_state(
+        self, agent_id: str, state: dict
+    ) -> bool:
+        """Persist agent operational state (task counts, config, etc.)."""
+        return await self.store(agent_id, "agent_state", state, namespace="state")
+
+    async def retrieve_agent_state(self, agent_id: str) -> dict | None:
+        """Retrieve persisted agent operational state."""
+        return await self.retrieve(agent_id, "agent_state", namespace="state")
+
     async def close(self) -> None:
         if self._client and not self._client.is_closed:
             await self._client.aclose()

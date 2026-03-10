@@ -93,16 +93,42 @@ class LLMIntegrationService:
         return "openai"
 
     def _resolve_api_key(self) -> str | None:
-        """Return the best available API key: provisioned store, then env var."""
-        try:
-            from config.credential_store import credential_store
-
-            cred = credential_store.get(self._provider_name)
-            if cred:
-                return cred.api_key
-        except ImportError:
-            pass
+        """Return the configured API key."""
         return self._api_key
+
+    async def _streaming_call(
+        self, call_kwargs: dict[str, Any], span: Any
+    ) -> Any:
+        """Execute a streaming LLM call, assembling chunks into a full response.
+
+        Uses ``litellm.acompletion(stream=True)`` which returns an async
+        generator of SSE chunks. The chunks are concatenated into a complete
+        response object that matches the non-streaming format.
+        """
+        chunks: list[str] = []
+        response_obj = None
+
+        async for chunk in await litellm.acompletion(**call_kwargs):
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta and hasattr(delta, "content") and delta.content:
+                chunks.append(delta.content)
+            # Keep last chunk for usage info (some providers include it on final chunk)
+            response_obj = chunk
+
+        # Build a response-like object with assembled content
+        full_content = "".join(chunks)
+
+        class _AssembledMessage:
+            content = full_content
+
+        class _AssembledChoice:
+            message = _AssembledMessage()
+
+        class _AssembledResponse:
+            choices = [_AssembledChoice()]
+            usage = getattr(response_obj, "usage", None)
+
+        return _AssembledResponse()
 
     async def _llm_call(
         self,
@@ -111,12 +137,15 @@ class LLMIntegrationService:
         user_prompt: str,
         fallback: Any,
         expected_type: type = list,
+        *,
+        stream: bool = False,
     ) -> Any:
         """Common LLM call wrapper with circuit breaker, metrics, and fallback.
 
         Returns parsed JSON response or fallback value on failure.
+        When *stream* is True and the gateway supports it, uses SSE streaming
+        for real-time token output, then assembles the full response.
         """
-        # Resolve credential: provisioned store first, then env var
         api_key = self._resolve_api_key()
         if not api_key or not _llm_circuit.can_execute():
             return fallback
@@ -151,12 +180,17 @@ class LLMIntegrationService:
                     "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
                     "api_key": api_key,
+                    "stream": stream,
                 }
                 if self._base_url:
                     call_kwargs["base_url"] = self._base_url
                 if self._extra_headers:
                     call_kwargs["extra_headers"] = self._extra_headers
-                response = await litellm.acompletion(**call_kwargs)
+
+                if stream:
+                    response = await self._streaming_call(call_kwargs, span)
+                else:
+                    response = await litellm.acompletion(**call_kwargs)
 
                 content = str(response.choices[0].message.content).strip()
                 if content.startswith("```json") and content.endswith("```"):

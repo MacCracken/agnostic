@@ -16,7 +16,6 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
 # Correlation ID context var — available to all code in the request
 correlation_id_ctx: ContextVar[str | None] = ContextVar("correlation_id", default=None)
@@ -792,105 +791,9 @@ async def on_chat_end() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Correlation ID middleware
+# Middleware removed — AGNOS handles correlation IDs, rate limiting, and
+# security headers at the gateway layer.  See roadmap post-migration cleanup.
 # ---------------------------------------------------------------------------
-
-_CORRELATION_HEADER = "X-Correlation-ID"
-
-
-class CorrelationIdMiddleware(BaseHTTPMiddleware):
-    """Propagate or generate a correlation ID for every request.
-
-    - Reads ``X-Correlation-ID`` from the incoming request (or generates a UUID).
-    - Stores the ID in :data:`correlation_id_ctx` so any code in the call
-      chain can access it (including structlog via ``merge_contextvars``).
-    - Attaches the header to the response.
-    """
-
-    async def dispatch(self, request: Request, call_next):
-        cid = request.headers.get(_CORRELATION_HEADER) or uuid.uuid4().hex
-        correlation_id_ctx.set(cid)
-
-        # Bind to structlog contextvars so JSON logs include correlation_id
-        try:
-            import structlog
-
-            structlog.contextvars.clear_contextvars()
-            structlog.contextvars.bind_contextvars(correlation_id=cid)
-        except ImportError:
-            pass
-
-        response = await call_next(request)
-        response.headers[_CORRELATION_HEADER] = cid
-        return response
-
-
-# ---------------------------------------------------------------------------
-# Rate limiting middleware
-# ---------------------------------------------------------------------------
-
-# Paths exempt from global rate limiting (health, metrics, static assets)
-_RATE_LIMIT_EXEMPT = frozenset({"/health", "/api/metrics", "/docs", "/openapi.json"})
-
-
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Global per-client rate limiter for all API endpoints.
-
-    Uses the in-memory :class:`~shared.rate_limit.RateLimiter` keyed by
-    client IP.  Exempt paths (health, metrics) are not counted.
-    Configurable via ``RATE_LIMIT_MAX_REQUESTS`` and
-    ``RATE_LIMIT_WINDOW_SECONDS`` env vars.
-    """
-
-    async def dispatch(self, request: Request, call_next):
-        path = request.url.path
-
-        # Skip non-API and exempt paths
-        if not path.startswith("/api") or path in _RATE_LIMIT_EXEMPT:
-            return await call_next(request)
-
-        from shared.rate_limit import default_rate_limiter
-
-        client_ip = request.client.host if request.client else "unknown"
-        if not await default_rate_limiter.is_allowed(client_ip):
-            remaining = default_rate_limiter.get_remaining(client_ip)
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "Rate limit exceeded. Please try again later."},
-                headers={
-                    "Retry-After": str(default_rate_limiter.window_seconds),
-                    "X-RateLimit-Limit": str(default_rate_limiter.max_requests),
-                    "X-RateLimit-Remaining": str(remaining),
-                },
-            )
-
-        return await call_next(request)
-
-
-# ---------------------------------------------------------------------------
-# Security headers middleware
-# ---------------------------------------------------------------------------
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Add OWASP-recommended security headers to every response."""
-
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; font-src 'self'; connect-src 'self' wss: ws:; "
-            "frame-ancestors 'none'"
-        )
-        response.headers["Strict-Transport-Security"] = (
-            "max-age=63072000; includeSubDomains; preload"
-        )
-        response.headers["Permissions-Policy"] = (
-            "camera=(), microphone=(), geolocation=(), payment=()"
-        )
-        return response
 
 
 from webgui.api import api_router  # noqa: E402
@@ -970,13 +873,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.warning(f"Agent registration failed: {e}")
 
-    # Auto-register AGNOSTIC as MCP server with SecureYeoman
+    # Auto-register AGNOSTIC as MCP server with SecureYeoman and daimon
     try:
-        from shared.yeoman_mcp_server import yeoman_mcp_registration
+        from shared.yeoman_mcp_server import (
+            daimon_mcp_registration,
+            yeoman_mcp_registration,
+        )
 
         await yeoman_mcp_registration.register()
+        await daimon_mcp_registration.register()
     except Exception as e:
-        logger.warning(f"YEOMAN MCP auto-registration failed: {e}")
+        logger.warning(f"MCP auto-registration failed: {e}")
 
     # Start outbound event push to SecureYeoman
     try:
@@ -1020,6 +927,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Webhook HTTP client closed")
     except Exception as e:
         logger.warning(f"Webhook HTTP client shutdown failed: {e}")
+
+    # Close AGNOS clients
+    for client_path, client_attr in [
+        ("shared.agnos_rpc_client", "agnos_rpc"),
+        ("shared.agnos_rag_client", "agnos_rag"),
+        ("shared.agnos_screen_client", "agnos_screen"),
+        ("shared.agnos_recording_client", "agnos_recording"),
+        ("shared.yeoman_mcp_server", "daimon_mcp_registration"),
+    ]:
+        try:
+            mod = __import__(client_path, fromlist=[client_attr])
+            client = getattr(mod, client_attr)
+            await client.close()
+        except Exception:
+            pass
+    logger.info("AGNOS clients closed")
 
     # Close AGNOS dashboard bridge (httpx client + periodic task)
     try:
@@ -1144,10 +1067,6 @@ def _configure_app(target_app: FastAPI) -> None:
             "X-Correlation-ID",
         ],
     )
-
-    target_app.add_middleware(SecurityHeadersMiddleware)
-    target_app.add_middleware(RateLimitMiddleware)
-    target_app.add_middleware(CorrelationIdMiddleware)
 
     target_app.include_router(api_router)
 
