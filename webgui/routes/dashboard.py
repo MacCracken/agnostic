@@ -324,9 +324,9 @@ async def list_alerts(
     try:
         from config.environment import config
 
-        redis_client = config.get_redis_client()
+        redis_client = config.get_async_redis_client()
         # Read from the alerts stream (most recent first)
-        raw = redis_client.xrevrange("stream:webgui:alerts", count=limit)
+        raw = await redis_client.xrevrange("stream:webgui:alerts", count=limit)
         alerts = []
         for stream_id, fields in raw:
             try:

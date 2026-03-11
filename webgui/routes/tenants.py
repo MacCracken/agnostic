@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from webgui.routes.dependencies import (
+    PaginatedResponse,
     _check_tenant_access,
     _require_tenant_enabled,
     get_current_user,
@@ -45,7 +46,7 @@ class TenantUserInvite(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/tenants")
+@router.get("/tenants", response_model=PaginatedResponse)
 async def list_tenants(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
@@ -203,7 +204,7 @@ async def delete_tenant(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/tenants/{tenant_id}/users")
+@router.get("/tenants/{tenant_id}/users", response_model=PaginatedResponse)
 async def list_tenant_users(
     tenant_id: str,
     limit: int = Query(50, ge=1, le=200),

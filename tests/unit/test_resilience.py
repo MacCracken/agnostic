@@ -1,11 +1,16 @@
 """Unit tests for shared.resilience — CircuitBreaker, retry_async, RetryConfig."""
 
-import asyncio
 import time
 
 import pytest
 
-from shared.resilience import CircuitBreaker, CircuitState, GracefulShutdown, RetryConfig, retry_async
+from shared.resilience import (
+    CircuitBreaker,
+    CircuitState,
+    GracefulShutdown,
+    RetryConfig,
+    retry_async,
+)
 
 
 class TestCircuitBreaker:

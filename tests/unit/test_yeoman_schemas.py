@@ -3,8 +3,6 @@
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from shared.yeoman_schemas import (
@@ -354,9 +352,7 @@ class TestTestExecutionResult:
         action = result.to_yeoman_action()
 
         coverage_actions = [
-            a
-            for a in action["actions"]
-            if a.get("title", "").startswith("[COVERAGE]")
+            a for a in action["actions"] if a.get("title", "").startswith("[COVERAGE]")
         ]
         assert len(coverage_actions) == 0
 
@@ -490,4 +486,9 @@ class TestQAReport:
         )
         action = report.to_yeoman_action()
 
-        assert set(action.keys()) == {"report_id", "session_id", "report_type", "actions"}
+        assert set(action.keys()) == {
+            "report_id",
+            "session_id",
+            "report_type",
+            "actions",
+        }

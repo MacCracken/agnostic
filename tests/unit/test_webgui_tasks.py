@@ -1,4 +1,4 @@
-"""Unit tests for P1–P4: task submission endpoints and related helpers."""
+"""Unit tests for P1-P4: task submission endpoints and related helpers."""
 
 import json
 import os
@@ -6,6 +6,7 @@ import sys
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from pydantic import ValidationError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -28,10 +29,10 @@ except ImportError:
 
 from fastapi import FastAPI
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def app():
@@ -73,6 +74,7 @@ def authed_client(app, auth_user):
 # Model validation tests
 # ---------------------------------------------------------------------------
 
+
 class TestTaskSubmitRequest:
     def test_required_fields(self):
         req = TaskSubmitRequest(title="My Task", description="Test everything")
@@ -108,25 +110,25 @@ class TestTaskSubmitRequest:
         assert req.agents == ["security-compliance"]
 
     def test_missing_required_fields(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskSubmitRequest(title="Only title")
 
     # --- Input validation (added with security hardening) ---
 
     def test_title_empty_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskSubmitRequest(title="", description="D")
 
     def test_title_too_long_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskSubmitRequest(title="x" * 201, description="D")
 
     def test_description_too_long_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskSubmitRequest(title="T", description="d" * 5001)
 
     def test_priority_invalid_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskSubmitRequest(title="T", description="D", priority="urgent")
 
     def test_priority_valid_values(self):
@@ -135,11 +137,11 @@ class TestTaskSubmitRequest:
             assert req.priority == p
 
     def test_business_goals_too_long_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskSubmitRequest(title="T", description="D", business_goals="x" * 501)
 
     def test_constraints_too_long_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskSubmitRequest(title="T", description="D", constraints="x" * 501)
 
 
@@ -173,6 +175,7 @@ class TestTaskStatusResponse:
 # ---------------------------------------------------------------------------
 # POST /api/tasks — submit_task
 # ---------------------------------------------------------------------------
+
 
 class TestSubmitTask:
     @patch("config.environment.config")
@@ -267,6 +270,7 @@ class TestSubmitTask:
 # GET /api/tasks/{task_id} — get_task
 # ---------------------------------------------------------------------------
 
+
 class TestGetTask:
     @patch("config.environment.config")
     def test_returns_404_when_missing(self, mock_config, authed_client):
@@ -302,6 +306,7 @@ class TestGetTask:
 # _run_task_async — status transitions and webhook
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_redis_store():
     """Helper: Redis mock that stores values in an in-memory dict."""
     stored: dict = {}
@@ -336,9 +341,12 @@ class TestRunTaskAsync:
         mock_redis = _make_mock_redis_store()
         mock_mod = _make_mock_optimized_manager({"pass_rate": 100})
 
-        with patch.dict("sys.modules", {
-            "agents.manager.qa_manager_optimized": mock_mod,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "agents.manager.qa_manager_optimized": mock_mod,
+            },
+        ):
             await _run_task_async(
                 task_id="t1",
                 session_id="s1",
@@ -365,10 +373,13 @@ class TestRunTaskAsync:
         bad_qa_mod = MagicMock()
         bad_qa_mod.QAManagerAgent.side_effect = RuntimeError("manager down")
 
-        with patch.dict("sys.modules", {
-            "agents.manager.qa_manager_optimized": bad_opt_mod,
-            "agents.manager.qa_manager": bad_qa_mod,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "agents.manager.qa_manager_optimized": bad_opt_mod,
+                "agents.manager.qa_manager": bad_qa_mod,
+            },
+        ):
             await _run_task_async(
                 task_id="t2",
                 session_id="s2",
@@ -388,9 +399,12 @@ class TestRunTaskAsync:
         mock_redis = _make_mock_redis_store()
         mock_mod = _make_mock_optimized_manager({"done": True})
 
-        with patch.dict("sys.modules", {
-            "agents.manager.qa_manager_optimized": mock_mod,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "agents.manager.qa_manager_optimized": mock_mod,
+            },
+        ):
             await _run_task_async(
                 task_id="t3",
                 session_id="s3",
@@ -410,11 +424,12 @@ class TestRunTaskAsync:
 # _fire_webhook — HMAC signing
 # ---------------------------------------------------------------------------
 
+
 class TestFireWebhook:
     @pytest.mark.asyncio
     async def test_sends_post_with_signature(self):
-        import hmac
         import hashlib
+        import hmac
 
         payload = {"task_id": "t1", "status": "completed"}
         secret = "mysecret"
@@ -423,6 +438,7 @@ class TestFireWebhook:
 
         class FakeResponse:
             status_code = 200
+
             def raise_for_status(self):
                 pass
 
@@ -435,7 +451,11 @@ class TestFireWebhook:
                 )
                 return FakeResponse()
 
-        with patch("webgui.api._get_webhook_client", new_callable=AsyncMock, return_value=FakeClient()):
+        with patch(
+            "webgui.api._get_webhook_client",
+            new_callable=AsyncMock,
+            return_value=FakeClient(),
+        ):
             await _fire_webhook(
                 "https://hook.example.com/cb",
                 secret,
@@ -449,6 +469,7 @@ class TestFireWebhook:
         assert sig_header.startswith("sha256=")
 
         import json as _json
+
         body = _json.dumps(payload)
         expected_sig = hmac.new(
             secret.encode(), body.encode(), hashlib.sha256
@@ -462,6 +483,7 @@ class TestFireWebhook:
 
         class FakeResponse:
             status_code = 200
+
             def raise_for_status(self):
                 pass
 
@@ -472,7 +494,11 @@ class TestFireWebhook:
                 captured_requests.append(headers)
                 return FakeResponse()
 
-        with patch("webgui.api._get_webhook_client", new_callable=AsyncMock, return_value=FakeClient()):
+        with patch(
+            "webgui.api._get_webhook_client",
+            new_callable=AsyncMock,
+            return_value=FakeClient(),
+        ):
             await _fire_webhook("https://hook.example.com/cb", None, payload)
 
         assert "X-Signature" not in captured_requests[0]
@@ -487,8 +513,14 @@ class TestFireWebhook:
             async def post(self, *args, **kwargs):
                 raise ConnectionError("unreachable")
 
-        with patch("webgui.api._get_webhook_client", new_callable=AsyncMock, return_value=BrokenClient()), \
-             patch("webgui.api.WEBHOOK_MAX_RETRIES", 1):
+        with (
+            patch(
+                "webgui.api._get_webhook_client",
+                new_callable=AsyncMock,
+                return_value=BrokenClient(),
+            ),
+            patch("webgui.api.WEBHOOK_MAX_RETRIES", 1),
+        ):
             # Should not raise
             await _fire_webhook("https://bad.example.com", "secret", {"x": 1})
 
@@ -508,9 +540,15 @@ class TestFireWebhook:
                 resp.raise_for_status = MagicMock()
                 return resp
 
-        with patch("webgui.api._get_webhook_client", new_callable=AsyncMock, return_value=FailThenSucceedClient()), \
-             patch("webgui.api.WEBHOOK_MAX_RETRIES", 3), \
-             patch("webgui.api.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with (
+            patch(
+                "webgui.api._get_webhook_client",
+                new_callable=AsyncMock,
+                return_value=FailThenSucceedClient(),
+            ),
+            patch("webgui.api.WEBHOOK_MAX_RETRIES", 3),
+            patch("webgui.api.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
             await _fire_webhook("https://hook.example.com/cb", None, {"x": 1})
 
         assert len(attempts) == 3  # 2 failures + 1 success
@@ -531,9 +569,15 @@ class TestFireWebhook:
                 attempts.append(1)
                 raise ConnectionError("unreachable")
 
-        with patch("webgui.api._get_webhook_client", new_callable=AsyncMock, return_value=AlwaysFailClient()), \
-             patch("webgui.api.WEBHOOK_MAX_RETRIES", 3), \
-             patch("webgui.api.asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch(
+                "webgui.api._get_webhook_client",
+                new_callable=AsyncMock,
+                return_value=AlwaysFailClient(),
+            ),
+            patch("webgui.api.WEBHOOK_MAX_RETRIES", 3),
+            patch("webgui.api.asyncio.sleep", new_callable=AsyncMock),
+        ):
             await _fire_webhook("https://bad.example.com", None, {"x": 1})
 
         assert len(attempts) == 3  # tried all 3 times
@@ -542,6 +586,7 @@ class TestFireWebhook:
 # ---------------------------------------------------------------------------
 # Agent-specific convenience endpoints (P4)
 # ---------------------------------------------------------------------------
+
 
 class TestAgentSpecificEndpoints:
     @patch("config.environment.config")
@@ -607,6 +652,7 @@ class TestAgentSpecificEndpoints:
 # A2A protocol endpoints (P8)
 # ---------------------------------------------------------------------------
 
+
 @patch("webgui.routes.tasks.YEOMAN_A2A_ENABLED", True)
 class TestA2AEndpoints:
     """Tests for POST /api/v1/a2a/receive and GET /api/v1/a2a/capabilities."""
@@ -670,9 +716,7 @@ class TestA2AEndpoints:
 
     @patch("config.environment.config")
     @patch("webgui.api.asyncio")
-    def test_delegate_minimal_payload(
-        self, mock_asyncio, mock_config, authed_client
-    ):
+    def test_delegate_minimal_payload(self, mock_asyncio, mock_config, authed_client):
         """Delegate with only title + description in payload."""
         mock_redis = Mock()
         mock_redis.setex.return_value = True

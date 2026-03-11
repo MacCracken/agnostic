@@ -105,7 +105,7 @@ class DashboardManager:
     """Manages real-time dashboard data and metrics"""
 
     def __init__(self):
-        self.redis_client = config.get_redis_client()
+        self.redis_client = config.get_async_redis_client()
         self.sessions_cache = {}
         self.agents_cache = {}
         self.last_cache_update = None
@@ -116,16 +116,22 @@ class DashboardManager:
 
         try:
             # Get session keys from Redis (scan_iter avoids blocking the server)
-            session_keys = list(
-                self.redis_client.scan_iter("session:*:info", count=200)
-            )
+            session_keys = [
+                key
+                async for key in self.redis_client.scan_iter(
+                    "session:*:info", count=200
+                )
+            ]
 
             for key in session_keys:
-                parts = key.decode(errors="replace").split(":")
+                key_str = (
+                    key.decode(errors="replace") if isinstance(key, bytes) else key
+                )
+                parts = key_str.split(":")
                 if len(parts) < 2:
                     continue
                 session_id = parts[1]
-                session_data = self.redis_client.get(key)
+                session_data = await self.redis_client.get(key)
 
                 if session_data:
                     try:
@@ -177,14 +183,22 @@ class DashboardManager:
 
         try:
             # Get agent status from Redis (scan_iter avoids blocking the server)
-            agent_keys = list(self.redis_client.scan_iter("agent:*:status", count=200))
+            agent_keys = [
+                key
+                async for key in self.redis_client.scan_iter(
+                    "agent:*:status", count=200
+                )
+            ]
 
             for key in agent_keys:
-                parts = key.decode(errors="replace").split(":")
+                key_str = (
+                    key.decode(errors="replace") if isinstance(key, bytes) else key
+                )
+                parts = key_str.split(":")
                 if len(parts) < 2:
                     continue
                 agent_name = parts[1]
-                status_data = self.redis_client.get(key)
+                status_data = await self.redis_client.get(key)
 
                 if status_data:
                     try:
@@ -230,7 +244,7 @@ class DashboardManager:
         """Get system resource metrics"""
         try:
             # Get Redis info
-            redis_info = self.redis_client.info()
+            redis_info = await self.redis_client.info()
 
             # Fetch once, derive both filtered and total counts
             all_sessions = await self.get_active_sessions()
@@ -278,7 +292,7 @@ class DashboardManager:
         try:
             # Get session info
             session_key = f"session:{session_id}:info"
-            session_data = self.redis_client.get(session_key)
+            session_data = await self.redis_client.get(session_key)
 
             if not session_data:
                 return None
@@ -287,12 +301,12 @@ class DashboardManager:
 
             # Get test plan
             plan_key = f"manager:{session_id}:test_plan"
-            plan_data = self.redis_client.get(plan_key)
+            plan_data = await self.redis_client.get(plan_key)
             test_plan = json.loads(plan_data) if plan_data else {}
 
             # Get verification results
             verify_key = f"manager:{session_id}:verification"
-            verify_data = self.redis_client.get(verify_key)
+            verify_data = await self.redis_client.get(verify_key)
             verification = json.loads(verify_data) if verify_data else {}
 
             # Get agent tasks
@@ -306,7 +320,7 @@ class DashboardManager:
                 "performance",
             ]:
                 task_key = f"{agent_name}:{session_id}:tasks"
-                task_data = self.redis_client.lrange(task_key, 0, -1)
+                task_data = await self.redis_client.lrange(task_key, 0, -1)
                 if task_data:
                     tasks[agent_name] = [json.loads(task) for task in task_data if task]
 
@@ -337,7 +351,7 @@ class DashboardManager:
                 "performance",
             ]:
                 notif_key = f"{agent_name}:{session_id}:notifications"
-                notifications = self.redis_client.lrange(notif_key, 0, -1)
+                notifications = await self.redis_client.lrange(notif_key, 0, -1)
 
                 for notif in notifications:
                     try:

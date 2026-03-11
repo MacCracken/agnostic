@@ -16,6 +16,7 @@ class Config:
 
     def __init__(self) -> None:
         self._redis_client: redis.Redis | None = None
+        self._async_redis_client: redis.asyncio.Redis | None = None
         self.load_environment()
 
     def load_environment(self) -> None:
@@ -118,6 +119,36 @@ class Config:
 
         redis_kwargs.pop("url", None)
         return redis.Redis(**redis_kwargs)
+
+    def get_async_redis_client(self) -> "redis.asyncio.Redis":
+        """Get async Redis client for use in async handlers."""
+        if self._async_redis_client is None:
+            self._async_redis_client = self._create_async_redis_client()
+        return self._async_redis_client
+
+    def _create_async_redis_client(self) -> "redis.asyncio.Redis":
+        """Create async Redis client with connection pooling."""
+        import redis.asyncio as aioredis
+
+        redis_url = self.redis_url
+        parsed = urlparse(redis_url)
+
+        host = parsed.hostname or self.redis_host
+        port = parsed.port or self.redis_port
+        db = int(parsed.path.lstrip("/") or self.redis_db)
+        password = parsed.password or self.redis_password
+
+        pool = aioredis.ConnectionPool(
+            host=host,
+            port=port,
+            db=db,
+            password=password,
+            max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "50")),
+            retry_on_timeout=True,
+            socket_connect_timeout=5,
+            decode_responses=True,
+        )
+        return aioredis.Redis(connection_pool=pool)
 
     def get_celery_app(self, app_name: str, **kwargs) -> Celery:
         """Create a Celery app with environment configuration."""

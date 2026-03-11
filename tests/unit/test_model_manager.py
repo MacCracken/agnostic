@@ -21,12 +21,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 try:
     from config.model_manager import (
+        AnthropicProvider,
+        BaseModelProvider,
+        GoogleProvider,
+        LocalLLMProvider,
         ModelManager,
         OpenAIProvider,
-        AnthropicProvider,
-        LocalLLMProvider,
-        GoogleProvider,
-        BaseModelProvider,
     )
 except ImportError:
     pytest.skip("model_manager module not available", allow_module_level=True)
@@ -265,17 +265,13 @@ class TestModelManagerProviderCreation:
             "primary_provider": "agnos_gateway",
             "fallback_providers": [],
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(disabled_config, f)
             tmp_path = f.name
 
         try:
             with patch("os.getcwd", return_value=os.path.dirname(tmp_path)):
-                mgr = ModelManager(
-                    config_file=os.path.basename(tmp_path)
-                )
+                mgr = ModelManager(config_file=os.path.basename(tmp_path))
             assert "agnos_gateway" not in mgr.providers
         finally:
             os.unlink(tmp_path)
@@ -288,17 +284,13 @@ class TestModelManagerProviderCreation:
             "primary_provider": "agnos_gateway",
             "fallback_providers": [],
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(enabled_config, f)
             tmp_path = f.name
 
         try:
             with patch("os.getcwd", return_value=os.path.dirname(tmp_path)):
-                mgr = ModelManager(
-                    config_file=os.path.basename(tmp_path)
-                )
+                mgr = ModelManager(config_file=os.path.basename(tmp_path))
             assert "agnos_gateway" in mgr.providers
         finally:
             os.unlink(tmp_path)
@@ -334,9 +326,7 @@ class TestAgnosEnvVars:
     def test_provider_info_reflects_base_url(self):
         """ModelManager.get_provider_info returns the configured base_url."""
         cfg = self._config_with_gateway_enabled("http://localhost:8088/v1")
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(cfg, f)
             tmp_path = f.name
 
@@ -352,9 +342,7 @@ class TestAgnosEnvVars:
     def test_custom_gateway_url(self):
         """A non-default gateway URL (e.g. remote agnosticos host) is accepted."""
         cfg = self._config_with_gateway_enabled("http://192.168.1.50:8088/v1")
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(cfg, f)
             tmp_path = f.name
 
@@ -369,9 +357,7 @@ class TestAgnosEnvVars:
 
     def test_get_available_providers_includes_gateway_when_enabled(self):
         cfg = self._config_with_gateway_enabled("http://localhost:8088/v1")
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(cfg, f)
             tmp_path = f.name
 
@@ -384,9 +370,7 @@ class TestAgnosEnvVars:
 
     def test_missing_provider_info_returns_none(self):
         cfg = self._config_with_gateway_enabled("http://localhost:8088/v1")
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(cfg, f)
             tmp_path = f.name
 
@@ -495,7 +479,7 @@ class TestModelManagerChatCompletion:
 
     @pytest.mark.asyncio
     async def test_routes_to_specified_provider(self):
-        mgr, mock_provider = self._make_manager_with_mock_provider("agnos_gateway")
+        mgr, _mock_provider = self._make_manager_with_mock_provider("agnos_gateway")
         messages = [{"role": "user", "content": "test"}]
         result = await mgr.chat_completion(messages, provider="agnos_gateway")
         assert result.get("success") is True

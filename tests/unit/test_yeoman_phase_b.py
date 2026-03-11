@@ -156,7 +156,9 @@ class TestYeomanJwt:
         mod._ENABLED = True
         mod._PUBLIC_KEY_PATH = ""
         mod._SHARED_SECRET = ""
-        mod._OIDC_DISCOVERY_URL = "https://idp.example.com/.well-known/openid-configuration"
+        mod._OIDC_DISCOVERY_URL = (
+            "https://idp.example.com/.well-known/openid-configuration"
+        )
         mod._cached_public_key = None
         try:
             assert mod.is_enabled() is True

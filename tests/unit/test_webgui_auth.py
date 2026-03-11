@@ -2,11 +2,11 @@ import json
 import os
 import sys
 from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 try:
     from webgui.auth import (
@@ -25,10 +25,22 @@ except ImportError:
 
 
 @pytest.fixture()
-def auth_mgr(mock_redis):
-    """Create AuthManager with mocked Redis."""
+def async_mock_redis():
+    """Async mock Redis client for auth tests."""
+    mock_client = AsyncMock()
+    mock_client.get.return_value = None
+    mock_client.set.return_value = True
+    mock_client.exists.return_value = False
+    mock_client.delete.return_value = True
+    mock_client.setex.return_value = True
+    return mock_client
+
+
+@pytest.fixture()
+def auth_mgr(async_mock_redis):
+    """Create AuthManager with mocked async Redis."""
     with patch("webgui.auth.config") as mock_config:
-        mock_config.get_redis_client.return_value = mock_redis
+        mock_config.get_async_redis_client.return_value = async_mock_redis
         mgr = AuthManager()
     return mgr
 
@@ -36,26 +48,38 @@ def auth_mgr(mock_redis):
 class TestAuthManagerInit:
     """Tests for AuthManager initialization"""
 
-    def test_default_init(self, mock_redis):
+    def test_default_init(self, async_mock_redis):
         with patch("webgui.auth.config") as mock_config:
-            mock_config.get_redis_client.return_value = mock_redis
+            mock_config.get_async_redis_client.return_value = async_mock_redis
             mgr = AuthManager()
         assert mgr.access_token_expire_minutes == 15
         assert mgr.refresh_token_expire_days == 7
         assert mgr.secret_key is not None
 
-    def test_production_requires_secret_key(self, mock_redis):
-        with patch("webgui.auth.config") as mock_config, \
-             patch.dict(os.environ, {"ENVIRONMENT": "production", "WEBGUI_SECRET_KEY": ""}):
-            mock_config.get_redis_client.return_value = mock_redis
+    def test_production_requires_secret_key(self, async_mock_redis):
+        with (
+            patch("webgui.auth.config") as mock_config,
+            patch.dict(
+                os.environ, {"ENVIRONMENT": "production", "WEBGUI_SECRET_KEY": ""}
+            ),
+        ):
+            mock_config.get_async_redis_client.return_value = async_mock_redis
             os.environ.pop("WEBGUI_SECRET_KEY", None)
             with pytest.raises(ValueError, match="WEBGUI_SECRET_KEY must be set"):
                 AuthManager()
 
-    def test_production_with_secret_key(self, mock_redis):
-        with patch("webgui.auth.config") as mock_config, \
-             patch.dict(os.environ, {"ENVIRONMENT": "production", "WEBGUI_SECRET_KEY": "test-secret-key-abc"}):
-            mock_config.get_redis_client.return_value = mock_redis
+    def test_production_with_secret_key(self, async_mock_redis):
+        with (
+            patch("webgui.auth.config") as mock_config,
+            patch.dict(
+                os.environ,
+                {
+                    "ENVIRONMENT": "production",
+                    "WEBGUI_SECRET_KEY": "test-secret-key-abc",
+                },
+            ),
+        ):
+            mock_config.get_async_redis_client.return_value = async_mock_redis
             mgr = AuthManager()
         assert mgr.secret_key == "test-secret-key-abc"
 
@@ -109,9 +133,9 @@ class TestTokens:
         assert tokens.token_type == "bearer"
 
     @pytest.mark.asyncio
-    async def test_verify_valid_token(self, auth_mgr, mock_redis):
+    async def test_verify_valid_token(self, auth_mgr, async_mock_redis):
         # Ensure token is not blacklisted
-        mock_redis.exists.return_value = False
+        async_mock_redis.exists.return_value = False
         user = User(
             user_id="u2",
             email="verify@example.com",
@@ -138,7 +162,7 @@ class TestTokens:
         assert payload is None
 
     @pytest.mark.asyncio
-    async def test_verify_blacklisted_token(self, auth_mgr, mock_redis):
+    async def test_verify_blacklisted_token(self, auth_mgr, async_mock_redis):
         user = User(
             user_id="u3",
             email="bl@example.com",
@@ -155,7 +179,7 @@ class TestTokens:
         )
         tokens = await auth_mgr.create_tokens(user)
         # Simulate blacklisted token
-        mock_redis.exists.return_value = True
+        async_mock_redis.exists.return_value = True
         payload = await auth_mgr.verify_token(tokens.access_token)
         assert payload is None
 
@@ -164,6 +188,7 @@ class TestTokens:
 # P2 — API key authentication via X-API-Key header
 # ---------------------------------------------------------------------------
 
+
 class TestApiKeyAuth:
     """Tests for get_current_user with X-API-Key header."""
 
@@ -171,7 +196,8 @@ class TestApiKeyAuth:
         try:
             from fastapi import FastAPI
             from fastapi.testclient import TestClient
-            from webgui.api import api_router, get_current_user
+
+            from webgui.api import api_router
         except ImportError:
             return None, None
 
@@ -186,11 +212,12 @@ class TestApiKeyAuth:
 
     @patch.dict(os.environ, {"AGNOSTIC_API_KEY": "test-static-key-123"})
     def test_static_env_key_valid(self):
-        """Valid AGNOSTIC_API_KEY in X-API-Key header → 200."""
+        """Valid AGNOSTIC_API_KEY in X-API-Key header -> 200."""
         try:
             from fastapi import FastAPI
             from fastapi.testclient import TestClient
-            from webgui.api import api_router, get_current_user
+
+            from webgui.api import api_router
         except ImportError:
             pytest.skip("webgui.api not available")
 
@@ -198,7 +225,7 @@ class TestApiKeyAuth:
         test_app.include_router(api_router)
         client = TestClient(test_app)
 
-        with patch("webgui.api.auth_manager") as mock_am:
+        with patch("webgui.api.auth_manager"):
             resp = client.get(
                 "/api/auth/me",
                 headers={"X-API-Key": "test-static-key-123"},
@@ -210,10 +237,11 @@ class TestApiKeyAuth:
 
     @patch.dict(os.environ, {"AGNOSTIC_API_KEY": "test-static-key-123"})
     def test_static_env_key_invalid(self):
-        """Wrong key in X-API-Key header → 401."""
+        """Wrong key in X-API-Key header -> 401."""
         try:
             from fastapi import FastAPI
             from fastapi.testclient import TestClient
+
             from webgui.api import api_router
         except ImportError:
             pytest.skip("webgui.api not available")
@@ -223,9 +251,9 @@ class TestApiKeyAuth:
         client = TestClient(test_app)
 
         with patch("config.environment.config") as mock_config:
-            mock_redis = Mock()
+            mock_redis = AsyncMock()
             mock_redis.get.return_value = None
-            mock_config.get_redis_client.return_value = mock_redis
+            mock_config.get_async_redis_client.return_value = mock_redis
 
             resp = client.get(
                 "/api/auth/me",
@@ -234,10 +262,11 @@ class TestApiKeyAuth:
         assert resp.status_code == 401
 
     def test_no_auth_returns_401(self):
-        """No X-API-Key and no Bearer → 401."""
+        """No X-API-Key and no Bearer -> 401."""
         try:
             from fastapi import FastAPI
             from fastapi.testclient import TestClient
+
             from webgui.api import api_router
         except ImportError:
             pytest.skip("webgui.api not available")
@@ -254,48 +283,54 @@ class TestApiKeyAuth:
 # P2 — API key management (create / list / revoke)
 # ---------------------------------------------------------------------------
 
+
 class TestApiKeyManagement:
     """Tests for create_api_key, list_api_keys, revoke_api_key helpers."""
 
     def _make_mock_redis(self):
-        mock_redis = Mock()
+        """Create an async-compatible mock redis backed by dict stores."""
         store: dict = {}
         sets: dict = {}
 
-        def fake_get(key):
+        mock_redis = AsyncMock()
+
+        async def fake_get(key):
             val = store.get(key)
             return val.encode() if isinstance(val, str) else val
 
-        def fake_set(key, value):
+        async def fake_set(key, value):
             store[key] = value if isinstance(value, str) else value.decode()
 
-        def fake_sadd(key, *members):
+        async def fake_sadd(key, *members):
             sets.setdefault(key, set()).update(members)
 
-        def fake_smembers(key):
-            return {m.encode() if isinstance(m, str) else m for m in sets.get(key, set())}
+        async def fake_smembers(key):
+            return {
+                m.encode() if isinstance(m, str) else m for m in sets.get(key, set())
+            }
 
-        def fake_delete(*keys):
+        async def fake_delete(*keys):
             for k in keys:
                 store.pop(k, None)
 
-        def fake_srem(key, *members):
+        async def fake_srem(key, *members):
             if key in sets:
                 sets[key].discard(members[0] if members else None)
 
-        mock_redis.get = fake_get
-        mock_redis.set = fake_set
-        mock_redis.sadd = fake_sadd
-        mock_redis.smembers = fake_smembers
-        mock_redis.delete = fake_delete
-        mock_redis.srem = fake_srem
+        mock_redis.get = AsyncMock(side_effect=fake_get)
+        mock_redis.set = AsyncMock(side_effect=fake_set)
+        mock_redis.sadd = AsyncMock(side_effect=fake_sadd)
+        mock_redis.smembers = AsyncMock(side_effect=fake_smembers)
+        mock_redis.delete = AsyncMock(side_effect=fake_delete)
+        mock_redis.srem = AsyncMock(side_effect=fake_srem)
         mock_redis._store = store
         mock_redis._sets = sets
         return mock_redis
 
-    def test_create_returns_raw_key_and_id(self):
+    @pytest.mark.asyncio
+    async def test_create_returns_raw_key_and_id(self):
         mock_redis = self._make_mock_redis()
-        raw_key, key_id, meta = create_api_key(
+        raw_key, key_id, meta = await create_api_key(
             redis_client=mock_redis,
             description="test key",
             role="api_user",
@@ -308,12 +343,12 @@ class TestApiKeyManagement:
         assert meta["created_by"] == "admin"
         assert "permissions" in meta
 
-    def test_create_stores_hash_not_raw(self):
+    @pytest.mark.asyncio
+    async def test_create_stores_hash_not_raw(self):
         """Raw key must not appear in Redis."""
-        import hashlib
 
         mock_redis = self._make_mock_redis()
-        raw_key, key_id, meta = create_api_key(
+        raw_key, _key_id, _meta = await create_api_key(
             redis_client=mock_redis,
             description="sensitive",
             role="api_user",
@@ -322,49 +357,54 @@ class TestApiKeyManagement:
         all_values = json.dumps(list(mock_redis._store.values()))
         assert raw_key not in all_values
 
-    def test_list_returns_key_ids(self):
+    @pytest.mark.asyncio
+    async def test_list_returns_key_ids(self):
         mock_redis = self._make_mock_redis()
-        _, key_id1, _ = create_api_key(mock_redis, "key1", "api_user", "admin")
-        _, key_id2, _ = create_api_key(mock_redis, "key2", "qa_engineer", "admin")
+        _, key_id1, _ = await create_api_key(mock_redis, "key1", "api_user", "admin")
+        _, key_id2, _ = await create_api_key(mock_redis, "key2", "qa_engineer", "admin")
 
-        keys = list_api_keys(mock_redis)
+        keys = await list_api_keys(mock_redis)
         ids = [k["key_id"] for k in keys]
         assert key_id1 in ids
         assert key_id2 in ids
 
-    def test_list_does_not_expose_hashes(self):
+    @pytest.mark.asyncio
+    async def test_list_does_not_expose_hashes(self):
         mock_redis = self._make_mock_redis()
-        create_api_key(mock_redis, "k", "api_user", "admin")
+        await create_api_key(mock_redis, "k", "api_user", "admin")
 
-        keys = list_api_keys(mock_redis)
+        keys = await list_api_keys(mock_redis)
         for entry in keys:
             assert "hash" not in str(entry).lower()
 
-    def test_revoke_removes_key(self):
+    @pytest.mark.asyncio
+    async def test_revoke_removes_key(self):
         mock_redis = self._make_mock_redis()
-        raw_key, key_id, _ = create_api_key(mock_redis, "k", "api_user", "admin")
+        _raw_key, key_id, _ = await create_api_key(mock_redis, "k", "api_user", "admin")
 
-        assert revoke_api_key(mock_redis, key_id) is True
-        keys = list_api_keys(mock_redis)
+        assert await revoke_api_key(mock_redis, key_id) is True
+        keys = await list_api_keys(mock_redis)
         ids = [k["key_id"] for k in keys]
         assert key_id not in ids
 
-    def test_revoke_nonexistent_returns_false(self):
+    @pytest.mark.asyncio
+    async def test_revoke_nonexistent_returns_false(self):
         mock_redis = self._make_mock_redis()
-        assert revoke_api_key(mock_redis, "nonexistent") is False
+        assert await revoke_api_key(mock_redis, "nonexistent") is False
 
-    def test_api_key_lookup_works_in_get_current_user(self):
+    @pytest.mark.asyncio
+    async def test_api_key_lookup_works_in_get_current_user(self):
         """End-to-end: created key is accepted by get_current_user."""
         import hashlib
 
         mock_redis = self._make_mock_redis()
-        raw_key, key_id, meta = create_api_key(
+        raw_key, key_id, _meta = await create_api_key(
             mock_redis, "e2e", "api_user", "admin"
         )
 
         # Simulate what get_current_user does
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        key_data = mock_redis.get(f"api_key:{key_hash}")
+        key_data = await mock_redis.get(f"api_key:{key_hash}")
         assert key_data is not None
         parsed = json.loads(key_data)
         assert parsed["key_id"] == key_id

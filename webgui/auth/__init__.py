@@ -51,7 +51,7 @@ class AuthManager:
     """
 
     def __init__(self):
-        self.redis_client = config.get_redis_client()
+        self.redis_client = config.get_async_redis_client()
 
         environment = os.getenv("ENVIRONMENT", "development")
         secret_key = os.getenv("WEBGUI_SECRET_KEY")
@@ -189,7 +189,7 @@ class AuthManager:
         """Get user by ID."""
         try:
             user_key = f"user:{user_id}"
-            user_data = self.redis_client.get(user_key)
+            user_data = await self.redis_client.get(user_key)
 
             if not user_data:
                 return None
@@ -240,8 +240,8 @@ class AuthManager:
     def _hash_password(self, password: str) -> str:
         return self.token_manager.hash_password(password)
 
-    def _is_token_blacklisted(self, token: str) -> bool:
-        return self.token_manager._is_token_blacklisted(token)
+    async def _is_token_blacklisted(self, token: str) -> bool:
+        return await self.token_manager._is_token_blacklisted(token)
 
 
 # Singleton instance

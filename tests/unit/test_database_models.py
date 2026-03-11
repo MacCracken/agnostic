@@ -6,7 +6,6 @@ without requiring a live database connection.
 
 import os
 import sys
-from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -57,14 +56,18 @@ class TestDatabaseModels:
     def test_test_session_has_indexes(self):
         from shared.database.models import TestSession
 
-        index_names = [idx.name for idx in TestSession.__table_args__ if hasattr(idx, "name")]
+        index_names = [
+            idx.name for idx in TestSession.__table_args__ if hasattr(idx, "name")
+        ]
         assert "idx_test_sessions_status" in index_names
         assert "idx_test_sessions_created_at" in index_names
 
     def test_test_result_has_indexes(self):
         from shared.database.models import TestResult
 
-        index_names = [idx.name for idx in TestResult.__table_args__ if hasattr(idx, "name")]
+        index_names = [
+            idx.name for idx in TestResult.__table_args__ if hasattr(idx, "name")
+        ]
         assert "idx_test_results_session_id" in index_names
         assert "idx_test_results_status" in index_names
         assert "idx_test_results_test_id" in index_names
@@ -122,7 +125,7 @@ class TestTestResultRepository:
     async def test_create_session(self, repo, mock_session):
         mock_session.refresh = AsyncMock()
 
-        result = await repo.create_session(
+        await repo.create_session(
             session_id="test-sess-001",
             title="Test Session",
             description="A test",
@@ -149,7 +152,7 @@ class TestTestResultRepository:
         mock_session.execute = AsyncMock(return_value=mock_result)
         mock_session.refresh = AsyncMock()
 
-        result = await repo.update_session_status("test-sess-001", "completed")
+        await repo.update_session_status("test-sess-001", "completed")
 
         assert mock_session_obj.status == "completed"
         mock_session.commit.assert_called_once()
@@ -160,9 +163,9 @@ class TestTestResultRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_session.execute = AsyncMock(return_value=mock_result)
 
-        result = await repo.update_session_status("nonexistent", "completed")
+        updated = await repo.update_session_status("nonexistent", "completed")
 
-        assert result is None
+        assert updated is None
         mock_session.commit.assert_not_called()
 
     @pytest.mark.asyncio
@@ -178,7 +181,7 @@ class TestTestResultRepository:
             "execution_time_ms": 150,
         }
 
-        result = await repo.add_test_result(result_data)
+        await repo.add_test_result(result_data)
 
         mock_session.add.assert_called_once()
         added = mock_session.add.call_args[0][0]
@@ -203,7 +206,7 @@ class TestTestResultRepository:
     async def test_add_metric(self, repo, mock_session):
         mock_session.refresh = AsyncMock()
 
-        result = await repo.add_metric(
+        await repo.add_metric(
             session_id="sess-1",
             metric_name="response_time_p95",
             metric_value=245.5,
@@ -221,7 +224,7 @@ class TestTestResultRepository:
         mock_session.refresh = AsyncMock()
 
         summary = {"total": 100, "passed": 95, "failed": 5, "pass_rate": 95.0}
-        result = await repo.create_report(
+        await repo.create_report(
             session_id="sess-1",
             report_type="executive_summary",
             summary=summary,

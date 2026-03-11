@@ -169,7 +169,7 @@ class TenantManager:
             return datetime.now(UTC) < tenant.trial_ends_at
         return False
 
-    def check_rate_limit(
+    async def check_rate_limit(
         self, redis_client, tenant_id: str, rate_limit: int | None = None
     ) -> bool:
         """Check and increment rate limit counter for a tenant.
@@ -181,13 +181,13 @@ class TenantManager:
         now = datetime.now(UTC)
         window_key = f"tenant:{tenant_id}:rate:{now.strftime('%Y%m%d%H%M')}"
 
-        current = redis_client.incr(window_key)
+        current = await redis_client.incr(window_key)
         if current == 1:
-            redis_client.expire(window_key, 60)
+            await redis_client.expire(window_key, 60)
 
         return current <= limit
 
-    def validate_tenant_api_key(
+    async def validate_tenant_api_key(
         self, redis_client, api_key: str
     ) -> dict[str, Any] | None:
         """Validate a tenant-scoped API key.
@@ -198,7 +198,7 @@ class TenantManager:
         import hashlib
 
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-        key_data = redis_client.get(f"tenant_api_key:{key_hash}")
+        key_data = await redis_client.get(f"tenant_api_key:{key_hash}")
         if not key_data:
             return None
 
@@ -208,7 +208,7 @@ class TenantManager:
 
         # Update last_used timestamp
         data["last_used_at"] = datetime.now(UTC).isoformat()
-        redis_client.set(f"tenant_api_key:{key_hash}", json.dumps(data))
+        await redis_client.set(f"tenant_api_key:{key_hash}", json.dumps(data))
 
         return {
             "user_id": f"tenant-api-{data.get('tenant_id', 'unknown')}",

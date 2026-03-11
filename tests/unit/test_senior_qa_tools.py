@@ -1,10 +1,12 @@
-import pytest
-from unittest.mock import Mock, patch
-import sys
 import os
+import sys
+
+import pytest
 
 # Add the agents directory to Python path for importing
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'agents', 'senior'))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "..", "agents", "senior")
+)
 
 try:
     from senior_qa import SelfHealingTool
@@ -30,7 +32,7 @@ class TestSelfHealingTool:
         try:
             tool = SelfHealingTool()
             result = tool._run("#login-button", "click")
-            
+
             # Should return a result with healing attempts
             assert isinstance(result, dict)
             assert "original_selector" in result or "success" in result
@@ -42,7 +44,7 @@ class TestSelfHealingTool:
         try:
             tool = SelfHealingTool()
             result = tool._run("#non-existent-element", "click")
-            
+
             # Should attempt healing and return result
             assert isinstance(result, dict)
         except Exception as e:
@@ -56,9 +58,9 @@ class TestSelfHealingTool:
             selectors = [
                 ".btn-primary",
                 "[data-testid='submit']",
-                "button[type='submit']"
+                "button[type='submit']",
             ]
-            
+
             for selector in selectors:
                 result = tool._run(selector, "click")
                 assert isinstance(result, dict)

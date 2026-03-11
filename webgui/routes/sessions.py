@@ -5,7 +5,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from webgui.routes.dependencies import get_current_user
+from webgui.routes.dependencies import PaginatedResponse, get_current_user
 
 router = APIRouter()
 
@@ -15,7 +15,7 @@ class SessionCompareRequest(BaseModel):
     session2_id: str
 
 
-@router.get("/sessions")
+@router.get("/sessions", response_model=PaginatedResponse)
 async def get_sessions(
     user_id: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -40,9 +40,9 @@ async def get_sessions(
     return {"items": items, "total": len(items), "limit": limit, "offset": offset}
 
 
-@router.get("/sessions/search")
+@router.get("/sessions/search", response_model=PaginatedResponse)
 async def search_sessions(
-    q: str = Query(..., min_length=1),
+    q: str = Query(..., min_length=1, max_length=500),
     limit: int = Query(20, ge=1, le=100),
     user: dict = Depends(get_current_user),
 ):
@@ -50,7 +50,7 @@ async def search_sessions(
 
     results = await history_manager.search_sessions(query=q, limit=limit)
     items = [asdict(s) for s in results]
-    return {"items": items, "total": len(items), "limit": limit}
+    return {"items": items, "total": len(items), "limit": limit, "offset": 0}
 
 
 @router.get("/sessions/{session_id}")
@@ -68,6 +68,10 @@ async def compare_sessions(
     req: SessionCompareRequest,
     user: dict = Depends(get_current_user),
 ):
+    """Compare two sessions from Redis history (real-time data).
+
+    For database-backed session diff, use GET /test-sessions/diff instead.
+    """
     from webgui.history import history_manager
 
     comparison = await history_manager.compare_sessions(

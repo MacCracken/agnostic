@@ -23,7 +23,7 @@ class TestNoOpMetrics:
         AGENTS_ACTIVE.labels(agent="test").set(3)
 
     def test_llm_metrics_inc(self):
-        from shared.metrics import LLM_CALLS_TOTAL, LLM_CALL_DURATION
+        from shared.metrics import LLM_CALL_DURATION, LLM_CALLS_TOTAL
 
         LLM_CALLS_TOTAL.labels(method="test", status="success").inc()
         LLM_CALL_DURATION.labels(method="test").observe(0.5)
@@ -46,7 +46,9 @@ class TestNoOpMetrics:
     def test_http_requests_counter(self):
         from shared.metrics import HTTP_REQUESTS_TOTAL
 
-        HTTP_REQUESTS_TOTAL.labels(method="GET", endpoint="/api/test", status_code="200").inc()
+        HTTP_REQUESTS_TOTAL.labels(
+            method="GET", endpoint="/api/test", status_code="200"
+        ).inc()
 
     def test_get_metrics_text_returns_string(self):
         from shared.metrics import get_metrics_text
@@ -68,7 +70,9 @@ class TestNoOpMetrics:
 
 
 @pytest.mark.skipif(
-    not __import__("shared.metrics", fromlist=["PROMETHEUS_AVAILABLE"]).PROMETHEUS_AVAILABLE,
+    not __import__(
+        "shared.metrics", fromlist=["PROMETHEUS_AVAILABLE"]
+    ).PROMETHEUS_AVAILABLE,
     reason="prometheus_client not installed",
 )
 class TestPrometheusMetrics:

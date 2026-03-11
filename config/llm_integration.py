@@ -27,8 +27,21 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
+def _on_llm_breaker_change(name: str, old_state: str, new_state: str) -> None:
+    """Update Prometheus gauge when the LLM circuit breaker changes state."""
+    from shared.metrics import CIRCUIT_BREAKER_STATE
+
+    state_values = {"closed": 0, "open": 1, "half_open": 2}
+    CIRCUIT_BREAKER_STATE.labels(service=name).set(state_values.get(new_state, -1))
+    logger.info("Circuit breaker %s: %s → %s", name, old_state, new_state)
+
+
 _llm_circuit = CircuitBreaker(
-    name="llm_api", failure_threshold=5, recovery_timeout=60.0
+    name="llm_api",
+    failure_threshold=5,
+    recovery_timeout=60.0,
+    on_state_change=_on_llm_breaker_change,
 )
 
 

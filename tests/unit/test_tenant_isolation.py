@@ -75,6 +75,35 @@ class TestTenantKeyIsolation:
 
 
 # ---------------------------------------------------------------------------
+# Helper to create an async-compatible mock redis backed by a dict store
+# ---------------------------------------------------------------------------
+
+
+def _make_async_redis_mock(store=None):
+    """Create an AsyncMock redis that uses a dict as backing store."""
+    if store is None:
+        store = {}
+    mock_redis = AsyncMock()
+
+    async def async_setex(key, ttl, value):
+        store[key] = value
+
+    async def async_get(key):
+        return store.get(key)
+
+    async def async_incr(key):
+        store[key] = store.get(key, 0) + 1
+        return store[key]
+
+    mock_redis.setex = AsyncMock(side_effect=async_setex)
+    mock_redis.get = AsyncMock(side_effect=async_get)
+    mock_redis.incr = AsyncMock(side_effect=async_incr)
+    mock_redis.expire = AsyncMock()
+    mock_redis.set = AsyncMock()
+    return mock_redis, store
+
+
+# ---------------------------------------------------------------------------
 # Task submit/get isolation via API
 # ---------------------------------------------------------------------------
 
@@ -85,6 +114,7 @@ class TestTaskEndpointIsolation:
     @pytest.fixture
     def app(self):
         from fastapi import FastAPI
+
         from webgui.api import api_router
 
         app = FastAPI()
@@ -94,6 +124,7 @@ class TestTaskEndpointIsolation:
     def _make_client(self, app, tenant_id):
         """Create a TestClient authenticated as a specific tenant."""
         from fastapi.testclient import TestClient
+
         from webgui.api import get_current_user
 
         async def override():
@@ -117,21 +148,14 @@ class TestTaskEndpointIsolation:
 
     def test_tenant_a_cannot_read_tenant_b_task(self, app):
         """A task created by tenant-a is not visible to tenant-b."""
-        store: dict[str, str] = {}
-
-        mock_redis = MagicMock()
-        mock_redis.setex = lambda key, ttl, value: store.__setitem__(key, value)
-        mock_redis.get = lambda key: store.get(key)
-        mock_redis.incr = MagicMock(return_value=1)
-        mock_redis.expire = MagicMock()
-
+        mock_redis, _store = _make_async_redis_mock()
         mgr = self._make_enabled_tenant_manager()
 
         with (
             patch("config.environment.config") as mock_config,
             patch("shared.database.tenants.tenant_manager", mgr),
         ):
-            mock_config.get_redis_client.return_value = mock_redis
+            mock_config.get_async_redis_client.return_value = mock_redis
 
             # Tenant A submits a task
             client_a = self._make_client(app, "tenant-a")
@@ -153,14 +177,7 @@ class TestTaskEndpointIsolation:
 
     def test_same_task_id_different_tenants_no_collision(self, app):
         """Two tenants can each store data under the same task_id without collision."""
-        store: dict[str, str] = {}
-
-        mock_redis = MagicMock()
-        mock_redis.setex = lambda key, ttl, value: store.__setitem__(key, value)
-        mock_redis.get = lambda key: store.get(key)
-        mock_redis.incr = MagicMock(return_value=1)
-        mock_redis.expire = MagicMock()
-
+        mock_redis, store = _make_async_redis_mock()
         mgr = self._make_enabled_tenant_manager()
 
         # Manually insert task records for same task_id but different tenants
@@ -168,28 +185,32 @@ class TestTaskEndpointIsolation:
         key_a = mgr.task_key("tenant-a", task_id)
         key_b = mgr.task_key("tenant-b", task_id)
 
-        store[key_a] = json.dumps({
-            "task_id": task_id,
-            "session_id": "sess-a",
-            "status": "pending",
-            "created_at": "2026-01-01T00:00:00",
-            "updated_at": "2026-01-01T00:00:00",
-            "result": None,
-        })
-        store[key_b] = json.dumps({
-            "task_id": task_id,
-            "session_id": "sess-b",
-            "status": "completed",
-            "created_at": "2026-01-01T00:00:00",
-            "updated_at": "2026-01-01T00:00:00",
-            "result": {"summary": "done"},
-        })
+        store[key_a] = json.dumps(
+            {
+                "task_id": task_id,
+                "session_id": "sess-a",
+                "status": "pending",
+                "created_at": "2026-01-01T00:00:00",
+                "updated_at": "2026-01-01T00:00:00",
+                "result": None,
+            }
+        )
+        store[key_b] = json.dumps(
+            {
+                "task_id": task_id,
+                "session_id": "sess-b",
+                "status": "completed",
+                "created_at": "2026-01-01T00:00:00",
+                "updated_at": "2026-01-01T00:00:00",
+                "result": {"summary": "done"},
+            }
+        )
 
         with (
             patch("config.environment.config") as mock_config,
             patch("shared.database.tenants.tenant_manager", mgr),
         ):
-            mock_config.get_redis_client.return_value = mock_redis
+            mock_config.get_async_redis_client.return_value = mock_redis
 
             # Tenant A sees pending
             client_a = self._make_client(app, "tenant-a")
@@ -212,7 +233,8 @@ class TestTaskEndpointIsolation:
 class TestRateLimitIsolation:
     """Verify rate limits are per-tenant, not global."""
 
-    def test_rate_limit_independent_per_tenant(self):
+    @pytest.mark.asyncio
+    async def test_rate_limit_independent_per_tenant(self):
         """Exhausting tenant-a's rate limit does not affect tenant-b."""
         from shared.database.tenants import TenantManager
 
@@ -222,27 +244,30 @@ class TestRateLimitIsolation:
 
         counters: dict[str, int] = {}
 
-        mock_redis = MagicMock()
+        mock_redis = AsyncMock()
 
-        def fake_incr(key):
+        async def fake_incr(key):
             counters[key] = counters.get(key, 0) + 1
             return counters[key]
 
-        mock_redis.incr = fake_incr
-        mock_redis.expire = MagicMock()
+        mock_redis.incr = AsyncMock(side_effect=fake_incr)
+        mock_redis.expire = AsyncMock()
 
         # Tenant A: 3 requests (exceeds limit of 2)
-        assert mgr.check_rate_limit(mock_redis, "tenant-a") is True   # 1
-        assert mgr.check_rate_limit(mock_redis, "tenant-a") is True   # 2
-        assert mgr.check_rate_limit(mock_redis, "tenant-a") is False  # 3 — blocked
+        assert await mgr.check_rate_limit(mock_redis, "tenant-a") is True  # 1
+        assert await mgr.check_rate_limit(mock_redis, "tenant-a") is True  # 2
+        assert (
+            await mgr.check_rate_limit(mock_redis, "tenant-a") is False
+        )  # 3 — blocked
 
         # Tenant B: still allowed
-        assert mgr.check_rate_limit(mock_redis, "tenant-b") is True
+        assert await mgr.check_rate_limit(mock_redis, "tenant-b") is True
 
     def test_rate_limit_returns_429_on_task_submit(self):
         """POST /api/tasks returns 429 when tenant rate limit exceeded."""
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from webgui.api import api_router, get_current_user
 
         app = FastAPI()
@@ -253,20 +278,20 @@ class TestRateLimitIsolation:
 
         app.dependency_overrides[get_current_user] = override
 
-        mock_redis = MagicMock()
-        mock_redis.incr = MagicMock(return_value=1)
-        mock_redis.expire = MagicMock()
-        mock_redis.setex = MagicMock()
+        mock_redis = AsyncMock()
+        mock_redis.incr.return_value = 1
+        mock_redis.expire = AsyncMock()
+        mock_redis.setex = AsyncMock()
 
         with (
             patch("config.environment.config") as mock_config,
             patch("shared.database.tenants.tenant_manager") as mock_mgr,
         ):
-            mock_config.get_redis_client.return_value = mock_redis
+            mock_config.get_async_redis_client.return_value = mock_redis
             mock_mgr.enabled = True
             mock_mgr.default_tenant_id = "default"
             mock_mgr.task_key.return_value = "tenant:limited:task:xyz"
-            mock_mgr.check_rate_limit.return_value = False
+            mock_mgr.check_rate_limit = AsyncMock(return_value=False)
 
             client = TestClient(app)
             resp = client.post(
@@ -287,7 +312,8 @@ class TestRateLimitIsolation:
 class TestAPIKeyIsolation:
     """Verify tenant API keys return correct tenant context."""
 
-    def test_api_key_returns_correct_tenant_id(self):
+    @pytest.mark.asyncio
+    async def test_api_key_returns_correct_tenant_id(self):
         """validate_tenant_api_key maps key to correct tenant."""
         import hashlib
 
@@ -301,21 +327,26 @@ class TestAPIKeyIsolation:
         hash_b = hashlib.sha256(key_b.encode()).hexdigest()
 
         store = {
-            f"tenant_api_key:{hash_a}": json.dumps({"tenant_id": "tenant-a", "role": "api_user"}),
-            f"tenant_api_key:{hash_b}": json.dumps({"tenant_id": "tenant-b", "role": "api_user"}),
+            f"tenant_api_key:{hash_a}": json.dumps(
+                {"tenant_id": "tenant-a", "role": "api_user"}
+            ),
+            f"tenant_api_key:{hash_b}": json.dumps(
+                {"tenant_id": "tenant-b", "role": "api_user"}
+            ),
         }
 
-        mock_redis = MagicMock()
-        mock_redis.get = lambda key: store.get(key)
-        mock_redis.set = MagicMock()
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=lambda key: store.get(key))
+        mock_redis.set = AsyncMock()
 
-        result_a = mgr.validate_tenant_api_key(mock_redis, key_a)
-        result_b = mgr.validate_tenant_api_key(mock_redis, key_b)
+        result_a = await mgr.validate_tenant_api_key(mock_redis, key_a)
+        result_b = await mgr.validate_tenant_api_key(mock_redis, key_b)
 
         assert result_a["tenant_id"] == "tenant-a"
         assert result_b["tenant_id"] == "tenant-b"
 
-    def test_api_key_for_one_tenant_does_not_auth_another(self):
+    @pytest.mark.asyncio
+    async def test_api_key_for_one_tenant_does_not_auth_another(self):
         """A valid key for tenant-a does not grant access to tenant-b data."""
         import hashlib
 
@@ -327,15 +358,17 @@ class TestAPIKeyIsolation:
         key = "only-for-tenant-a"
         key_hash = hashlib.sha256(key.encode()).hexdigest()
 
-        mock_redis = MagicMock()
-        mock_redis.get = lambda k: (
-            json.dumps({"tenant_id": "tenant-a"})
-            if k == f"tenant_api_key:{key_hash}"
-            else None
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(
+            side_effect=lambda k: (
+                json.dumps({"tenant_id": "tenant-a"})
+                if k == f"tenant_api_key:{key_hash}"
+                else None
+            )
         )
-        mock_redis.set = MagicMock()
+        mock_redis.set = AsyncMock()
 
-        result = mgr.validate_tenant_api_key(mock_redis, key)
+        result = await mgr.validate_tenant_api_key(mock_redis, key)
         assert result["tenant_id"] == "tenant-a"
 
         # The user dict has tenant-a, so task_key will scope to tenant-a

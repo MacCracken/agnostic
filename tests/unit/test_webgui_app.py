@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,7 +15,9 @@ _mock_redis = MagicMock()
 
 @pytest.fixture(autouse=True)
 def _patch_redis(monkeypatch):
-    monkeypatch.setattr("config.environment.config.get_redis_client", lambda: _mock_redis)
+    monkeypatch.setattr(
+        "config.environment.config.get_redis_client", lambda: _mock_redis
+    )
     _mock_redis.reset_mock()
     _mock_redis.get.reset_mock()
     _mock_redis.ping.reset_mock()
@@ -74,7 +76,10 @@ class TestAgenticQAGUI:
         from webgui.app import AgenticQAGUI
 
         gui = AgenticQAGUI()
-        _mock_redis.lrange.return_value = [b"not json", json.dumps({"timestamp": "t", "agent": "a", "scenario_id": "s"}).encode()]
+        _mock_redis.lrange.return_value = [
+            b"not json",
+            json.dumps({"timestamp": "t", "agent": "a", "scenario_id": "s"}).encode(),
+        ]
         trace = await gui.get_reasoning_trace("sess1")
         assert len(trace) == 1
 
@@ -127,8 +132,10 @@ class TestHealthCheck:
         _mock_redis.ping.side_effect = None
         _mock_redis.ping.return_value = True
         _mock_redis.get.return_value = None
-        with patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}), \
-             patch("socket.create_connection", side_effect=Exception("refused")):
+        with (
+            patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}),
+            patch("socket.create_connection", side_effect=Exception("refused")),
+        ):
             response = client.get("/health")
         data = response.json()
         assert data["rabbitmq"] == "error"
@@ -151,11 +158,11 @@ class TestHealthCheck:
             "status": "idle",
         }
         _mock_redis.get.return_value = json.dumps(agent_status).encode()
-        with patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}), \
-             patch("socket.create_connection") as mock_sock:
+        with (
+            patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}),
+            patch("socket.create_connection") as mock_sock,
+        ):
             mock_sock.return_value = MagicMock()
             response = client.get("/health")
         data = response.json()
         assert data["status"] == "healthy"
-
-

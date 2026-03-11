@@ -59,6 +59,17 @@ class AuditAction(StrEnum):
     TOOL_INVOKED = "integration.tool_invoked"
     WEBHOOK_RECEIVED = "integration.webhook_received"
 
+    # A2A
+    A2A_DELEGATE_RECEIVED = "a2a.delegate.received"
+    A2A_RESULT_RECEIVED = "a2a.result.received"
+    A2A_STATUS_QUERY = "a2a.status_query"
+    A2A_DELEGATE_SENT = "a2a.delegate.sent"
+
+    # Session lifecycle
+    SESSION_CREATED = "session.created"
+    SESSION_COMPLETED = "session.completed"
+    SESSION_FAILED = "session.failed"
+
     # System
     RATE_LIMIT_EXCEEDED = "system.rate_limit"
     PERMISSION_DENIED = "system.permission_denied"

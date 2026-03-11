@@ -57,7 +57,7 @@ class OAuthProviderFactory:
         """Local authentication with password."""
         try:
             user_key = f"user:email:{email}"
-            user_data = self.redis_client.get(user_key)
+            user_data = await self.redis_client.get(user_key)
 
             if not user_data:
                 return None
@@ -283,7 +283,7 @@ class OAuthProviderFactory:
         """Get existing OAuth user or create new one."""
         try:
             user_key = f"user:email:{email}"
-            user_data = self.redis_client.get(user_key)
+            user_data = await self.redis_client.get(user_key)
 
             if user_data:
                 user_dict = json.loads(user_data)
@@ -349,7 +349,7 @@ class OAuthProviderFactory:
                 user_dict["last_login"] = user.last_login.isoformat()
 
             user_key = f"user:{user.user_id}"
-            self.redis_client.set(user_key, json.dumps(user_dict))
+            await self.redis_client.set(user_key, json.dumps(user_dict))
 
             email_key = f"user:email:{user.email}"
             email_data = {
@@ -372,7 +372,7 @@ class OAuthProviderFactory:
             ):
                 email_data["password_hash"] = user_dict["password_hash"]
 
-            self.redis_client.set(email_key, json.dumps(email_data))
+            await self.redis_client.set(email_key, json.dumps(email_data))
 
         except Exception as e:
             logger.error(f"Error saving user: {e}")
@@ -382,21 +382,21 @@ class OAuthProviderFactory:
         """Update user's last login time."""
         try:
             user_key = f"user:{user_id}"
-            user_data = self.redis_client.get(user_key)
+            user_data = await self.redis_client.get(user_key)
 
             if user_data:
                 user_dict = json.loads(user_data)
                 user_dict["last_login"] = datetime.now().isoformat()
-                self.redis_client.set(user_key, json.dumps(user_dict))
+                await self.redis_client.set(user_key, json.dumps(user_dict))
 
                 email = user_dict.get("email")
                 if email:
                     email_key = f"user:email:{email}"
-                    email_data = self.redis_client.get(email_key)
+                    email_data = await self.redis_client.get(email_key)
                     if email_data:
                         email_dict = json.loads(email_data)
                         email_dict["last_login"] = datetime.now().isoformat()
-                        self.redis_client.set(email_key, json.dumps(email_dict))
+                        await self.redis_client.set(email_key, json.dumps(email_dict))
 
         except Exception as e:
             logger.error(f"Error updating last login: {e}")

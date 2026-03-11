@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -76,7 +76,7 @@ class TestCheckPermission:
 class TestCheckResourceAccess:
     @pytest.mark.asyncio
     async def test_session_owner_access(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         session_info = {"user_id": "u1", "team_id": "team1"}
         redis.get.return_value = json.dumps(session_info).encode()
         user = _make_user()
@@ -86,7 +86,7 @@ class TestCheckResourceAccess:
 
     @pytest.mark.asyncio
     async def test_session_non_owner_denied(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         session_info = {"user_id": "other-user", "team_id": "other-team"}
         redis.get.return_value = json.dumps(session_info).encode()
         user = _make_user()
@@ -96,7 +96,7 @@ class TestCheckResourceAccess:
 
     @pytest.mark.asyncio
     async def test_team_lead_same_team_access(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         session_info = {"user_id": "other-user", "team_id": "team1"}
         redis.get.return_value = json.dumps(session_info).encode()
         user = _make_user(
@@ -110,8 +110,12 @@ class TestCheckResourceAccess:
 
     @pytest.mark.asyncio
     async def test_org_admin_same_org_access(self):
-        redis = MagicMock()
-        session_info = {"user_id": "other", "team_id": "other-team", "organization_id": "org1"}
+        redis = AsyncMock()
+        session_info = {
+            "user_id": "other",
+            "team_id": "other-team",
+            "organization_id": "org1",
+        }
         redis.get.return_value = json.dumps(session_info).encode()
         user = _make_user(
             role=UserRole.ORG_ADMIN,
@@ -124,8 +128,12 @@ class TestCheckResourceAccess:
 
     @pytest.mark.asyncio
     async def test_super_admin_always_access(self):
-        redis = MagicMock()
-        session_info = {"user_id": "other", "team_id": "other", "organization_id": "other"}
+        redis = AsyncMock()
+        session_info = {
+            "user_id": "other",
+            "team_id": "other",
+            "organization_id": "other",
+        }
         redis.get.return_value = json.dumps(session_info).encode()
         user = _make_user(
             role=UserRole.SUPER_ADMIN,

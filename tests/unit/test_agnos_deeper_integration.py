@@ -24,7 +24,10 @@ class TestAgnosRagClient:
     def client(self):
         with patch.dict(
             os.environ,
-            {"AGNOS_RAG_ENABLED": "true", "AGNOS_AGENT_REGISTRY_URL": "http://test:8090"},
+            {
+                "AGNOS_RAG_ENABLED": "true",
+                "AGNOS_AGENT_REGISTRY_URL": "http://test:8090",
+            },
             clear=False,
         ):
             from shared.agnos_rag_client import AgnosRagClient
@@ -59,7 +62,9 @@ class TestAgnosRagClient:
         mock_http.is_closed = False
         client._client = mock_http
 
-        result = await client.ingest("OWASP Top 10 guide", metadata={"framework": "owasp"})
+        result = await client.ingest(
+            "OWASP Top 10 guide", metadata={"framework": "owasp"}
+        )
         assert result["status"] == "ingested"
         assert result["chunks"] == 5
 
@@ -122,10 +127,12 @@ class TestAgnosRagClient:
         mock_http.is_closed = False
         client._client = mock_http
 
-        results = await client.ingest_batch([
-            {"text": "doc 1", "metadata": {"type": "compliance"}},
-            {"text": "doc 2"},
-        ])
+        results = await client.ingest_batch(
+            [
+                {"text": "doc 1", "metadata": {"type": "compliance"}},
+                {"text": "doc 2"},
+            ]
+        )
         assert len(results) == 2
         assert all(r["status"] == "ingested" for r in results)
 
@@ -140,7 +147,10 @@ class TestAgnosScreenClient:
     def client(self):
         with patch.dict(
             os.environ,
-            {"AGNOS_SCREEN_ENABLED": "true", "AGNOS_AGENT_REGISTRY_URL": "http://test:8090"},
+            {
+                "AGNOS_SCREEN_ENABLED": "true",
+                "AGNOS_AGENT_REGISTRY_URL": "http://test:8090",
+            },
             clear=False,
         ):
             from shared.agnos_screen_client import AgnosScreenClient
@@ -222,7 +232,10 @@ class TestAgnosRecordingClient:
     def client(self):
         with patch.dict(
             os.environ,
-            {"AGNOS_SCREEN_ENABLED": "true", "AGNOS_AGENT_REGISTRY_URL": "http://test:8090"},
+            {
+                "AGNOS_SCREEN_ENABLED": "true",
+                "AGNOS_AGENT_REGISTRY_URL": "http://test:8090",
+            },
             clear=False,
         ):
             from shared.agnos_recording_client import AgnosRecordingClient
@@ -234,7 +247,10 @@ class TestAgnosRecordingClient:
     async def test_start_session_recording(self, client):
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"status": "recording", "recording_id": "rec-abc"}
+        mock_response.json.return_value = {
+            "status": "recording",
+            "recording_id": "rec-abc",
+        }
 
         mock_http = AsyncMock()
         mock_http.post = AsyncMock(return_value=mock_response)
@@ -372,7 +388,10 @@ class TestTokenBudgetDashboard:
         from webgui.routes.dependencies import get_current_user
 
         app = FastAPI()
-        app.dependency_overrides[get_current_user] = lambda: {"user_id": "test", "role": "admin"}
+        app.dependency_overrides[get_current_user] = lambda: {
+            "user_id": "test",
+            "role": "admin",
+        }
         app.include_router(router, prefix="/api")
 
         return TestClient(app)
@@ -472,7 +491,9 @@ class TestPersistentMemoryMigration:
     async def test_retrieve_session(self, client):
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"value": {"status": "active", "progress": 0.5}}
+        mock_response.json.return_value = {
+            "value": {"status": "active", "progress": 0.5}
+        }
 
         mock_http = AsyncMock()
         mock_http.get = AsyncMock(return_value=mock_response)

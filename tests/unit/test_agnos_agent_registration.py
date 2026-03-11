@@ -236,7 +236,9 @@ class TestAgentRegistryClientRegister:
 
         enabled_client._registered_agents["qa-manager"] = "uuid-1234"
 
-        mock_client = _make_mock_httpx_client(side_effect=httpx.TimeoutException("timeout"))
+        mock_client = _make_mock_httpx_client(
+            side_effect=httpx.TimeoutException("timeout")
+        )
         enabled_client._client = mock_client
 
         result = await enabled_client.deregister_agent("qa-manager")
@@ -310,9 +312,7 @@ class TestAgentRegistryClientHeartbeat:
         mock_client = _make_mock_httpx_client({})
         client._client = mock_client
 
-        result = await client.send_heartbeat(
-            "qa-manager", metadata={"active_tasks": 3}
-        )
+        result = await client.send_heartbeat("qa-manager", metadata={"active_tasks": 3})
 
         assert result["status"] == "ok"
         payload = mock_client.post.call_args[1]["json"]
@@ -341,7 +341,9 @@ class TestAgentRegistryClientBulkOperations:
     async def test_register_all_agents(self, client):
         from config.agnos_agent_registration import AGNOSTIC_AGENTS
 
-        mock_client = _make_mock_httpx_client({"id": "uuid-auto", "status": "registered"})
+        mock_client = _make_mock_httpx_client(
+            {"id": "uuid-auto", "status": "registered"}
+        )
         client._client = mock_client
 
         results = await client.register_all_agents()

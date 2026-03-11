@@ -7,7 +7,6 @@ task status publishing in the API layer.
 import json
 import os
 import sys
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -93,13 +92,15 @@ class TestTaskStatusRouting:
 
         redis_message = {
             "channel": b"task:task-abc",
-            "data": json.dumps({
-                "type": "task_status_changed",
-                "task_id": "task-abc",
-                "status": "completed",
-                "timestamp": "2026-03-05T12:00:00",
-                "result": {"passed": True},
-            }),
+            "data": json.dumps(
+                {
+                    "type": "task_status_changed",
+                    "task_id": "task-abc",
+                    "status": "completed",
+                    "timestamp": "2026-03-05T12:00:00",
+                    "result": {"passed": True},
+                }
+            ),
         }
 
         await manager._handle_redis_message(redis_message)
@@ -116,12 +117,14 @@ class TestTaskStatusRouting:
 
         redis_message = {
             "channel": b"task:task-abc",
-            "data": json.dumps({
-                "type": "task_status_changed",
-                "task_id": "task-abc",
-                "status": "completed",
-                "timestamp": "2026-03-05T12:00:00",
-            }),
+            "data": json.dumps(
+                {
+                    "type": "task_status_changed",
+                    "task_id": "task-abc",
+                    "status": "completed",
+                    "timestamp": "2026-03-05T12:00:00",
+                }
+            ),
         }
 
         await manager._handle_redis_message(redis_message)
@@ -140,12 +143,14 @@ class TestTaskStatusRouting:
 
         redis_message = {
             "channel": b"task:task-abc",
-            "data": json.dumps({
-                "type": "task_status_changed",
-                "task_id": "task-abc",
-                "status": "running",
-                "timestamp": "2026-03-05T12:00:00",
-            }),
+            "data": json.dumps(
+                {
+                    "type": "task_status_changed",
+                    "task_id": "task-abc",
+                    "status": "running",
+                    "timestamp": "2026-03-05T12:00:00",
+                }
+            ),
         }
 
         await manager._handle_redis_message(redis_message)
@@ -191,9 +196,7 @@ class TestClientSubscribeTaskMessage:
 
     @pytest.mark.asyncio
     async def test_subscribe_task_no_task_id_ignored(self, handler):
-        await handler._handle_client_message(
-            "conn-1", {"type": "subscribe_task"}
-        )
+        await handler._handle_client_message("conn-1", {"type": "subscribe_task"})
 
         handler.realtime_manager.subscribe_to_task.assert_not_called()
 

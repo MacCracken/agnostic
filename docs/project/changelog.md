@@ -10,6 +10,39 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ---
 
+## [2026.3.11]
+
+### Added
+
+- **SSRF protection for agent tools** — `shared/ssrf.py` with `validate_url()` and `validate_hostname()` blocking private/internal networks; applied to `SecurityAssessmentTool` and `ComprehensiveSecurityAssessmentTool`
+- **Webhook idempotency** — deterministic `event_id` via SHA-256 hash + dedup check in `_EventBuffer.push()` prevents duplicate webhook processing
+- **Task status state machine** — forward-only `_VALID_TRANSITIONS` dict with atomic Redis WATCH/MULTI/EXEC optimistic locking (3 retries) for task status updates
+- **A2A rate limiting** — `_check_a2a_rate_limit()` with configurable per-peer rate limit (`A2A_RATE_LIMIT` env var, default 60/min)
+- **A2A audit logging** — `AuditAction.A2A_DELEGATE_RECEIVED`, `A2A_RESULT_RECEIVED`, `A2A_STATUS_QUERY`, `A2A_DELEGATE_SENT` enum members + audit_log calls in A2A endpoint
+- **Session lifecycle audit actions** — `AuditAction.SESSION_CREATED`, `SESSION_COMPLETED`, `SESSION_FAILED`
+- **A2A payload validation** — delegate messages now require a `description` field (returns 400 if missing)
+- **Circuit breaker metrics** — `_on_llm_breaker_change()` callback exports state to Prometheus `CIRCUIT_BREAKER_STATE` gauge
+- **Async Redis client** — `config.environment.Config.get_async_redis_client()` returning `redis.asyncio.Redis`; auth, alerts, dashboard, reports, and tasks modules migrated to async Redis
+- **Bounded thread pool** — `ThreadPoolExecutor(max_workers=20)` as default event loop executor in `webgui/app.py`
+- **Dashboard performance** — TTL caching (5s), `mget()` batch fetching, `asyncio.gather()` parallelism, dynamic `SCAN` count based on `dbsize()`
+- **Database composite indexes** — `(created_at, status)` on TestSession/TestResult, `(session_id, status)` on TestResult
+- **`PaginatedResponse` model** — shared Pydantic envelope for consistent pagination across list endpoints
+- **`response_model` on endpoints** — OpenAPI schema validation on auth, dashboard, sessions, agents, reports, persistence, and tenants endpoints
+- **JSON schema validation** — `isinstance(dict)` checks on all `json.loads()` results from Redis in integration and dashboard routes
+- **Report download size limit** — 100 MB cap on report file downloads
+
+### Fixed
+
+- **Fire-and-forget task crash logging** — `add_done_callback` on all `asyncio.create_task()` calls across 6 agent modules
+- **Bare exception anti-pattern** — replaced `except Exception: pass` with `logger.debug()` in agent modules
+- **Timezone consistency** — `datetime.now(UTC)` across all agent and dashboard modules (was `datetime.now()`)
+
+### Changed
+
+- **Test count** — 810 unit tests passing (was 790), 0 failed, 2 skipped
+
+---
+
 ## [2026.3.9]
 
 ### Added

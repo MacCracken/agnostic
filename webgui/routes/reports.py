@@ -10,7 +10,11 @@ from pydantic import BaseModel
 
 from shared.audit import AuditAction, audit_log
 from webgui.auth import Permission
-from webgui.routes.dependencies import get_current_user, require_permission
+from webgui.routes.dependencies import (
+    PaginatedResponse,
+    get_current_user,
+    require_permission,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +51,7 @@ class ScheduleReportResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/reports")
+@router.get("/reports", response_model=PaginatedResponse)
 async def list_reports(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -55,21 +59,17 @@ async def list_reports(
 ):
     from config.environment import config
 
-    redis_client = config.get_redis_client()
+    redis_client = config.get_async_redis_client()
     user_id = user.get("user_id", "")
     # Use SCAN instead of KEYS to avoid blocking Redis
     pattern = f"report:*:{user_id}:*"
     matched_keys: list[str] = []
-    cursor = 0
-    while True:
-        cursor, batch = redis_client.scan(cursor=cursor, match=pattern, count=200)
-        matched_keys.extend(batch)
-        if cursor == 0:
-            break
+    async for key in redis_client.scan_iter(match=pattern, count=200):
+        matched_keys.append(key)
     # Fetch all values in one round-trip with MGET
     reports = []
     if matched_keys:
-        values = redis_client.mget(matched_keys)
+        values = await redis_client.mget(matched_keys)
         for data in values:
             if data:
                 reports.append(json.loads(data))
@@ -126,8 +126,8 @@ async def download_report(
 ):
     from config.environment import config
 
-    redis_client = config.get_redis_client()
-    meta_data = redis_client.get(f"report:{report_id}:meta")
+    redis_client = config.get_async_redis_client()
+    meta_data = await redis_client.get(f"report:{report_id}:meta")
     if not meta_data:
         raise HTTPException(status_code=404, detail="Report not found")
 
@@ -146,6 +146,11 @@ async def download_report(
 
     if not resolved.exists():
         raise HTTPException(status_code=404, detail="Report file not found on disk")
+
+    # Limit download size to prevent DoS
+    _MAX_REPORT_SIZE = 100 * 1024 * 1024  # 100 MB
+    if resolved.stat().st_size > _MAX_REPORT_SIZE:
+        raise HTTPException(status_code=413, detail="Report file exceeds size limit")
 
     audit_log(
         AuditAction.REPORT_DOWNLOADED,
@@ -166,7 +171,7 @@ async def download_report(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/reports/scheduled")
+@router.get("/reports/scheduled", response_model=PaginatedResponse)
 async def get_scheduled_reports(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),

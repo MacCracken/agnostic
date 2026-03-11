@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from webgui.routes.dependencies import get_current_user
+from webgui.routes.dependencies import PaginatedResponse, get_current_user
 
 router = APIRouter()
 
@@ -81,7 +81,7 @@ async def get_agent_detail(
     return asdict(metrics)
 
 
-@router.get("/agents")
+@router.get("/agents", response_model=PaginatedResponse)
 async def get_agents(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),

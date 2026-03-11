@@ -1,9 +1,7 @@
 """Tests for shared/alerts.py — AlertManager, HealthMonitor."""
 
-import json
 import os
 import sys
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,7 +14,6 @@ from shared.alerts import (
     AlertType,
     HealthMonitor,
 )
-
 
 # ---------------------------------------------------------------------------
 # AlertManager tests
@@ -240,9 +237,7 @@ class TestCircuitBreakerCallback:
         from shared.resilience import CircuitBreaker
 
         callback = MagicMock()
-        cb = CircuitBreaker(
-            name="test", failure_threshold=2, on_state_change=callback
-        )
+        cb = CircuitBreaker(name="test", failure_threshold=2, on_state_change=callback)
 
         cb.record_failure()
         callback.assert_not_called()
@@ -254,9 +249,7 @@ class TestCircuitBreakerCallback:
         from shared.resilience import CircuitBreaker
 
         callback = MagicMock()
-        cb = CircuitBreaker(
-            name="test", failure_threshold=1, on_state_change=callback
-        )
+        cb = CircuitBreaker(name="test", failure_threshold=1, on_state_change=callback)
 
         cb.record_failure()  # trips to OPEN
         callback.reset_mock()

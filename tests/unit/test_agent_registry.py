@@ -1,11 +1,10 @@
 import os
 import sys
-from unittest.mock import patch
 
 import pytest
 
 # Add config path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 try:
     from config.agent_registry import AgentDefinition, AgentRegistry

@@ -4,7 +4,9 @@ import sys
 import pytest
 
 # Add the agents directory to Python path for importing
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'agents', 'performance'))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "..", "agents", "performance")
+)
 
 try:
     from qa_performance import (
@@ -59,11 +61,13 @@ class TestLoadTestingTool:
     def test_run_returns_results(self):
         """Test _run method returns load test results"""
         tool = LoadTestingTool()
-        result = tool._run({
-            "target_url": "https://example.com",
-            "concurrent_users": 100,
-            "duration_seconds": 60
-        })
+        result = tool._run(
+            {
+                "target_url": "https://example.com",
+                "concurrent_users": 100,
+                "duration_seconds": 60,
+            }
+        )
 
         assert isinstance(result, dict)
         assert result["status"] == "completed"
@@ -93,10 +97,12 @@ class TestResilienceValidationTool:
     def test_run_returns_results(self):
         """Test _run method returns resilience results"""
         tool = ResilienceValidationTool()
-        result = tool._run({
-            "target_services": ["api", "database", "cache"],
-            "failure_scenarios": ["network_partition", "service_crash"]
-        })
+        result = tool._run(
+            {
+                "target_services": ["api", "database", "cache"],
+                "failure_scenarios": ["network_partition", "service_crash"],
+            }
+        )
 
         assert isinstance(result, dict)
         assert result["status"] == "completed"

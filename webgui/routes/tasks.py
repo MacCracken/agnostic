@@ -156,15 +156,12 @@ async def _run_task_async(
     tenant_id: str = "default",
 ) -> None:
     """Run a QA task asynchronously, updating Redis through status transitions."""
-    import asyncio as _asyncio
-
     from shared.database.tenants import tenant_manager
 
     task_redis_key = tenant_manager.task_key(tenant_id, task_id)
-    loop = _asyncio.get_running_loop()
 
-    def _update_task_sync(status: str, result: dict | None = None) -> dict[str, Any]:
-        raw = redis_client.get(task_redis_key)
+    async def _update_task(status: str, result: dict | None = None) -> dict[str, Any]:
+        raw = await redis_client.get(task_redis_key)
         record: dict[str, Any] = (
             json.loads(raw)
             if raw
@@ -177,10 +174,10 @@ async def _run_task_async(
         record["status"] = status
         record["updated_at"] = datetime.now(UTC).isoformat()
         record["result"] = result
-        redis_client.setex(task_redis_key, 86400, json.dumps(record))
+        await redis_client.setex(task_redis_key, 86400, json.dumps(record))
 
         # Publish task update to WebSocket subscribers
-        redis_client.publish(
+        await redis_client.publish(
             f"task:{task_id}",
             json.dumps(
                 {
@@ -194,9 +191,6 @@ async def _run_task_async(
         )
 
         return record
-
-    async def _update_task(status: str, result: dict | None = None) -> dict[str, Any]:
-        return await loop.run_in_executor(None, _update_task_sync, status, result)
 
     final_record: dict[str, Any] = {}
     try:
@@ -218,6 +212,7 @@ async def _run_task_async(
                 return QAManagerAgent()
 
         try:
+            loop = asyncio.get_running_loop()
             manager = await loop.run_in_executor(None, _run_agent_sync)
         except BaseException as import_err:
             logger.error(
@@ -313,7 +308,7 @@ async def submit_task(
         "result": None,
     }
 
-    redis_client = config.get_redis_client()
+    redis_client = config.get_async_redis_client()
 
     # Tenant-scoped Redis key when multi-tenant is enabled
     from shared.database.tenants import tenant_manager
@@ -322,7 +317,7 @@ async def submit_task(
     task_redis_key = tenant_manager.task_key(tenant_id, task_id)
 
     # Rate limit check for tenant
-    if tenant_manager.enabled and not tenant_manager.check_rate_limit(
+    if tenant_manager.enabled and not await tenant_manager.check_rate_limit(
         redis_client, tenant_id
     ):
         audit_log(
@@ -332,7 +327,7 @@ async def submit_task(
         )
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
-    redis_client.setex(task_redis_key, 86400, json.dumps(task_record))
+    await redis_client.setex(task_redis_key, 86400, json.dumps(task_record))
 
     # Fire-and-forget async execution with crash containment
     task = asyncio.create_task(
@@ -367,10 +362,10 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     from config.environment import config
     from shared.database.tenants import tenant_manager
 
-    redis_client = config.get_redis_client()
+    redis_client = config.get_async_redis_client()
     tenant_id = user.get("tenant_id", tenant_manager.default_tenant_id)
     task_redis_key = tenant_manager.task_key(tenant_id, task_id)
-    data = redis_client.get(task_redis_key)
+    data = await redis_client.get(task_redis_key)
     if not data:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -427,6 +422,24 @@ async def submit_full_task(
 # A2A (Agent-to-Agent) protocol endpoints
 # ---------------------------------------------------------------------------
 
+_A2A_RATE_LIMIT = int(os.getenv("A2A_RATE_LIMIT", "60"))  # requests per minute
+_A2A_RATE_WINDOW = 60  # seconds
+
+
+async def _check_a2a_rate_limit(peer_id: str) -> bool:
+    """Return True if the peer is within the A2A rate limit."""
+    try:
+        from config.environment import config
+
+        redis_client = config.get_async_redis_client()
+        key = f"a2a_rate:{peer_id}"
+        current = await redis_client.incr(key)
+        if current == 1:
+            await redis_client.expire(key, _A2A_RATE_WINDOW)
+        return current <= _A2A_RATE_LIMIT
+    except Exception:
+        return True  # fail open
+
 
 @router.post("/v1/a2a/receive")
 async def receive_a2a_message(
@@ -439,8 +452,22 @@ async def receive_a2a_message(
             status_code=503,
             detail="A2A protocol not enabled. Set YEOMAN_A2A_ENABLED=true",
         )
+
+    # Rate limit check
+    try:
+        if not await _check_a2a_rate_limit(msg.fromPeerId):
+            raise HTTPException(status_code=429, detail="A2A rate limit exceeded")
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # fail open if rate limit check fails
+
     if msg.type == "a2a:delegate":
         payload = msg.payload
+        if not payload.get("description"):
+            raise HTTPException(
+                status_code=400, detail="Description is required for delegate tasks"
+            )
         task_req = TaskSubmitRequest(
             title=payload.get("title", "A2A QA Task"),
             description=payload.get("description", ""),
@@ -450,6 +477,12 @@ async def receive_a2a_message(
             standards=payload.get("standards", []),
         )
         result = await submit_task(task_req, user)
+        audit_log(
+            AuditAction.A2A_DELEGATE_RECEIVED,
+            actor=msg.fromPeerId,
+            resource_type="a2a",
+            detail={"message_id": msg.id, "task_id": result.task_id},
+        )
         return {"accepted": True, "task_id": result.task_id, "message_id": msg.id}
 
     if msg.type == "a2a:heartbeat":
@@ -464,10 +497,22 @@ async def receive_a2a_message(
             yeoman_a2a_client.cache_result(task_id, msg.payload)
         except ImportError:
             logger.debug("yeoman_a2a_client not available — result not cached")
+        audit_log(
+            AuditAction.A2A_RESULT_RECEIVED,
+            actor=msg.fromPeerId,
+            resource_type="a2a",
+            detail={"message_id": msg.id},
+        )
         return {"accepted": True, "message_id": msg.id, "type": "result_cached"}
 
     if msg.type == "a2a:status_query":
         # YEOMAN querying AGNOSTIC status
+        audit_log(
+            AuditAction.A2A_STATUS_QUERY,
+            actor=msg.fromPeerId,
+            resource_type="a2a",
+            detail={"message_id": msg.id},
+        )
         status_data: dict = {"provider": "agnostic-qa", "agents": [], "sessions": []}
         try:
             from webgui.dashboard import dashboard_manager

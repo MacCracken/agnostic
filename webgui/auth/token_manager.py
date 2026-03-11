@@ -53,7 +53,7 @@ class TokenManager:
 
             # Store refresh token in Redis
             refresh_key = f"refresh_token:{user.user_id}"
-            self.redis_client.setex(
+            await self.redis_client.setex(
                 refresh_key,
                 timedelta(days=self.refresh_token_expire_days),
                 refresh_token,
@@ -74,7 +74,7 @@ class TokenManager:
         try:
             payload = jwt.decode(token, self.secret_key, algorithms=["HS256"])
 
-            if self._is_token_blacklisted(token):
+            if await self._is_token_blacklisted(token):
                 return None
 
             return payload
@@ -104,11 +104,17 @@ class TokenManager:
             user_id = payload.get("user_id")
 
             refresh_key = f"refresh_token:{user_id}"
-            stored_token = self.redis_client.get(refresh_key)
+            stored_token = await self.redis_client.get(refresh_key)
 
-            if not stored_token or not hmac.compare_digest(
-                stored_token.decode(), refresh_token
-            ):
+            if not stored_token:
+                return None
+
+            stored_str = (
+                stored_token.decode()
+                if isinstance(stored_token, bytes)
+                else stored_token
+            )
+            if not hmac.compare_digest(stored_str, refresh_token):
                 return None
 
             user = await get_user_fn(user_id)
@@ -117,7 +123,7 @@ class TokenManager:
 
             # Delete the used refresh token BEFORE issuing new ones
             # (rotation — old token can never be replayed)
-            self.redis_client.delete(refresh_key)
+            await self.redis_client.delete(refresh_key)
 
             return await self.create_tokens(user)
 
@@ -131,10 +137,10 @@ class TokenManager:
             blacklist_key = (
                 f"blacklist_token:{hashlib.sha256(access_token.encode()).hexdigest()}"
             )
-            self.redis_client.setex(blacklist_key, timedelta(hours=1), "1")
+            await self.redis_client.setex(blacklist_key, timedelta(hours=1), "1")
 
             refresh_key = f"refresh_token:{user_id}"
-            self.redis_client.delete(refresh_key)
+            await self.redis_client.delete(refresh_key)
 
             return True
 
@@ -142,13 +148,13 @@ class TokenManager:
             logger.error(f"Error during logout: {e}")
             return False
 
-    def _is_token_blacklisted(self, token: str) -> bool:
+    async def _is_token_blacklisted(self, token: str) -> bool:
         """Check if token is blacklisted."""
         try:
             blacklist_key = (
                 f"blacklist_token:{hashlib.sha256(token.encode()).hexdigest()}"
             )
-            return self.redis_client.exists(blacklist_key)
+            return await self.redis_client.exists(blacklist_key)
         except Exception as e:
             logger.error(f"Error checking token blacklist: {e}")
             return True  # Fail closed — treat as blacklisted if Redis is unavailable

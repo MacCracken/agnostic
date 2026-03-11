@@ -1,10 +1,12 @@
-import pytest
-from unittest.mock import Mock, patch
-import sys
 import os
+import sys
+
+import pytest
 
 # Add the agents directory to Python path for importing
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'agents', 'manager'))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "..", "agents", "manager")
+)
 
 try:
     from qa_manager import TestPlanDecompositionTool
@@ -25,13 +27,13 @@ class TestTestPlanDecompositionTool:
         """Test that _run returns a properly structured result"""
         tool = TestPlanDecompositionTool()
         result = tool._run(sample_requirements)
-        
+
         # Check that all required keys are present
         assert "test_scenarios" in result
         assert "acceptance_criteria" in result
         assert "risk_areas" in result
         assert "priority_matrix" in result
-        
+
         # Check that values are lists
         assert isinstance(result["test_scenarios"], list)
         assert isinstance(result["acceptance_criteria"], list)
@@ -42,7 +44,7 @@ class TestTestPlanDecompositionTool:
         """Test scenario extraction from requirements"""
         tool = TestPlanDecompositionTool()
         scenarios = tool._extract_scenarios(sample_requirements)
-        
+
         assert isinstance(scenarios, list)
         assert len(scenarios) > 0
         assert all(isinstance(s, str) for s in scenarios)
@@ -51,7 +53,7 @@ class TestTestPlanDecompositionTool:
         """Test acceptance criteria extraction"""
         tool = TestPlanDecompositionTool()
         criteria = tool._extract_criteria(sample_requirements)
-        
+
         assert isinstance(criteria, list)
         assert len(criteria) > 0
         assert all(isinstance(c, str) for c in criteria)
@@ -60,7 +62,7 @@ class TestTestPlanDecompositionTool:
         """Test risk identification from requirements"""
         tool = TestPlanDecompositionTool()
         risks = tool._identify_risks(sample_requirements)
-        
+
         assert isinstance(risks, list)
         assert len(risks) > 0
         assert all(isinstance(r, str) for r in risks)
@@ -69,7 +71,7 @@ class TestTestPlanDecompositionTool:
         """Test priority matrix creation"""
         tool = TestPlanDecompositionTool()
         matrix = tool._create_priority_matrix(sample_requirements)
-        
+
         assert isinstance(matrix, dict)
         # Check that it contains expected priority categories
         priority_categories = ["high", "medium", "low"]
@@ -81,7 +83,7 @@ class TestTestPlanDecompositionTool:
         """Test behavior with empty requirements string"""
         tool = TestPlanDecompositionTool()
         result = tool._run("")
-        
+
         # Should still return valid structure even with empty input
         assert "test_scenarios" in result
         assert "acceptance_criteria" in result

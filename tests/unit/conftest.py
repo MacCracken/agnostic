@@ -16,7 +16,7 @@ def sample_test_results() -> dict:
         "failed": 2,
         "severity": "high",
         "category": "security",
-        "description": "Sample finding"
+        "description": "Sample finding",
     }
 
 

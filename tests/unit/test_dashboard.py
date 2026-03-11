@@ -4,25 +4,37 @@ import json
 import os
 import sys
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-_mock_redis = MagicMock()
+_mock_redis = AsyncMock()
+
+
+async def _async_iter(items):
+    """Helper to create an async iterator from a list."""
+    for item in items:
+        yield item
 
 
 @pytest.fixture(autouse=True)
 def _patch_redis(monkeypatch):
-    monkeypatch.setattr("config.environment.config.get_redis_client", lambda: _mock_redis)
+    monkeypatch.setattr(
+        "config.environment.config.get_async_redis_client", lambda: _mock_redis
+    )
     _mock_redis.reset_mock()
     _mock_redis.get.reset_mock()
-    _mock_redis.scan_iter.reset_mock()
     _mock_redis.get.return_value = None
     _mock_redis.get.side_effect = None
-    _mock_redis.scan_iter.return_value = []
-    _mock_redis.scan_iter.side_effect = None
+    # scan_iter must be a regular method returning an async iterator (not a coroutine)
+    _mock_redis.scan_iter = MagicMock(return_value=_async_iter([]))
+    _mock_redis.info.reset_mock()
+    _mock_redis.info.side_effect = None
+    _mock_redis.lrange.reset_mock()
+    _mock_redis.lrange.return_value = []
+    _mock_redis.lrange.side_effect = None
 
 
 def _make_manager():
@@ -50,7 +62,7 @@ class TestEnums:
 class TestGetActiveSessions:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_sessions(self):
-        _mock_redis.scan_iter.return_value = []
+        _mock_redis.scan_iter = MagicMock(return_value=_async_iter([]))
         mgr = _make_manager()
         sessions = await mgr.get_active_sessions()
         assert sessions == []
@@ -68,7 +80,9 @@ class TestGetActiveSessions:
             "scenarios_completed": 5,
             "scenarios_total": 10,
         }
-        _mock_redis.scan_iter.return_value = [b"session:abc:info"]
+        _mock_redis.scan_iter = MagicMock(
+            return_value=_async_iter([b"session:abc:info"])
+        )
         _mock_redis.get.return_value = json.dumps(session_data).encode()
         mgr = _make_manager()
         sessions = await mgr.get_active_sessions()
@@ -85,7 +99,7 @@ class TestGetActiveSessions:
             "created_at": now,
             "updated_at": now,
         }
-        _mock_redis.scan_iter.return_value = [b"session:x:info"]
+        _mock_redis.scan_iter = MagicMock(return_value=_async_iter([b"session:x:info"]))
         _mock_redis.get.return_value = json.dumps(session_data).encode()
         mgr = _make_manager()
         sessions = await mgr.get_active_sessions()
@@ -96,7 +110,9 @@ class TestGetActiveSessions:
 
     @pytest.mark.asyncio
     async def test_skips_invalid_json(self):
-        _mock_redis.scan_iter.return_value = [b"session:bad:info"]
+        _mock_redis.scan_iter = MagicMock(
+            return_value=_async_iter([b"session:bad:info"])
+        )
         _mock_redis.get.return_value = b"not json"
         mgr = _make_manager()
         sessions = await mgr.get_active_sessions()
@@ -106,7 +122,7 @@ class TestGetActiveSessions:
 class TestGetAgentStatus:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_agents(self):
-        _mock_redis.scan_iter.return_value = []
+        _mock_redis.scan_iter = MagicMock(return_value=_async_iter([]))
         mgr = _make_manager()
         agents = await mgr.get_agent_status()
         assert agents == []
@@ -122,7 +138,9 @@ class TestGetAgentStatus:
             "cpu_usage": 45.0,
             "memory_usage": 60.0,
         }
-        _mock_redis.scan_iter.return_value = [b"agent:qa-manager:status"]
+        _mock_redis.scan_iter = MagicMock(
+            return_value=_async_iter([b"agent:qa-manager:status"])
+        )
         _mock_redis.get.return_value = json.dumps(agent_data).encode()
         mgr = _make_manager()
         agents = await mgr.get_agent_status()
@@ -135,10 +153,18 @@ class TestGetAgentStatus:
     @pytest.mark.asyncio
     async def test_sorted_by_name(self):
         agents_data = [
-            ("agent:zeta:status", {"status": "idle", "last_heartbeat": datetime.now().isoformat()}),
-            ("agent:alpha:status", {"status": "busy", "last_heartbeat": datetime.now().isoformat()}),
+            (
+                "agent:zeta:status",
+                {"status": "idle", "last_heartbeat": datetime.now().isoformat()},
+            ),
+            (
+                "agent:alpha:status",
+                {"status": "busy", "last_heartbeat": datetime.now().isoformat()},
+            ),
         ]
-        _mock_redis.scan_iter.return_value = [a[0].encode() for a in agents_data]
+        _mock_redis.scan_iter = MagicMock(
+            return_value=_async_iter([a[0].encode() for a in agents_data])
+        )
         _mock_redis.get.side_effect = [json.dumps(a[1]).encode() for a in agents_data]
         mgr = _make_manager()
         agents = await mgr.get_agent_status()
@@ -154,7 +180,7 @@ class TestGetResourceMetrics:
             "connected_clients": 5,
             "uptime_in_seconds": 3600,
         }
-        _mock_redis.scan_iter.return_value = []
+        _mock_redis.scan_iter = MagicMock(return_value=_async_iter([]))
         mgr = _make_manager()
         metrics = await mgr.get_resource_metrics()
         assert metrics.redis_memory_usage == 1024000
@@ -186,7 +212,7 @@ class TestGetSessionDetails:
             None,  # verification
         ]
         _mock_redis.lrange.return_value = []  # agent tasks
-        _mock_redis.scan_iter = MagicMock(return_value=[])
+        _mock_redis.scan_iter = MagicMock(return_value=_async_iter([]))
         mgr = _make_manager()
         result = await mgr.get_session_details("sess1")
         assert result is not None
@@ -216,7 +242,7 @@ class TestStatusColors:
 class TestExportDashboardData:
     @pytest.mark.asyncio
     async def test_returns_full_export(self):
-        _mock_redis.scan_iter.return_value = []
+        _mock_redis.scan_iter = MagicMock(return_value=_async_iter([]))
         _mock_redis.info.return_value = {
             "used_memory": 0,
             "connected_clients": 0,

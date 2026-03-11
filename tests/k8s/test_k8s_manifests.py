@@ -5,8 +5,6 @@ These tests validate YAML syntax, structural correctness, and security
 posture of all k8s manifests and Helm values without requiring a live cluster.
 """
 
-import os
-import re
 from pathlib import Path
 
 import pytest
@@ -23,6 +21,7 @@ HELM_TEMPLATES_DIR = HELM_DIR / "templates"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def load_yaml_file(path: Path) -> list[dict]:
     """Load a YAML file that may contain multiple documents (--- separator)."""
@@ -46,15 +45,20 @@ def all_helm_value_files() -> list[Path]:
 # YAML Syntax Tests
 # ---------------------------------------------------------------------------
 
+
 class TestYamlSyntax:
     """All manifest files must be parseable YAML."""
 
-    @pytest.mark.parametrize("manifest_path", all_manifest_files(), ids=lambda p: p.name)
+    @pytest.mark.parametrize(
+        "manifest_path", all_manifest_files(), ids=lambda p: p.name
+    )
     def test_manifest_is_valid_yaml(self, manifest_path: Path):
         docs = load_yaml_file(manifest_path)
         assert len(docs) >= 1, f"{manifest_path.name} parsed to zero documents"
 
-    @pytest.mark.parametrize("values_path", all_helm_value_files(), ids=lambda p: p.name)
+    @pytest.mark.parametrize(
+        "values_path", all_helm_value_files(), ids=lambda p: p.name
+    )
     def test_helm_values_is_valid_yaml(self, values_path: Path):
         docs = load_yaml_file(values_path)
         assert len(docs) == 1, f"{values_path.name} should be a single YAML document"
@@ -68,12 +72,15 @@ class TestYamlSyntax:
 # Manifest Structure Tests
 # ---------------------------------------------------------------------------
 
+
 class TestManifestStructure:
     """Every Kubernetes resource document must have the required top-level fields."""
 
     REQUIRED_FIELDS = {"apiVersion", "kind", "metadata"}
 
-    @pytest.mark.parametrize("manifest_path", all_manifest_files(), ids=lambda p: p.name)
+    @pytest.mark.parametrize(
+        "manifest_path", all_manifest_files(), ids=lambda p: p.name
+    )
     def test_required_top_level_fields(self, manifest_path: Path):
         docs = load_yaml_file(manifest_path)
         for doc in docs:
@@ -83,7 +90,9 @@ class TestManifestStructure:
                 f"missing required fields: {missing}"
             )
 
-    @pytest.mark.parametrize("manifest_path", all_manifest_files(), ids=lambda p: p.name)
+    @pytest.mark.parametrize(
+        "manifest_path", all_manifest_files(), ids=lambda p: p.name
+    )
     def test_namespace_set(self, manifest_path: Path):
         """All resources should target the agentic-qa namespace."""
         docs = load_yaml_file(manifest_path)
@@ -102,6 +111,7 @@ class TestManifestStructure:
 # ---------------------------------------------------------------------------
 # Security Context Tests
 # ---------------------------------------------------------------------------
+
 
 class TestSecurityContexts:
     """Agent and WebGUI deployments must have hardened security contexts.
@@ -172,6 +182,7 @@ class TestSecurityContexts:
 # Resource Limits Tests
 # ---------------------------------------------------------------------------
 
+
 class TestResourceLimits:
     """All containers must declare resource requests and limits."""
 
@@ -202,6 +213,7 @@ class TestResourceLimits:
 # ---------------------------------------------------------------------------
 # Health Probe Tests
 # ---------------------------------------------------------------------------
+
 
 class TestHealthProbes:
     """All agent and WebGUI deployments must have liveness and readiness probes."""
@@ -243,6 +255,7 @@ class TestHealthProbes:
 # Kustomization Tests
 # ---------------------------------------------------------------------------
 
+
 class TestKustomization:
     """kustomization.yaml must reference all manifests that exist on disk."""
 
@@ -272,12 +285,18 @@ class TestKustomization:
 # HPA Tests
 # ---------------------------------------------------------------------------
 
+
 class TestHPA:
     """HPA resources must reference valid deployments."""
 
     EXPECTED_HPA_TARGETS = {
-        "qa-manager", "senior-qa", "junior-qa",
-        "qa-analyst", "security-compliance", "performance-agent", "webgui",
+        "qa-manager",
+        "senior-qa",
+        "junior-qa",
+        "qa-analyst",
+        "security-compliance",
+        "performance-agent",
+        "webgui",
     }
 
     def test_hpa_targets_exist(self):
@@ -323,19 +342,32 @@ class TestHPA:
 # PDB Tests
 # ---------------------------------------------------------------------------
 
+
 class TestPDB:
     """PDB resources must cover all agent and WebGUI deployments."""
 
     EXPECTED_PDB_SELECTORS = {
-        "qa-manager", "senior-qa", "junior-qa",
-        "qa-analyst", "security-compliance", "performance-agent", "webgui",
+        "qa-manager",
+        "senior-qa",
+        "junior-qa",
+        "qa-analyst",
+        "security-compliance",
+        "performance-agent",
+        "webgui",
     }
 
     def test_all_agents_have_pdb(self):
         pdb_path = MANIFESTS_DIR / "pod-disruption-budgets.yaml"
         pdb_docs = load_yaml_file(pdb_path)
         selectors = {
-            list(doc.get("spec", {}).get("selector", {}).get("matchLabels", {}).values())[0]
+            next(
+                iter(
+                    doc.get("spec", {})
+                    .get("selector", {})
+                    .get("matchLabels", {})
+                    .values()
+                )
+            )
             for doc in pdb_docs
             if doc.get("spec", {}).get("selector", {}).get("matchLabels")
         }
@@ -354,6 +386,7 @@ class TestPDB:
 # ---------------------------------------------------------------------------
 # NetworkPolicy Tests
 # ---------------------------------------------------------------------------
+
 
 class TestNetworkPolicies:
     """NetworkPolicy resources must exist for all major pod selectors."""
@@ -388,12 +421,20 @@ class TestNetworkPolicies:
 # ResourceQuota Tests
 # ---------------------------------------------------------------------------
 
+
 class TestResourceQuota:
     """ResourceQuota must define all expected hard limits."""
 
     EXPECTED_QUOTA_KEYS = {
-        "requests.cpu", "requests.memory", "limits.cpu", "limits.memory",
-        "pods", "services", "secrets", "configmaps", "persistentvolumeclaims",
+        "requests.cpu",
+        "requests.memory",
+        "limits.cpu",
+        "limits.memory",
+        "pods",
+        "services",
+        "secrets",
+        "configmaps",
+        "persistentvolumeclaims",
     }
 
     def test_quota_has_all_expected_limits(self):
@@ -409,19 +450,37 @@ class TestResourceQuota:
 # Helm values.yaml Tests
 # ---------------------------------------------------------------------------
 
+
 class TestHelmValues:
     """values.yaml must define all expected top-level configuration keys."""
 
     REQUIRED_TOP_LEVEL_KEYS = {
-        "image", "namespace", "secrets", "redis", "rabbitmq", "agents",
-        "webgui", "ingress", "env", "podSecurityContext", "securityContext",
-        "serviceAccount", "autoscaling", "startupProbe",
-        "networkPolicy", "podDisruptionBudget", "resourceQuota",
+        "image",
+        "namespace",
+        "secrets",
+        "redis",
+        "rabbitmq",
+        "agents",
+        "webgui",
+        "ingress",
+        "env",
+        "podSecurityContext",
+        "securityContext",
+        "serviceAccount",
+        "autoscaling",
+        "startupProbe",
+        "networkPolicy",
+        "podDisruptionBudget",
+        "resourceQuota",
     }
 
     REQUIRED_AGENTS = {
-        "qaManager", "seniorQa", "juniorQa", "qaAnalyst",
-        "securityCompliance", "performance",
+        "qaManager",
+        "seniorQa",
+        "juniorQa",
+        "qaAnalyst",
+        "securityCompliance",
+        "performance",
     }
 
     def _load_values(self) -> dict:
@@ -441,9 +500,15 @@ class TestHelmValues:
     def test_autoscaling_has_required_fields(self):
         values = self._load_values()
         autoscaling = values.get("autoscaling", {})
-        for field in ("enabled", "minReplicas", "maxReplicas",
-                      "targetCPUUtilizationPercentage", "targetMemoryUtilizationPercentage",
-                      "juniorQaMaxReplicas", "webguiMaxReplicas"):
+        for field in (
+            "enabled",
+            "minReplicas",
+            "maxReplicas",
+            "targetCPUUtilizationPercentage",
+            "targetMemoryUtilizationPercentage",
+            "juniorQaMaxReplicas",
+            "webguiMaxReplicas",
+        ):
             assert field in autoscaling, f"autoscaling.{field} missing from values.yaml"
 
     def test_network_policy_flag_present(self):
@@ -456,7 +521,9 @@ class TestHelmValues:
         values = self._load_values()
         pdb = values.get("podDisruptionBudget", {})
         assert "enabled" in pdb, "values.yaml missing podDisruptionBudget.enabled"
-        assert "minAvailable" in pdb, "values.yaml missing podDisruptionBudget.minAvailable"
+        assert "minAvailable" in pdb, (
+            "values.yaml missing podDisruptionBudget.minAvailable"
+        )
 
     def test_resource_quota_fields(self):
         values = self._load_values()
@@ -478,4 +545,6 @@ class TestHelmValues:
             "values.yaml securityContext.runAsNonRoot must be true"
         )
         caps = sec.get("capabilities", {}).get("drop", [])
-        assert "ALL" in caps, "values.yaml securityContext.capabilities.drop must include ALL"
+        assert "ALL" in caps, (
+            "values.yaml securityContext.capabilities.drop must include ALL"
+        )

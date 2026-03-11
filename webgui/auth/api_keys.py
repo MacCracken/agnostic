@@ -26,7 +26,7 @@ _API_KEY_ROLE_PERMISSIONS: dict[str, list[str]] = {
 }
 
 
-def create_api_key(
+async def create_api_key(
     redis_client: Any,
     description: str,
     role: str,
@@ -60,30 +60,30 @@ def create_api_key(
     }
 
     # Store hash -> metadata (no TTL = permanent until revoked)
-    redis_client.set(f"api_key:{key_hash}", json.dumps(key_meta))
+    await redis_client.set(f"api_key:{key_hash}", json.dumps(key_meta))
     # Store key_id -> hash for management lookups
-    redis_client.set(f"api_key_id:{key_id}", key_hash)
+    await redis_client.set(f"api_key_id:{key_id}", key_hash)
     # Add to index set
-    redis_client.sadd("api_keys:index", key_id)
+    await redis_client.sadd("api_keys:index", key_id)
 
     return raw_key, key_id, key_meta
 
 
-def list_api_keys(redis_client: Any) -> list[dict[str, Any]]:
+async def list_api_keys(redis_client: Any) -> list[dict[str, Any]]:
     """Return metadata for all API keys (never raw keys or hashes)."""
-    raw_ids = redis_client.smembers("api_keys:index")
+    raw_ids = await redis_client.smembers("api_keys:index")
     result: list[dict[str, Any]] = []
 
     for raw_id in raw_ids:
         key_id = raw_id.decode() if isinstance(raw_id, bytes) else raw_id
-        key_hash_raw = redis_client.get(f"api_key_id:{key_id}")
+        key_hash_raw = await redis_client.get(f"api_key_id:{key_id}")
         if not key_hash_raw:
             continue
 
         key_hash = (
             key_hash_raw.decode() if isinstance(key_hash_raw, bytes) else key_hash_raw
         )
-        meta_data = redis_client.get(f"api_key:{key_hash}")
+        meta_data = await redis_client.get(f"api_key:{key_hash}")
         if not meta_data:
             continue
 
@@ -101,16 +101,16 @@ def list_api_keys(redis_client: Any) -> list[dict[str, Any]]:
     return result
 
 
-def revoke_api_key(redis_client: Any, key_id: str) -> bool:
+async def revoke_api_key(redis_client: Any, key_id: str) -> bool:
     """Revoke an API key by its key_id.  Returns True if found and deleted."""
-    key_hash_raw = redis_client.get(f"api_key_id:{key_id}")
+    key_hash_raw = await redis_client.get(f"api_key_id:{key_id}")
     if not key_hash_raw:
         return False
 
     key_hash = (
         key_hash_raw.decode() if isinstance(key_hash_raw, bytes) else key_hash_raw
     )
-    redis_client.delete(f"api_key:{key_hash}")
-    redis_client.delete(f"api_key_id:{key_id}")
-    redis_client.srem("api_keys:index", key_id)
+    await redis_client.delete(f"api_key:{key_hash}")
+    await redis_client.delete(f"api_key_id:{key_id}")
+    await redis_client.srem("api_keys:index", key_id)
     return True

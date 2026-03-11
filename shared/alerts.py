@@ -188,10 +188,10 @@ class AlertManager:
         try:
             from config.environment import config
 
-            redis_client = config.get_redis_client()
-            redis_client.publish("webgui:alerts", json.dumps(payload))
+            redis_client = config.get_async_redis_client()
+            await redis_client.publish("webgui:alerts", json.dumps(payload))
             # Persist to stream for query endpoint (capped at 1000 entries)
-            redis_client.xadd(
+            await redis_client.xadd(
                 "stream:webgui:alerts",
                 {"data": json.dumps(payload)},
                 maxlen=1000,

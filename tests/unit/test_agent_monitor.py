@@ -3,8 +3,8 @@
 import json
 import os
 import sys
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import datetime
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,7 +15,9 @@ _mock_redis = MagicMock()
 
 @pytest.fixture(autouse=True)
 def _patch_redis(monkeypatch):
-    monkeypatch.setattr("config.environment.config.get_redis_client", lambda: _mock_redis)
+    monkeypatch.setattr(
+        "config.environment.config.get_redis_client", lambda: _mock_redis
+    )
     _mock_redis.reset_mock()
     _mock_redis.get.reset_mock()
     _mock_redis.keys.reset_mock()
@@ -171,7 +173,10 @@ class TestGetActiveTasks:
         }
         completed_task = {**task_data, "task_id": "t2", "status": "completed"}
         _mock_redis.keys.return_value = [b"task:qa-manager:t1", b"task:qa-manager:t2"]
-        _mock_redis.scan_iter.return_value = [b"task:qa-manager:t1", b"task:qa-manager:t2"]
+        _mock_redis.scan_iter.return_value = [
+            b"task:qa-manager:t1",
+            b"task:qa-manager:t2",
+        ]
         _mock_redis.get.side_effect = [
             json.dumps(task_data).encode(),
             json.dumps(completed_task).encode(),
@@ -188,7 +193,10 @@ class TestGetQueueDepths:
         pending_task = {"status": "pending"}
         running_task = {"status": "in_progress"}
         _mock_redis.keys.return_value = [b"task:qa-manager:1", b"task:qa-manager:2"]
-        _mock_redis.scan_iter.return_value = [b"task:qa-manager:1", b"task:qa-manager:2"]
+        _mock_redis.scan_iter.return_value = [
+            b"task:qa-manager:1",
+            b"task:qa-manager:2",
+        ]
         _mock_redis.get.side_effect = [
             json.dumps(pending_task).encode(),
             json.dumps(running_task).encode(),
@@ -209,7 +217,12 @@ class TestCalculateErrorRate:
         completed = {"status": "completed"}
         failed = {"status": "failed"}
         # 3 completed + 1 failed = 25% error rate
-        keys = [b"task:qa-manager:1", b"task:qa-manager:2", b"task:qa-manager:3", b"task:qa-manager:4"]
+        keys = [
+            b"task:qa-manager:1",
+            b"task:qa-manager:2",
+            b"task:qa-manager:3",
+            b"task:qa-manager:4",
+        ]
         # _calculate_error_rate calls _get_agent_task_count 3 times:
         #   completed (scan_iter + 4 gets), failed (scan_iter + 4 gets), failed again (scan_iter + 4 gets)
         _mock_redis.keys.side_effect = [keys, keys, keys]

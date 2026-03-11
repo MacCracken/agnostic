@@ -32,9 +32,10 @@ def test_redis_connection() -> bool:
     """Test Redis connection."""
     try:
         import redis
+
         client = redis.Redis(
-            host=os.getenv('REDIS_HOST', 'localhost'),
-            port=int(os.getenv('REDIS_PORT', '6379')),
+            host=os.getenv("REDIS_HOST", "localhost"),
+            port=int(os.getenv("REDIS_PORT", "6379")),
             db=0,
             socket_connect_timeout=5,
         )
@@ -50,14 +51,15 @@ def test_rabbitmq_connection() -> bool:
     """Test RabbitMQ connection."""
     try:
         import pika
+
         rmq_user = os.getenv("RABBITMQ_USER", "")
         rmq_pass = os.getenv("RABBITMQ_PASSWORD", "")
         connection = pika.BlockingConnection(
             pika.ConnectionParameters(
-                host='localhost',
+                host="localhost",
                 port=5672,
                 credentials=pika.PlainCredentials(rmq_user, rmq_pass),
-                socket_timeout=5
+                socket_timeout=5,
             )
         )
         connection.close()
@@ -97,7 +99,7 @@ def test_basic_functionality() -> bool:
         config.get_redis_client()
 
         # Test Celery app creation
-        config.get_celery_app('smoke_test')
+        config.get_celery_app("smoke_test")
 
         print("✓ Basic functionality test passed")
         return True

@@ -4,8 +4,6 @@ import json
 import logging
 from unittest.mock import patch
 
-import pytest
-
 import shared.audit as audit_module
 from shared.audit import AuditAction, audit_log
 
@@ -103,7 +101,9 @@ class TestAuditActionEnum:
     def test_all_values_are_dotted_strings(self):
         """Every enum value follows the dotted string pattern."""
         for action in AuditAction:
-            assert "." in action.value, f"{action.name} value {action.value!r} is not dotted"
+            assert "." in action.value, (
+                f"{action.name} value {action.value!r} is not dotted"
+            )
 
     def test_expected_actions_exist(self):
         """Key actions are defined."""

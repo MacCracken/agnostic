@@ -2,7 +2,7 @@
 
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -414,9 +414,7 @@ class TestJobStoreSelection:
                 "shared.database.models.get_database_url",
                 return_value="postgresql+asyncpg://user:pass@localhost/testdb",
             ),
-            patch(
-                "apscheduler.jobstores.sqlalchemy.SQLAlchemyJobStore"
-            ) as mock_sqla,
+            patch("apscheduler.jobstores.sqlalchemy.SQLAlchemyJobStore") as mock_sqla,
         ):
             mock_sqla.return_value = MagicMock()
             result = mgr._create_jobstore()
@@ -438,9 +436,7 @@ class TestJobStoreSelection:
                 "shared.database.models.get_database_url",
                 return_value="postgresql+asyncpg://user:pass@localhost/testdb",
             ),
-            patch(
-                "apscheduler.jobstores.sqlalchemy.SQLAlchemyJobStore"
-            ) as mock_sqla,
+            patch("apscheduler.jobstores.sqlalchemy.SQLAlchemyJobStore") as mock_sqla,
         ):
             mock_sqla.return_value = MagicMock()
             mgr._create_jobstore()

@@ -1,10 +1,15 @@
 """Test result persistence (PostgreSQL) endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from webgui.auth import Permission
-from webgui.routes.dependencies import get_current_user, get_db_repo, require_permission
+from webgui.routes.dependencies import (
+    PaginatedResponse,
+    get_current_user,
+    get_db_repo,
+    require_permission,
+)
 
 router = APIRouter()
 
@@ -15,24 +20,24 @@ router = APIRouter()
 
 
 class TestSessionCreate(BaseModel):
-    session_id: str
-    title: str
-    description: str | None = None
-    priority: str | None = None
+    session_id: str = Field(..., max_length=200)
+    title: str = Field(..., max_length=500)
+    description: str | None = Field(default=None, max_length=5000)
+    priority: str | None = Field(default=None, max_length=50)
 
 
 class TestResultCreate(BaseModel):
-    session_id: str
-    test_id: str
-    test_name: str
-    description: str | None = None
-    status: str
-    severity: str | None = None
-    category: str | None = None
-    component: str | None = None
-    agent_name: str | None = None
-    error_message: str | None = None
-    stack_trace: str | None = None
+    session_id: str = Field(..., max_length=200)
+    test_id: str = Field(..., max_length=200)
+    test_name: str = Field(..., max_length=500)
+    description: str | None = Field(default=None, max_length=5000)
+    status: str = Field(..., max_length=50)
+    severity: str | None = Field(default=None, max_length=50)
+    category: str | None = Field(default=None, max_length=200)
+    component: str | None = Field(default=None, max_length=200)
+    agent_name: str | None = Field(default=None, max_length=200)
+    error_message: str | None = Field(default=None, max_length=5000)
+    stack_trace: str | None = Field(default=None, max_length=50000)
     execution_time_ms: int | None = None
     test_data: dict | None = None
     expected_result: dict | None = None
@@ -54,11 +59,38 @@ class TestMetricsQuery(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+
+
+class TestSessionResponse(BaseModel):
+    id: int
+    session_id: str
+    status: str
+
+
+class TestResultResponse(BaseModel):
+    id: int
+    test_id: str
+    status: str
+
+
+class StatusUpdateResponse(BaseModel):
+    session_id: str
+    status: str
+
+
+class DeleteResponse(BaseModel):
+    status: str
+    job_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Test session endpoints
 # ---------------------------------------------------------------------------
 
 
-@router.get("/test-sessions")
+@router.get("/test-sessions", response_model=PaginatedResponse)
 async def get_test_sessions(
     status: str | None = None,
     limit: int = Query(50, ge=1, le=200),
@@ -89,7 +121,7 @@ async def get_test_sessions(
     return {"items": items, "total": len(items), "limit": limit, "offset": offset}
 
 
-@router.post("/test-sessions", status_code=201)
+@router.post("/test-sessions", status_code=201, response_model=TestSessionResponse)
 async def create_test_session(
     req: TestSessionCreate,
     user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
@@ -114,7 +146,7 @@ async def create_test_session(
     }
 
 
-@router.put("/test-sessions/{session_id}/status")
+@router.put("/test-sessions/{session_id}/status", response_model=StatusUpdateResponse)
 async def update_test_session_status(
     session_id: str,
     status: str,
@@ -137,7 +169,7 @@ async def update_test_session_status(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/test-results")
+@router.get("/test-results", response_model=PaginatedResponse)
 async def get_test_results(
     session_id: str | None = None,
     status: str | None = None,
@@ -174,7 +206,7 @@ async def get_test_results(
     return {"items": items, "total": len(items), "limit": limit, "offset": offset}
 
 
-@router.post("/test-results", status_code=201)
+@router.post("/test-results", status_code=201, response_model=TestResultResponse)
 async def add_test_result(
     req: TestResultCreate,
     user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
@@ -226,8 +258,12 @@ async def get_quality_trends(
 
 @router.get("/test-sessions/diff")
 async def diff_test_sessions(
-    base: str = Query(..., description="Base session ID (the 'before')"),
-    compare: str = Query(..., description="Compare session ID (the 'after')"),
+    base: str = Query(
+        ..., max_length=200, description="Base session ID (the 'before')"
+    ),
+    compare: str = Query(
+        ..., max_length=200, description="Compare session ID (the 'after')"
+    ),
     user: dict = Depends(get_current_user),
 ):
     """Compare test results between two sessions to detect regressions.
@@ -235,6 +271,8 @@ async def diff_test_sessions(
     Returns regressions (was passing, now failing), fixes, new tests,
     removed tests, and aggregate pass-rate / timing deltas.
     Requires DATABASE_ENABLED=true.
+
+    For Redis-backed session comparison, use POST /sessions/compare instead.
     """
     repo = await get_db_repo()
     if repo is None:

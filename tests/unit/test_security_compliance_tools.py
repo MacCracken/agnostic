@@ -5,7 +5,12 @@ from unittest.mock import Mock, patch
 import pytest
 
 # Add the agents directory to Python path for importing
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'agents', 'security_compliance'))
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "agents", "security_compliance"
+    ),
+)
 
 try:
     from qa_security_compliance import (
@@ -33,7 +38,7 @@ class TestComprehensiveSecurityAssessmentTool:
         assert "Strict-Transport-Security" in tool.EXPECTED_HEADERS
         assert "X-Frame-Options" in tool.EXPECTED_HEADERS
 
-    @patch('qa_security_compliance.requests')
+    @patch("qa_security_compliance.requests")
     def test_run_with_valid_target(self, mock_requests):
         """Test _run method with a valid target"""
         mock_response = Mock()
@@ -53,7 +58,7 @@ class TestComprehensiveSecurityAssessmentTool:
         except Exception as e:
             pytest.skip(f"ComprehensiveSecurityAssessmentTool _run failed: {e}")
 
-    @patch('qa_security_compliance.requests')
+    @patch("qa_security_compliance.requests")
     def test_run_with_empty_url(self, mock_requests):
         """Test _run method with empty URL"""
         try:
@@ -78,10 +83,12 @@ class TestGDPRComplianceTool:
         """Test _run method with a target"""
         try:
             tool = GDPRComplianceTool()
-            result = tool._run({
-                "url": "https://example.com",
-                "data_processing_activities": ["user_registration", "analytics"]
-            })
+            result = tool._run(
+                {
+                    "url": "https://example.com",
+                    "data_processing_activities": ["user_registration", "analytics"],
+                }
+            )
 
             assert isinstance(result, dict)
         except Exception as e:
@@ -101,10 +108,12 @@ class TestSOC2ComplianceTool:
         """Test _run method with a target"""
         try:
             tool = SOC2ComplianceTool()
-            result = tool._run({
-                "url": "https://example.com",
-                "trust_criteria": ["security", "availability"]
-            })
+            result = tool._run(
+                {
+                    "url": "https://example.com",
+                    "trust_criteria": ["security", "availability"],
+                }
+            )
 
             assert isinstance(result, dict)
         except Exception as e:

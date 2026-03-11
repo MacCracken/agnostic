@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
 class TestMessageBuffer:
-    """Tests for Redis Streams–based MessageBuffer."""
+    """Tests for Redis Streams-based MessageBuffer."""
 
     def _make_buffer(self):
         from webgui.realtime import MessageBuffer
@@ -61,8 +61,22 @@ class TestMessageBuffer:
         """get_messages_since calls XRANGE with exclusive ID."""
         buf, redis = self._make_buffer()
         redis.xrange.return_value = [
-            (b"100-0", {b"payload": json.dumps({"type": "notification", "timestamp": "t1"}).encode()}),
-            (b"200-0", {b"payload": json.dumps({"type": "notification", "timestamp": "t2"}).encode()}),
+            (
+                b"100-0",
+                {
+                    b"payload": json.dumps(
+                        {"type": "notification", "timestamp": "t1"}
+                    ).encode()
+                },
+            ),
+            (
+                b"200-0",
+                {
+                    b"payload": json.dumps(
+                        {"type": "notification", "timestamp": "t2"}
+                    ).encode()
+                },
+            ),
         ]
 
         results = buf.get_messages_since("task:abc", "50-0")
@@ -97,7 +111,10 @@ class TestMessageBuffer:
         """get_messages_since handles string (not bytes) keys from Redis."""
         buf, redis = self._make_buffer()
         redis.xrange.return_value = [
-            ("100-0", {"payload": json.dumps({"type": "notification", "timestamp": "t1"})}),
+            (
+                "100-0",
+                {"payload": json.dumps({"type": "notification", "timestamp": "t1"})},
+            ),
         ]
 
         results = buf.get_messages_since("task:abc", "0-0")
@@ -127,8 +144,28 @@ class TestReplayMissedMessages:
 
         mock_buffer = MagicMock()
         mock_buffer.get_messages_since.return_value = [
-            ("100-0", {"type": "task_status_changed", "timestamp": "t1", "session_id": None, "agent_name": None, "user_id": None, "data": {"status": "running"}}),
-            ("200-0", {"type": "task_status_changed", "timestamp": "t2", "session_id": None, "agent_name": None, "user_id": None, "data": {"status": "completed"}}),
+            (
+                "100-0",
+                {
+                    "type": "task_status_changed",
+                    "timestamp": "t1",
+                    "session_id": None,
+                    "agent_name": None,
+                    "user_id": None,
+                    "data": {"status": "running"},
+                },
+            ),
+            (
+                "200-0",
+                {
+                    "type": "task_status_changed",
+                    "timestamp": "t2",
+                    "session_id": None,
+                    "agent_name": None,
+                    "user_id": None,
+                    "data": {"status": "completed"},
+                },
+            ),
         ]
         mgr.message_buffer = mock_buffer
 
@@ -169,18 +206,21 @@ class TestWebSocketReconnection:
     @pytest.mark.asyncio
     async def test_subscribe_session_with_last_message_id_triggers_replay(self):
         """subscribe_session with last_message_id replays missed messages."""
-        from webgui.realtime import WebSocketHandler, RealtimeManager
+        from webgui.realtime import RealtimeManager, WebSocketHandler
 
         mgr = MagicMock(spec=RealtimeManager)
         mgr.subscribe_to_session = AsyncMock()
         mgr.replay_missed_messages = AsyncMock(return_value=3)
 
         handler = WebSocketHandler(mgr)
-        await handler._handle_client_message("conn1", {
-            "type": "subscribe_session",
-            "session_id": "sess-1",
-            "last_message_id": "500-0",
-        })
+        await handler._handle_client_message(
+            "conn1",
+            {
+                "type": "subscribe_session",
+                "session_id": "sess-1",
+                "last_message_id": "500-0",
+            },
+        )
 
         mgr.subscribe_to_session.assert_called_once_with("conn1", "sess-1")
         mgr.replay_missed_messages.assert_called_once_with(
@@ -190,17 +230,20 @@ class TestWebSocketReconnection:
     @pytest.mark.asyncio
     async def test_subscribe_session_without_last_id_no_replay(self):
         """subscribe_session without last_message_id does not replay."""
-        from webgui.realtime import WebSocketHandler, RealtimeManager
+        from webgui.realtime import RealtimeManager, WebSocketHandler
 
         mgr = MagicMock(spec=RealtimeManager)
         mgr.subscribe_to_session = AsyncMock()
         mgr.replay_missed_messages = AsyncMock()
 
         handler = WebSocketHandler(mgr)
-        await handler._handle_client_message("conn1", {
-            "type": "subscribe_session",
-            "session_id": "sess-1",
-        })
+        await handler._handle_client_message(
+            "conn1",
+            {
+                "type": "subscribe_session",
+                "session_id": "sess-1",
+            },
+        )
 
         mgr.subscribe_to_session.assert_called_once()
         mgr.replay_missed_messages.assert_not_called()
@@ -208,7 +251,7 @@ class TestWebSocketReconnection:
     @pytest.mark.asyncio
     async def test_subscribe_task_with_last_message_id_triggers_replay(self):
         """subscribe_task with last_message_id replays missed messages."""
-        from webgui.realtime import WebSocketHandler, RealtimeManager
+        from webgui.realtime import RealtimeManager, WebSocketHandler
 
         mgr = MagicMock(spec=RealtimeManager)
         mgr.subscribe_to_task = AsyncMock()
@@ -216,11 +259,14 @@ class TestWebSocketReconnection:
         mgr.replay_missed_messages = AsyncMock(return_value=5)
 
         handler = WebSocketHandler(mgr)
-        await handler._handle_client_message("conn1", {
-            "type": "subscribe_task",
-            "task_id": "task-abc",
-            "last_message_id": "300-0",
-        })
+        await handler._handle_client_message(
+            "conn1",
+            {
+                "type": "subscribe_task",
+                "task_id": "task-abc",
+                "last_message_id": "300-0",
+            },
+        )
 
         mgr.subscribe_to_task.assert_called_once_with("conn1", "task-abc")
         mgr.replay_missed_messages.assert_called_once_with(
@@ -230,7 +276,7 @@ class TestWebSocketReconnection:
     @pytest.mark.asyncio
     async def test_subscribe_task_without_last_id_no_replay(self):
         """subscribe_task without last_message_id does not replay."""
-        from webgui.realtime import WebSocketHandler, RealtimeManager
+        from webgui.realtime import RealtimeManager, WebSocketHandler
 
         mgr = MagicMock(spec=RealtimeManager)
         mgr.subscribe_to_task = AsyncMock()
@@ -238,10 +284,13 @@ class TestWebSocketReconnection:
         mgr.replay_missed_messages = AsyncMock()
 
         handler = WebSocketHandler(mgr)
-        await handler._handle_client_message("conn1", {
-            "type": "subscribe_task",
-            "task_id": "task-abc",
-        })
+        await handler._handle_client_message(
+            "conn1",
+            {
+                "type": "subscribe_task",
+                "task_id": "task-abc",
+            },
+        )
 
         mgr.subscribe_to_task.assert_called_once()
         mgr.replay_missed_messages.assert_not_called()

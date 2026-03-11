@@ -3,8 +3,6 @@
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
@@ -18,7 +16,9 @@ class TestBaseToolFallback:
         from shared.crewai_compat import BaseTool
 
         # When crewai is installed, BaseTool is abstract — check class attrs exist
-        assert hasattr(BaseTool, "name") or "name" in getattr(BaseTool, "model_fields", {})
+        assert hasattr(BaseTool, "name") or "name" in getattr(
+            BaseTool, "model_fields", {}
+        )
         assert hasattr(BaseTool, "description") or "description" in getattr(
             BaseTool, "model_fields", {}
         )

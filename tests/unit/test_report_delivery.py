@@ -117,7 +117,9 @@ class TestReportDeliveryService:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            with patch("webgui.scheduled_reports.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            with patch(
+                "webgui.scheduled_reports.asyncio.sleep", new_callable=AsyncMock
+            ) as mock_sleep:
                 result = await svc._deliver_webhook(
                     {"status": "success", "report_id": "rpt-1"}, "Test"
                 )
@@ -153,7 +155,9 @@ class TestReportDeliveryService:
 
             # Verify Slack message format
             call_kwargs = mock_client.post.call_args
-            body = json.loads(call_kwargs.kwargs.get("content") or call_kwargs[1].get("content"))
+            body = json.loads(
+                call_kwargs.kwargs.get("content") or call_kwargs[1].get("content")
+            )
             assert "Weekly Report" in body["text"]
             assert "rpt-1" in body["text"]
             assert ":white_check_mark:" in body["text"]
@@ -182,7 +186,9 @@ class TestReportDeliveryService:
             )
 
             call_kwargs = mock_client.post.call_args
-            body = json.loads(call_kwargs.kwargs.get("content") or call_kwargs[1].get("content"))
+            body = json.loads(
+                call_kwargs.kwargs.get("content") or call_kwargs[1].get("content")
+            )
             assert ":x:" in body["text"]
 
     @pytest.mark.asyncio
@@ -196,9 +202,7 @@ class TestReportDeliveryService:
         svc._deliver_webhook = AsyncMock(return_value="delivered")
         svc._deliver_slack = AsyncMock(return_value="delivered")
 
-        results = await svc.deliver(
-            {"status": "success", "report_id": "rpt-1"}, "Test"
-        )
+        results = await svc.deliver({"status": "success", "report_id": "rpt-1"}, "Test")
 
         assert results["webhook"] == "delivered"
         assert results["slack"] == "delivered"
@@ -234,7 +238,9 @@ class TestScheduledReportDeliveryIntegration:
         mock_exports.ReportFormat.return_value = "pdf"
         mock_exports.ReportType.return_value = "comprehensive"
         mock_exports.ReportRequest = MagicMock
-        mock_exports.report_generator.generate_report = AsyncMock(return_value=mock_metadata)
+        mock_exports.report_generator.generate_report = AsyncMock(
+            return_value=mock_metadata
+        )
 
         with patch.dict("sys.modules", {"webgui.exports": mock_exports}):
             result = await mgr._generate_and_deliver(
@@ -362,7 +368,9 @@ class TestEmailDelivery:
 
         with patch("webgui.scheduled_reports.aiosmtplib.SMTP") as mock_smtp_cls:
             mock_smtp_fail = AsyncMock()
-            mock_smtp_fail.connect = AsyncMock(side_effect=Exception("connection refused"))
+            mock_smtp_fail.connect = AsyncMock(
+                side_effect=Exception("connection refused")
+            )
 
             mock_smtp_ok = AsyncMock()
             mock_smtp_ok.connect = AsyncMock()
@@ -371,7 +379,9 @@ class TestEmailDelivery:
 
             mock_smtp_cls.side_effect = [mock_smtp_fail, mock_smtp_ok]
 
-            with patch("webgui.scheduled_reports.asyncio.sleep", new_callable=AsyncMock):
+            with patch(
+                "webgui.scheduled_reports.asyncio.sleep", new_callable=AsyncMock
+            ):
                 result = await svc._deliver_email(
                     {"status": "success", "report_id": "rpt-1"}, "Test"
                 )
@@ -399,7 +409,9 @@ class TestEmailDelivery:
             mock_smtp.connect = AsyncMock(side_effect=Exception("connection refused"))
             mock_smtp_cls.return_value = mock_smtp
 
-            with patch("webgui.scheduled_reports.asyncio.sleep", new_callable=AsyncMock):
+            with patch(
+                "webgui.scheduled_reports.asyncio.sleep", new_callable=AsyncMock
+            ):
                 result = await svc._deliver_email(
                     {"status": "success", "report_id": "rpt-1"}, "Test"
                 )
@@ -451,9 +463,7 @@ class TestEmailDelivery:
         svc._deliver_slack = AsyncMock(return_value="delivered")
         svc._deliver_email = AsyncMock(return_value="delivered")
 
-        results = await svc.deliver(
-            {"status": "success", "report_id": "rpt-1"}, "Test"
-        )
+        results = await svc.deliver({"status": "success", "report_id": "rpt-1"}, "Test")
 
         assert results["webhook"] == "delivered"
         assert results["slack"] == "delivered"

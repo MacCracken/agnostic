@@ -35,12 +35,14 @@ async def get_structured_results(
             TestExecutionResult,
         )
 
-        redis_client = config.get_redis_client()
+        redis_client = config.get_async_redis_client()
 
         results = {}
 
         if result_type in (None, "security"):
-            security_data = redis_client.get(f"security_compliance:{session_id}:audit")
+            security_data = await redis_client.get(
+                f"security_compliance:{session_id}:audit"
+            )
             if security_data:
                 sec = json.loads(security_data)
                 findings = []
@@ -75,7 +77,7 @@ async def get_structured_results(
                 )
 
         if result_type in (None, "performance"):
-            perf_data = redis_client.get(f"analyst:{session_id}:performance")
+            perf_data = await redis_client.get(f"analyst:{session_id}:performance")
             if perf_data:
                 perf = json.loads(perf_data)
                 results["performance"] = PerformanceResult(
@@ -91,7 +93,7 @@ async def get_structured_results(
                 )
 
         if result_type in (None, "test_execution"):
-            test_data = redis_client.get(f"junior:{session_id}:test_results")
+            test_data = await redis_client.get(f"junior:{session_id}:test_results")
             if test_data:
                 test = json.loads(test_data)
                 results["test_execution"] = TestExecutionResult(

@@ -38,21 +38,37 @@ class ApiKeyCreateRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int | None = None
+
+
+class StatusResponse(BaseModel):
+    status: str
+
+
+# ---------------------------------------------------------------------------
 # Auth endpoints
 # ---------------------------------------------------------------------------
 
 
-@router.post("/auth/login")
+@router.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest):
     # Rate limit login attempts per email
     try:
         from config.environment import config
 
-        redis_client = config.get_redis_client()
+        redis_client = config.get_async_redis_client()
         rate_key = f"login_attempts:{req.email}"
-        attempts = redis_client.incr(rate_key)
+        attempts = await redis_client.incr(rate_key)
         if attempts == 1:
-            redis_client.expire(rate_key, _LOGIN_WINDOW_SECONDS)
+            await redis_client.expire(rate_key, _LOGIN_WINDOW_SECONDS)
         if attempts > _LOGIN_MAX_ATTEMPTS:
             logger.warning("Login rate limit exceeded for %s", req.email)
             raise HTTPException(
@@ -80,7 +96,7 @@ async def login(req: LoginRequest):
     }
 
 
-@router.post("/auth/refresh")
+@router.post("/auth/refresh", response_model=TokenResponse)
 async def refresh(req: RefreshRequest):
     tokens = await auth_manager.refresh_tokens(req.refresh_token)
     if tokens is None:
@@ -93,7 +109,7 @@ async def refresh(req: RefreshRequest):
     }
 
 
-@router.post("/auth/logout")
+@router.post("/auth/logout", response_model=StatusResponse)
 async def logout(request: Request, user: dict = Depends(get_current_user)):
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
@@ -132,8 +148,8 @@ async def create_api_key(
     from config.environment import config
     from webgui.auth import create_api_key as _create_api_key
 
-    redis_client = config.get_redis_client()
-    raw_key, key_id, key_meta = _create_api_key(
+    redis_client = config.get_async_redis_client()
+    raw_key, key_id, key_meta = await _create_api_key(
         redis_client=redis_client,
         description=req.description,
         role=req.role,
@@ -159,8 +175,8 @@ async def list_api_keys(
     from config.environment import config
     from webgui.auth import list_api_keys as _list_api_keys
 
-    redis_client = config.get_redis_client()
-    keys = _list_api_keys(redis_client)
+    redis_client = config.get_async_redis_client()
+    keys = await _list_api_keys(redis_client)
     total = len(keys)
     return {
         "items": keys[offset : offset + limit],
@@ -179,8 +195,8 @@ async def delete_api_key(
     from config.environment import config
     from webgui.auth import revoke_api_key as _revoke_api_key
 
-    redis_client = config.get_redis_client()
-    deleted = _revoke_api_key(redis_client, key_id)
+    redis_client = config.get_async_redis_client()
+    deleted = await _revoke_api_key(redis_client, key_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="API key not found")
     return {"status": "revoked", "key_id": key_id}

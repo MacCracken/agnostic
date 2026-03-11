@@ -2,18 +2,25 @@
 
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-sqlalchemy = pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed")
+pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed")
 
 from shared.database.repository import TestResultRepository
 
 
-def _make_result(test_id, test_name, status, execution_time_ms=None, error_message=None, component=None):
+def _make_result(
+    test_id,
+    test_name,
+    status,
+    execution_time_ms=None,
+    error_message=None,
+    component=None,
+):
     """Create a mock TestResult row."""
     r = MagicMock()
     r.test_id = test_id
@@ -64,7 +71,9 @@ class TestDiffSessions:
     async def test_regression_detected(self, repo):
         """Test that went from passed to failed is flagged as regression."""
         base = [_make_result("t1", "Login test", "passed", 100)]
-        compare = [_make_result("t1", "Login test", "failed", 200, error_message="timeout")]
+        compare = [
+            _make_result("t1", "Login test", "failed", 200, error_message="timeout")
+        ]
 
         mock_base = MagicMock()
         mock_base.scalars.return_value.all.return_value = base

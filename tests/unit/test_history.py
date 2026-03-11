@@ -15,7 +15,9 @@ _mock_redis = MagicMock()
 
 @pytest.fixture(autouse=True)
 def _patch_redis(monkeypatch):
-    monkeypatch.setattr("config.environment.config.get_redis_client", lambda: _mock_redis)
+    monkeypatch.setattr(
+        "config.environment.config.get_redis_client", lambda: _mock_redis
+    )
     _mock_redis.reset_mock()
     _mock_redis.get.reset_mock()
     _mock_redis.keys.reset_mock()
@@ -62,13 +64,17 @@ class TestIsInTimeRange:
         from webgui.history import TimeRange
 
         mgr = _make_manager()
-        assert mgr._is_in_time_range(datetime.now() - timedelta(hours=12), TimeRange.LAST_24_HOURS)
+        assert mgr._is_in_time_range(
+            datetime.now() - timedelta(hours=12), TimeRange.LAST_24_HOURS
+        )
 
     def test_outside_24h(self):
         from webgui.history import TimeRange
 
         mgr = _make_manager()
-        assert not mgr._is_in_time_range(datetime.now() - timedelta(hours=48), TimeRange.LAST_24_HOURS)
+        assert not mgr._is_in_time_range(
+            datetime.now() - timedelta(hours=48), TimeRange.LAST_24_HOURS
+        )
 
     def test_all_time_always_true(self):
         from webgui.history import TimeRange
@@ -80,19 +86,25 @@ class TestIsInTimeRange:
         from webgui.history import TimeRange
 
         mgr = _make_manager()
-        assert mgr._is_in_time_range(datetime.now() - timedelta(days=3), TimeRange.LAST_7_DAYS)
+        assert mgr._is_in_time_range(
+            datetime.now() - timedelta(days=3), TimeRange.LAST_7_DAYS
+        )
 
     def test_within_30d(self):
         from webgui.history import TimeRange
 
         mgr = _make_manager()
-        assert mgr._is_in_time_range(datetime.now() - timedelta(days=15), TimeRange.LAST_30_DAYS)
+        assert mgr._is_in_time_range(
+            datetime.now() - timedelta(days=15), TimeRange.LAST_30_DAYS
+        )
 
     def test_within_90d(self):
         from webgui.history import TimeRange
 
         mgr = _make_manager()
-        assert mgr._is_in_time_range(datetime.now() - timedelta(days=60), TimeRange.LAST_90_DAYS)
+        assert mgr._is_in_time_range(
+            datetime.now() - timedelta(days=60), TimeRange.LAST_90_DAYS
+        )
 
 
 class TestPassesFilters:
@@ -122,20 +134,40 @@ class TestSortSessions:
         now = datetime.now()
         return [
             SessionSummary(
-                session_id="s1", title="A", status="completed",
-                created_at=now - timedelta(hours=2), updated_at=now - timedelta(hours=1),
-                completed_at=now, duration_minutes=60, user_id="u1",
-                environment="dev", overall_score=80.0, test_coverage=90,
-                agent_count=4, scenarios_completed=9, scenarios_total=10,
-                error_count=1, warning_count=2,
+                session_id="s1",
+                title="A",
+                status="completed",
+                created_at=now - timedelta(hours=2),
+                updated_at=now - timedelta(hours=1),
+                completed_at=now,
+                duration_minutes=60,
+                user_id="u1",
+                environment="dev",
+                overall_score=80.0,
+                test_coverage=90,
+                agent_count=4,
+                scenarios_completed=9,
+                scenarios_total=10,
+                error_count=1,
+                warning_count=2,
             ),
             SessionSummary(
-                session_id="s2", title="B", status="completed",
-                created_at=now - timedelta(hours=1), updated_at=now,
-                completed_at=now, duration_minutes=30, user_id="u1",
-                environment="dev", overall_score=95.0, test_coverage=100,
-                agent_count=4, scenarios_completed=10, scenarios_total=10,
-                error_count=0, warning_count=0,
+                session_id="s2",
+                title="B",
+                status="completed",
+                created_at=now - timedelta(hours=1),
+                updated_at=now,
+                completed_at=now,
+                duration_minutes=30,
+                user_id="u1",
+                environment="dev",
+                overall_score=95.0,
+                test_coverage=100,
+                agent_count=4,
+                scenarios_completed=10,
+                scenarios_total=10,
+                error_count=0,
+                warning_count=0,
             ),
         ]
 
@@ -144,7 +176,9 @@ class TestSortSessions:
 
         mgr = _make_manager()
         sessions = self._make_sessions()
-        sorted_sessions = mgr._sort_sessions(sessions, SortBy.CREATED_AT, SortOrder.ASCENDING)
+        sorted_sessions = mgr._sort_sessions(
+            sessions, SortBy.CREATED_AT, SortOrder.ASCENDING
+        )
         assert sorted_sessions[0].session_id == "s1"  # older first
 
     def test_sort_by_overall_score_desc(self):
@@ -152,7 +186,9 @@ class TestSortSessions:
 
         mgr = _make_manager()
         sessions = self._make_sessions()
-        sorted_sessions = mgr._sort_sessions(sessions, SortBy.OVERALL_SCORE, SortOrder.DESCENDING)
+        sorted_sessions = mgr._sort_sessions(
+            sessions, SortBy.OVERALL_SCORE, SortOrder.DESCENDING
+        )
         assert sorted_sessions[0].session_id == "s2"  # higher score first
 
     def test_sort_by_duration(self):
@@ -160,7 +196,9 @@ class TestSortSessions:
 
         mgr = _make_manager()
         sessions = self._make_sessions()
-        sorted_sessions = mgr._sort_sessions(sessions, SortBy.DURATION, SortOrder.ASCENDING)
+        sorted_sessions = mgr._sort_sessions(
+            sessions, SortBy.DURATION, SortOrder.ASCENDING
+        )
         assert sorted_sessions[0].duration_minutes == 30
 
     def test_sort_by_test_coverage(self):
@@ -168,7 +206,9 @@ class TestSortSessions:
 
         mgr = _make_manager()
         sessions = self._make_sessions()
-        sorted_sessions = mgr._sort_sessions(sessions, SortBy.TEST_COVERAGE, SortOrder.DESCENDING)
+        sorted_sessions = mgr._sort_sessions(
+            sessions, SortBy.TEST_COVERAGE, SortOrder.DESCENDING
+        )
         assert sorted_sessions[0].test_coverage == 100
 
 
@@ -177,22 +217,22 @@ class TestCalculateTrend:
         mgr = _make_manager()
         now = datetime.now()
         points = [(now + timedelta(hours=i), 50.0) for i in range(5)]
-        direction, pct = mgr._calculate_trend(points)
+        direction, _pct = mgr._calculate_trend(points)
         assert direction == "stable"
 
     def test_improving_when_rising(self):
         mgr = _make_manager()
         now = datetime.now()
         points = [(now + timedelta(hours=i), float(i * 10)) for i in range(5)]
-        direction, pct = mgr._calculate_trend(points)
+        direction, _pct = mgr._calculate_trend(points)
         assert direction == "improving"
-        assert pct > 0
+        assert _pct > 0
 
     def test_declining_when_falling(self):
         mgr = _make_manager()
         now = datetime.now()
         points = [(now + timedelta(hours=i), 100.0 - i * 10) for i in range(5)]
-        direction, pct = mgr._calculate_trend(points)
+        direction, _pct = mgr._calculate_trend(points)
         assert direction == "declining"
 
     def test_stable_with_too_few_points(self):
@@ -246,8 +286,12 @@ class TestGetSessionHistory:
             "updated_at": now.isoformat(),
         }
         encoded = json.dumps(session_data).encode()
-        _mock_redis.keys.return_value = [f"session:s{i}:info".encode() for i in range(5)]
-        _mock_redis.scan_iter.return_value = [f"session:s{i}:info".encode() for i in range(5)]
+        _mock_redis.keys.return_value = [
+            f"session:s{i}:info".encode() for i in range(5)
+        ]
+        _mock_redis.scan_iter.return_value = [
+            f"session:s{i}:info".encode() for i in range(5)
+        ]
         _mock_redis.get.return_value = encoded
         _mock_redis.exists.return_value = False
         mgr = _make_manager()
@@ -283,7 +327,9 @@ class TestCompareSessions:
         cached = {"session_id": "s1", "overall_score": 80}
         _mock_redis.get.side_effect = [
             json.dumps(cached).encode(),  # cache hit for s1
-            json.dumps({"session_id": "s2", "overall_score": 90}).encode(),  # cache hit for s2
+            json.dumps(
+                {"session_id": "s2", "overall_score": 90}
+            ).encode(),  # cache hit for s2
         ]
         mgr = _make_manager()
         result = await mgr.compare_sessions("s1", "s2")

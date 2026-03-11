@@ -4,7 +4,9 @@ import sys
 import pytest
 
 # Add the agents directory to Python path for importing
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'agents', 'junior'))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "..", "agents", "junior")
+)
 
 try:
     from junior_qa import (
@@ -33,7 +35,9 @@ class TestRegressionTestingTool:
         """Test _run method with an empty test suite"""
         try:
             tool = RegressionTestingTool()
-            result = await tool._run({"name": "empty-suite", "test_cases": []}, "staging")
+            result = await tool._run(
+                {"name": "empty-suite", "test_cases": []}, "staging"
+            )
 
             assert isinstance(result, dict)
             assert "results" in result
@@ -51,7 +55,7 @@ class TestRegressionTestingTool:
                 "test_cases": [
                     {"id": "tc-1", "type": "unit", "name": "test_login"},
                     {"id": "tc-2", "type": "unit", "name": "test_logout"},
-                ]
+                ],
             }
             result = await tool._run(test_suite, "staging")
 
@@ -76,11 +80,13 @@ class TestSyntheticDataGeneratorTool:
         """Test _run method with basic data spec"""
         try:
             tool = SyntheticDataGeneratorTool()
-            result = tool._run({
-                "data_type": "user_profiles",
-                "count": 5,
-                "fields": ["name", "email", "phone"]
-            })
+            result = tool._run(
+                {
+                    "data_type": "user_profiles",
+                    "count": 5,
+                    "fields": ["name", "email", "phone"],
+                }
+            )
 
             assert isinstance(result, dict)
         except Exception as e:
@@ -103,14 +109,16 @@ class TestTestExecutionOptimizerTool:
         """Test _run method with test cases for optimization"""
         try:
             tool = TestExecutionOptimizerTool()
-            result = tool._run({
-                "test_cases": [
-                    {"id": "tc-1", "priority": "high", "duration": 30},
-                    {"id": "tc-2", "priority": "low", "duration": 10},
-                    {"id": "tc-3", "priority": "medium", "duration": 20},
-                ],
-                "code_changes": ["auth.py", "models.py"]
-            })
+            result = tool._run(
+                {
+                    "test_cases": [
+                        {"id": "tc-1", "priority": "high", "duration": 30},
+                        {"id": "tc-2", "priority": "low", "duration": 10},
+                        {"id": "tc-3", "priority": "medium", "duration": 20},
+                    ],
+                    "code_changes": ["auth.py", "models.py"],
+                }
+            )
 
             assert isinstance(result, dict)
         except Exception as e:

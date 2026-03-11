@@ -30,7 +30,9 @@ _mkdir_patcher.start()
 
 @pytest.fixture(autouse=True)
 def _patch_redis(monkeypatch):
-    monkeypatch.setattr("config.environment.config.get_redis_client", lambda: _mock_redis)
+    monkeypatch.setattr(
+        "config.environment.config.get_redis_client", lambda: _mock_redis
+    )
     _mock_redis.reset_mock()
     _mock_redis.get.reset_mock()
     _mock_redis.lrange.reset_mock()
@@ -163,7 +165,9 @@ class TestCollectSessionData:
 
     @pytest.mark.asyncio
     async def test_collects_timeline(self):
-        notif = json.dumps({"timestamp": "2026-01-01T00:00:00", "event": "started"}).encode()
+        notif = json.dumps(
+            {"timestamp": "2026-01-01T00:00:00", "event": "started"}
+        ).encode()
         _mock_redis.lrange.return_value = [notif]
 
         gen = _make_generator()
@@ -183,7 +187,10 @@ class TestCollectSessionData:
 
     @pytest.mark.asyncio
     async def test_skips_bad_notification_json(self):
-        _mock_redis.lrange.return_value = [b"not json", json.dumps({"timestamp": "t"}).encode()]
+        _mock_redis.lrange.return_value = [
+            b"not json",
+            json.dumps({"timestamp": "t"}).encode(),
+        ]
         gen = _make_generator()
         data = await gen._collect_session_data("s1")
         valid = [e for e in data["timeline"] if "timestamp" in e]

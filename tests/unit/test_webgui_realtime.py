@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -41,8 +41,9 @@ class TestWebSocketMessage:
 
     def test_websocket_message_creation(self):
         """Verify WebSocketMessage can be created with required fields."""
-        from webgui.realtime import EventType, WebSocketMessage
         from datetime import datetime
+
+        from webgui.realtime import EventType, WebSocketMessage
 
         msg = WebSocketMessage(
             type=EventType.SESSION_STATUS_CHANGED,
@@ -55,8 +56,9 @@ class TestWebSocketMessage:
 
     def test_websocket_message_with_data(self):
         """Verify WebSocketMessage accepts optional data field."""
-        from webgui.realtime import EventType, WebSocketMessage
         from datetime import datetime
+
+        from webgui.realtime import EventType, WebSocketMessage
 
         msg = WebSocketMessage(
             type=EventType.NOTIFICATION,
@@ -83,6 +85,7 @@ class TestRealtimeManager:
         with patch("webgui.realtime.config") as mock_config:
             mock_config.get_redis_client.return_value = mock_redis
             from webgui.realtime import RealtimeManager
+
             manager = RealtimeManager()
             manager.redis_client = mock_redis
             return manager
@@ -121,17 +124,19 @@ class TestRealtimeManager:
 
         await realtime_manager.subscribe_to_session("conn-1", "session-123")
 
-        assert f"webgui:session:session-123" in realtime_manager.connection_subscriptions[
-            "conn-1"
-        ]
+        assert (
+            "webgui:session:session-123"
+            in realtime_manager.connection_subscriptions["conn-1"]
+        )
 
     @pytest.mark.asyncio
     async def test_publish_event(self, realtime_manager):
         """Verify publishing events to Redis pub/sub."""
-        from webgui.realtime import EventType, WebSocketMessage
         from datetime import datetime
 
-        mock_pubsub = MagicMock()
+        from webgui.realtime import EventType, WebSocketMessage
+
+        MagicMock()  # pubsub (unused, publish is called directly)
         realtime_manager.redis_client.publish = MagicMock()
 
         msg = WebSocketMessage(
@@ -148,12 +153,11 @@ class TestRealtimeManager:
     @pytest.mark.asyncio
     async def test_handle_redis_message_agent_tasks(self, realtime_manager):
         """Verify handling agent task notification messages."""
-        from webgui.realtime import EventType
 
         mock_websocket = AsyncMock()
         realtime_manager.websockets = {"conn-1": mock_websocket}
         realtime_manager.connection_subscriptions = {
-            "conn-1": {f"webgui:session:session-123"}
+            "conn-1": {"webgui:session:session-123"}
         }
 
         redis_message = {
@@ -193,7 +197,9 @@ class TestWebSocketHandler:
         return WebSocketHandler(mock_manager)
 
     @pytest.mark.asyncio
-    async def test_handle_websocket_accepts_connection(self, websocket_handler, mock_manager):
+    async def test_handle_websocket_accepts_connection(
+        self, websocket_handler, mock_manager
+    ):
         """Verify WebSocket handler accepts connections."""
         mock_websocket = AsyncMock()
         mock_websocket.accept = AsyncMock()
@@ -205,7 +211,9 @@ class TestWebSocketHandler:
         mock_websocket.accept.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_handle_websocket_adds_connection(self, websocket_handler, mock_manager):
+    async def test_handle_websocket_adds_connection(
+        self, websocket_handler, mock_manager
+    ):
         """Verify WebSocket handler adds connection to manager."""
         mock_websocket = AsyncMock()
         mock_websocket.accept = AsyncMock()
@@ -251,7 +259,6 @@ class TestRealtimeChannels:
         """Verify all agent task channels are configured for subscription."""
         with patch("webgui.realtime.config") as mock_config:
             mock_config.get_redis_client.return_value = MagicMock()
-            from webgui.realtime import RealtimeManager
 
             expected_agent_channels = [
                 "manager:tasks",

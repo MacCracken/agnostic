@@ -11,11 +11,34 @@ from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import Depends, Header, HTTPException
+from pydantic import BaseModel
 
 from shared.audit import AuditAction, audit_log
 from webgui.auth import Permission, auth_manager
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Standard response models
+# ---------------------------------------------------------------------------
+
+
+class PaginatedResponse(BaseModel):
+    """Standard pagination envelope for list endpoints."""
+
+    items: list[dict[str, Any]]
+    total: int
+    limit: int
+    offset: int = 0
+
+
+class ErrorDetail(BaseModel):
+    """Standard error response body."""
+
+    detail: str
+    code: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # SSRF protection — block callbacks to private/internal networks
@@ -130,9 +153,9 @@ async def get_current_user(
         try:
             from config.environment import config
 
-            redis_client = config.get_redis_client()
+            redis_client = config.get_async_redis_client()
             key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
-            key_data = redis_client.get(f"api_key:{key_hash}")
+            key_data = await redis_client.get(f"api_key:{key_hash}")
             if key_data:
                 parsed = json.loads(key_data)
                 audit_log(
@@ -147,7 +170,7 @@ async def get_current_user(
             from shared.database.tenants import tenant_manager
 
             if tenant_manager.enabled:
-                tenant_user = tenant_manager.validate_tenant_api_key(
+                tenant_user = await tenant_manager.validate_tenant_api_key(
                     redis_client, x_api_key
                 )
                 if tenant_user:

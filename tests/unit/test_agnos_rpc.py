@@ -43,7 +43,9 @@ class TestAgentRpcMethods:
         from shared.agnos_rpc_client import AGENT_RPC_METHODS
 
         for agent_key, methods in AGENT_RPC_METHODS.items():
-            assert len(methods) > 0, f"Agent {agent_key} should have at least one method"
+            assert len(methods) > 0, (
+                f"Agent {agent_key} should have at least one method"
+            )
 
     def test_capability_methods_covered(self):
         """All CAPABILITY_DEFINITIONS should have corresponding RPC methods."""
@@ -74,9 +76,7 @@ class TestAgnosRpcClientInit:
             assert client.enabled is False
 
     def test_enabled_via_env(self):
-        with patch.dict(
-            os.environ, {"AGNOS_RPC_ENABLED": "true"}, clear=False
-        ):
+        with patch.dict(os.environ, {"AGNOS_RPC_ENABLED": "true"}, clear=False):
             from shared.agnos_rpc_client import AgnosRpcClient
 
             client = AgnosRpcClient()

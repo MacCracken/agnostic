@@ -85,7 +85,9 @@ class TestGetAgentConfig:
     def test_returns_config_if_present(self):
         custom = {
             "team_presets": {"standard": {"agents": []}},
-            "agent_roles": {"qa-manager": {"focus": "orchestration", "tools": ["planner"]}},
+            "agent_roles": {
+                "qa-manager": {"focus": "orchestration", "tools": ["planner"]}
+            },
         }
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(custom, f)

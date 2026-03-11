@@ -2,7 +2,7 @@
 
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -144,7 +144,7 @@ class TestTenantManager:
 
         tenant = MagicMock()
         tenant.status = TenantStatus.TRIAL
-        tenant.trial_ends_at = datetime(2099, 12, 31, tzinfo=timezone.utc)
+        tenant.trial_ends_at = datetime(2099, 12, 31, tzinfo=UTC)
 
         assert mgr.is_within_trial(tenant) is True
 
@@ -156,7 +156,7 @@ class TestTenantManager:
 
         tenant = MagicMock()
         tenant.status = TenantStatus.TRIAL
-        tenant.trial_ends_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        tenant.trial_ends_at = datetime(2020, 1, 1, tzinfo=UTC)
 
         assert mgr.is_within_trial(tenant) is False
 
@@ -168,7 +168,7 @@ class TestTenantManager:
 
         tenant = MagicMock()
         tenant.status = TenantStatus.ACTIVE
-        tenant.trial_ends_at = datetime(2099, 12, 31, tzinfo=timezone.utc)
+        tenant.trial_ends_at = datetime(2099, 12, 31, tzinfo=UTC)
 
         assert mgr.is_within_trial(tenant) is False
 
@@ -208,69 +208,75 @@ class TestTenantManager:
 
     # -- check_rate_limit --
 
-    def test_check_rate_limit_allowed(self):
+    @pytest.mark.asyncio
+    async def test_check_rate_limit_allowed(self):
         """check_rate_limit returns True when under limit."""
         from shared.database.tenants import TenantManager
 
         mgr = TenantManager()
         mgr.default_rate_limit = 100
 
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.incr.return_value = 1
 
-        assert mgr.check_rate_limit(redis, "acme") is True
+        assert await mgr.check_rate_limit(redis, "acme") is True
         redis.expire.assert_called_once()
 
-    def test_check_rate_limit_exceeded(self):
+    @pytest.mark.asyncio
+    async def test_check_rate_limit_exceeded(self):
         """check_rate_limit returns False when over limit."""
         from shared.database.tenants import TenantManager
 
         mgr = TenantManager()
         mgr.default_rate_limit = 100
 
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.incr.return_value = 101
 
-        assert mgr.check_rate_limit(redis, "acme") is False
+        assert await mgr.check_rate_limit(redis, "acme") is False
 
-    def test_check_rate_limit_custom_limit(self):
+    @pytest.mark.asyncio
+    async def test_check_rate_limit_custom_limit(self):
         """check_rate_limit respects custom rate_limit parameter."""
         from shared.database.tenants import TenantManager
 
         mgr = TenantManager()
 
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.incr.return_value = 6
 
-        assert mgr.check_rate_limit(redis, "acme", rate_limit=5) is False
-        assert mgr.check_rate_limit(redis, "acme", rate_limit=10) is True
+        assert await mgr.check_rate_limit(redis, "acme", rate_limit=5) is False
+        assert await mgr.check_rate_limit(redis, "acme", rate_limit=10) is True
 
-    def test_check_rate_limit_sets_expiry_on_first_request(self):
+    @pytest.mark.asyncio
+    async def test_check_rate_limit_sets_expiry_on_first_request(self):
         """check_rate_limit sets 60s TTL on first request in window."""
         from shared.database.tenants import TenantManager
 
         mgr = TenantManager()
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.incr.return_value = 1
 
-        mgr.check_rate_limit(redis, "acme")
+        await mgr.check_rate_limit(redis, "acme")
         redis.expire.assert_called_once()
         assert redis.expire.call_args[0][1] == 60
 
-    def test_check_rate_limit_no_expiry_on_subsequent(self):
+    @pytest.mark.asyncio
+    async def test_check_rate_limit_no_expiry_on_subsequent(self):
         """check_rate_limit does not reset TTL on subsequent requests."""
         from shared.database.tenants import TenantManager
 
         mgr = TenantManager()
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.incr.return_value = 5
 
-        mgr.check_rate_limit(redis, "acme")
+        await mgr.check_rate_limit(redis, "acme")
         redis.expire.assert_not_called()
 
     # -- validate_tenant_api_key --
 
-    def test_validate_tenant_api_key_valid(self):
+    @pytest.mark.asyncio
+    async def test_validate_tenant_api_key_valid(self):
         """validate_tenant_api_key returns user dict for valid key."""
         import hashlib
         import json
@@ -278,18 +284,20 @@ class TestTenantManager:
         from shared.database.tenants import TenantManager
 
         mgr = TenantManager()
-        redis = MagicMock()
+        redis = AsyncMock()
 
         api_key = "test-api-key-12345"
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-        stored = json.dumps({
-            "tenant_id": "acme",
-            "role": "admin",
-            "permissions": ["read", "write"],
-        })
+        stored = json.dumps(
+            {
+                "tenant_id": "acme",
+                "role": "admin",
+                "permissions": ["read", "write"],
+            }
+        )
         redis.get.return_value = stored
 
-        result = mgr.validate_tenant_api_key(redis, api_key)
+        result = await mgr.validate_tenant_api_key(redis, api_key)
 
         assert result is not None
         assert result["tenant_id"] == "acme"
@@ -299,33 +307,33 @@ class TestTenantManager:
         assert "read" in result["permissions"]
         redis.get.assert_called_once_with(f"tenant_api_key:{key_hash}")
 
-    def test_validate_tenant_api_key_invalid(self):
+    @pytest.mark.asyncio
+    async def test_validate_tenant_api_key_invalid(self):
         """validate_tenant_api_key returns None for unknown key."""
         from shared.database.tenants import TenantManager
 
         mgr = TenantManager()
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.get.return_value = None
 
-        result = mgr.validate_tenant_api_key(redis, "bad-key")
+        result = await mgr.validate_tenant_api_key(redis, "bad-key")
         assert result is None
 
-    def test_validate_tenant_api_key_updates_last_used(self):
+    @pytest.mark.asyncio
+    async def test_validate_tenant_api_key_updates_last_used(self):
         """validate_tenant_api_key updates last_used_at in Redis."""
-        import hashlib
         import json
 
         from shared.database.tenants import TenantManager
 
         mgr = TenantManager()
-        redis = MagicMock()
+        redis = AsyncMock()
 
         api_key = "key-for-timestamp-test"
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         stored = json.dumps({"tenant_id": "acme"})
         redis.get.return_value = stored
 
-        mgr.validate_tenant_api_key(redis, api_key)
+        await mgr.validate_tenant_api_key(redis, api_key)
 
         redis.set.assert_called_once()
         call_args = redis.set.call_args
@@ -553,6 +561,7 @@ class TestTenantEndpoints:
     @pytest.fixture
     def app(self):
         from fastapi import FastAPI
+
         from webgui.api import api_router
 
         app = FastAPI()
@@ -562,6 +571,7 @@ class TestTenantEndpoints:
     @pytest.fixture
     def admin_client(self, app):
         from fastapi.testclient import TestClient
+
         from webgui.api import get_current_user
 
         async def override():
@@ -575,6 +585,7 @@ class TestTenantEndpoints:
     @pytest.fixture
     def viewer_client(self, app):
         from fastapi.testclient import TestClient
+
         from webgui.api import get_current_user
 
         async def override():

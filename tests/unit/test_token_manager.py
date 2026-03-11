@@ -4,7 +4,7 @@ import hashlib
 import os
 import sys
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import jwt
 import pytest
@@ -38,13 +38,13 @@ def _make_user(**overrides):
 def _make_manager(redis=None):
     from webgui.auth.token_manager import TokenManager
 
-    return TokenManager(redis_client=redis or MagicMock(), secret_key=SECRET)
+    return TokenManager(redis_client=redis or AsyncMock(), secret_key=SECRET)
 
 
 class TestCreateTokens:
     @pytest.mark.asyncio
     async def test_returns_auth_token(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         mgr = _make_manager(redis)
         user = _make_user()
         token = await mgr.create_tokens(user)
@@ -73,7 +73,7 @@ class TestCreateTokens:
 
     @pytest.mark.asyncio
     async def test_stores_refresh_in_redis(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         mgr = _make_manager(redis)
         user = _make_user()
         token = await mgr.create_tokens(user)
@@ -95,7 +95,7 @@ class TestCreateTokens:
 class TestVerifyToken:
     @pytest.mark.asyncio
     async def test_valid_token(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.exists.return_value = False
         mgr = _make_manager(redis)
         user = _make_user()
@@ -108,7 +108,11 @@ class TestVerifyToken:
     async def test_expired_token(self):
         mgr = _make_manager()
         expired = jwt.encode(
-            {"user_id": "u1", "type": "access", "exp": datetime.now(UTC) - timedelta(hours=1)},
+            {
+                "user_id": "u1",
+                "type": "access",
+                "exp": datetime.now(UTC) - timedelta(hours=1),
+            },
             SECRET,
             algorithm="HS256",
         )
@@ -123,7 +127,7 @@ class TestVerifyToken:
 
     @pytest.mark.asyncio
     async def test_blacklisted_token(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.exists.return_value = True  # token is blacklisted
         mgr = _make_manager(redis)
         user = _make_user()
@@ -135,7 +139,7 @@ class TestVerifyToken:
 class TestRefreshTokens:
     @pytest.mark.asyncio
     async def test_successful_refresh(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.exists.return_value = False
         mgr = _make_manager(redis)
         user = _make_user()
@@ -155,7 +159,11 @@ class TestRefreshTokens:
         mgr = _make_manager()
         # Create an access token (type != "refresh")
         access = jwt.encode(
-            {"user_id": "u1", "type": "access", "exp": datetime.now(UTC) + timedelta(hours=1)},
+            {
+                "user_id": "u1",
+                "type": "access",
+                "exp": datetime.now(UTC) + timedelta(hours=1),
+            },
             SECRET,
             algorithm="HS256",
         )
@@ -164,11 +172,15 @@ class TestRefreshTokens:
 
     @pytest.mark.asyncio
     async def test_mismatched_stored_token(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.get.return_value = b"different-token"
         mgr = _make_manager(redis)
         refresh = jwt.encode(
-            {"user_id": "u1", "type": "refresh", "exp": datetime.now(UTC) + timedelta(days=1)},
+            {
+                "user_id": "u1",
+                "type": "refresh",
+                "exp": datetime.now(UTC) + timedelta(days=1),
+            },
             SECRET,
             algorithm="HS256",
         )
@@ -177,7 +189,7 @@ class TestRefreshTokens:
 
     @pytest.mark.asyncio
     async def test_inactive_user(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         mgr = _make_manager(redis)
         user = _make_user(is_active=False)
         token = await mgr.create_tokens(user)
@@ -189,7 +201,7 @@ class TestRefreshTokens:
 
     @pytest.mark.asyncio
     async def test_user_not_found(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         mgr = _make_manager(redis)
         user = _make_user()
         token = await mgr.create_tokens(user)
@@ -203,7 +215,7 @@ class TestRefreshTokens:
 class TestLogout:
     @pytest.mark.asyncio
     async def test_blacklists_and_deletes(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         mgr = _make_manager(redis)
         result = await mgr.logout("u1", "some-access-token")
         assert result is True
@@ -212,7 +224,7 @@ class TestLogout:
 
     @pytest.mark.asyncio
     async def test_blacklist_key_uses_hash(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         mgr = _make_manager(redis)
         token = "my-token"
         await mgr.logout("u1", token)
@@ -221,7 +233,7 @@ class TestLogout:
 
     @pytest.mark.asyncio
     async def test_returns_false_on_error(self):
-        redis = MagicMock()
+        redis = AsyncMock()
         redis.setex.side_effect = Exception("Redis down")
         mgr = _make_manager(redis)
         result = await mgr.logout("u1", "token")

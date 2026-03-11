@@ -1,13 +1,12 @@
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 try:
     from fastapi.testclient import TestClient
@@ -82,13 +81,18 @@ class TestAuthEndpoints:
         assert resp.status_code == 422  # validation error
 
     def test_login_invalid_credentials(self, client):
-        mock_redis = MagicMock()
+        mock_redis = AsyncMock()
         mock_redis.incr.return_value = 1
         mock_redis.expire.return_value = True
         mock_auth_manager = MagicMock()
         mock_auth_manager.authenticate_user = AsyncMock(return_value=None)
-        with patch("config.environment.config.get_redis_client", return_value=mock_redis), \
-             patch("webgui.routes.auth.auth_manager", mock_auth_manager):
+        with (
+            patch(
+                "config.environment.config.get_async_redis_client",
+                return_value=mock_redis,
+            ),
+            patch("webgui.routes.auth.auth_manager", mock_auth_manager),
+        ):
             resp = client.post(
                 "/api/auth/login",
                 json={"email": "bad@example.com", "password": "wrong"},
@@ -115,11 +119,13 @@ class TestDashboardEndpoints:
     @patch("webgui.api.auth_manager")
     def test_dashboard_authenticated(self, mock_auth, authed_client):
         with patch("webgui.dashboard.dashboard_manager") as mock_dm:
-            mock_dm.export_dashboard_data = AsyncMock(return_value={
-                "sessions": [],
-                "agents": [],
-                "metrics": {},
-            })
+            mock_dm.export_dashboard_data = AsyncMock(
+                return_value={
+                    "sessions": [],
+                    "agents": [],
+                    "metrics": {},
+                }
+            )
             resp = authed_client.get("/api/dashboard")
             assert resp.status_code == 200
 
@@ -128,9 +134,16 @@ class TestAgentMetricsDashboard:
     @patch("shared.agent_metrics.get_agent_metrics")
     def test_agent_dashboard_returns_agents(self, mock_get, authed_client):
         mock_get.return_value = [
-            {"agent": "qa-manager", "tasks_total": 5, "tasks_success": 4,
-             "tasks_failed": 1, "success_rate": 0.8, "prompt_tokens": 100,
-             "completion_tokens": 50, "active": 1.0},
+            {
+                "agent": "qa-manager",
+                "tasks_total": 5,
+                "tasks_success": 4,
+                "tasks_failed": 1,
+                "success_rate": 0.8,
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "active": 1.0,
+            },
         ]
         resp = authed_client.get("/api/dashboard/agent-metrics")
         assert resp.status_code == 200
@@ -173,6 +186,7 @@ class TestAgentEndpoints:
 # P6 — Enhanced health endpoint
 # ---------------------------------------------------------------------------
 
+
 class TestHealthCheckEndpoint:
     """Tests for the enhanced /health endpoint in webgui/app.py."""
 
@@ -180,6 +194,7 @@ class TestHealthCheckEndpoint:
         """Import the real app's health endpoint for testing."""
         try:
             from webgui.app import app as real_app
+
             return real_app
         except ImportError:
             return None
@@ -195,11 +210,12 @@ class TestHealthCheckEndpoint:
         mock_redis.ping.return_value = True
         mock_redis.get.return_value = None  # no heartbeats
 
-        with patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}), \
-             patch("webgui.app.config") as mock_config, \
-             patch("webgui.app.socket") as mock_socket, \
-             patch("webgui.app._agent_registry") as mock_registry:
-
+        with (
+            patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}),
+            patch("webgui.app.config") as mock_config,
+            patch("webgui.app.socket") as mock_socket,
+            patch("webgui.app._agent_registry") as mock_registry,
+        ):
             mock_config.get_redis_client.return_value = mock_redis
 
             # RabbitMQ connect succeeds
@@ -229,10 +245,11 @@ class TestHealthCheckEndpoint:
         mock_redis = Mock()
         mock_redis.ping.side_effect = ConnectionError("redis down")
 
-        with patch("webgui.app.config") as mock_config, \
-             patch("webgui.app.socket") as mock_socket, \
-             patch("webgui.app._agent_registry") as mock_registry:
-
+        with (
+            patch("webgui.app.config") as mock_config,
+            patch("webgui.app.socket") as mock_socket,
+            patch("webgui.app._agent_registry") as mock_registry,
+        ):
             mock_config.get_redis_client.return_value = mock_redis
             mock_socket.create_connection.return_value = Mock()
             mock_registry.get_agents_for_team.return_value = []
@@ -256,13 +273,16 @@ class TestHealthCheckEndpoint:
         mock_redis.ping.return_value = True
         mock_redis.get.return_value = None
 
-        with patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}), \
-             patch("webgui.app.config") as mock_config, \
-             patch("webgui.app.socket") as mock_socket, \
-             patch("webgui.app._agent_registry") as mock_registry:
-
+        with (
+            patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}),
+            patch("webgui.app.config") as mock_config,
+            patch("webgui.app.socket") as mock_socket,
+            patch("webgui.app._agent_registry") as mock_registry,
+        ):
             mock_config.get_redis_client.return_value = mock_redis
-            mock_socket.create_connection.side_effect = ConnectionRefusedError("rmq down")
+            mock_socket.create_connection.side_effect = ConnectionRefusedError(
+                "rmq down"
+            )
             mock_registry.get_agents_for_team.return_value = []
 
             client = TestClient(real_app)
@@ -280,7 +300,7 @@ class TestHealthCheckEndpoint:
         except ImportError:
             pytest.skip("webgui.app not importable")
 
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         heartbeat_data = json.dumps({"last_heartbeat": now_iso}).encode()
 
         mock_redis = Mock()
@@ -290,11 +310,12 @@ class TestHealthCheckEndpoint:
         mock_agent = Mock()
         mock_agent.name = "QA Manager"
 
-        with patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}), \
-             patch("webgui.app.config") as mock_config, \
-             patch("webgui.app.socket") as mock_socket, \
-             patch("webgui.app._agent_registry") as mock_registry:
-
+        with (
+            patch.dict(os.environ, {"RABBITMQ_HOST": "rabbitmq"}),
+            patch("webgui.app.config") as mock_config,
+            patch("webgui.app.socket") as mock_socket,
+            patch("webgui.app._agent_registry") as mock_registry,
+        ):
             mock_config.get_redis_client.return_value = mock_redis
             mock_socket.create_connection.return_value = Mock()
             mock_registry.get_agents_for_team.return_value = [mock_agent]
@@ -313,7 +334,7 @@ class TestHealthCheckEndpoint:
         except ImportError:
             pytest.skip("webgui.app not importable")
 
-        old_ts = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        old_ts = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
         heartbeat_data = json.dumps({"last_heartbeat": old_ts}).encode()
 
         mock_redis = Mock()
@@ -323,11 +344,12 @@ class TestHealthCheckEndpoint:
         mock_agent = Mock()
         mock_agent.name = "QA Manager"
 
-        with patch("webgui.app.config") as mock_config, \
-             patch("webgui.app.socket") as mock_socket, \
-             patch("webgui.app._agent_registry") as mock_registry, \
-             patch.dict(os.environ, {"AGENT_STALE_THRESHOLD_SECONDS": "60"}):
-
+        with (
+            patch("webgui.app.config") as mock_config,
+            patch("webgui.app.socket") as mock_socket,
+            patch("webgui.app._agent_registry") as mock_registry,
+            patch.dict(os.environ, {"AGENT_STALE_THRESHOLD_SECONDS": "60"}),
+        ):
             mock_config.get_redis_client.return_value = mock_redis
             mock_socket.create_connection.return_value = Mock()
             mock_registry.get_agents_for_team.return_value = [mock_agent]
@@ -346,11 +368,12 @@ class TestHealthCheckEndpoint:
 # Security: path traversal in report download
 # ---------------------------------------------------------------------------
 
+
 class TestReportDownloadSecurity:
     """Verify path traversal is blocked in GET /api/reports/{id}/download."""
 
     def _make_redis_with_meta(self, file_path: str):
-        mock_redis = Mock()
+        mock_redis = AsyncMock()
         mock_redis.get.return_value = json.dumps({"file_path": file_path}).encode()
         return mock_redis
 
@@ -365,8 +388,8 @@ class TestReportDownloadSecurity:
         reports_mod._REPORTS_DIR = tmp_path.resolve()
         try:
             with patch("config.environment.config") as mock_cfg:
-                mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
-                    str(report_file)
+                mock_cfg.get_async_redis_client.return_value = (
+                    self._make_redis_with_meta(str(report_file))
                 )
                 resp = authed_client.get("/api/reports/report-abc/download")
             assert resp.status_code == 200
@@ -384,8 +407,8 @@ class TestReportDownloadSecurity:
         reports_mod._REPORTS_DIR = tmp_path.resolve()
         try:
             with patch("config.environment.config") as mock_cfg:
-                mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
-                    malicious_path
+                mock_cfg.get_async_redis_client.return_value = (
+                    self._make_redis_with_meta(malicious_path)
                 )
                 resp = authed_client.get("/api/reports/evil-id/download")
             assert resp.status_code == 403
@@ -402,8 +425,8 @@ class TestReportDownloadSecurity:
         reports_mod._REPORTS_DIR = tmp_path.resolve()
         try:
             with patch("config.environment.config") as mock_cfg:
-                mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
-                    traversal
+                mock_cfg.get_async_redis_client.return_value = (
+                    self._make_redis_with_meta(traversal)
                 )
                 resp = authed_client.get("/api/reports/dotdot/download")
             assert resp.status_code == 403
@@ -419,8 +442,8 @@ class TestReportDownloadSecurity:
         reports_mod._REPORTS_DIR = tmp_path.resolve()
         try:
             with patch("config.environment.config") as mock_cfg:
-                mock_cfg.get_redis_client.return_value = self._make_redis_with_meta(
-                    nonexistent
+                mock_cfg.get_async_redis_client.return_value = (
+                    self._make_redis_with_meta(nonexistent)
                 )
                 resp = authed_client.get("/api/reports/gone/download")
             assert resp.status_code == 404
@@ -472,7 +495,9 @@ class TestSSRFProtection:
         # Mock DNS resolution to return a public IP
         monkeypatch.setattr(
             "webgui.routes.dependencies.socket.getaddrinfo",
-            lambda *a, **kw: [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))],
+            lambda *a, **kw: [
+                (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))
+            ],
         )
         _validate_callback_url("https://hooks.example.com/callback")
 
@@ -483,7 +508,9 @@ class TestSSRFProtection:
 
         monkeypatch.setattr(
             "webgui.routes.dependencies.socket.getaddrinfo",
-            lambda *a, **kw: [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("203.0.113.1", 0))],
+            lambda *a, **kw: [
+                (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("203.0.113.1", 0))
+            ],
         )
         _validate_callback_url("https://my-webhook.company.io/hook")
 
@@ -495,7 +522,9 @@ class TestSSRFProtection:
         # DNS rebinding: domain resolves to a private IP
         monkeypatch.setattr(
             "webgui.routes.dependencies.socket.getaddrinfo",
-            lambda *a, **kw: [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("10.0.0.1", 0))],
+            lambda *a, **kw: [
+                (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("10.0.0.1", 0))
+            ],
         )
         with pytest.raises(ValueError, match="private network"):
             _validate_callback_url("https://evil-rebind.attacker.com/hook")
@@ -567,7 +596,6 @@ class TestStaticApiKeyPermissions:
 
         with patch.dict(os.environ, {"AGNOSTIC_API_KEY": "test-key-123"}):
             # Re-import to pick up env var
-            from webgui.api import get_current_user
 
             # Simulate what get_current_user does for static key
             import hmac

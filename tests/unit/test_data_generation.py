@@ -2,7 +2,7 @@
 
 import os
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,7 +18,9 @@ _mock_celery = MagicMock()
 @pytest.fixture(autouse=True)
 def _patch_config(monkeypatch):
     """Patch config.get_redis_client and config.get_celery_app globally."""
-    monkeypatch.setattr("config.environment.config.get_redis_client", lambda: _mock_redis)
+    monkeypatch.setattr(
+        "config.environment.config.get_redis_client", lambda: _mock_redis
+    )
     monkeypatch.setattr(
         "config.environment.config.get_celery_app", lambda name: _mock_celery
     )
@@ -102,7 +104,9 @@ class TestGenerateDataItem:
 
     def test_float_field_with_range(self):
         gen = _make_generator()
-        preset = {"score": {"type": "float", "options": {"range": [0.0, 1.0], "decimals": 3}}}
+        preset = {
+            "score": {"type": "float", "options": {"range": [0.0, 1.0], "decimals": 3}}
+        }
         item = gen._generate_data_item(preset, 0)
         assert 0.0 <= item["score"] <= 1.0
 
@@ -114,7 +118,9 @@ class TestGenerateDataItem:
 
     def test_date_field_with_range(self):
         gen = _make_generator()
-        preset = {"d": {"type": "date", "options": {"range": ["2024-01-01", "2024-12-31"]}}}
+        preset = {
+            "d": {"type": "date", "options": {"range": ["2024-01-01", "2024-12-31"]}}
+        }
         item = gen._generate_data_item(preset, 0)
         assert item["d"].startswith("2024-")
 
@@ -174,7 +180,13 @@ class TestEdgeCaseData:
         result = gen.generate_edge_case_data("api_testing")
         assert "edge_case_data" in result
         assert len(result["edge_case_data"]) == 5  # 5 default edge cases
-        assert result["edge_cases"] == ["boundary", "null", "empty", "max_length", "special_chars"]
+        assert result["edge_cases"] == [
+            "boundary",
+            "null",
+            "empty",
+            "max_length",
+            "special_chars",
+        ]
 
     def test_null_edge_case(self):
         gen = _make_generator()
@@ -194,7 +206,9 @@ class TestEdgeCaseData:
 
     def test_special_chars_edge_case(self):
         gen = _make_generator()
-        result = gen.generate_edge_case_data("form_testing", edge_cases=["special_chars"])
+        result = gen.generate_edge_case_data(
+            "form_testing", edge_cases=["special_chars"]
+        )
         item = result["edge_case_data"][0]
         # String fields should have special chars
         assert "!@#" in str(item.get("first_name", ""))
@@ -272,5 +286,7 @@ class TestDataGenerationService:
         from shared.data_generation_service import DataGenerationService
 
         service = DataGenerationService()
-        result = service.generate_for_agent("unknown_agent", {"data_type": "generic", "count": 3})
+        result = service.generate_for_agent(
+            "unknown_agent", {"data_type": "generic", "count": 3}
+        )
         assert "optimization_metadata" in result

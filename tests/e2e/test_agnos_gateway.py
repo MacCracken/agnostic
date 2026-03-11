@@ -121,7 +121,8 @@ def test_agents_registered_with_daimon(
     # Check that at least one agnostic agent is registered
     agents = data if isinstance(data, list) else data.get("agents", [])
     agnostic_agents = [
-        a for a in agents
+        a
+        for a in agents
         if isinstance(a, dict) and "agnostic" in a.get("agent_id", "").lower()
     ]
     assert len(agnostic_agents) > 0, (
@@ -144,7 +145,9 @@ def test_webgui_health_shows_gateway(http_client: httpx.Client):
 # ---------------------------------------------------------------------------
 
 
-def test_no_openai_key_needed_with_gateway(http_client: httpx.Client, api_headers: dict):
+def test_no_openai_key_needed_with_gateway(
+    http_client: httpx.Client, api_headers: dict
+):
     """When gateway is enabled, tasks should work without OPENAI_API_KEY.
 
     hoosh holds the provider keys — Agnostic only needs AGNOS_LLM_GATEWAY_API_KEY.

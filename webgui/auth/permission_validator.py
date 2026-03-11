@@ -93,7 +93,7 @@ class PermissionValidator:
         """Check session-specific access."""
         try:
             session_key = f"session:{session_id}:info"
-            session_data = self.redis_client.get(session_key)
+            session_data = await self.redis_client.get(session_key)
 
             if session_data:
                 session_info = json.loads(session_data)

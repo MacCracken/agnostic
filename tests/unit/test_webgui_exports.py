@@ -5,11 +5,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 # Patch Path.mkdir before importing (singleton creates /app/reports at import time)
-with patch.object(Path, "mkdir", return_value=None), \
-     patch("config.environment.config") as _mock_cfg:
+with (
+    patch.object(Path, "mkdir", return_value=None),
+    patch("config.environment.config") as _mock_cfg,
+):
     _mock_cfg.get_redis_client.return_value = Mock()
     try:
         from webgui.exports import (
@@ -25,8 +27,10 @@ with patch.object(Path, "mkdir", return_value=None), \
 @pytest.fixture()
 def report_gen(mock_redis, tmp_path):
     """Create ReportGenerator with mocked Redis and temp reports dir."""
-    with patch("webgui.exports.config") as mock_config, \
-         patch.object(Path, "mkdir", return_value=None):
+    with (
+        patch("webgui.exports.config") as mock_config,
+        patch.object(Path, "mkdir", return_value=None),
+    ):
         mock_config.get_redis_client.return_value = mock_redis
         gen = ReportGenerator()
         gen.reports_dir = tmp_path / "reports"
@@ -38,8 +42,10 @@ class TestReportGeneratorInit:
     """Tests for ReportGenerator initialization"""
 
     def test_init(self, mock_redis):
-        with patch("webgui.exports.config") as mock_config, \
-             patch.object(Path, "mkdir", return_value=None):
+        with (
+            patch("webgui.exports.config") as mock_config,
+            patch.object(Path, "mkdir", return_value=None),
+        ):
             mock_config.get_redis_client.return_value = mock_redis
             gen = ReportGenerator()
         assert gen.redis_client is mock_redis
@@ -97,6 +103,7 @@ class TestReportGeneration:
     @pytest.mark.asyncio
     async def test_collect_session_data_with_redis_data(self, report_gen, mock_redis):
         import json
+
         mock_redis.get.side_effect = lambda key: (
             json.dumps({"status": "completed"}) if "info" in key else None
         )
@@ -116,7 +123,9 @@ class TestGenerateFileSanitization:
             report_type=ReportType.EXECUTIVE_SUMMARY,
             format=ReportFormat.JSON,
         )
-        file_path_str, _ = await report_gen._generate_file(content, ReportFormat.JSON, req)
+        file_path_str, _ = await report_gen._generate_file(
+            content, ReportFormat.JSON, req
+        )
         generated = Path(file_path_str)
         # File must stay within reports dir
         assert generated.resolve().is_relative_to(report_gen.reports_dir.resolve())
@@ -133,6 +142,8 @@ class TestGenerateFileSanitization:
             report_type=ReportType.EXECUTIVE_SUMMARY,
             format=ReportFormat.JSON,
         )
-        file_path_str, _ = await report_gen._generate_file(content, ReportFormat.JSON, req)
+        file_path_str, _ = await report_gen._generate_file(
+            content, ReportFormat.JSON, req
+        )
         generated = Path(file_path_str)
         assert "session_20260101_abc123" in generated.name

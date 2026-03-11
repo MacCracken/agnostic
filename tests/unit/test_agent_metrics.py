@@ -4,7 +4,9 @@ from unittest.mock import patch
 
 import pytest
 
-prometheus_client = pytest.importorskip("prometheus_client", reason="prometheus_client not installed")
+prometheus_client = pytest.importorskip(
+    "prometheus_client", reason="prometheus_client not installed"
+)
 
 
 class TestGetAgentMetrics:
@@ -136,12 +138,17 @@ class TestHelpers:
 
         from shared.agent_metrics import _get_counter_value
 
-        sample = SimpleNamespace(labels={"agent": "qa-manager", "status": "success"}, value=42)
+        sample = SimpleNamespace(
+            labels={"agent": "qa-manager", "status": "success"}, value=42
+        )
         metric = MagicMock()
         inner = MagicMock()
         inner.samples = [sample]
         metric.collect.return_value = [inner]
-        assert _get_counter_value(metric, {"agent": "qa-manager", "status": "success"}) == 42
+        assert (
+            _get_counter_value(metric, {"agent": "qa-manager", "status": "success"})
+            == 42
+        )
 
     def test_get_counter_value_no_match(self):
         from types import SimpleNamespace
@@ -220,9 +227,13 @@ class TestGetLlmMetricsWithData:
         from shared.agent_metrics import get_llm_metrics
 
         samples = [
-            SimpleNamespace(labels={"method": "generate", "status": "success"}, value=100),
+            SimpleNamespace(
+                labels={"method": "generate", "status": "success"}, value=100
+            ),
             SimpleNamespace(labels={"method": "generate", "status": "error"}, value=5),
-            SimpleNamespace(labels={"method": "analyze", "status": "success"}, value=50),
+            SimpleNamespace(
+                labels={"method": "analyze", "status": "success"}, value=50
+            ),
         ]
 
         def mock_iter(metric):
