@@ -24,8 +24,16 @@ USER root
 
 WORKDIR /app
 
+# Add PGDG repo — base image is Bookworm which only ships PostgreSQL 15
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gnupg curl ca-certificates \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+       | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+       > /etc/apt/sources.list.d/pgdg.list \
+    && rm -rf /var/lib/apt/lists/*
+
 # Additional system deps: embedded services + supervisor
-# Base image is Debian Trixie which ships PostgreSQL 17 natively
 RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     redis-server \
