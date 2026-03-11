@@ -96,9 +96,7 @@ class LLMIntegrationService:
         """Return the configured API key."""
         return self._api_key
 
-    async def _streaming_call(
-        self, call_kwargs: dict[str, Any], span: Any
-    ) -> Any:
+    async def _streaming_call(self, call_kwargs: dict[str, Any], span: Any) -> Any:
         """Execute a streaming LLM call, assembling chunks into a full response.
 
         Uses ``litellm.acompletion(stream=True)`` which returns an async

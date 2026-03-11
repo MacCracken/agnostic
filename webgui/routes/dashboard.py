@@ -272,9 +272,7 @@ async def get_token_budget_pools(user: dict = Depends(get_current_user)):
 
         agent_budgets = {}
         for agent_key, agent_config in AGNOSTIC_AGENTS.items():
-            remaining = await agnos_token_budget.get_remaining(
-                agent_config["agent_id"]
-            )
+            remaining = await agnos_token_budget.get_remaining(agent_config["agent_id"])
             if remaining is not None:
                 agent_budgets[agent_key] = remaining
 

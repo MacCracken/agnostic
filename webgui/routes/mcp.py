@@ -630,5 +630,3 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
     raise HTTPException(
         status_code=404, detail=f"Tool dispatch not implemented: {tool_name}"
     )
-
-

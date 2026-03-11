@@ -510,7 +510,9 @@ class AgentRegistryClient:
         agent_results = await asyncio.gather(
             *[self.register_agent(k) for k in agent_keys]
         )
-        results: dict[str, dict[str, Any]] = dict(zip(agent_keys, agent_results, strict=False))
+        results: dict[str, dict[str, Any]] = dict(
+            zip(agent_keys, agent_results, strict=False)
+        )
 
         # After all agents are registered, advertise capabilities
         results["capabilities"] = await self.advertise_capabilities()

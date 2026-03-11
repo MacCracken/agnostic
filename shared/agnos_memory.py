@@ -205,9 +205,7 @@ class AgnosMemoryClient:
             agent_id, f"session:{session_id}", session_data, namespace="sessions"
         )
 
-    async def retrieve_session(
-        self, agent_id: str, session_id: str
-    ) -> dict | None:
+    async def retrieve_session(self, agent_id: str, session_id: str) -> dict | None:
         """Retrieve a persisted QA session from AGNOS memory."""
         return await self.retrieve(
             agent_id, f"session:{session_id}", namespace="sessions"
@@ -224,9 +222,7 @@ class AgnosMemoryClient:
             agent_id, f"session:{session_id}", namespace="sessions"
         )
 
-    async def store_agent_state(
-        self, agent_id: str, state: dict
-    ) -> bool:
+    async def store_agent_state(self, agent_id: str, state: dict) -> bool:
         """Persist agent operational state (task counts, config, etc.)."""
         return await self.store(agent_id, "agent_state", state, namespace="state")
 

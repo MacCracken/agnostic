@@ -105,7 +105,9 @@ class HistoryManager:
 
         try:
             # Get all session keys
-            session_keys = list(self.redis_client.scan_iter("session:*:info", count=100))
+            session_keys = list(
+                self.redis_client.scan_iter("session:*:info", count=100)
+            )
 
             for key in session_keys:
                 parts = key.decode(errors="replace").split(":")

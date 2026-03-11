@@ -32,7 +32,6 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
-
 class ApiKeyCreateRequest(BaseModel):
     description: str = ""
     role: str = "api_user"
@@ -98,9 +97,11 @@ async def refresh(req: RefreshRequest):
 async def logout(request: Request, user: dict = Depends(get_current_user)):
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        access_token = auth_header[len("Bearer "):]
+        access_token = auth_header[len("Bearer ") :]
     else:
-        raise HTTPException(status_code=400, detail="Missing Bearer token in Authorization header")
+        raise HTTPException(
+            status_code=400, detail="Missing Bearer token in Authorization header"
+        )
     success = await auth_manager.logout(user["user_id"], access_token)
     if not success:
         raise HTTPException(status_code=500, detail="Logout failed")

@@ -74,9 +74,7 @@ class AgnosRpcClient:
             os.getenv("AGNOS_RPC_ENABLED", "false").lower() == "true"
             and _HTTPX_AVAILABLE
         )
-        self.base_url = os.getenv(
-            "AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090"
-        )
+        self.base_url = os.getenv("AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090")
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
@@ -192,14 +190,21 @@ class AgnosRpcClient:
         keys, ids = zip(*eligible, strict=False)
         method_lists = [AGENT_RPC_METHODS[k] for k in keys]
         gathered = await asyncio.gather(
-            *[self.register_methods(did, methods) for did, methods in zip(ids, method_lists, strict=False)]
+            *[
+                self.register_methods(did, methods)
+                for did, methods in zip(ids, method_lists, strict=False)
+            ]
         )
         results: dict[str, Any] = dict(zip(keys, gathered, strict=False))
 
         total = sum(
-            r.get("count", 0) for r in results.values() if r.get("status") == "registered"
+            r.get("count", 0)
+            for r in results.values()
+            if r.get("status") == "registered"
         )
-        logger.info("Registered %d total RPC methods across %d agents", total, len(results))
+        logger.info(
+            "Registered %d total RPC methods across %d agents", total, len(results)
+        )
         return results
 
     async def deregister_all_methods(self) -> None:
@@ -264,9 +269,7 @@ class AgnosRpcClient:
     # Discovery — list available remote methods
     # ------------------------------------------------------------------
 
-    async def list_methods(
-        self, agent_id: str | None = None
-    ) -> list[str]:
+    async def list_methods(self, agent_id: str | None = None) -> list[str]:
         """List RPC methods registered with daimon.
 
         Args:

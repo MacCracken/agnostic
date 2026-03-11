@@ -234,7 +234,9 @@ class AgentMonitor:
         try:
             # Get task keys
             if agent_name:
-                task_keys = list(self.redis_client.scan_iter(f"task:{agent_name}:*", count=100))
+                task_keys = list(
+                    self.redis_client.scan_iter(f"task:{agent_name}:*", count=100)
+                )
             else:
                 task_keys = list(self.redis_client.scan_iter("task:*", count=100))
 
@@ -429,7 +431,9 @@ class AgentMonitor:
 
                 # Count pending tasks
                 pending_tasks = 0
-                task_keys = list(self.redis_client.scan_iter(f"task:{agent_name}:*", count=100))
+                task_keys = list(
+                    self.redis_client.scan_iter(f"task:{agent_name}:*", count=100)
+                )
 
                 for key in task_keys:
                     task_data = self.redis_client.get(key)
@@ -451,7 +455,9 @@ class AgentMonitor:
     def _get_agent_task_count(self, agent_name: str, status: str) -> int:
         """Get count of tasks with specific status for agent"""
         try:
-            task_keys = list(self.redis_client.scan_iter(f"task:{agent_name}:*", count=100))
+            task_keys = list(
+                self.redis_client.scan_iter(f"task:{agent_name}:*", count=100)
+            )
             count = 0
 
             for key in task_keys:
@@ -494,7 +500,9 @@ class AgentMonitor:
         tasks = []
 
         try:
-            task_keys = list(self.redis_client.scan_iter(f"task:{agent_name}:*", count=100))
+            task_keys = list(
+                self.redis_client.scan_iter(f"task:{agent_name}:*", count=100)
+            )
 
             for key in task_keys:
                 task_data = self.redis_client.get(key)
@@ -526,7 +534,9 @@ class AgentMonitor:
 
         try:
             # Get performance history from Redis
-            perf_keys = list(self.redis_client.scan_iter(f"perf:{agent_name}:*", count=100))
+            perf_keys = list(
+                self.redis_client.scan_iter(f"perf:{agent_name}:*", count=100)
+            )
 
             response_times = []
             cpu_usages = []

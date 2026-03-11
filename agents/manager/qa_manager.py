@@ -278,11 +278,18 @@ class QAManagerAgent:
             if json_match:
                 parsed = json.loads(json_match.group())
                 # Validate that it has at least one expected key
-                if any(k in parsed for k in ("scenarios", "acceptance_criteria", "risk_matrix")):
-                    logger.info("Successfully parsed decomposition result from LLM output")
+                if any(
+                    k in parsed
+                    for k in ("scenarios", "acceptance_criteria", "risk_matrix")
+                ):
+                    logger.info(
+                        "Successfully parsed decomposition result from LLM output"
+                    )
                     return parsed
         except Exception as e:
-            logger.debug("Could not parse LLM decomposition result, using fallback: %s", e)
+            logger.debug(
+                "Could not parse LLM decomposition result, using fallback: %s", e
+            )
 
         # Fallback: structured template
         return {

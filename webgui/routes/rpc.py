@@ -30,9 +30,7 @@ class RpcCallRequest(BaseModel):
         default_factory=dict, description="Method parameters"
     )
     timeout_ms: int = Field(default=30000, description="Timeout in milliseconds")
-    sender_id: str | None = Field(
-        default=None, description="Calling agent identifier"
-    )
+    sender_id: str | None = Field(default=None, description="Calling agent identifier")
 
 
 class RpcCallResponse(BaseModel):
