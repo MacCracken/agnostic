@@ -392,12 +392,14 @@ class TestTokenBudgetDashboard:
 
 class TestLLMStreamingCall:
     def test_streaming_call_method_exists(self):
+        pytest.importorskip("litellm")
         from config.llm_integration import LLMIntegrationService
 
         assert hasattr(LLMIntegrationService, "_streaming_call")
 
     def test_llm_call_accepts_stream_param(self):
         """Verify _llm_call signature includes stream parameter."""
+        pytest.importorskip("litellm")
         import inspect
 
         from config.llm_integration import LLMIntegrationService

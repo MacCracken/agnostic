@@ -30,7 +30,7 @@ except ImportError:
 class RagChunk:
     """A single chunk returned from a RAG query."""
 
-    __slots__ = ("content", "score", "metadata")
+    __slots__ = ("content", "metadata", "score")
 
     def __init__(
         self,
@@ -62,7 +62,7 @@ class AgnosRagClient:
             "AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090"
         )
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
-        self._client: "httpx.AsyncClient | None" = None
+        self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
 
         try:

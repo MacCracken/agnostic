@@ -67,7 +67,7 @@ async def login(req: LoginRequest):
         raise HTTPException(
             status_code=503,
             detail="Service temporarily unavailable. Try again later.",
-        )
+        ) from e
 
     user = await auth_manager.authenticate_user(email=req.email, password=req.password)
     if user is None:

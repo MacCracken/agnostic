@@ -1,6 +1,5 @@
 """OAuth provider authentication — Google, GitHub, Azure AD, and local."""
 
-import hashlib
 import json
 import logging
 import os

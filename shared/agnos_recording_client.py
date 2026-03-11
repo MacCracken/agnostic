@@ -17,7 +17,8 @@ Configure via:
 import asyncio
 import logging
 import os
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class AgnosRecordingClient:
             "AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090"
         )
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
-        self._client: "httpx.AsyncClient | None" = None
+        self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
         self._active_recordings: dict[str, str] = {}  # session_id → recording_id
 

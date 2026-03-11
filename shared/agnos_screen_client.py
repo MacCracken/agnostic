@@ -40,7 +40,7 @@ class AgnosScreenClient:
             "AGNOS_AGENT_REGISTRY_URL", "http://localhost:8090"
         )
         self.api_key = os.getenv("AGNOS_AGENT_API_KEY", "")
-        self._client: "httpx.AsyncClient | None" = None
+        self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
 
         try:
