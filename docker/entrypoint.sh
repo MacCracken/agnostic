@@ -134,5 +134,11 @@ export POSTGRES_EMBEDDED
 export CADDY_ENABLED
 export PG_FIRST_RUN="${PG_FIRST_RUN:-false}"
 
+# When Caddy handles TLS, bind app to loopback only (prevent direct access bypassing TLS)
+if [ "$CADDY_ENABLED" = "true" ]; then
+    export CHAINLIT_HOST="127.0.0.1"
+    echo "[entrypoint] App bound to 127.0.0.1 (Caddy handles external traffic)"
+fi
+
 echo "[entrypoint] Services: redis=${REDIS_EMBEDDED}, postgres=${POSTGRES_EMBEDDED}, tls=${CADDY_ENABLED}"
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/agnostic.conf

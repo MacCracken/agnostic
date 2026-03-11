@@ -44,7 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* && apt-get clean
 
 # Caddy — production TLS reverse proxy (skipped at runtime if TLS_ENABLED!=true)
-RUN curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64" -o /usr/local/bin/caddy \
+RUN ARCH=$(dpkg --print-architecture) \
+    && curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=${ARCH}" -o /usr/local/bin/caddy \
     && chmod +x /usr/local/bin/caddy
 
 # Python dependencies
