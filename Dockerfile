@@ -42,8 +42,10 @@ COPY requirements-docker.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
-# App user (UID 1000 — primary AGNOS app-space user)
-RUN groupadd -g 1000 agnostic && useradd -u 1000 -g agnostic -m -s /bin/bash agnostic
+# Rename AGNOS default user (agnos:1000) to project user (agnostic:1000)
+# Once AGNOS base publishes with agnos:999, switch to groupadd/useradd
+RUN groupmod -n agnostic agnos \
+    && usermod -l agnostic -d /home/agnostic -m agnos
 RUN mkdir -p /app/logs && chown -R agnostic:agnostic /app
 
 # Playwright browsers
