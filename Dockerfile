@@ -25,6 +25,7 @@ USER root
 WORKDIR /app
 
 # Additional system deps: embedded services + supervisor
+# Base image is Debian Trixie which ships PostgreSQL 17 natively
 RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     redis-server \
@@ -38,6 +39,8 @@ RUN ARCH=$(dpkg --print-architecture) \
     && chmod +x /usr/local/bin/caddy
 
 # Python dependencies
+# setuptools needed for literalai (chainlit transitive dep) which uses setup.py
+RUN pip install --no-cache-dir --break-system-packages setuptools
 COPY requirements-docker.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
