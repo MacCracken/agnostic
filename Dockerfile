@@ -1,4 +1,4 @@
-# Agnostic QA Platform
+# Agnostic QA Platform on AGNOS Python 3.13
 #
 # Production image with embedded Redis + PostgreSQL (managed by supervisord).
 # Optional TLS termination via Caddy for standalone deployments.
@@ -15,29 +15,18 @@
 #   TLS_ENABLED=true TLS_CERT_PATH=/certs/cert.pem TLS_KEY_PATH=/certs/key.pem docker compose up -d
 #   TLS_ENABLED=true TLS_DOMAIN=qa.example.com docker compose up -d   # auto-HTTPS
 
-FROM python:3.13-slim
+FROM ghcr.io/maccracken/agnosticos:python3.13
 
-# Environment
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 ENV DEBIAN_FRONTEND=noninteractive
 
+USER root
+
 WORKDIR /app
 
-# System dependencies
+# Additional system deps: embedded services + supervisor
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ git curl make \
-    # OpenCV / computer vision
-    libgl1 libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 libgthread-2.0-0 \
-    # Crypto
-    libssl-dev libffi-dev \
-    # Playwright
-    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-    libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
-    # Health check
     netcat-openbsd \
-    # Embedded services (skipped at runtime if external URLs provided)
     redis-server \
     postgresql-17 postgresql-client-17 \
     supervisor \
@@ -50,30 +39,30 @@ RUN ARCH=$(dpkg --print-architecture) \
 
 # Python dependencies
 COPY requirements-docker.txt /tmp/requirements.txt
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
-# App user
-RUN groupadd -r appuser && useradd -r -m -g appuser appuser
-RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+# App user (UID 1000 — primary AGNOS app-space user)
+RUN groupadd -g 1000 agnostic && useradd -u 1000 -g agnostic -m -s /bin/bash agnostic
+RUN mkdir -p /app/logs && chown -R agnostic:agnostic /app
 
 # Playwright browsers
-USER appuser
+USER agnostic
 RUN playwright install chromium
 USER root
 
 # Persistent data directories for embedded services
 RUN mkdir -p /data/redis /data/postgres /data/caddy /var/log/supervisor \
-    && chown -R appuser:appuser /data/redis \
+    && chown -R agnostic:agnostic /data/redis \
     && chown -R postgres:postgres /data/postgres
 
 # Application code
-COPY --chown=appuser:appuser VERSION ./VERSION
-COPY --chown=appuser:appuser webgui/ ./webgui/
-COPY --chown=appuser:appuser agents/ ./agents/
-COPY --chown=appuser:appuser config/ ./config/
-COPY --chown=appuser:appuser shared/ ./shared/
-COPY --chown=appuser:appuser docker/agent-entrypoint.sh ./agent-entrypoint.sh
+COPY --chown=agnostic:agnostic VERSION ./VERSION
+COPY --chown=agnostic:agnostic webgui/ ./webgui/
+COPY --chown=agnostic:agnostic agents/ ./agents/
+COPY --chown=agnostic:agnostic config/ ./config/
+COPY --chown=agnostic:agnostic shared/ ./shared/
+COPY --chown=agnostic:agnostic docker/agent-entrypoint.sh ./agent-entrypoint.sh
 
 # Supervisord config and entrypoint
 COPY docker/supervisord.conf /etc/supervisor/conf.d/agnostic.conf
@@ -97,7 +86,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
 EXPOSE 8000 443 80
 
 LABEL org.opencontainers.image.source="https://github.com/MacCracken/agnostic"
-LABEL org.opencontainers.image.description="Agnostic QA Platform"
+LABEL org.opencontainers.image.description="Agnostic QA Platform on AGNOS"
 LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.base.name="ghcr.io/maccracken/agnosticos:python3.13"
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]

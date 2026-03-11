@@ -1,89 +1,43 @@
-# Agentic QA Team System - Base Docker Image
+# Agentic QA Team System - Base Docker Image on AGNOS Python 3.13
 # Contains all common dependencies to speed up agent container builds
 
-FROM python:3.13-slim
+FROM ghcr.io/maccracken/agnosticos:python3.13
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 ENV DEBIAN_FRONTEND=noninteractive
 
-WORKDIR /app
-
-# Install system dependencies (superset of all agent requirements)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Build tools (needed by all agents)
-    gcc \
-    g++ \
-    git \
-    curl \
-    make \
-    # OpenCV and computer vision libraries (senior-qa specific)
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libgthread-2.0-0 \
-    # Network and crypto tools
-    libssl-dev \
-    libffi-dev \
-    # Playwright dependencies
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    # Cleanup
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-# Copy and install runtime Python dependencies (dev tools excluded)
-# This layer will be cached and reused by all agent containers
-COPY requirements-docker.txt /tmp/requirements.txt
-
-# Install Python dependencies with pip cache mount for speed
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r /tmp/requirements.txt
-
-# Create app user with home directory (needed for Playwright browsers)
-RUN groupadd -r appuser && useradd -r -m -g appuser appuser
-
-# Create logs directory
-RUN mkdir -p /app/logs && chown -R appuser:appuser /app
-
-# Install Playwright browsers as appuser (browsers go in user home)
-# Skip system dependencies as they're already installed above
-USER appuser
-RUN playwright install chromium
-
-# Switch back to root for remaining system-level installs
 USER root
 
-# Health check utilities
+WORKDIR /app
+
+# Health check utility
 RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
+# Python dependencies for agents
+COPY requirements-docker.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
+
+# Create app user with home directory (needed for Playwright browsers)
+RUN groupadd -g 1000 agnostic && useradd -u 1000 -g agnostic -m -s /bin/bash agnostic
+
+# Create logs directory
+RUN mkdir -p /app/logs && chown -R agnostic:agnostic /app
+
+# Install Playwright browsers as agnostic user (browsers go in user home)
+USER agnostic
+RUN playwright install chromium
+
 # Run as non-root user
-USER appuser
+USER agnostic
 
 # Metadata
-LABEL maintainer="Agentic QA Team"
-LABEL description="Base image for all QA agent containers"
+LABEL description="Base image for all QA agent containers on AGNOS"
 LABEL version="2026.3"
 LABEL org.opencontainers.image.source="https://github.com/MacCracken/agnostic"
 LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.base.name="ghcr.io/maccracken/agnosticos:python3.13"
 
-# Default command
-CMD ["python", "--version"]
+CMD ["python3", "--version"]

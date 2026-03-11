@@ -2,11 +2,11 @@
 FROM agnostic-qa-base:latest
 
 # Copy web GUI code (all dependencies already installed in base)
-COPY --chown=appuser:appuser VERSION ./VERSION
-COPY --chown=appuser:appuser webgui/ ./webgui/
-COPY --chown=appuser:appuser agents/ ./agents/
-COPY --chown=appuser:appuser config/ ./config/
-COPY --chown=appuser:appuser shared/ ./shared/
+COPY --chown=agnostic:agnostic VERSION ./VERSION
+COPY --chown=agnostic:agnostic webgui/ ./webgui/
+COPY --chown=agnostic:agnostic agents/ ./agents/
+COPY --chown=agnostic:agnostic config/ ./config/
+COPY --chown=agnostic:agnostic shared/ ./shared/
 
 # Set environment variables
 ENV CHAINLIT_HOST=0.0.0.0

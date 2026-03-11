@@ -11,10 +11,10 @@
 FROM agnostic-qa-base:latest
 
 # Copy everything agents need (small — code only, deps are in base image)
-COPY --chown=appuser:appuser VERSION ./VERSION
-COPY --chown=appuser:appuser agents/ ./agents/
-COPY --chown=appuser:appuser config/ ./config/
-COPY --chown=appuser:appuser shared/ ./shared/
+COPY --chown=agnostic:agnostic VERSION ./VERSION
+COPY --chown=agnostic:agnostic agents/ ./agents/
+COPY --chown=agnostic:agnostic config/ ./config/
+COPY --chown=agnostic:agnostic shared/ ./shared/
 
 # Default role (overridden by docker-compose environment or --build-arg)
 ARG AGENT_ROLE=manager
@@ -25,7 +25,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import redis; r = redis.Redis(host='redis', port=6379); r.ping()" || exit 1
 
 # Entrypoint script resolves AGENT_ROLE to the correct module
-COPY --chown=appuser:appuser docker/agent-entrypoint.sh /app/agent-entrypoint.sh
+COPY --chown=agnostic:agnostic docker/agent-entrypoint.sh /app/agent-entrypoint.sh
 LABEL org.opencontainers.image.source="https://github.com/MacCracken/agnostic"
 LABEL org.opencontainers.image.description="Agnostic QA Platform - agent"
 LABEL org.opencontainers.image.licenses="MIT"
