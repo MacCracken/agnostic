@@ -68,7 +68,7 @@ def test_a2a_roundtrip_delegate_to_structured_results(
     result_data = None
     while status in ("pending", "running") and time.monotonic() < deadline:
         time.sleep(3)
-        poll = http_client.get(f"/api/tasks/{task_id}", headers=api_headers)
+        poll = http_client.get(f"/api/v1/tasks/{task_id}", headers=api_headers)
         assert poll.status_code == 200
         result_data = poll.json()
         status = result_data["status"]
@@ -88,7 +88,7 @@ def test_a2a_roundtrip_delegate_to_structured_results(
     if result_data and status in ("completed", "failed"):
         session_id = result_data["session_id"]
         results_resp = http_client.get(
-            f"/api/results/structured/{session_id}",
+            f"/api/v1/results/structured/{session_id}",
             headers=api_headers,
         )
         assert results_resp.status_code == 200
@@ -160,7 +160,7 @@ def test_a2a_roundtrip_result_cache(http_client: httpx.Client, api_headers: dict
     assert data["type"] == "result_cached"
 
     # Verify cached results appear in YEOMAN dashboard endpoint
-    dash = http_client.get("/api/dashboard/yeoman", headers=api_headers)
+    dash = http_client.get("/api/v1/dashboard/yeoman", headers=api_headers)
     assert dash.status_code == 200
 
 
@@ -200,7 +200,7 @@ def test_mcp_tool_discovery_and_invoke(http_client: httpx.Client, api_headers: d
 
 def test_dashboard_widget_for_embedding(http_client: httpx.Client, api_headers: dict):
     """Embeddable widget returns expected shape."""
-    resp = http_client.get("/api/dashboard/widget", headers=api_headers)
+    resp = http_client.get("/api/v1/dashboard/widget", headers=api_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert "agents" in data

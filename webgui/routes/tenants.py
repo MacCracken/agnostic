@@ -1,5 +1,7 @@
 """Multi-tenant management endpoints."""
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
@@ -7,11 +9,14 @@ from webgui.routes.dependencies import (
     PaginatedResponse,
     _check_tenant_access,
     _require_tenant_enabled,
+    _tenant_repo_dependency,
     get_current_user,
-    get_tenant_repo,
 )
 
 router = APIRouter()
+
+# Type alias for the repository injected by Depends(_tenant_repo_dependency)
+_RepoType = Any
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +47,39 @@ class TenantUserInvite(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+
+
+class TenantResponse(BaseModel):
+    """Tenant detail — allows extra fields."""
+
+    model_config = {"extra": "allow"}
+
+    tenant_id: str
+    name: str
+    status: str | None = None
+    plan: str | None = None
+
+
+class TenantDeleteResponse(BaseModel):
+    tenant_id: str
+    status: str
+
+
+class TenantUserResponse(BaseModel):
+    user_id: str
+    email: str
+    role: str
+    status: str | None = None
+
+
+class TenantUserDeleteResponse(BaseModel):
+    user_id: str
+    status: str
+
+
+# ---------------------------------------------------------------------------
 # Tenant CRUD endpoints
 # ---------------------------------------------------------------------------
 
@@ -51,6 +89,7 @@ async def list_tenants(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_tenant_repo_dependency),
 ):
     """List tenants (admin only)."""
     _require_tenant_enabled()
@@ -58,7 +97,6 @@ async def list_tenants(
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    repo = await get_tenant_repo()
     if repo is None:
         raise HTTPException(status_code=503, detail="Tenant database unavailable")
 
@@ -85,10 +123,11 @@ async def list_tenants(
     }
 
 
-@router.post("/tenants")
+@router.post("/tenants", response_model=TenantResponse)
 async def create_tenant(
     req: TenantCreate,
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_tenant_repo_dependency),
 ):
     """Create a new tenant (admin only)."""
     _require_tenant_enabled()
@@ -96,7 +135,6 @@ async def create_tenant(
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    repo = await get_tenant_repo()
     if repo is None:
         raise HTTPException(status_code=503, detail="Tenant database unavailable")
 
@@ -116,16 +154,16 @@ async def create_tenant(
     }
 
 
-@router.get("/tenants/{tenant_id}")
+@router.get("/tenants/{tenant_id}", response_model=TenantResponse)
 async def get_tenant(
     tenant_id: str,
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_tenant_repo_dependency),
 ):
     """Get tenant details."""
     _require_tenant_enabled()
     _check_tenant_access(user, tenant_id)
 
-    repo = await get_tenant_repo()
     if repo is None:
         raise HTTPException(status_code=503, detail="Tenant database unavailable")
 
@@ -147,11 +185,12 @@ async def get_tenant(
     }
 
 
-@router.put("/tenants/{tenant_id}")
+@router.put("/tenants/{tenant_id}", response_model=TenantResponse)
 async def update_tenant(
     tenant_id: str,
     req: TenantUpdate,
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_tenant_repo_dependency),
 ):
     """Update tenant (admin only)."""
     _require_tenant_enabled()
@@ -160,7 +199,6 @@ async def update_tenant(
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    repo = await get_tenant_repo()
     if repo is None:
         raise HTTPException(status_code=503, detail="Tenant database unavailable")
 
@@ -177,10 +215,11 @@ async def update_tenant(
     }
 
 
-@router.delete("/tenants/{tenant_id}")
+@router.delete("/tenants/{tenant_id}", response_model=TenantDeleteResponse)
 async def delete_tenant(
     tenant_id: str,
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_tenant_repo_dependency),
 ):
     """Delete tenant (admin only — super_admin only for delete)."""
     _require_tenant_enabled()
@@ -188,7 +227,6 @@ async def delete_tenant(
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Super admin access required")
 
-    repo = await get_tenant_repo()
     if repo is None:
         raise HTTPException(status_code=503, detail="Tenant database unavailable")
 
@@ -210,12 +248,12 @@ async def list_tenant_users(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_tenant_repo_dependency),
 ):
     """List users in a tenant."""
     _require_tenant_enabled()
     _check_tenant_access(user, tenant_id)
 
-    repo = await get_tenant_repo()
     if repo is None:
         raise HTTPException(status_code=503, detail="Tenant database unavailable")
 
@@ -240,11 +278,12 @@ async def list_tenant_users(
     }
 
 
-@router.post("/tenants/{tenant_id}/users")
+@router.post("/tenants/{tenant_id}/users", response_model=TenantUserResponse)
 async def invite_tenant_user(
     tenant_id: str,
     req: TenantUserInvite,
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_tenant_repo_dependency),
 ):
     """Invite user to tenant."""
     _require_tenant_enabled()
@@ -252,7 +291,6 @@ async def invite_tenant_user(
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    repo = await get_tenant_repo()
     if repo is None:
         raise HTTPException(status_code=503, detail="Tenant database unavailable")
 
@@ -270,11 +308,12 @@ async def invite_tenant_user(
     }
 
 
-@router.delete("/tenants/{tenant_id}/users/{user_id}")
+@router.delete("/tenants/{tenant_id}/users/{user_id}", response_model=TenantUserDeleteResponse)
 async def remove_tenant_user(
     tenant_id: str,
     user_id: str,
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_tenant_repo_dependency),
 ):
     """Remove user from tenant."""
     _require_tenant_enabled()
@@ -282,7 +321,6 @@ async def remove_tenant_user(
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    repo = await get_tenant_repo()
     if repo is None:
         raise HTTPException(status_code=503, detail="Tenant database unavailable")
 

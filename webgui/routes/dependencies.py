@@ -40,6 +40,7 @@ class ErrorDetail(BaseModel):
     code: str | None = None
 
 
+
 # ---------------------------------------------------------------------------
 # SSRF protection — block callbacks to private/internal networks
 # ---------------------------------------------------------------------------
@@ -252,8 +253,28 @@ def _get_db_repo():
         return None
 
 
+async def _db_repo_dependency():
+    """FastAPI dependency generator — yields repo, closes session on exit."""
+    repo_class = _get_db_repo()
+    if repo_class is None:
+        yield None
+        return
+    from shared.database.models import get_session
+
+    session = await get_session()
+    try:
+        yield repo_class(session)
+    finally:
+        await session.close()
+
+
 async def get_db_repo():
-    """Get database repository instance."""
+    """Get database repository instance.
+
+    Returns the repo directly (no session cleanup). Prefer using
+    ``Depends(_db_repo_dependency)`` in route handlers for proper lifecycle.
+    Kept for backward compatibility with non-route callers and tests.
+    """
     repo_class = _get_db_repo()
     if repo_class is None:
         return None
@@ -263,8 +284,31 @@ async def get_db_repo():
     return repo_class(session)
 
 
+async def _tenant_repo_dependency():
+    """FastAPI dependency generator — yields repo, closes session on exit."""
+    if not MULTI_TENANT_ENABLED or not DATABASE_ENABLED:
+        yield None
+        return
+    try:
+        from shared.database.models import get_session
+        from shared.database.tenant_repository import TenantRepository
+
+        session = await get_session()
+        try:
+            yield TenantRepository(session)
+        finally:
+            await session.close()
+    except Exception:
+        yield None
+
+
 async def get_tenant_repo():
-    """Get tenant repository instance."""
+    """Get tenant repository instance.
+
+    Returns the repo directly (no session cleanup). Prefer using
+    ``Depends(_tenant_repo_dependency)`` in route handlers for proper lifecycle.
+    Kept for backward compatibility with non-route callers and tests.
+    """
     if not MULTI_TENANT_ENABLED or not DATABASE_ENABLED:
         return None
     try:

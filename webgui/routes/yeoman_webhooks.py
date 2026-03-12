@@ -86,6 +86,11 @@ class WebhookResponse(BaseModel):
     message: str
 
 
+class YeomanEventsResponse(BaseModel):
+    events: list[dict[str, Any]]
+    total: int
+
+
 # ---------------------------------------------------------------------------
 # Event type → QA task mapping
 # ---------------------------------------------------------------------------
@@ -268,7 +273,7 @@ def get_event_buffer() -> _EventBuffer:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/v1/yeoman/webhooks", response_model=WebhookResponse)
+@router.post("/yeoman/webhooks", response_model=WebhookResponse)
 async def receive_yeoman_webhook(
     request: Request,
     x_webhook_signature: str | None = Header(default=None, alias="X-Webhook-Signature"),
@@ -391,7 +396,7 @@ async def receive_yeoman_webhook(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/v1/yeoman/events/stream")
+@router.get("/yeoman/events/stream")
 async def yeoman_event_stream(
     user: dict = Depends(get_current_user),
 ):
@@ -450,7 +455,7 @@ async def yeoman_event_stream(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/v1/yeoman/events")
+@router.get("/yeoman/events", response_model=YeomanEventsResponse)
 async def list_yeoman_events(
     limit: int = 50,
     user: dict = Depends(get_current_user),

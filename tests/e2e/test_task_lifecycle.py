@@ -25,7 +25,7 @@ def test_full_task_lifecycle(http_client: httpx.Client, api_headers: dict):
         "target_url": "http://example.com",
     }
     try:
-        resp = http_client.post("/api/tasks", json=payload, headers=api_headers)
+        resp = http_client.post("/api/v1/tasks", json=payload, headers=api_headers)
     except httpx.RemoteProtocolError:
         pytest.skip("Server disconnected (agent runtime crash in CI)")
     if resp.status_code == 500:
@@ -42,7 +42,7 @@ def test_full_task_lifecycle(http_client: httpx.Client, api_headers: dict):
     result_data = None
     while status in ("pending", "running") and time.monotonic() < deadline:
         time.sleep(3)
-        poll = http_client.get(f"/api/tasks/{task_id}", headers=api_headers)
+        poll = http_client.get(f"/api/v1/tasks/{task_id}", headers=api_headers)
         assert poll.status_code == 200
         result_data = poll.json()
         status = result_data["status"]
@@ -58,7 +58,7 @@ def test_task_not_found(http_client: httpx.Client, api_headers: dict):
     """GET /api/tasks/{random-uuid} returns 404."""
     fake_id = str(uuid.uuid4())
     try:
-        resp = http_client.get(f"/api/tasks/{fake_id}", headers=api_headers)
+        resp = http_client.get(f"/api/v1/tasks/{fake_id}", headers=api_headers)
     except httpx.RemoteProtocolError:
         pytest.skip("Server disconnected (unstable after agent crash in CI)")
     if resp.status_code == 500:
@@ -72,7 +72,7 @@ def test_input_validation_rejects_empty_title(
     """POST /api/tasks with empty title returns 422."""
     payload = {"title": "", "description": "Some description"}
     try:
-        resp = http_client.post("/api/tasks", json=payload, headers=api_headers)
+        resp = http_client.post("/api/v1/tasks", json=payload, headers=api_headers)
     except httpx.RemoteProtocolError:
         pytest.skip("Server disconnected (unstable after agent crash in CI)")
     assert resp.status_code == 422
@@ -87,7 +87,7 @@ def test_input_validation_rejects_invalid_priority(
         "description": "Testing invalid priority",
         "priority": "invalid",
     }
-    resp = http_client.post("/api/tasks", json=payload, headers=api_headers)
+    resp = http_client.post("/api/v1/tasks", json=payload, headers=api_headers)
     assert resp.status_code == 422
 
 

@@ -1,8 +1,10 @@
 """Agent status, monitoring, and AGNOS registration endpoints."""
 
 from dataclasses import asdict
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from webgui.routes.dependencies import PaginatedResponse, get_current_user
 
@@ -10,11 +12,36 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+
+
+class AgentRegistrationStatusResponse(BaseModel):
+    agents: list[dict[str, Any]] = []
+    registered: int = 0
+    total: int = 0
+
+
+class AgentRegistrationResultResponse(BaseModel):
+    results: list[dict[str, Any]]
+
+
+class AgentMetricsResponse(BaseModel):
+    """Agent metrics — allows extra fields from dataclass conversion."""
+
+    model_config = {"extra": "allow"}
+
+    agent_name: str
+    total_tasks: int = 0
+    success_rate: float = 0.0
+
+
+# ---------------------------------------------------------------------------
 # Agent status endpoints
 # ---------------------------------------------------------------------------
 
 
-@router.get("/agents/registration-status")
+@router.get("/agents/registration-status", response_model=AgentRegistrationStatusResponse)
 async def get_agent_registration_status(
     user: dict = Depends(get_current_user),
 ):
@@ -27,7 +54,7 @@ async def get_agent_registration_status(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/agents/register-agnostic")
+@router.post("/agents/register-agnostic", response_model=AgentRegistrationResultResponse)
 async def register_agnostic_agents(
     user: dict = Depends(get_current_user),
 ):
@@ -44,7 +71,7 @@ async def register_agnostic_agents(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/agents/deregister-agnostic")
+@router.post("/agents/deregister-agnostic", response_model=AgentRegistrationResultResponse)
 async def deregister_agnostic_agents(
     user: dict = Depends(get_current_user),
 ):
@@ -61,14 +88,14 @@ async def deregister_agnostic_agents(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get("/agents/queues")
+@router.get("/agents/queues", response_model=dict[str, int])
 async def get_agent_queues(user: dict = Depends(get_current_user)):
     from webgui.agent_monitor import agent_monitor
 
     return await agent_monitor.get_queue_depths()
 
 
-@router.get("/agents/{agent_name}")
+@router.get("/agents/{agent_name}", response_model=AgentMetricsResponse)
 async def get_agent_detail(
     agent_name: str,
     user: dict = Depends(get_current_user),

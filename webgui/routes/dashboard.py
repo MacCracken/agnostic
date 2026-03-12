@@ -34,12 +34,72 @@ class AlertListResponse(BaseModel):
     limit: int
 
 
+class DashboardDataResponse(BaseModel):
+    """Top-level dashboard export — allows extra fields."""
+
+    model_config = {"extra": "allow"}
+
+
+class MetricsDataResponse(BaseModel):
+    """Resource metrics — allows extra fields from dataclass."""
+
+    model_config = {"extra": "allow"}
+
+
+class AgentMetricsDashboardResponse(BaseModel):
+    agents: list[dict[str, Any]]
+
+
+class LLMMetricsDashboardResponse(BaseModel):
+    llm: dict[str, Any]
+
+
+class GatewayHealthResponse(BaseModel):
+    model_config = {"extra": "allow"}
+
+
+class YeomanStatusResponse(BaseModel):
+    enabled: bool = False
+    cached_results: dict[str, Any] = {}
+    peer_id: str | None = None
+
+
+class UnifiedDashboardResponse(BaseModel):
+    agnostic: dict[str, Any]
+    yeoman: dict[str, Any]
+    agnos_bridge: dict[str, Any]
+
+
+class WidgetResponse(BaseModel):
+    provider: str
+    version: str
+    agents: list[dict[str, Any]]
+    sessions: dict[str, Any]
+    quality: dict[str, Any]
+    compliance: dict[str, Any]
+    healthy: bool
+
+
+class TokenBudgetResponse(BaseModel):
+    enabled: bool = False
+    pool: str | None = None
+    pools: list[Any] = []
+    agent_budgets: dict[str, Any] = {}
+    error: str | None = None
+
+
+class RecordingsResponse(BaseModel):
+    enabled: bool = False
+    recordings: list[Any] = []
+    active_sessions: list[Any] = []
+
+
 # ---------------------------------------------------------------------------
 # Dashboard endpoints
 # ---------------------------------------------------------------------------
 
 
-@router.get("/dashboard")
+@router.get("/dashboard", response_model=DashboardDataResponse)
 async def get_dashboard(user: dict = Depends(get_current_user)):
     from webgui.dashboard import dashboard_manager
 
@@ -65,7 +125,7 @@ async def get_dashboard_agents(user: dict = Depends(get_current_user)):
     return {"items": items, "total": len(items)}
 
 
-@router.get("/dashboard/metrics")
+@router.get("/dashboard/metrics", response_model=MetricsDataResponse)
 async def get_dashboard_metrics(user: dict = Depends(get_current_user)):
     from webgui.dashboard import dashboard_manager
 
@@ -73,7 +133,7 @@ async def get_dashboard_metrics(user: dict = Depends(get_current_user)):
     return asdict(metrics)
 
 
-@router.get("/dashboard/agent-metrics")
+@router.get("/dashboard/agent-metrics", response_model=AgentMetricsDashboardResponse)
 async def get_agent_dashboard(user: dict = Depends(get_current_user)):
     """Per-agent metrics: task counts, success rates, LLM token usage."""
     from shared.agent_metrics import get_agent_metrics
@@ -81,7 +141,7 @@ async def get_agent_dashboard(user: dict = Depends(get_current_user)):
     return {"agents": get_agent_metrics()}
 
 
-@router.get("/dashboard/llm")
+@router.get("/dashboard/llm", response_model=LLMMetricsDashboardResponse)
 async def get_llm_dashboard(user: dict = Depends(get_current_user)):
     """Aggregated LLM usage metrics: call counts, error rates, by method."""
     from shared.agent_metrics import get_llm_metrics
@@ -89,7 +149,7 @@ async def get_llm_dashboard(user: dict = Depends(get_current_user)):
     return {"llm": get_llm_metrics()}
 
 
-@router.get("/dashboard/llm-gateway")
+@router.get("/dashboard/llm-gateway", response_model=GatewayHealthResponse)
 async def get_llm_gateway_health(user: dict = Depends(get_current_user)):
     """AGNOS LLM Gateway health check and status."""
     from config.model_manager import model_manager
@@ -97,7 +157,7 @@ async def get_llm_gateway_health(user: dict = Depends(get_current_user)):
     return await model_manager.gateway_health()
 
 
-@router.get("/dashboard/yeoman")
+@router.get("/dashboard/yeoman", response_model=YeomanStatusResponse)
 async def get_yeoman_status(user: dict = Depends(get_current_user)):
     """Get cached YEOMAN task results and status for unified dashboard view."""
     try:
@@ -114,7 +174,7 @@ async def get_yeoman_status(user: dict = Depends(get_current_user)):
         return {"enabled": False, "cached_results": {}, "peer_id": None}
 
 
-@router.get("/dashboard/unified")
+@router.get("/dashboard/unified", response_model=UnifiedDashboardResponse)
 async def get_unified_dashboard(user: dict = Depends(get_current_user)):
     """Get combined AGNOSTIC + YEOMAN status for unified AGNOS dashboard view."""
     from webgui.dashboard import dashboard_manager
@@ -160,7 +220,7 @@ async def get_unified_dashboard(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/dashboard/widget")
+@router.get("/dashboard/widget", response_model=WidgetResponse)
 async def get_embeddable_widget(user: dict = Depends(get_current_user)):
     """Compact JSON optimized for SecureYeoman dashboard embedding.
 
@@ -251,7 +311,7 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/dashboard/token-budget")
+@router.get("/dashboard/token-budget", response_model=TokenBudgetResponse)
 async def get_token_budget_pools(user: dict = Depends(get_current_user)):
     """Display AGNOS token budget pool metrics."""
     try:
@@ -292,7 +352,7 @@ async def get_token_budget_pools(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/dashboard/recordings")
+@router.get("/dashboard/recordings", response_model=RecordingsResponse)
 async def get_active_recordings(user: dict = Depends(get_current_user)):
     """List active screen recording sessions."""
     try:

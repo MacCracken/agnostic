@@ -47,7 +47,7 @@ class TestNoOpMetrics:
         from shared.metrics import HTTP_REQUESTS_TOTAL
 
         HTTP_REQUESTS_TOTAL.labels(
-            method="GET", endpoint="/api/test", status_code="200"
+            method="GET", endpoint="/api/v1/test", status_code="200"
         ).inc()
 
     def test_get_metrics_text_returns_string(self):

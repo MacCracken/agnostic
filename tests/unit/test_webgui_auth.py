@@ -204,7 +204,7 @@ class TestApiKeyAuth:
         test_app = FastAPI()
         test_app.include_router(api_router)
 
-        @test_app.get("/api/auth/me")
+        @test_app.get("/api/v1/auth/me")
         async def me(user=None):
             return user or {}
 
@@ -227,7 +227,7 @@ class TestApiKeyAuth:
 
         with patch("webgui.api.auth_manager"):
             resp = client.get(
-                "/api/auth/me",
+                "/api/v1/auth/me",
                 headers={"X-API-Key": "test-static-key-123"},
             )
         assert resp.status_code == 200
@@ -256,7 +256,7 @@ class TestApiKeyAuth:
             mock_config.get_async_redis_client.return_value = mock_redis
 
             resp = client.get(
-                "/api/auth/me",
+                "/api/v1/auth/me",
                 headers={"X-API-Key": "wrong-key"},
             )
         assert resp.status_code == 401
@@ -275,7 +275,7 @@ class TestApiKeyAuth:
         test_app.include_router(api_router)
         client = TestClient(test_app)
 
-        resp = client.get("/api/auth/me")
+        resp = client.get("/api/v1/auth/me")
         assert resp.status_code == 401
 
 

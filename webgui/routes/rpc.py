@@ -16,7 +16,7 @@ from webgui.routes.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/rpc", tags=["rpc"])
+router = APIRouter(prefix="/rpc", tags=["rpc"])
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +38,11 @@ class RpcCallResponse(BaseModel):
     method: str
     result: dict[str, Any] | None = None
     error: str | None = None
+
+
+class RpcMethodsResponse(BaseModel):
+    methods: list[str]
+    count: int
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +121,7 @@ async def handle_rpc_call(
     }
 
 
-@router.get("/methods")
+@router.get("/methods", response_model=RpcMethodsResponse)
 async def list_local_methods(_user: dict = Depends(get_current_user)) -> dict[str, Any]:
     """List RPC methods this Agnostic instance can handle."""
     return {

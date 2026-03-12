@@ -46,7 +46,7 @@ def test_a2a_capabilities(http_client: httpx.Client):
 
 def test_prometheus_metrics(http_client: httpx.Client):
     """GET /api/metrics returns Prometheus exposition text with qa_ metrics."""
-    resp = http_client.get("/api/metrics")
+    resp = http_client.get("/api/v1/metrics")
     assert resp.status_code == 200
     body = resp.text
     # Prometheus metrics should contain at least one qa_ prefixed metric
@@ -61,13 +61,13 @@ def test_prometheus_metrics(http_client: httpx.Client):
 
 def test_auth_rejects_no_credentials(http_client: httpx.Client):
     """GET /api/tasks/nonexistent without auth returns 401."""
-    resp = http_client.get(f"/api/tasks/{uuid.uuid4()}")
+    resp = http_client.get(f"/api/v1/tasks/{uuid.uuid4()}")
     assert resp.status_code == 401
 
 
 def test_auth_accepts_api_key(http_client: httpx.Client, api_headers: dict):
     """GET /api/dashboard with X-API-Key returns 200."""
-    resp = http_client.get("/api/dashboard", headers=api_headers)
+    resp = http_client.get("/api/v1/dashboard", headers=api_headers)
     assert resp.status_code == 200
 
 
@@ -84,7 +84,7 @@ def test_submit_task_and_poll(http_client: httpx.Client, api_headers: dict):
         "priority": "medium",
         "target_url": "http://example.com",
     }
-    resp = http_client.post("/api/tasks", json=payload, headers=api_headers)
+    resp = http_client.post("/api/v1/tasks", json=payload, headers=api_headers)
     # 201 = submitted, 500 = agent runtime unavailable (placeholder API key)
     if resp.status_code == 500:
         pytest.skip("Task submission failed (agent runtime unavailable in CI)")
@@ -98,7 +98,7 @@ def test_submit_task_and_poll(http_client: httpx.Client, api_headers: dict):
     status = "pending"
     while status == "pending" and time.monotonic() < deadline:
         time.sleep(2)
-        poll = http_client.get(f"/api/tasks/{task_id}", headers=api_headers)
+        poll = http_client.get(f"/api/v1/tasks/{task_id}", headers=api_headers)
         assert poll.status_code == 200
         status = poll.json()["status"]
 
@@ -110,7 +110,7 @@ def test_submit_security_task(http_client: httpx.Client, api_headers: dict):
     payload = {"title": "E2E security scan", "description": "OWASP Top-10 check"}
     try:
         resp = http_client.post(
-            "/api/tasks/security", json=payload, headers=api_headers
+            "/api/v1/tasks/security", json=payload, headers=api_headers
         )
     except httpx.RemoteProtocolError:
         pytest.skip("Server disconnected (agent runtime crash in CI)")
@@ -124,7 +124,7 @@ def test_submit_performance_task(http_client: httpx.Client, api_headers: dict):
     payload = {"title": "E2E perf test", "description": "Load test check"}
     try:
         resp = http_client.post(
-            "/api/tasks/performance", json=payload, headers=api_headers
+            "/api/v1/tasks/performance", json=payload, headers=api_headers
         )
     except httpx.RemoteProtocolError:
         pytest.skip("Server disconnected (agent runtime crash in CI)")
@@ -141,7 +141,7 @@ def test_submit_performance_task(http_client: httpx.Client, api_headers: dict):
 def test_list_sessions(http_client: httpx.Client, api_headers: dict):
     """GET /api/sessions returns 200 with a list."""
     try:
-        resp = http_client.get("/api/sessions", headers=api_headers)
+        resp = http_client.get("/api/v1/sessions", headers=api_headers)
     except httpx.RemoteProtocolError:
         pytest.skip("Server disconnected (Redis timeout in CI)")
     assert resp.status_code == 200
@@ -157,7 +157,7 @@ def test_report_generation(http_client: httpx.Client, api_headers: dict):
     """POST /api/reports/generate returns a report_id."""
     # Submit a quick task first to get a session_id
     task_resp = http_client.post(
-        "/api/tasks",
+        "/api/v1/tasks",
         json={"title": "Report gen test", "description": "Quick task for report"},
         headers=api_headers,
     )
@@ -166,7 +166,7 @@ def test_report_generation(http_client: httpx.Client, api_headers: dict):
     session_id = task_resp.json()["session_id"]
 
     report_resp = http_client.post(
-        "/api/reports/generate",
+        "/api/v1/reports/generate",
         json={
             "session_id": session_id,
             "report_type": "executive_summary",
@@ -183,7 +183,7 @@ def test_report_generation(http_client: httpx.Client, api_headers: dict):
 def test_report_list(http_client: httpx.Client, api_headers: dict):
     """GET /api/reports returns 200 with a list."""
     try:
-        resp = http_client.get("/api/reports", headers=api_headers)
+        resp = http_client.get("/api/v1/reports", headers=api_headers)
     except httpx.RemoteProtocolError:
         pytest.skip("Server disconnected (Redis timeout in CI)")
     assert resp.status_code == 200
@@ -198,7 +198,7 @@ def test_report_list(http_client: httpx.Client, api_headers: dict):
 
 def test_agents_status(http_client: httpx.Client, api_headers: dict):
     """GET /api/agents returns 200 with agent list."""
-    resp = http_client.get("/api/agents", headers=api_headers)
+    resp = http_client.get("/api/v1/agents", headers=api_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, (list, dict))
@@ -233,7 +233,7 @@ def test_path_traversal_blocked(http_client: httpx.Client, api_headers: dict):
     # via Path.is_relative_to().  Here we verify a bogus report_id returns 404.
     try:
         resp = http_client.get(
-            "/api/reports/nonexistent-report-id/download", headers=api_headers
+            "/api/v1/reports/nonexistent-report-id/download", headers=api_headers
         )
     except httpx.RemoteProtocolError:
         pytest.skip("Server disconnected (unstable after agent crash in CI)")

@@ -187,7 +187,7 @@ class TestSubmitTask:
         mock_asyncio.create_task = Mock()
 
         resp = authed_client.post(
-            "/api/tasks",
+            "/api/v1/tasks",
             json={"title": "My Test", "description": "Run all checks"},
         )
         assert resp.status_code == 201
@@ -206,7 +206,7 @@ class TestSubmitTask:
         mock_asyncio.create_task = Mock()
 
         authed_client.post(
-            "/api/tasks",
+            "/api/v1/tasks",
             json={"title": "T", "description": "D"},
         )
 
@@ -226,7 +226,7 @@ class TestSubmitTask:
         mock_asyncio.create_task = Mock()
 
         authed_client.post(
-            "/api/tasks",
+            "/api/v1/tasks",
             json={"title": "T", "description": "D"},
         )
 
@@ -235,32 +235,32 @@ class TestSubmitTask:
     def test_submit_unauthenticated(self, app):
         client = TestClient(app)
         resp = client.post(
-            "/api/tasks",
+            "/api/v1/tasks",
             json={"title": "T", "description": "D"},
         )
         assert resp.status_code == 401
 
     def test_submit_missing_fields(self, authed_client):
-        resp = authed_client.post("/api/tasks", json={"title": "T"})
+        resp = authed_client.post("/api/v1/tasks", json={"title": "T"})
         assert resp.status_code == 422
 
     def test_submit_invalid_priority_rejected(self, authed_client):
         resp = authed_client.post(
-            "/api/tasks",
+            "/api/v1/tasks",
             json={"title": "T", "description": "D", "priority": "urgent"},
         )
         assert resp.status_code == 422
 
     def test_submit_title_too_long_rejected(self, authed_client):
         resp = authed_client.post(
-            "/api/tasks",
+            "/api/v1/tasks",
             json={"title": "x" * 201, "description": "D"},
         )
         assert resp.status_code == 422
 
     def test_submit_description_too_long_rejected(self, authed_client):
         resp = authed_client.post(
-            "/api/tasks",
+            "/api/v1/tasks",
             json={"title": "T", "description": "d" * 5001},
         )
         assert resp.status_code == 422
@@ -278,7 +278,7 @@ class TestGetTask:
         mock_redis.get.return_value = None
         mock_config.get_redis_client.return_value = mock_redis
 
-        resp = authed_client.get("/api/tasks/nonexistent-id")
+        resp = authed_client.get("/api/v1/tasks/nonexistent-id")
         assert resp.status_code == 404
 
     @patch("config.environment.config")
@@ -295,7 +295,7 @@ class TestGetTask:
         mock_redis.get.return_value = json.dumps(record).encode()
         mock_config.get_redis_client.return_value = mock_redis
 
-        resp = authed_client.get("/api/tasks/task-abc")
+        resp = authed_client.get("/api/v1/tasks/task-abc")
         assert resp.status_code == 200
         data = resp.json()
         assert data["task_id"] == "task-abc"
@@ -600,7 +600,7 @@ class TestAgentSpecificEndpoints:
         mock_asyncio.create_task = Mock()
 
         resp = authed_client.post(
-            "/api/tasks/security",
+            "/api/v1/tasks/security",
             json={"title": "T", "description": "D"},
         )
         assert resp.status_code == 201
@@ -614,7 +614,7 @@ class TestAgentSpecificEndpoints:
         mock_asyncio.create_task = Mock()
 
         resp = authed_client.post(
-            "/api/tasks/performance",
+            "/api/v1/tasks/performance",
             json={"title": "T", "description": "D"},
         )
         assert resp.status_code == 201
@@ -628,7 +628,7 @@ class TestAgentSpecificEndpoints:
         mock_asyncio.create_task = Mock()
 
         resp = authed_client.post(
-            "/api/tasks/regression",
+            "/api/v1/tasks/regression",
             json={"title": "T", "description": "D"},
         )
         assert resp.status_code == 201
@@ -642,7 +642,7 @@ class TestAgentSpecificEndpoints:
         mock_asyncio.create_task = Mock()
 
         resp = authed_client.post(
-            "/api/tasks/full",
+            "/api/v1/tasks/full",
             json={"title": "T", "description": "D"},
         )
         assert resp.status_code == 201

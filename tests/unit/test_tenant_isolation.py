@@ -160,19 +160,19 @@ class TestTaskEndpointIsolation:
             # Tenant A submits a task
             client_a = self._make_client(app, "tenant-a")
             resp_a = client_a.post(
-                "/api/tasks",
+                "/api/v1/tasks",
                 json={"title": "Test A", "description": "From tenant A"},
             )
             assert resp_a.status_code == 201
             task_id = resp_a.json()["task_id"]
 
             # Tenant A can read it
-            resp_read_a = client_a.get(f"/api/tasks/{task_id}")
+            resp_read_a = client_a.get(f"/api/v1/tasks/{task_id}")
             assert resp_read_a.status_code == 200
 
             # Tenant B cannot read it
             client_b = self._make_client(app, "tenant-b")
-            resp_read_b = client_b.get(f"/api/tasks/{task_id}")
+            resp_read_b = client_b.get(f"/api/v1/tasks/{task_id}")
             assert resp_read_b.status_code == 404
 
     def test_same_task_id_different_tenants_no_collision(self, app):
@@ -214,13 +214,13 @@ class TestTaskEndpointIsolation:
 
             # Tenant A sees pending
             client_a = self._make_client(app, "tenant-a")
-            resp_a = client_a.get(f"/api/tasks/{task_id}")
+            resp_a = client_a.get(f"/api/v1/tasks/{task_id}")
             assert resp_a.status_code == 200
             assert resp_a.json()["status"] == "pending"
 
             # Tenant B sees completed
             client_b = self._make_client(app, "tenant-b")
-            resp_b = client_b.get(f"/api/tasks/{task_id}")
+            resp_b = client_b.get(f"/api/v1/tasks/{task_id}")
             assert resp_b.status_code == 200
             assert resp_b.json()["status"] == "completed"
 
@@ -295,7 +295,7 @@ class TestRateLimitIsolation:
 
             client = TestClient(app)
             resp = client.post(
-                "/api/tasks",
+                "/api/v1/tasks",
                 json={"title": "Test", "description": "Rate limited"},
             )
             assert resp.status_code == 429

@@ -1,6 +1,7 @@
 """Session history endpoints."""
 
 from dataclasses import asdict
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -13,6 +14,20 @@ router = APIRouter()
 class SessionCompareRequest(BaseModel):
     session1_id: str
     session2_id: str
+
+
+class SessionDetailResponse(BaseModel):
+    """Session details — allows extra fields from history manager."""
+
+    model_config = {"extra": "allow"}
+
+    session_id: str | None = None
+
+
+class SessionCompareResponse(BaseModel):
+    """Session comparison — allows extra fields from dataclass."""
+
+    model_config = {"extra": "allow"}
 
 
 @router.get("/sessions", response_model=PaginatedResponse)
@@ -53,7 +68,7 @@ async def search_sessions(
     return {"items": items, "total": len(items), "limit": limit, "offset": 0}
 
 
-@router.get("/sessions/{session_id}")
+@router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
 async def get_session(session_id: str, user: dict = Depends(get_current_user)):
     from webgui.history import history_manager
 
@@ -63,7 +78,7 @@ async def get_session(session_id: str, user: dict = Depends(get_current_user)):
     return details
 
 
-@router.post("/sessions/compare")
+@router.post("/sessions/compare", response_model=SessionCompareResponse)
 async def compare_sessions(
     req: SessionCompareRequest,
     user: dict = Depends(get_current_user),

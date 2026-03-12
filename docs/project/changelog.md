@@ -10,6 +10,17 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ---
 
+## [2026.3.12]
+
+### Changed
+
+- **API versioning** — all REST endpoints now under `/api/v1/` prefix (was `/api/`). Protocol-specific routes (RPC, A2A, MCP, Yeoman) unified under the same prefix — no more mixed `/api/` and `/api/v1/` paths
+- **`response_model` coverage** — added Pydantic response models to all 57 API routes (was 36/57). Every JSON endpoint now has explicit schema for OpenAPI docs and response validation. Streaming/file endpoints excluded
+- **`Depends()` session lifecycle** — database sessions in persistence and tenant routes now use FastAPI `Depends()` async generators (`_db_repo_dependency`, `_tenant_repo_dependency`) with guaranteed `session.close()` on exit. Legacy `get_db_repo()`/`get_tenant_repo()` retained for non-route callers
+- **Async Redis in HistoryManager** — `webgui/history.py` migrated from sync `redis.Redis` to `redis.asyncio.Redis`, eliminating event-loop blocking in session history, search, and metrics queries
+
+---
+
 ## [2026.3.11]
 
 ### Added

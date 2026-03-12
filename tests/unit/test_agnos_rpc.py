@@ -366,7 +366,7 @@ class TestRpcHandlerRoute:
             )
 
             resp = rpc_client.post(
-                "/api/v1/rpc/handle",
+                "/api/rpc/handle",
                 json={
                     "method": "agnostic.security_audit",
                     "params": {"target": "example.com"},
@@ -382,20 +382,20 @@ class TestRpcHandlerRoute:
 
     def test_handle_unknown_agnostic_method(self, rpc_client):
         resp = rpc_client.post(
-            "/api/v1/rpc/handle",
+            "/api/rpc/handle",
             json={"method": "agnostic.nonexistent", "params": {}},
         )
         assert resp.status_code == 404
 
     def test_handle_non_agnostic_method(self, rpc_client):
         resp = rpc_client.post(
-            "/api/v1/rpc/handle",
+            "/api/rpc/handle",
             json={"method": "other.method", "params": {}},
         )
         assert resp.status_code == 400
 
     def test_list_local_methods(self, rpc_client):
-        resp = rpc_client.get("/api/v1/rpc/methods")
+        resp = rpc_client.get("/api/rpc/methods")
         assert resp.status_code == 200
         data = resp.json()
         assert data["count"] == 8
@@ -414,7 +414,7 @@ class TestRpcHandlerRoute:
             )
 
             resp = rpc_client.post(
-                "/api/v1/rpc/handle",
+                "/api/rpc/handle",
                 json={"method": "agnostic.security_audit", "params": {}},
             )
 

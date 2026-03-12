@@ -77,7 +77,7 @@ class TestHealthEndpoint:
 
 class TestAuthEndpoints:
     def test_login_missing_credentials(self, client):
-        resp = client.post("/api/auth/login", json={})
+        resp = client.post("/api/v1/auth/login", json={})
         assert resp.status_code == 422  # validation error
 
     def test_login_invalid_credentials(self, client):
@@ -94,17 +94,17 @@ class TestAuthEndpoints:
             patch("webgui.routes.auth.auth_manager", mock_auth_manager),
         ):
             resp = client.post(
-                "/api/auth/login",
+                "/api/v1/auth/login",
                 json={"email": "bad@example.com", "password": "wrong"},
             )
         assert resp.status_code == 401
 
     def test_me_unauthenticated(self, client):
-        resp = client.get("/api/auth/me")
+        resp = client.get("/api/v1/auth/me")
         assert resp.status_code == 401
 
     def test_me_authenticated(self, authed_client, auth_user):
-        resp = authed_client.get("/api/auth/me")
+        resp = authed_client.get("/api/v1/auth/me")
         assert resp.status_code == 200
         data = resp.json()
         assert data["user_id"] == auth_user["user_id"]
@@ -113,7 +113,7 @@ class TestAuthEndpoints:
 
 class TestDashboardEndpoints:
     def test_dashboard_unauthenticated(self, client):
-        resp = client.get("/api/dashboard")
+        resp = client.get("/api/v1/dashboard")
         assert resp.status_code == 401
 
     @patch("webgui.api.auth_manager")
@@ -126,7 +126,7 @@ class TestDashboardEndpoints:
                     "metrics": {},
                 }
             )
-            resp = authed_client.get("/api/dashboard")
+            resp = authed_client.get("/api/v1/dashboard")
             assert resp.status_code == 200
 
 
@@ -145,7 +145,7 @@ class TestAgentMetricsDashboard:
                 "active": 1.0,
             },
         ]
-        resp = authed_client.get("/api/dashboard/agent-metrics")
+        resp = authed_client.get("/api/v1/dashboard/agent-metrics")
         assert resp.status_code == 200
         data = resp.json()
         assert "agents" in data
@@ -160,7 +160,7 @@ class TestAgentMetricsDashboard:
             "error_rate": 0.1667,
             "by_method": {"generate_test_scenarios": {"calls": 8, "errors": 2}},
         }
-        resp = authed_client.get("/api/dashboard/llm")
+        resp = authed_client.get("/api/v1/dashboard/llm")
         assert resp.status_code == 200
         data = resp.json()
         assert "llm" in data
@@ -172,13 +172,13 @@ class TestAgentEndpoints:
     @patch("webgui.agent_monitor.agent_monitor")
     def test_agents_list(self, mock_monitor, authed_client):
         mock_monitor.get_all_agent_status = AsyncMock(return_value=[])
-        resp = authed_client.get("/api/agents")
+        resp = authed_client.get("/api/v1/agents")
         assert resp.status_code == 200
 
     @patch("webgui.agent_monitor.agent_monitor")
     def test_agent_queues(self, mock_monitor, authed_client):
         mock_monitor.get_queue_depths = AsyncMock(return_value={"qa_manager": 0})
-        resp = authed_client.get("/api/agents/queues")
+        resp = authed_client.get("/api/v1/agents/queues")
         assert resp.status_code == 200
 
 
@@ -391,7 +391,7 @@ class TestReportDownloadSecurity:
                 mock_cfg.get_async_redis_client.return_value = (
                     self._make_redis_with_meta(str(report_file))
                 )
-                resp = authed_client.get("/api/reports/report-abc/download")
+                resp = authed_client.get("/api/v1/reports/report-abc/download")
             assert resp.status_code == 200
         finally:
             reports_mod._REPORTS_DIR = original_dir
@@ -410,7 +410,7 @@ class TestReportDownloadSecurity:
                 mock_cfg.get_async_redis_client.return_value = (
                     self._make_redis_with_meta(malicious_path)
                 )
-                resp = authed_client.get("/api/reports/evil-id/download")
+                resp = authed_client.get("/api/v1/reports/evil-id/download")
             assert resp.status_code == 403
         finally:
             reports_mod._REPORTS_DIR = original_dir
@@ -428,7 +428,7 @@ class TestReportDownloadSecurity:
                 mock_cfg.get_async_redis_client.return_value = (
                     self._make_redis_with_meta(traversal)
                 )
-                resp = authed_client.get("/api/reports/dotdot/download")
+                resp = authed_client.get("/api/v1/reports/dotdot/download")
             assert resp.status_code == 403
         finally:
             reports_mod._REPORTS_DIR = original_dir
@@ -445,7 +445,7 @@ class TestReportDownloadSecurity:
                 mock_cfg.get_async_redis_client.return_value = (
                     self._make_redis_with_meta(nonexistent)
                 )
-                resp = authed_client.get("/api/reports/gone/download")
+                resp = authed_client.get("/api/v1/reports/gone/download")
             assert resp.status_code == 404
         finally:
             reports_mod._REPORTS_DIR = original_dir

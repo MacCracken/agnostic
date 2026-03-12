@@ -4,33 +4,51 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-_mock_redis = MagicMock()
+_mock_redis = AsyncMock()
+
+
+class _AsyncIterator:
+    """Helper to make scan_iter return an async iterator."""
+
+    def __init__(self, items):
+        self._items = list(items)
+        self._idx = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._idx >= len(self._items):
+            raise StopAsyncIteration
+        item = self._items[self._idx]
+        self._idx += 1
+        return item
+
+
+def _set_scan_iter(items):
+    """Set scan_iter to return an async iterator over items."""
+    _mock_redis.scan_iter = MagicMock(return_value=_AsyncIterator(items))
 
 
 @pytest.fixture(autouse=True)
 def _patch_redis(monkeypatch):
     monkeypatch.setattr(
-        "config.environment.config.get_redis_client", lambda: _mock_redis
+        "config.environment.config.get_async_redis_client", lambda: _mock_redis
     )
     _mock_redis.reset_mock()
     _mock_redis.get.reset_mock()
-    _mock_redis.keys.reset_mock()
-    _mock_redis.scan_iter.reset_mock()
-    _mock_redis.exists.reset_mock()
     _mock_redis.get.return_value = None
     _mock_redis.get.side_effect = None
-    _mock_redis.keys.return_value = []
-    _mock_redis.keys.side_effect = None
-    _mock_redis.scan_iter.return_value = []
-    _mock_redis.scan_iter.side_effect = None
+    _set_scan_iter([])
     _mock_redis.exists.return_value = False
     _mock_redis.exists.side_effect = None
+    _mock_redis.setex.return_value = True
 
 
 def _make_manager():
@@ -245,8 +263,7 @@ class TestCalculateTrend:
 class TestGetSessionHistory:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_sessions(self):
-        _mock_redis.keys.return_value = []
-        _mock_redis.scan_iter.return_value = []
+        _set_scan_iter([])
         mgr = _make_manager()
         sessions = await mgr.get_session_history()
         assert sessions == []
@@ -263,10 +280,9 @@ class TestGetSessionHistory:
             "user_id": "u1",
             "environment": "dev",
         }
-        _mock_redis.keys.return_value = [b"session:s1:info"]
-        _mock_redis.scan_iter.return_value = [b"session:s1:info"]
+        _set_scan_iter(["session:s1:info"])
         _mock_redis.get.side_effect = [
-            json.dumps(session_data).encode(),  # session info
+            json.dumps(session_data),  # session info
             None,  # verification
             None,  # test plan
         ]
@@ -285,13 +301,8 @@ class TestGetSessionHistory:
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
         }
-        encoded = json.dumps(session_data).encode()
-        _mock_redis.keys.return_value = [
-            f"session:s{i}:info".encode() for i in range(5)
-        ]
-        _mock_redis.scan_iter.return_value = [
-            f"session:s{i}:info".encode() for i in range(5)
-        ]
+        encoded = json.dumps(session_data)
+        _set_scan_iter([f"session:s{i}:info" for i in range(5)])
         _mock_redis.get.return_value = encoded
         _mock_redis.exists.return_value = False
         mgr = _make_manager()
@@ -303,7 +314,7 @@ class TestGetSessionDetails:
     @pytest.mark.asyncio
     async def test_returns_cached(self):
         cached = {"session_id": "s1", "title": "Cached"}
-        _mock_redis.get.side_effect = [json.dumps(cached).encode()]
+        _mock_redis.get.side_effect = [json.dumps(cached)]
         mgr = _make_manager()
         result = await mgr.get_session_details("s1")
         assert result["title"] == "Cached"
@@ -326,10 +337,10 @@ class TestCompareSessions:
         """Compare sessions delegates to get_session_details twice."""
         cached = {"session_id": "s1", "overall_score": 80}
         _mock_redis.get.side_effect = [
-            json.dumps(cached).encode(),  # cache hit for s1
+            json.dumps(cached),  # cache hit for s1
             json.dumps(
                 {"session_id": "s2", "overall_score": 90}
-            ).encode(),  # cache hit for s2
+            ),  # cache hit for s2
         ]
         mgr = _make_manager()
         result = await mgr.compare_sessions("s1", "s2")

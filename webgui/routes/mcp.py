@@ -318,29 +318,29 @@ MCP_TOOLS: list[dict[str, Any]] = [
 _TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "agnostic_submit_task": ("POST", "/api/v1/tasks"),
     "agnostic_task_status": ("GET", "/api/v1/tasks/{task_id}"),
-    "agnostic_list_sessions": ("GET", "/api/dashboard/sessions"),
-    "agnostic_agent_status": ("GET", "/api/dashboard/agents"),
-    "agnostic_dashboard": ("GET", "/api/dashboard"),
+    "agnostic_list_sessions": ("GET", "/api/v1/dashboard/sessions"),
+    "agnostic_agent_status": ("GET", "/api/v1/dashboard/agents"),
+    "agnostic_dashboard": ("GET", "/api/v1/dashboard"),
     "agnostic_security_scan": ("POST", "/api/v1/tasks"),
-    "agnostic_security_findings": ("GET", "/api/results/structured/{session_id}"),
+    "agnostic_security_findings": ("GET", "/api/v1/results/structured/{session_id}"),
     "agnostic_performance_test": ("POST", "/api/v1/tasks"),
-    "agnostic_performance_results": ("GET", "/api/results/structured/{session_id}"),
-    "agnostic_structured_results": ("GET", "/api/results/structured/{session_id}"),
+    "agnostic_performance_results": ("GET", "/api/v1/results/structured/{session_id}"),
+    "agnostic_structured_results": ("GET", "/api/v1/results/structured/{session_id}"),
     "agnostic_session_diff": ("GET", "/api/v1/sessions/compare"),
-    "agnostic_quality_trends": ("GET", "/api/dashboard/metrics"),
-    "agnostic_quality_dashboard": ("GET", "/api/dashboard/widget"),
+    "agnostic_quality_trends": ("GET", "/api/v1/dashboard/metrics"),
+    "agnostic_quality_dashboard": ("GET", "/api/v1/dashboard/widget"),
     "agnostic_qa_orchestrate": ("POST", "/api/v1/tasks"),
     "agnostic_generate_report": ("POST", "/api/v1/reports/generate"),
     "agnostic_list_reports": ("GET", "/api/v1/reports"),
     "agnostic_health": ("GET", "/health"),
-    "agnostic_metrics": ("GET", "/api/metrics"),
-    "agnostic_agent_metrics": ("GET", "/api/dashboard/agent-metrics"),
-    "agnostic_llm_usage": ("GET", "/api/dashboard/llm"),
+    "agnostic_metrics": ("GET", "/api/v1/metrics"),
+    "agnostic_agent_metrics": ("GET", "/api/v1/dashboard/agent-metrics"),
+    "agnostic_llm_usage": ("GET", "/api/v1/dashboard/llm"),
     "agnostic_a2a_delegate": ("POST", "/api/v1/a2a/receive"),
     "agnostic_a2a_status": ("POST", "/api/v1/a2a/receive"),
     "agnostic_a2a_heartbeat": ("POST", "/api/v1/a2a/receive"),
     "agnostic_subscribe_webhook": ("POST", "/api/v1/tasks"),
-    "agnostic_event_stream": ("GET", "/api/v1/events/stream"),
+    "agnostic_event_stream": ("GET", "/api/v1/yeoman/events/stream"),
 }
 
 
@@ -363,6 +363,23 @@ class MCPInvokeResponse(BaseModel):
     timestamp: str
 
 
+class MCPToolsResponse(BaseModel):
+    tools: list[dict[str, Any]]
+    total: int
+    server: dict[str, Any]
+
+
+class MCPServerInfoResponse(BaseModel):
+    name: str
+    version: str
+    protocol_version: str
+    capabilities: dict[str, Any]
+    tool_count: int
+    categories: list[str]
+    health_endpoint: str
+    auth_methods: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -376,7 +393,7 @@ def _require_mcp_enabled() -> None:
         )
 
 
-@router.get("/v1/mcp/tools")
+@router.get("/mcp/tools", response_model=MCPToolsResponse)
 async def list_mcp_tools(
     category: str | None = None,
     _user: dict = Depends(get_current_user),
@@ -400,7 +417,7 @@ async def list_mcp_tools(
     }
 
 
-@router.get("/v1/mcp/server-info")
+@router.get("/mcp/server-info", response_model=MCPServerInfoResponse)
 async def mcp_server_info(_user: dict = Depends(get_current_user)):
     """MCP server metadata for auto-registration handshake."""
     _require_mcp_enabled()
@@ -418,7 +435,7 @@ async def mcp_server_info(_user: dict = Depends(get_current_user)):
     }
 
 
-@router.post("/v1/mcp/invoke", response_model=MCPInvokeResponse)
+@router.post("/mcp/invoke", response_model=MCPInvokeResponse)
 async def invoke_mcp_tool(
     req: MCPInvokeRequest,
     user: dict = Depends(get_current_user),

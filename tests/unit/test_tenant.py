@@ -599,14 +599,14 @@ class TestTenantEndpoints:
     def test_list_tenants_disabled(self, admin_client):
         """Returns 503 when multi-tenancy disabled."""
         with patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", False):
-            resp = admin_client.get("/api/tenants")
+            resp = admin_client.get("/api/v1/tenants")
             assert resp.status_code == 503
 
     def test_create_tenant_disabled(self, admin_client):
         """Returns 503 when multi-tenancy disabled."""
         with patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", False):
             resp = admin_client.post(
-                "/api/tenants",
+                "/api/v1/tenants",
                 json={
                     "tenant_id": "t1",
                     "name": "T1",
@@ -619,7 +619,7 @@ class TestTenantEndpoints:
     def test_get_tenant_disabled(self, admin_client):
         """Returns 503 when multi-tenancy disabled."""
         with patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", False):
-            resp = admin_client.get("/api/tenants/t1")
+            resp = admin_client.get("/api/v1/tenants/t1")
             assert resp.status_code == 503
 
     def test_list_tenants_requires_admin(self, viewer_client):
@@ -628,60 +628,92 @@ class TestTenantEndpoints:
             patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
             patch("webgui.routes.dependencies.DATABASE_ENABLED", True),
         ):
-            resp = viewer_client.get("/api/tenants")
+            resp = viewer_client.get("/api/v1/tenants")
             assert resp.status_code == 403
 
-    def test_get_tenant_not_found(self, admin_client):
+    def test_get_tenant_not_found(self, app, admin_client):
         """Returns 404 when tenant not found."""
+        from webgui.routes.dependencies import _tenant_repo_dependency
+
         mock_repo = AsyncMock()
         mock_repo.get_tenant.return_value = None
 
+        async def override():
+            return mock_repo
+
         with (
             patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
             patch("webgui.routes.dependencies.DATABASE_ENABLED", True),
-            patch("webgui.routes.tenants.get_tenant_repo", return_value=mock_repo),
         ):
-            resp = admin_client.get("/api/tenants/nonexistent")
-            assert resp.status_code == 404
+            app.dependency_overrides[_tenant_repo_dependency] = override
+            try:
+                resp = admin_client.get("/api/v1/tenants/nonexistent")
+                assert resp.status_code == 404
+            finally:
+                app.dependency_overrides.pop(_tenant_repo_dependency, None)
 
-    def test_delete_tenant_not_found(self, admin_client):
+    def test_delete_tenant_not_found(self, app, admin_client):
         """Returns 404 when deleting nonexistent tenant."""
+        from webgui.routes.dependencies import _tenant_repo_dependency
+
         mock_repo = AsyncMock()
         mock_repo.delete_tenant.return_value = False
 
+        async def override():
+            return mock_repo
+
         with (
             patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
             patch("webgui.routes.dependencies.DATABASE_ENABLED", True),
-            patch("webgui.routes.tenants.get_tenant_repo", return_value=mock_repo),
         ):
-            resp = admin_client.delete("/api/tenants/nonexistent")
-            assert resp.status_code == 404
+            app.dependency_overrides[_tenant_repo_dependency] = override
+            try:
+                resp = admin_client.delete("/api/v1/tenants/nonexistent")
+                assert resp.status_code == 404
+            finally:
+                app.dependency_overrides.pop(_tenant_repo_dependency, None)
 
-    def test_update_tenant_not_found(self, admin_client):
+    def test_update_tenant_not_found(self, app, admin_client):
         """Returns 404 when updating nonexistent tenant."""
+        from webgui.routes.dependencies import _tenant_repo_dependency
+
         mock_repo = AsyncMock()
         mock_repo.update_tenant.return_value = None
 
+        async def override():
+            return mock_repo
+
         with (
             patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
             patch("webgui.routes.dependencies.DATABASE_ENABLED", True),
-            patch("webgui.routes.tenants.get_tenant_repo", return_value=mock_repo),
         ):
-            resp = admin_client.put("/api/tenants/nonexistent", json={"name": "New"})
-            assert resp.status_code == 404
+            app.dependency_overrides[_tenant_repo_dependency] = override
+            try:
+                resp = admin_client.put("/api/v1/tenants/nonexistent", json={"name": "New"})
+                assert resp.status_code == 404
+            finally:
+                app.dependency_overrides.pop(_tenant_repo_dependency, None)
 
-    def test_remove_user_not_found(self, admin_client):
+    def test_remove_user_not_found(self, app, admin_client):
         """Returns 404 when removing nonexistent user."""
+        from webgui.routes.dependencies import _tenant_repo_dependency
+
         mock_repo = AsyncMock()
         mock_repo.remove_user.return_value = False
 
+        async def override():
+            return mock_repo
+
         with (
             patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
             patch("webgui.routes.dependencies.DATABASE_ENABLED", True),
-            patch("webgui.routes.tenants.get_tenant_repo", return_value=mock_repo),
         ):
-            resp = admin_client.delete("/api/tenants/t1/users/nonexistent")
-            assert resp.status_code == 404
+            app.dependency_overrides[_tenant_repo_dependency] = override
+            try:
+                resp = admin_client.delete("/api/v1/tenants/t1/users/nonexistent")
+                assert resp.status_code == 404
+            finally:
+                app.dependency_overrides.pop(_tenant_repo_dependency, None)
 
     def test_database_disabled_returns_503(self, admin_client):
         """Returns 503 when database not enabled even if tenant is."""
@@ -689,5 +721,5 @@ class TestTenantEndpoints:
             patch("webgui.routes.dependencies.MULTI_TENANT_ENABLED", True),
             patch("webgui.routes.dependencies.DATABASE_ENABLED", False),
         ):
-            resp = admin_client.get("/api/tenants")
+            resp = admin_client.get("/api/v1/tenants")
             assert resp.status_code == 503

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from webgui.auth import Permission, auth_manager
-from webgui.routes.dependencies import get_current_user, require_permission
+from webgui.routes.dependencies import PaginatedResponse, get_current_user, require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,27 @@ class TokenResponse(BaseModel):
 
 class StatusResponse(BaseModel):
     status: str
+
+
+class UserMeResponse(BaseModel):
+    user_id: str | None = None
+    email: str | None = None
+    role: str | None = None
+    permissions: list[str] = []
+
+
+class ApiKeyCreateResponse(BaseModel):
+    key_id: str
+    api_key: str
+    description: str = ""
+    role: str = "api_user"
+    created_at: str
+    note: str = ""
+
+
+class ApiKeyDeleteResponse(BaseModel):
+    status: str
+    key_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +145,7 @@ async def logout(request: Request, user: dict = Depends(get_current_user)):
     return {"status": "logged_out"}
 
 
-@router.get("/auth/me")
+@router.get("/auth/me", response_model=UserMeResponse)
 async def auth_me(user: dict = Depends(get_current_user)):
     return {
         "user_id": user.get("user_id"),
@@ -139,7 +160,7 @@ async def auth_me(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/auth/api-keys", status_code=201)
+@router.post("/auth/api-keys", status_code=201, response_model=ApiKeyCreateResponse)
 async def create_api_key(
     req: ApiKeyCreateRequest,
     user: dict = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
@@ -165,7 +186,7 @@ async def create_api_key(
     }
 
 
-@router.get("/auth/api-keys")
+@router.get("/auth/api-keys", response_model=PaginatedResponse)
 async def list_api_keys(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -186,7 +207,7 @@ async def list_api_keys(
     }
 
 
-@router.delete("/auth/api-keys/{key_id}")
+@router.delete("/auth/api-keys/{key_id}", response_model=ApiKeyDeleteResponse)
 async def delete_api_key(
     key_id: str,
     user: dict = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),

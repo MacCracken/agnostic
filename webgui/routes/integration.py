@@ -3,8 +3,10 @@
 import json
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from webgui.routes.dependencies import get_current_user
 
@@ -13,7 +15,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/results/structured/{session_id}")
+class StructuredResultsResponse(BaseModel):
+    """Structured QA results — allows extra fields from yeoman schema."""
+
+    model_config = {"extra": "allow"}
+
+    session_id: str | None = None
+
+
+@router.get("/results/structured/{session_id}", response_model=StructuredResultsResponse)
 async def get_structured_results(
     session_id: str,
     result_type: str | None = None,

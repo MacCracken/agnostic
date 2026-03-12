@@ -75,6 +75,22 @@ class A2AStatusResponse(BaseModel):
     data: dict[str, Any]
 
 
+class A2AReceiveResponse(BaseModel):
+    """Generic A2A receive response — allows extra fields per message type."""
+
+    model_config = {"extra": "allow"}
+
+    accepted: bool
+    message_id: str
+
+
+class A2ACapabilitiesResponse(BaseModel):
+    capabilities: list[dict[str, Any]]
+    mcp: dict[str, Any]
+    webhooks: dict[str, Any]
+    auth_methods: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Webhook helpers
 # ---------------------------------------------------------------------------
@@ -441,7 +457,7 @@ async def _check_a2a_rate_limit(peer_id: str) -> bool:
         return True  # fail open
 
 
-@router.post("/v1/a2a/receive")
+@router.post("/a2a/receive", response_model=A2AReceiveResponse)
 async def receive_a2a_message(
     msg: A2AMessage,
     user: dict = Depends(get_current_user),
@@ -535,7 +551,7 @@ async def receive_a2a_message(
     }
 
 
-@router.get("/v1/a2a/capabilities")
+@router.get("/a2a/capabilities", response_model=A2ACapabilitiesResponse)
 async def a2a_capabilities():
     """Advertise what this Agnostic instance can do as an A2A peer.
 

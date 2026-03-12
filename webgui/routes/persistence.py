@@ -1,15 +1,20 @@
 """Test result persistence (PostgreSQL) endpoints."""
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from webgui.auth import Permission
 from webgui.routes.dependencies import (
     PaginatedResponse,
+    _db_repo_dependency,
     get_current_user,
-    get_db_repo,
     require_permission,
 )
+
+# Type alias for the repository injected by Depends(_db_repo_dependency)
+_RepoType = Any
 
 router = APIRouter()
 
@@ -85,6 +90,27 @@ class DeleteResponse(BaseModel):
     job_id: str | None = None
 
 
+class TestResultsSummaryResponse(BaseModel):
+    """Session results summary — allows extra fields from repository."""
+
+    model_config = {"extra": "allow"}
+
+    session_id: str | None = None
+    total: int = 0
+
+
+class QualityTrendsResponse(BaseModel):
+    """Quality trends — allows extra fields from repository."""
+
+    model_config = {"extra": "allow"}
+
+
+class SessionDiffResponse(BaseModel):
+    """Session diff — allows extra fields from repository."""
+
+    model_config = {"extra": "allow"}
+
+
 # ---------------------------------------------------------------------------
 # Test session endpoints
 # ---------------------------------------------------------------------------
@@ -96,9 +122,9 @@ async def get_test_sessions(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_db_repo_dependency),
 ):
     """Get test sessions."""
-    repo = await get_db_repo()
     if repo is None:
         raise HTTPException(
             status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
@@ -125,9 +151,9 @@ async def get_test_sessions(
 async def create_test_session(
     req: TestSessionCreate,
     user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
+    repo: _RepoType = Depends(_db_repo_dependency),
 ):
     """Create a new test session."""
-    repo = await get_db_repo()
     if repo is None:
         raise HTTPException(
             status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
@@ -151,9 +177,9 @@ async def update_test_session_status(
     session_id: str,
     status: str,
     user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
+    repo: _RepoType = Depends(_db_repo_dependency),
 ):
     """Update test session status."""
-    repo = await get_db_repo()
     if repo is None:
         raise HTTPException(
             status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
@@ -176,9 +202,9 @@ async def get_test_results(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_db_repo_dependency),
 ):
     """Get test results."""
-    repo = await get_db_repo()
     if repo is None:
         raise HTTPException(
             status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
@@ -210,9 +236,9 @@ async def get_test_results(
 async def add_test_result(
     req: TestResultCreate,
     user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
+    repo: _RepoType = Depends(_db_repo_dependency),
 ):
     """Add a test result."""
-    repo = await get_db_repo()
     if repo is None:
         raise HTTPException(
             status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
@@ -221,13 +247,13 @@ async def add_test_result(
     return {"id": result.id, "test_id": result.test_id, "status": result.status}
 
 
-@router.get("/test-results/{session_id}/summary")
+@router.get("/test-results/{session_id}/summary", response_model=TestResultsSummaryResponse)
 async def get_test_results_summary(
     session_id: str,
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_db_repo_dependency),
 ):
     """Get summary of test results for a session."""
-    repo = await get_db_repo()
     if repo is None:
         raise HTTPException(
             status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
@@ -241,13 +267,13 @@ async def get_test_results_summary(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/test-metrics/trends")
+@router.get("/test-metrics/trends", response_model=QualityTrendsResponse)
 async def get_quality_trends(
     days: int = 30,
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_db_repo_dependency),
 ):
     """Get quality trends over time."""
-    repo = await get_db_repo()
     if repo is None:
         raise HTTPException(
             status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"
@@ -256,7 +282,7 @@ async def get_quality_trends(
     return trends
 
 
-@router.get("/test-sessions/diff")
+@router.get("/test-sessions/diff", response_model=SessionDiffResponse)
 async def diff_test_sessions(
     base: str = Query(
         ..., max_length=200, description="Base session ID (the 'before')"
@@ -265,6 +291,7 @@ async def diff_test_sessions(
         ..., max_length=200, description="Compare session ID (the 'after')"
     ),
     user: dict = Depends(get_current_user),
+    repo: _RepoType = Depends(_db_repo_dependency),
 ):
     """Compare test results between two sessions to detect regressions.
 
@@ -274,7 +301,6 @@ async def diff_test_sessions(
 
     For Redis-backed session comparison, use POST /sessions/compare instead.
     """
-    repo = await get_db_repo()
     if repo is None:
         raise HTTPException(
             status_code=503, detail="Database not enabled. Set DATABASE_ENABLED=true"

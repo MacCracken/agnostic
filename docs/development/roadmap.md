@@ -30,4 +30,4 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 
 ---
 
-*Last Updated: 2026-03-11 · Version: 2026.3.11 · Test count: 810 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-12 · Version: 2026.3.12 · Test count: 810 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

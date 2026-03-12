@@ -86,9 +86,11 @@ class HistoryManager:
     """Manages historical session data and comparisons"""
 
     def __init__(self):
-        self.redis_client = config.get_redis_client()
         self.session_cache = {}
         self.cache_timeout = 300  # 5 minutes
+
+    def _get_async_client(self):
+        return config.get_async_redis_client()
 
     async def get_session_history(
         self,
@@ -104,17 +106,19 @@ class HistoryManager:
         sessions = []
 
         try:
+            redis_client = self._get_async_client()
             # Get all session keys
-            session_keys = list(
-                self.redis_client.scan_iter("session:*:info", count=100)
-            )
+            session_keys: list[str] = []
+            async for key in redis_client.scan_iter("session:*:info", count=100):
+                session_keys.append(key)
 
             for key in session_keys:
-                parts = key.decode(errors="replace").split(":")
+                key_str = key if isinstance(key, str) else key.decode(errors="replace")
+                parts = key_str.split(":")
                 if len(parts) < 2:
                     continue
                 session_id = parts[1]
-                session_data = self.redis_client.get(key)
+                session_data = await redis_client.get(key)
 
                 if session_data:
                     try:
@@ -200,9 +204,10 @@ class HistoryManager:
     async def get_session_details(self, session_id: str) -> dict[str, Any] | None:
         """Get detailed session data"""
         try:
+            redis_client = self._get_async_client()
             # Check cache first
             cache_key = f"session_details:{session_id}"
-            cached = self.redis_client.get(cache_key)
+            cached = await redis_client.get(cache_key)
             if cached:
                 return json.loads(cached)
 
@@ -213,7 +218,7 @@ class HistoryManager:
             session_data = await report_gen._collect_session_data(session_id)
 
             # Cache the result
-            self.redis_client.setex(
+            await redis_client.setex(
                 cache_key, self.cache_timeout, json.dumps(session_data, default=str)
             )
 
@@ -504,16 +509,17 @@ class HistoryManager:
         }
 
         try:
+            redis_client = self._get_async_client()
             # Get verification data
             verify_key = f"manager:{session_id}:verification"
-            verify_data = self.redis_client.get(verify_key)
+            verify_data = await redis_client.get(verify_key)
             if verify_data:
                 verify = json.loads(verify_data)
                 metrics["overall_score"] = verify.get("overall_score")
 
             # Get test plan
             plan_key = f"manager:{session_id}:test_plan"
-            plan_data = self.redis_client.get(plan_key)
+            plan_data = await redis_client.get(plan_key)
             if plan_data:
                 plan = json.loads(plan_data)
                 scenarios = plan.get("scenarios", [])
@@ -543,11 +549,11 @@ class HistoryManager:
                 elif agent == "analyst":
                     agent_key = f"{agent}:{session_id}:comprehensive_report"
 
-                if self.redis_client.exists(agent_key):
+                if await redis_client.exists(agent_key):
                     metrics["agent_count"] += 1
 
                     # Count errors and warnings from agent results
-                    result_data = self.redis_client.get(agent_key)
+                    result_data = await redis_client.get(agent_key)
                     if result_data:
                         result = json.loads(result_data)
                         if "errors" in result:

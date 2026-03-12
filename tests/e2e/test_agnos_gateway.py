@@ -90,7 +90,7 @@ def test_gateway_llm_round_trip(http_client: httpx.Client, api_headers: dict):
         "priority": "low",
     }
     resp = http_client.post(
-        "/api/tasks",
+        "/api/v1/tasks",
         json=task_payload,
         headers=api_headers,
     )
@@ -159,7 +159,7 @@ def test_no_openai_key_needed_with_gateway(
     # Submit task — if gateway is properly configured, this should not fail
     # with "OPENAI_API_KEY not set"
     resp = http_client.post(
-        "/api/tasks",
+        "/api/v1/tasks",
         json={
             "title": "Smoke test",
             "description": "Smoke test: verify homepage loads",

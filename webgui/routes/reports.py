@@ -40,10 +40,24 @@ class ScheduleReportRequest(BaseModel):
     schedule: dict
 
 
+class ReportGenerateResponse(BaseModel):
+    report_id: str
+    generated_at: str
+    session_id: str
+    report_type: str
+    format: str
+    file_size: int
+
+
 class ScheduleReportResponse(BaseModel):
     job_id: str
     name: str
     next_run: str | None
+
+
+class ReportDeleteResponse(BaseModel):
+    status: str
+    job_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +96,7 @@ async def list_reports(
     }
 
 
-@router.post("/reports/generate")
+@router.post("/reports/generate", response_model=ReportGenerateResponse)
 async def generate_report(
     req: ReportGenerateRequest,
     user: dict = Depends(require_permission(Permission.REPORTS_GENERATE)),
@@ -189,7 +203,7 @@ async def get_scheduled_reports(
     }
 
 
-@router.post("/reports/scheduled")
+@router.post("/reports/scheduled", response_model=ScheduleReportResponse)
 async def schedule_report(
     req: ScheduleReportRequest,
     user: dict = Depends(require_permission(Permission.REPORTS_GENERATE)),
@@ -227,7 +241,7 @@ async def schedule_report(
         raise HTTPException(status_code=500, detail="Failed to schedule report") from e
 
 
-@router.delete("/reports/scheduled/{job_id}")
+@router.delete("/reports/scheduled/{job_id}", response_model=ReportDeleteResponse)
 async def delete_scheduled_report(
     job_id: str,
     user: dict = Depends(require_permission(Permission.REPORTS_GENERATE)),
