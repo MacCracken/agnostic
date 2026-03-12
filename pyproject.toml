@@ -152,6 +152,7 @@ filterwarnings = [
     "ignore::ResourceWarning",
     "ignore::ImportWarning",
     "ignore::DeprecationWarning:crewai",
+    "ignore::DeprecationWarning:pydantic",
 ]
 
 [tool.ruff]

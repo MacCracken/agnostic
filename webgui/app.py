@@ -13,6 +13,7 @@ import chainlit as cl
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Add config path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 sys.path.append("/app")
 
 
-_MAX_ACTIVE_SESSIONS = 1000
+_MAX_ACTIVE_SESSIONS = int(os.getenv("MAX_ACTIVE_SESSIONS", "1000"))
 
 
 class AgenticQAGUI:
@@ -1007,8 +1008,12 @@ _configure_app(app)
 # ---------------------------------------------------------------------------
 
 
-async def health_check() -> dict[str, Any]:
-    """Return infrastructure and agent liveness status."""
+async def health_check() -> JSONResponse:
+    """Return infrastructure and agent liveness status.
+
+    Returns HTTP 200 for healthy, 503 for degraded or unhealthy so that
+    monitoring systems and load balancers can detect problems.
+    """
     status_details: dict[str, Any] = {
         "timestamp": datetime.now(UTC).isoformat(),
         "redis": "ok",
@@ -1082,7 +1087,24 @@ async def health_check() -> dict[str, Any]:
             if agent_name not in status_details["agents"]:
                 status_details["agents"][agent_name] = "offline"
 
-    # 4. YEOMAN A2A health (if enabled)
+    # 4. Database health (if enabled)
+    if os.getenv("DATABASE_ENABLED", "false").lower() == "true":
+        try:
+            from sqlalchemy import text
+
+            from shared.database.models import get_session
+
+            session = await get_session()
+            try:
+                await session.execute(text("SELECT 1"))
+                status_details["database"] = "ok"
+            finally:
+                await session.close()
+        except Exception as e:
+            logger.warning(f"Health check: database error: {e}")
+            status_details["database"] = "error"
+
+    # 5. YEOMAN A2A health (if enabled)
     try:
         from shared.yeoman_a2a_client import yeoman_a2a_client
 
@@ -1097,7 +1119,7 @@ async def health_check() -> dict[str, Any]:
     except ImportError:
         status_details["yeoman"] = "unavailable"
 
-    # 5. AGNOS dashboard bridge health (if enabled)
+    # 6. AGNOS dashboard bridge health (if enabled)
     try:
         from shared.agnos_dashboard_bridge import agnos_dashboard_bridge
 
@@ -1112,13 +1134,24 @@ async def health_check() -> dict[str, Any]:
     except ImportError:
         status_details["agnos_bridge"] = "unavailable"
 
+    # 7. LLM gateway health (if enabled)
+    if os.getenv("AGNOS_LLM_GATEWAY_ENABLED", "").lower() in ("true", "1", "yes"):
+        try:
+
+            from config.llm_integration import _llm_circuit
+
+            status_details["llm_gateway"] = _llm_circuit.state.value
+        except Exception:
+            status_details["llm_gateway"] = "unknown"
+
     # Determine overall status
     # Redis is critical (webgui needs it); RabbitMQ is optional (workers profile)
     redis_ok = status_details["redis"] == "ok"
     rabbitmq_ok = status_details["rabbitmq"] in ("ok", "not_configured")
+    db_ok = status_details.get("database", "ok") in ("ok",)
     any_alive = any(v == "alive" for v in status_details["agents"].values())
 
-    if not redis_ok:
+    if not redis_ok or not db_ok:
         overall = "unhealthy"
     elif not rabbitmq_ok or not any_alive:
         overall = "degraded"
@@ -1126,7 +1159,52 @@ async def health_check() -> dict[str, Any]:
         overall = "healthy"
 
     status_details["status"] = overall
-    return status_details
+
+    # Return proper HTTP status code for monitoring systems
+    http_status = 200 if overall == "healthy" else 503
+    return JSONResponse(content=status_details, status_code=http_status)
+
+
+async def readiness_check() -> JSONResponse:
+    """Readiness probe: is the app ready to accept traffic?
+
+    Unlike /health (liveness), readiness checks that critical dependencies
+    are initialized. Kubernetes uses this to decide whether to route
+    traffic to the pod (vs. /health which decides whether to restart).
+    """
+    checks: dict[str, str] = {}
+
+    # Redis must be reachable
+    try:
+        redis_client = config.get_redis_client()
+        redis_client.ping()
+        checks["redis"] = "ok"
+    except Exception:
+        checks["redis"] = "error"
+
+    # Database must be reachable (if enabled)
+    if os.getenv("DATABASE_ENABLED", "false").lower() == "true":
+        try:
+            from sqlalchemy import text
+
+            from shared.database.models import get_session
+
+            session = await get_session()
+            try:
+                await session.execute(text("SELECT 1"))
+                checks["database"] = "ok"
+            finally:
+                await session.close()
+        except Exception:
+            checks["database"] = "error"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    checks["status"] = "ready" if all_ok else "not_ready"
+
+    return JSONResponse(
+        content=checks,
+        status_code=200 if all_ok else 503,
+    )
 
 
 async def _websocket_endpoint(websocket):
@@ -1148,8 +1226,9 @@ async def _websocket_endpoint(websocket):
     await websocket_handler.handle_websocket(websocket, user_id)
 
 
-# Register health + websocket on standalone app
+# Register health + readiness + websocket on standalone app
 app.get("/health")(health_check)
+app.get("/ready")(readiness_check)
 app.websocket("/ws/realtime")(_websocket_endpoint)
 
 # Also register on Chainlit's app so routes work under `chainlit run`.

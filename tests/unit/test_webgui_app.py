@@ -105,26 +105,31 @@ class TestHealthCheck:
 
         return TestClient(app, raise_server_exceptions=False)
 
-    def test_health_returns_200(self, client):
+    def test_health_degraded_no_agents(self, client):
+        """No agents alive → degraded (503)."""
         _mock_redis.ping.side_effect = None
         _mock_redis.ping.return_value = True
         _mock_redis.get.return_value = None
         with patch("socket.create_connection") as mock_sock:
             mock_sock.return_value = MagicMock()
             response = client.get("/health")
-        assert response.status_code == 200
+        # Degraded returns 503 for monitoring systems
+        assert response.status_code == 503
         data = response.json()
         assert "status" in data
         assert "redis" in data
         assert "agents" in data
+        assert data["status"] in ("degraded", "healthy")
 
     def test_health_redis_error(self, client):
+        """Redis down → unhealthy (503)."""
         _mock_redis.ping.side_effect = Exception("Connection refused")
         _mock_redis.ping.return_value = None
         _mock_redis.get.return_value = None
         with patch("socket.create_connection") as mock_sock:
             mock_sock.return_value = MagicMock()
             response = client.get("/health")
+        assert response.status_code == 503
         data = response.json()
         assert data["redis"] == "error"
 
@@ -140,17 +145,8 @@ class TestHealthCheck:
         data = response.json()
         assert data["rabbitmq"] == "error"
 
-    def test_health_degraded_no_agents(self, client):
-        _mock_redis.ping.side_effect = None
-        _mock_redis.ping.return_value = True
-        _mock_redis.get.return_value = None
-        with patch("socket.create_connection") as mock_sock:
-            mock_sock.return_value = MagicMock()
-            response = client.get("/health")
-        data = response.json()
-        assert data["status"] in ("degraded", "healthy")
-
     def test_health_healthy_with_alive_agent(self, client):
+        """All systems up + agent alive → healthy (200)."""
         _mock_redis.ping.side_effect = None
         _mock_redis.ping.return_value = True
         agent_status = {
@@ -164,5 +160,6 @@ class TestHealthCheck:
         ):
             mock_sock.return_value = MagicMock()
             response = client.get("/health")
+        assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"

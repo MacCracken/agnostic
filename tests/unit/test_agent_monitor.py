@@ -1,39 +1,54 @@
-"""Tests for webgui/agent_monitor.py — AgentMonitor, AgentStatus, TaskInfo."""
+"""Tests for webgui/agent_monitor.py — AgentMonitor, AgentStatus, TaskInfo.
+
+All Redis calls are now async; the mock uses AsyncMock where needed.
+"""
 
 import json
 import os
 import sys
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-_mock_redis = MagicMock()
+_mock_redis = AsyncMock()
 
 
 @pytest.fixture(autouse=True)
 def _patch_redis(monkeypatch):
     monkeypatch.setattr(
-        "config.environment.config.get_redis_client", lambda: _mock_redis
+        "config.environment.config.get_async_redis_client", lambda: _mock_redis
     )
     _mock_redis.reset_mock()
-    _mock_redis.get.reset_mock()
-    _mock_redis.keys.reset_mock()
-    _mock_redis.scan_iter.reset_mock()
-    _mock_redis.get.return_value = None
-    _mock_redis.get.side_effect = None
-    _mock_redis.keys.return_value = []
-    _mock_redis.keys.side_effect = None
-    _mock_redis.scan_iter.return_value = []
-    _mock_redis.scan_iter.side_effect = None
+    _mock_redis.get = AsyncMock(return_value=None)
+    _mock_redis.mget = AsyncMock(return_value=[])
+    _mock_redis.setex = AsyncMock()
+    _mock_redis.lrange = AsyncMock(return_value=[])
+
+    # scan_iter needs to be an async generator
+    async def _empty_scan(*args, **kwargs):
+        return
+        yield  # makes this an async generator
+
+    _mock_redis.scan_iter = _empty_scan
 
 
 def _make_monitor():
     from webgui.agent_monitor import AgentMonitor
 
     return AgentMonitor()
+
+
+def _set_scan_iter(keys):
+    """Helper: make scan_iter yield the given keys."""
+
+    async def _scan(*args, **kwargs):
+        for k in keys:
+            yield k
+
+    _mock_redis.scan_iter = _scan
 
 
 class TestEnums:
@@ -64,12 +79,26 @@ class TestAgentMonitorInit:
         assert "security-compliance-agent" in names
 
 
+class TestBoundedCache:
+    def test_evicts_oldest(self):
+        from webgui.agent_monitor import _BoundedCache
+
+        cache = _BoundedCache(max_size=3)
+        cache["a"] = 1
+        cache["b"] = 2
+        cache["c"] = 3
+        cache["d"] = 4
+        assert "a" not in cache
+        assert "d" in cache
+        assert len(cache) == 3
+
+
 class TestGetAgentStatus:
     @pytest.mark.asyncio
     async def test_returns_offline_when_no_data(self):
-        _mock_redis.get.return_value = None
-        _mock_redis.keys.return_value = []
-        _mock_redis.scan_iter.return_value = []
+        _mock_redis.get = AsyncMock(return_value=None)
+        _set_scan_iter([])
+        _mock_redis.mget = AsyncMock(return_value=[])
         monitor = _make_monitor()
         status = await monitor.get_agent_status("qa-manager")
         assert status is not None
@@ -101,8 +130,8 @@ class TestGetAgentStatus:
             "uptime_seconds": 3600,
             "error_rate": 16.67,
         }
-        # First call returns cached data
-        _mock_redis.get.side_effect = [json.dumps(cached).encode()]
+        # First call returns cached data from Redis
+        _mock_redis.get = AsyncMock(return_value=json.dumps(cached))
         monitor = _make_monitor()
         status = await monitor._get_agent_status("qa-manager", AgentType.MANAGER)
         assert status.status == "busy"
@@ -123,10 +152,12 @@ class TestGetAgentStatus:
             "uptime_seconds": 7200,
         }
         # get(cache_key) = None, get(status_key) = data
-        _mock_redis.get.side_effect = [None, json.dumps(status_data).encode()]
-        _mock_redis.keys.return_value = []
-        _mock_redis.scan_iter.return_value = []
-        _mock_redis.setex = MagicMock()
+        _mock_redis.get = AsyncMock(
+            side_effect=[None, json.dumps(status_data)]
+        )
+        _set_scan_iter([])
+        _mock_redis.mget = AsyncMock(return_value=[])
+        _mock_redis.setex = AsyncMock()
         monitor = _make_monitor()
         status = await monitor._get_agent_status("qa-manager", AgentType.MANAGER)
         assert status.status == "idle"
@@ -135,9 +166,9 @@ class TestGetAgentStatus:
 class TestGetAllAgentStatus:
     @pytest.mark.asyncio
     async def test_returns_list_of_statuses(self):
-        _mock_redis.get.return_value = None
-        _mock_redis.keys.return_value = []
-        _mock_redis.scan_iter.return_value = []
+        _mock_redis.get = AsyncMock(return_value=None)
+        _set_scan_iter([])
+        _mock_redis.mget = AsyncMock(return_value=[])
         monitor = _make_monitor()
         statuses = await monitor.get_all_agent_status()
         assert isinstance(statuses, list)
@@ -150,8 +181,8 @@ class TestGetAllAgentStatus:
 class TestGetActiveTasks:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_tasks(self):
-        _mock_redis.keys.return_value = []
-        _mock_redis.scan_iter.return_value = []
+        _set_scan_iter([])
+        _mock_redis.mget = AsyncMock(return_value=[])
         monitor = _make_monitor()
         tasks = await monitor.get_active_tasks()
         assert tasks == []
@@ -172,15 +203,13 @@ class TestGetActiveTasks:
             "error_message": None,
         }
         completed_task = {**task_data, "task_id": "t2", "status": "completed"}
-        _mock_redis.keys.return_value = [b"task:qa-manager:t1", b"task:qa-manager:t2"]
-        _mock_redis.scan_iter.return_value = [
-            b"task:qa-manager:t1",
-            b"task:qa-manager:t2",
-        ]
-        _mock_redis.get.side_effect = [
-            json.dumps(task_data).encode(),
-            json.dumps(completed_task).encode(),
-        ]
+        _set_scan_iter(["task:qa-manager:t1", "task:qa-manager:t2"])
+        _mock_redis.mget = AsyncMock(
+            return_value=[
+                json.dumps(task_data),
+                json.dumps(completed_task),
+            ]
+        )
         monitor = _make_monitor()
         tasks = await monitor.get_active_tasks()
         assert len(tasks) == 1
@@ -192,58 +221,73 @@ class TestGetQueueDepths:
     async def test_returns_depths(self):
         pending_task = {"status": "pending"}
         running_task = {"status": "in_progress"}
-        _mock_redis.keys.return_value = [b"task:qa-manager:1", b"task:qa-manager:2"]
-        _mock_redis.scan_iter.return_value = [
-            b"task:qa-manager:1",
-            b"task:qa-manager:2",
-        ]
-        _mock_redis.get.side_effect = [
-            json.dumps(pending_task).encode(),
-            json.dumps(running_task).encode(),
-        ] * 6  # 6 agents
+        _set_scan_iter(["task:qa-manager:1", "task:qa-manager:2"])
+        _mock_redis.mget = AsyncMock(
+            return_value=[
+                json.dumps(pending_task),
+                json.dumps(running_task),
+            ]
+        )
         monitor = _make_monitor()
         depths = await monitor.get_queue_depths()
         assert isinstance(depths, dict)
 
 
-class TestCalculateErrorRate:
-    def test_zero_when_no_tasks(self):
-        _mock_redis.keys.return_value = []
-        _mock_redis.scan_iter.return_value = []
-        monitor = _make_monitor()
-        assert monitor._calculate_error_rate("qa-manager") == 0.0
-
-    def test_calculates_rate(self):
+class TestCountTasksByStatus:
+    @pytest.mark.asyncio
+    async def test_counts_correctly(self):
         completed = {"status": "completed"}
         failed = {"status": "failed"}
-        # 3 completed + 1 failed = 25% error rate
-        keys = [
-            b"task:qa-manager:1",
-            b"task:qa-manager:2",
-            b"task:qa-manager:3",
-            b"task:qa-manager:4",
-        ]
-        # _calculate_error_rate calls _get_agent_task_count 3 times:
-        #   completed (scan_iter + 4 gets), failed (scan_iter + 4 gets), failed again (scan_iter + 4 gets)
-        _mock_redis.keys.side_effect = [keys, keys, keys]
-        _mock_redis.scan_iter.side_effect = [keys, keys, keys]
-        get_responses = [
-            json.dumps(completed).encode(),
-            json.dumps(completed).encode(),
-            json.dumps(completed).encode(),
-            json.dumps(failed).encode(),
-        ]
-        _mock_redis.get.side_effect = get_responses * 3
+        _set_scan_iter([
+            "task:qa-manager:1",
+            "task:qa-manager:2",
+            "task:qa-manager:3",
+            "task:qa-manager:4",
+        ])
+        _mock_redis.mget = AsyncMock(
+            return_value=[
+                json.dumps(completed),
+                json.dumps(completed),
+                json.dumps(completed),
+                json.dumps(failed),
+            ]
+        )
         monitor = _make_monitor()
-        rate = monitor._calculate_error_rate("qa-manager")
-        assert rate == pytest.approx(25.0, abs=1.0)
+        counts = await monitor._count_tasks_by_status("qa-manager")
+        assert counts["completed"] == 3
+        assert counts["failed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_error_rate_from_counts(self):
+        """Error rate is calculated from single SCAN+MGET pass, not 3 separate scans."""
+        completed = {"status": "completed"}
+        failed = {"status": "failed"}
+        _set_scan_iter([
+            "task:qa-manager:1",
+            "task:qa-manager:2",
+            "task:qa-manager:3",
+            "task:qa-manager:4",
+        ])
+        _mock_redis.mget = AsyncMock(
+            return_value=[
+                json.dumps(completed),
+                json.dumps(completed),
+                json.dumps(completed),
+                json.dumps(failed),
+            ]
+        )
+        monitor = _make_monitor()
+        counts = await monitor._count_tasks_by_status("qa-manager")
+        total = counts.get("completed", 0) + counts.get("failed", 0)
+        error_rate = (counts.get("failed", 0) / total * 100) if total > 0 else 0.0
+        assert error_rate == pytest.approx(25.0, abs=1.0)
 
 
 class TestGetAgentMetrics:
     @pytest.mark.asyncio
     async def test_returns_none_when_no_tasks(self):
-        _mock_redis.keys.return_value = []
-        _mock_redis.scan_iter.return_value = []
+        _set_scan_iter([])
+        _mock_redis.mget = AsyncMock(return_value=[])
         monitor = _make_monitor()
         metrics = await monitor.get_agent_metrics("qa-manager", "24h")
         assert metrics is None
@@ -256,19 +300,24 @@ class TestGetAgentMetrics:
             "created_at": now.isoformat(),
             "duration_seconds": 30,
         }
-        _mock_redis.keys.side_effect = [
-            [b"task:qa-manager:1"],  # _get_agent_tasks_in_range
-            [],  # _get_agent_performance_data
-            [],  # _calculate_error_rate (completed)
-            [],  # _calculate_error_rate (failed)
-        ]
-        _mock_redis.scan_iter.side_effect = [
-            [b"task:qa-manager:1"],  # _get_agent_tasks_in_range
-            [],  # _get_agent_performance_data
-            [],  # _calculate_error_rate (completed)
-            [],  # _calculate_error_rate (failed)
-        ]
-        _mock_redis.get.side_effect = [json.dumps(task).encode()]
+        # First scan_iter for tasks, second for perf data
+        call_count = 0
+
+        async def _alternating_scan(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield "task:qa-manager:1"
+            # perf scan yields nothing
+
+        _mock_redis.scan_iter = _alternating_scan
+        _mock_redis.mget = AsyncMock(
+            side_effect=[
+                [json.dumps(task)],  # task data
+                [],  # perf data
+            ]
+        )
+        _mock_redis.get = AsyncMock(return_value=None)
         monitor = _make_monitor()
         metrics = await monitor.get_agent_metrics("qa-manager", "1h")
         assert metrics is not None

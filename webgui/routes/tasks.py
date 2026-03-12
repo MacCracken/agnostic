@@ -345,6 +345,10 @@ async def submit_task(
 
     await redis_client.setex(task_redis_key, 86400, json.dumps(task_record))
 
+    # Store requirements for retry support
+    req_key = tenant_manager.task_key(tenant_id, f"req:{task_id}")
+    await redis_client.setex(req_key, 86400, json.dumps(requirements))
+
     # Fire-and-forget async execution with crash containment
     task = asyncio.create_task(
         _run_task_async(
@@ -387,6 +391,134 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
 
     record = json.loads(data)
     return TaskStatusResponse(**record)
+
+
+# ---------------------------------------------------------------------------
+# Task cancellation and retry
+# ---------------------------------------------------------------------------
+
+
+class TaskCancelResponse(BaseModel):
+    task_id: str
+    status: str
+    message: str
+
+
+class TaskRetryResponse(BaseModel):
+    original_task_id: str
+    new_task_id: str
+    session_id: str
+    status: str
+
+
+@router.delete("/tasks/{task_id}", response_model=TaskCancelResponse)
+async def cancel_task(task_id: str, user: dict = Depends(get_current_user)):
+    """Cancel a pending or running task."""
+    if not _TASK_ID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Invalid task ID format")
+
+    from config.environment import config
+    from shared.database.tenants import tenant_manager
+
+    redis_client = config.get_async_redis_client()
+    tenant_id = user.get("tenant_id", tenant_manager.default_tenant_id)
+    task_redis_key = tenant_manager.task_key(tenant_id, task_id)
+    data = await redis_client.get(task_redis_key)
+    if not data:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    record = json.loads(data)
+    current_status = record.get("status")
+
+    if current_status in ("completed", "failed", "cancelled"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot cancel task in '{current_status}' state",
+        )
+
+    record["status"] = "cancelled"
+    record["updated_at"] = datetime.now(UTC).isoformat()
+    await redis_client.setex(task_redis_key, 86400, json.dumps(record))
+
+    audit_log(
+        AuditAction.TASK_CANCELLED,
+        actor=user.get("user_id"),
+        resource_type="task",
+        resource_id=task_id,
+    )
+
+    return TaskCancelResponse(
+        task_id=task_id,
+        status="cancelled",
+        message="Task cancelled successfully",
+    )
+
+
+@router.post("/tasks/{task_id}/retry", response_model=TaskRetryResponse, status_code=201)
+async def retry_task(task_id: str, user: dict = Depends(get_current_user)):
+    """Retry a failed or cancelled task by creating a new task with the same parameters."""
+    if not _TASK_ID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Invalid task ID format")
+
+    from config.environment import config
+    from shared.database.tenants import tenant_manager
+
+    redis_client = config.get_async_redis_client()
+    tenant_id = user.get("tenant_id", tenant_manager.default_tenant_id)
+    task_redis_key = tenant_manager.task_key(tenant_id, task_id)
+    data = await redis_client.get(task_redis_key)
+    if not data:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    record = json.loads(data)
+    current_status = record.get("status")
+
+    if current_status not in ("failed", "cancelled"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Can only retry failed or cancelled tasks, current status: '{current_status}'",
+        )
+
+    # Look up original requirements from the session key
+    original_session_id = record.get("session_id", "")
+    req_key = tenant_manager.task_key(tenant_id, f"req:{task_id}")
+    req_data = await redis_client.get(req_key)
+
+    # Build new task from stored requirements or minimal fallback
+    if req_data:
+        requirements = json.loads(req_data)
+        task_req = TaskSubmitRequest(
+            title=requirements.get("title", f"Retry of {task_id}"),
+            description=requirements.get("description", f"Retry of task {task_id}"),
+            target_url=requirements.get("target_url"),
+            priority=requirements.get("priority", "high"),
+            agents=requirements.get("agents", []),
+            standards=requirements.get("standards", []),
+            business_goals=requirements.get("business_goals", "Ensure quality and functionality"),
+            constraints=requirements.get("constraints", "Standard testing environment"),
+        )
+    else:
+        task_req = TaskSubmitRequest(
+            title=f"Retry of {task_id}",
+            description=f"Automated retry of failed task {task_id} (session: {original_session_id})",
+        )
+
+    result = await submit_task(task_req, user)
+
+    audit_log(
+        AuditAction.TASK_SUBMITTED,
+        actor=user.get("user_id"),
+        resource_type="task",
+        resource_id=result.task_id,
+        detail={"retry_of": task_id},
+    )
+
+    return TaskRetryResponse(
+        original_task_id=task_id,
+        new_task_id=result.task_id,
+        session_id=result.session_id,
+        status="pending",
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,9 @@
 
 import json
 import logging
+import os
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -20,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_REPORTS_DIR = Path("/app/reports").resolve()
+_REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "/app/reports")).resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -30,8 +32,10 @@ _REPORTS_DIR = Path("/app/reports").resolve()
 
 class ReportGenerateRequest(BaseModel):
     session_id: str
-    report_type: str = "executive_summary"
-    format: str = "json"
+    report_type: Literal[
+        "executive_summary", "detailed", "compliance", "security", "performance"
+    ] = "executive_summary"
+    format: Literal["json", "html", "pdf"] = "json"
 
 
 class ScheduleReportRequest(BaseModel):
@@ -116,7 +120,16 @@ async def generate_report(
         report_type=report_type,
         format=report_format,
     )
-    metadata = await report_generator.generate_report(report_req, user["user_id"])
+    try:
+        metadata = await report_generator.generate_report(report_req, user["user_id"])
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=f"Insufficient disk permissions: {e}") from e
+    except OSError as e:
+        logger.error(f"Report generation I/O error: {e}", exc_info=True)
+        raise HTTPException(status_code=507, detail="Report generation failed: storage error") from e
+    except Exception as e:
+        logger.error(f"Report generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Report generation failed") from e
     audit_log(
         AuditAction.REPORT_GENERATED,
         actor=user.get("user_id"),

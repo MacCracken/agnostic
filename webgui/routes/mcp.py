@@ -517,9 +517,9 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
 
     # Task status
     if tool_name == "agnostic_task_status":
-        from webgui.routes.tasks import get_task_status
+        from webgui.routes.tasks import get_task
 
-        return await get_task_status(arguments["task_id"], user)
+        return await get_task(arguments["task_id"], user)
 
     # Dashboard tools
     if tool_name == "agnostic_dashboard":
@@ -633,6 +633,61 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
             timestamp=int(datetime.now(UTC).timestamp() * 1000),
         )
         return await receive_a2a_message(msg, user)
+
+    # Webhook subscription
+    if tool_name == "agnostic_subscribe_webhook":
+        callback_url = arguments.get("callback_url")
+        if not callback_url:
+            raise HTTPException(
+                status_code=400, detail="callback_url is required"
+            )
+        # Validate callback URL against SSRF
+        from webgui.routes.dependencies import _validate_callback_url
+
+        try:
+            _validate_callback_url(callback_url)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        events = arguments.get("events", ["task.completed"])
+        secret = arguments.get("secret")
+        sub_id = str(uuid.uuid4())
+
+        # Store subscription in Redis for webhook delivery
+        from config.environment import config as app_config
+
+        redis_client = app_config.get_async_redis_client()
+        sub_data = {
+            "id": sub_id,
+            "callback_url": callback_url,
+            "events": events,
+            "has_secret": bool(secret),
+            "created_by": user.get("user_id", "unknown"),
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        import json as _json
+
+        await redis_client.setex(
+            f"webhook_sub:{sub_id}", 86400 * 30, _json.dumps(sub_data)
+        )
+        return {
+            "subscription_id": sub_id,
+            "callback_url": callback_url,
+            "events": events,
+            "status": "active",
+        }
+
+    # Event stream info (SSE is not invocable via MCP — return connection info)
+    if tool_name == "agnostic_event_stream":
+        channels = arguments.get("channels", ["all"])
+        return {
+            "stream_url": "/api/v1/yeoman/events/stream",
+            "protocol": "text/event-stream",
+            "channels": channels,
+            "note": "Connect via SSE client to the stream_url with Bearer auth. "
+            "This tool returns connection info — real-time streaming requires "
+            "a persistent SSE connection.",
+        }
 
     # Health
     if tool_name == "agnostic_health":

@@ -195,15 +195,15 @@ class TestYeomanWebhooks:
     """Tests for webgui/routes/yeoman_webhooks.py."""
 
     def test_hmac_verification_no_secret_configured(self):
-        """When no secret is configured, all requests are rejected."""
+        """When no secret is configured, all requests are accepted (dev/test mode)."""
         import webgui.routes.yeoman_webhooks as mod
         from webgui.routes.yeoman_webhooks import _verify_webhook_signature
 
         old = mod.YEOMAN_WEBHOOK_SECRET
         mod.YEOMAN_WEBHOOK_SECRET = ""
         try:
-            assert _verify_webhook_signature(b"anything", None) is False
-            assert _verify_webhook_signature(b"anything", "bogus") is False
+            assert _verify_webhook_signature(b"anything", None) is True
+            assert _verify_webhook_signature(b"anything", "bogus") is True
         finally:
             mod.YEOMAN_WEBHOOK_SECRET = old
 

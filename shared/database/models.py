@@ -181,16 +181,16 @@ async def init_db():
             database_url,
             echo=False,
             pool_pre_ping=True,
-            pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
-            max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "10")),
+            pool_size=int(os.getenv("DB_POOL_SIZE", "20")),
+            max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "40")),
             pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "3600")),
             pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "30")),
         )
 
         logger.info(
             "Database pool configured: size=%s, overflow=%s, recycle=%ss, timeout=%ss",
-            os.getenv("DB_POOL_SIZE", "5"),
-            os.getenv("DB_MAX_OVERFLOW", "10"),
+            os.getenv("DB_POOL_SIZE", "20"),
+            os.getenv("DB_MAX_OVERFLOW", "40"),
             os.getenv("DB_POOL_RECYCLE", "3600"),
             os.getenv("DB_POOL_TIMEOUT", "30"),
         )

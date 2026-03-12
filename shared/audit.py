@@ -41,6 +41,7 @@ class AuditAction(StrEnum):
     TASK_SUBMITTED = "task.submitted"
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
+    TASK_CANCELLED = "task.cancelled"
 
     # Reports
     REPORT_GENERATED = "report.generated"

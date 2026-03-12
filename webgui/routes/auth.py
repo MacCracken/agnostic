@@ -7,7 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from webgui.auth import Permission, auth_manager
-from webgui.routes.dependencies import PaginatedResponse, get_current_user, require_permission
+from webgui.routes.dependencies import (
+    PaginatedResponse,
+    get_current_user,
+    require_permission,
+)
 
 logger = logging.getLogger(__name__)
 

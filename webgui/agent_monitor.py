@@ -1,12 +1,16 @@
 """
 Agent Monitor Module
 Real-time agent activity visualization and performance monitoring.
+
+Uses async Redis throughout to avoid blocking the event loop.
+Batches key lookups with MGET to eliminate N+1 query patterns.
 """
 
 import json
 import logging
 import os
 import sys
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -17,6 +21,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.environment import config
 
 logger = logging.getLogger(__name__)
+
+# LRU-style cache: max entries before eviction
+_CACHE_MAX_ENTRIES = int(os.getenv("AGENT_MONITOR_CACHE_MAX_ENTRIES", "200"))
 
 
 class AgentType(Enum):
@@ -84,13 +91,27 @@ class AgentMetrics:
     last_updated: datetime
 
 
+class _BoundedCache(OrderedDict):
+    """OrderedDict with a max-size eviction policy (LRU)."""
+
+    def __init__(self, max_size: int = _CACHE_MAX_ENTRIES) -> None:
+        super().__init__()
+        self._max_size = max_size
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        while len(self) > self._max_size:
+            self.popitem(last=False)
+
+
 class AgentMonitor:
-    """Monitors agent activity and performance"""
+    """Monitors agent activity and performance using async Redis."""
 
     def __init__(self):
-        self.redis_client = config.get_redis_client()
-        self.agent_status_cache = {}
-        self.task_cache = {}
+        self._redis = config.get_async_redis_client()
+        self._status_cache = _BoundedCache(_CACHE_MAX_ENTRIES)
         self.cache_timeout = 60  # 1 minute
 
         # Agent configuration
@@ -115,13 +136,61 @@ class AgentMonitor:
             },
         }
 
+    # ------------------------------------------------------------------
+    # Internal helpers — async Redis with MGET batching
+    # ------------------------------------------------------------------
+
+    async def _scan_keys(self, pattern: str, count: int = 100) -> list[str]:
+        """Async SCAN for keys matching pattern."""
+        keys: list[str] = []
+        async for key in self._redis.scan_iter(pattern, count=count):
+            keys.append(key)
+        return keys
+
+    async def _mget_parsed(self, keys: list[str]) -> list[dict[str, Any] | None]:
+        """MGET + JSON parse in one shot. Returns None for missing/bad entries."""
+        if not keys:
+            return []
+        values = await self._redis.mget(keys)
+        results: list[dict[str, Any] | None] = []
+        for v in values:
+            if v is None:
+                results.append(None)
+                continue
+            try:
+                results.append(json.loads(v))
+            except (json.JSONDecodeError, TypeError):
+                results.append(None)
+        return results
+
+    async def _get_task_data_for_agent(self, agent_name: str) -> list[dict[str, Any]]:
+        """Fetch all task data for an agent using SCAN + MGET (not N+1)."""
+        keys = await self._scan_keys(f"task:{agent_name}:*")
+        parsed = await self._mget_parsed(keys)
+        return [d for d in parsed if d is not None]
+
+    async def _count_tasks_by_status(
+        self, agent_name: str
+    ) -> dict[str, int]:
+        """Count tasks grouped by status in a single SCAN + MGET pass."""
+        tasks = await self._get_task_data_for_agent(agent_name)
+        counts: dict[str, int] = {}
+        for t in tasks:
+            status = t.get("status", "unknown")
+            counts[status] = counts.get(status, 0) + 1
+        return counts
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     async def get_all_agent_status(self) -> list[AgentStatus]:
         """Get status of all agents"""
         agent_statuses = []
 
         try:
-            for agent_type, config in self.agents.items():
-                agent_name = config["name"]
+            for agent_type, cfg in self.agents.items():
+                agent_name = cfg["name"]
                 status = await self._get_agent_status(agent_name, agent_type)
                 if status:
                     agent_statuses.append(status)
@@ -139,8 +208,8 @@ class AgentMonitor:
         try:
             # Find agent type
             agent_type = None
-            for atype, config in self.agents.items():
-                if config["name"] == agent_name:
+            for atype, cfg in self.agents.items():
+                if cfg["name"] == agent_name:
                     agent_type = atype
                     break
 
@@ -156,11 +225,11 @@ class AgentMonitor:
     async def _get_agent_status(
         self, agent_name: str, agent_type: AgentType
     ) -> AgentStatus | None:
-        """Get detailed status for an agent"""
+        """Get detailed status for an agent (async Redis)."""
         try:
             # Check cache first
             cache_key = f"agent_status:{agent_name}"
-            cached = self.redis_client.get(cache_key)
+            cached = await self._redis.get(cache_key)
 
             if cached:
                 data = json.loads(cached)
@@ -170,9 +239,9 @@ class AgentMonitor:
                 )
                 return AgentStatus(**data)
 
-            # Get status from Redis
+            # Get status from Redis (async)
             status_key = f"agent:{agent_name}:status"
-            status_data = self.redis_client.get(status_key)
+            status_data = await self._redis.get(status_key)
 
             if not status_data:
                 # Agent not found, return offline status
@@ -194,9 +263,12 @@ class AgentMonitor:
 
             data = json.loads(status_data)
 
-            # Get additional metrics
-            tasks_completed = self._get_agent_task_count(agent_name, "completed")
-            tasks_failed = self._get_agent_task_count(agent_name, "failed")
+            # Get task counts in a single SCAN + MGET pass (not 3 separate scans)
+            counts = await self._count_tasks_by_status(agent_name)
+            tasks_completed = counts.get("completed", 0)
+            tasks_failed = counts.get("failed", 0)
+            total = tasks_completed + tasks_failed
+            error_rate = (tasks_failed / total * 100) if total > 0 else 0.0
 
             status = AgentStatus(
                 agent_name=agent_name,
@@ -213,11 +285,11 @@ class AgentMonitor:
                 memory_usage=data.get("memory_usage", 0.0),
                 response_time_ms=data.get("response_time_ms", 0.0),
                 uptime_seconds=data.get("uptime_seconds", 0),
-                error_rate=self._calculate_error_rate(agent_name),
+                error_rate=error_rate,
             )
 
-            # Cache the result
-            self.redis_client.setex(
+            # Cache the result (async)
+            await self._redis.setex(
                 cache_key, self.cache_timeout, json.dumps(asdict(status), default=str)
             )
 
@@ -228,58 +300,50 @@ class AgentMonitor:
             return None
 
     async def get_active_tasks(self, agent_name: str | None = None) -> list[TaskInfo]:
-        """Get currently active tasks"""
+        """Get currently active tasks using SCAN + MGET."""
         active_tasks = []
 
         try:
-            # Get task keys
-            if agent_name:
-                task_keys = list(
-                    self.redis_client.scan_iter(f"task:{agent_name}:*", count=100)
-                )
-            else:
-                task_keys = list(self.redis_client.scan_iter("task:*", count=100))
+            pattern = f"task:{agent_name}:*" if agent_name else "task:*"
+            keys = await self._scan_keys(pattern)
+            parsed = await self._mget_parsed(keys)
 
-            for key in task_keys:
-                task_data = self.redis_client.get(key)
-                if task_data:
-                    try:
-                        data = json.loads(task_data)
-
-                        # Filter for active tasks
-                        if data.get("status") in ["pending", "in_progress"]:
-                            # Parse dates
-                            created_at = datetime.fromisoformat(
-                                data.get("created_at", datetime.now().isoformat())
-                            )
-                            started_at = None
-                            if data.get("started_at"):
-                                started_at = datetime.fromisoformat(data["started_at"])
-                            completed_at = None
-                            if data.get("completed_at"):
-                                completed_at = datetime.fromisoformat(
-                                    data["completed_at"]
-                                )
-
-                            task = TaskInfo(
-                                task_id=data.get("task_id", ""),
-                                agent_name=data.get("agent_name", ""),
-                                session_id=data.get("session_id", ""),
-                                task_type=data.get("task_type", ""),
-                                status=TaskStatus(data.get("status", "pending")),
-                                created_at=created_at,
-                                started_at=started_at,
-                                completed_at=completed_at,
-                                duration_seconds=data.get("duration_seconds", 0),
-                                result=data.get("result"),
-                                error_message=data.get("error_message"),
+            for data in parsed:
+                if data is None:
+                    continue
+                try:
+                    if data.get("status") in ["pending", "in_progress"]:
+                        created_at = datetime.fromisoformat(
+                            data.get("created_at", datetime.now().isoformat())
+                        )
+                        started_at = None
+                        if data.get("started_at"):
+                            started_at = datetime.fromisoformat(data["started_at"])
+                        completed_at = None
+                        if data.get("completed_at"):
+                            completed_at = datetime.fromisoformat(
+                                data["completed_at"]
                             )
 
-                            active_tasks.append(task)
+                        task = TaskInfo(
+                            task_id=data.get("task_id", ""),
+                            agent_name=data.get("agent_name", ""),
+                            session_id=data.get("session_id", ""),
+                            task_type=data.get("task_type", ""),
+                            status=TaskStatus(data.get("status", "pending")),
+                            created_at=created_at,
+                            started_at=started_at,
+                            completed_at=completed_at,
+                            duration_seconds=data.get("duration_seconds", 0),
+                            result=data.get("result"),
+                            error_message=data.get("error_message"),
+                        )
 
-                    except (json.JSONDecodeError, ValueError) as e:
-                        logger.warning(f"Error parsing task data: {e}")
-                        continue
+                        active_tasks.append(task)
+
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"Error parsing task data: {e}")
+                    continue
 
             # Sort by created_at
             active_tasks.sort(key=lambda x: x.created_at, reverse=True)
@@ -307,8 +371,8 @@ class AgentMonitor:
             else:
                 start_time = now - timedelta(hours=24)
 
-            # Get tasks in time range
-            tasks = await self._get_agent_tasks_in_range(agent_name, start_time, now)
+            # Get tasks in time range (single SCAN + MGET)
+            tasks = await self._get_tasks_in_range(agent_name, start_time, now)
 
             if not tasks:
                 return None
@@ -327,10 +391,14 @@ class AgentMonitor:
             ]
             avg_duration = sum(durations) / len(durations) if durations else 0
 
-            # Get performance data
-            perf_data = await self._get_agent_performance_data(
+            # Get performance data (single SCAN + MGET)
+            perf_data = await self._get_performance_data(
                 agent_name, start_time, now
             )
+
+            # Error rate from same data (no extra scan)
+            total_terminal = completed_tasks + failed_tasks
+            error_rate = (failed_tasks / total_terminal * 100) if total_terminal > 0 else 0.0
 
             metrics = AgentMetrics(
                 agent_name=agent_name,
@@ -343,7 +411,7 @@ class AgentMonitor:
                 average_response_time_ms=perf_data.get("avg_response_time_ms", 0),
                 cpu_usage_average=perf_data.get("avg_cpu_usage", 0),
                 memory_usage_average=perf_data.get("avg_memory_usage", 0),
-                error_rate=self._calculate_error_rate(agent_name),
+                error_rate=error_rate,
                 last_updated=datetime.now(),
             )
 
@@ -366,14 +434,14 @@ class AgentMonitor:
 
         try:
             # Add nodes for each agent
-            for agent_type, config in self.agents.items():
-                agent_name = config["name"]
+            for agent_type, cfg in self.agents.items():
+                agent_name = cfg["name"]
                 status = await self._get_agent_status(agent_name, agent_type)
 
                 if status:
                     node = {
                         "id": agent_name,
-                        "label": config["description"],
+                        "label": cfg["description"],
                         "type": agent_type.value,
                         "status": status.status,
                         "tasks_completed": status.tasks_completed,
@@ -384,15 +452,15 @@ class AgentMonitor:
             # Get communication edges from recent notifications
             time_threshold = datetime.now() - timedelta(hours=24)
 
-            for agent_type, config in self.agents.items():
-                agent_name = config["name"]
+            for agent_type, cfg in self.agents.items():
+                agent_name = cfg["name"]
 
-                # Get recent notifications
+                # Get recent notifications (async SCAN + MGET)
                 notif_pattern = f"{agent_name}:*:notifications"
-                notif_keys = list(self.redis_client.scan_iter(notif_pattern, count=100))
+                notif_keys = await self._scan_keys(notif_pattern)
 
                 for key in notif_keys:
-                    notifications = self.redis_client.lrange(key, 0, -1)
+                    notifications = await self._redis.lrange(key, 0, -1)
                     for notif in notifications:
                         try:
                             data = json.loads(notif)
@@ -401,7 +469,6 @@ class AgentMonitor:
                             )
 
                             if notif_time >= time_threshold:
-                                # Create edge if this is communication between agents
                                 target_agent = data.get("target_agent")
                                 if target_agent and target_agent != agent_name:
                                     edge = {
@@ -422,110 +489,46 @@ class AgentMonitor:
         return graph_data
 
     async def get_queue_depths(self) -> dict[str, int]:
-        """Get current queue depths for each agent"""
+        """Get current queue depths for each agent using SCAN + MGET."""
         queue_depths = {}
 
         try:
-            for config in self.agents.values():
-                agent_name = config["name"]
-
-                # Count pending tasks
-                pending_tasks = 0
-                task_keys = list(
-                    self.redis_client.scan_iter(f"task:{agent_name}:*", count=100)
-                )
-
-                for key in task_keys:
-                    task_data = self.redis_client.get(key)
-                    if task_data:
-                        try:
-                            data = json.loads(task_data)
-                            if data.get("status") == "pending":
-                                pending_tasks += 1
-                        except json.JSONDecodeError:
-                            continue
-
-                queue_depths[agent_name] = pending_tasks
+            for cfg in self.agents.values():
+                agent_name = cfg["name"]
+                tasks = await self._get_task_data_for_agent(agent_name)
+                pending = sum(1 for t in tasks if t.get("status") == "pending")
+                queue_depths[agent_name] = pending
 
         except Exception as e:
             logger.error(f"Error getting queue depths: {e}")
 
         return queue_depths
 
-    def _get_agent_task_count(self, agent_name: str, status: str) -> int:
-        """Get count of tasks with specific status for agent"""
-        try:
-            task_keys = list(
-                self.redis_client.scan_iter(f"task:{agent_name}:*", count=100)
-            )
-            count = 0
+    # ------------------------------------------------------------------
+    # Private helpers (all async, using batched MGET)
+    # ------------------------------------------------------------------
 
-            for key in task_keys:
-                task_data = self.redis_client.get(key)
-                if task_data:
-                    try:
-                        data = json.loads(task_data)
-                        if data.get("status") == status:
-                            count += 1
-                    except json.JSONDecodeError:
-                        continue
-
-            return count
-
-        except Exception as e:
-            logger.error(f"Error getting task count for {agent_name}: {e}")
-            return 0
-
-    def _calculate_error_rate(self, agent_name: str) -> float:
-        """Calculate error rate for agent"""
-        try:
-            total_tasks = self._get_agent_task_count(
-                agent_name, "completed"
-            ) + self._get_agent_task_count(agent_name, "failed")
-            failed_tasks = self._get_agent_task_count(agent_name, "failed")
-
-            if total_tasks == 0:
-                return 0.0
-
-            return (failed_tasks / total_tasks) * 100
-
-        except Exception as e:
-            logger.error(f"Error calculating error rate for {agent_name}: {e}")
-            return 0.0
-
-    async def _get_agent_tasks_in_range(
+    async def _get_tasks_in_range(
         self, agent_name: str, start_time: datetime, end_time: datetime
     ) -> list[dict[str, Any]]:
-        """Get tasks for agent within time range"""
+        """Get tasks for agent within time range (single SCAN + MGET)."""
         tasks = []
+        all_tasks = await self._get_task_data_for_agent(agent_name)
 
-        try:
-            task_keys = list(
-                self.redis_client.scan_iter(f"task:{agent_name}:*", count=100)
-            )
-
-            for key in task_keys:
-                task_data = self.redis_client.get(key)
-                if task_data:
-                    try:
-                        data = json.loads(task_data)
-                        created_at = datetime.fromisoformat(data.get("created_at", ""))
-
-                        if start_time <= created_at <= end_time:
-                            tasks.append(data)
-
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-
-        except Exception as e:
-            logger.error(f"Error getting tasks in range for {agent_name}: {e}")
+        for data in all_tasks:
+            try:
+                created_at = datetime.fromisoformat(data.get("created_at", ""))
+                if start_time <= created_at <= end_time:
+                    tasks.append(data)
+            except (ValueError, TypeError):
+                continue
 
         return tasks
 
-    async def _get_agent_performance_data(
+    async def _get_performance_data(
         self, agent_name: str, start_time: datetime, end_time: datetime
     ) -> dict[str, float]:
-        """Get performance metrics for agent in time range"""
+        """Get performance metrics for agent in time range (single SCAN + MGET)."""
         perf_data = {
             "avg_response_time_ms": 0.0,
             "avg_cpu_usage": 0.0,
@@ -533,34 +536,28 @@ class AgentMonitor:
         }
 
         try:
-            # Get performance history from Redis
-            perf_keys = list(
-                self.redis_client.scan_iter(f"perf:{agent_name}:*", count=100)
-            )
+            keys = await self._scan_keys(f"perf:{agent_name}:*")
+            parsed = await self._mget_parsed(keys)
 
             response_times = []
             cpu_usages = []
             memory_usages = []
 
-            for key in perf_keys:
-                perf_record = self.redis_client.get(key)
-                if perf_record:
-                    try:
-                        data = json.loads(perf_record)
-                        timestamp = datetime.fromisoformat(data.get("timestamp", ""))
+            for data in parsed:
+                if data is None:
+                    continue
+                try:
+                    timestamp = datetime.fromisoformat(data.get("timestamp", ""))
+                    if start_time <= timestamp <= end_time:
+                        if "response_time_ms" in data:
+                            response_times.append(data["response_time_ms"])
+                        if "cpu_usage" in data:
+                            cpu_usages.append(data["cpu_usage"])
+                        if "memory_usage" in data:
+                            memory_usages.append(data["memory_usage"])
+                except (ValueError, TypeError):
+                    continue
 
-                        if start_time <= timestamp <= end_time:
-                            if "response_time_ms" in data:
-                                response_times.append(data["response_time_ms"])
-                            if "cpu_usage" in data:
-                                cpu_usages.append(data["cpu_usage"])
-                            if "memory_usage" in data:
-                                memory_usages.append(data["memory_usage"])
-
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-
-            # Calculate averages
             if response_times:
                 perf_data["avg_response_time_ms"] = sum(response_times) / len(
                     response_times

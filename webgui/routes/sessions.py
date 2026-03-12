@@ -1,7 +1,7 @@
 """Session history endpoints."""
 
 from dataclasses import asdict
-from typing import Any
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -33,6 +33,11 @@ class SessionCompareResponse(BaseModel):
 @router.get("/sessions", response_model=PaginatedResponse)
 async def get_sessions(
     user_id: str | None = Query(None),
+    status: str | None = Query(None, description="Filter by status: pending, running, completed, failed"),
+    created_after: str | None = Query(None, description="ISO 8601 date (inclusive)"),
+    created_before: str | None = Query(None, description="ISO 8601 date (inclusive)"),
+    sort_by: Literal["created_at", "updated_at", "status"] = Query("created_at"),
+    sort_order: Literal["asc", "desc"] = Query("desc"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
     user: dict = Depends(get_current_user),
@@ -48,11 +53,27 @@ async def get_sessions(
 
     sessions = await history_manager.get_session_history(
         user_id=user_id,
-        limit=limit,
-        offset=offset,
+        limit=limit + offset,  # Fetch enough for offset slicing
+        offset=0,
     )
     items = [asdict(s) for s in sessions]
-    return {"items": items, "total": len(items), "limit": limit, "offset": offset}
+
+    # Apply filters
+    if status:
+        items = [i for i in items if i.get("status") == status]
+    if created_after:
+        items = [i for i in items if i.get("created_at", "") >= created_after]
+    if created_before:
+        items = [i for i in items if i.get("created_at", "") <= created_before]
+
+    # Sort
+    reverse = sort_order == "desc"
+    items.sort(key=lambda x: x.get(sort_by, ""), reverse=reverse)
+
+    total = len(items)
+    items = items[offset : offset + limit]
+
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/sessions/search", response_model=PaginatedResponse)

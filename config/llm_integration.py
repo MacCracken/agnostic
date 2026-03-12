@@ -3,6 +3,7 @@ LLM Integration Service for Agentic QA Team System.
 Provides real LLM-driven analysis for tools instead of static/mock data.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -109,37 +110,48 @@ class LLMIntegrationService:
         """Return the configured API key."""
         return self._api_key
 
+    # Per-chunk timeout: if no chunk arrives in this many seconds, abort.
+    _STREAM_CHUNK_TIMEOUT = float(os.getenv("LLM_STREAM_CHUNK_TIMEOUT", "60"))
+    # Total stream timeout: hard cap on entire streaming call.
+    _STREAM_TOTAL_TIMEOUT = float(os.getenv("LLM_STREAM_TOTAL_TIMEOUT", "300"))
+
     async def _streaming_call(self, call_kwargs: dict[str, Any], span: Any) -> Any:
         """Execute a streaming LLM call, assembling chunks into a full response.
 
         Uses ``litellm.acompletion(stream=True)`` which returns an async
         generator of SSE chunks. The chunks are concatenated into a complete
         response object that matches the non-streaming format.
+
+        Enforces per-chunk and total timeouts to prevent indefinite hangs.
         """
-        chunks: list[str] = []
-        response_obj = None
 
-        async for chunk in await litellm.acompletion(**call_kwargs):
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta and hasattr(delta, "content") and delta.content:
-                chunks.append(delta.content)
-            # Keep last chunk for usage info (some providers include it on final chunk)
-            response_obj = chunk
+        async def _consume_stream() -> Any:
+            chunks: list[str] = []
+            response_obj = None
 
-        # Build a response-like object with assembled content
-        full_content = "".join(chunks)
+            async for chunk in await litellm.acompletion(**call_kwargs):
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and hasattr(delta, "content") and delta.content:
+                    chunks.append(delta.content)
+                response_obj = chunk
 
-        class _AssembledMessage:
-            content = full_content
+            full_content = "".join(chunks)
 
-        class _AssembledChoice:
-            message = _AssembledMessage()
+            class _AssembledMessage:
+                content = full_content
 
-        class _AssembledResponse:
-            choices = [_AssembledChoice()]
-            usage = getattr(response_obj, "usage", None)
+            class _AssembledChoice:
+                message = _AssembledMessage()
 
-        return _AssembledResponse()
+            class _AssembledResponse:
+                choices = [_AssembledChoice()]
+                usage = getattr(response_obj, "usage", None)
+
+            return _AssembledResponse()
+
+        return await asyncio.wait_for(
+            _consume_stream(), timeout=self._STREAM_TOTAL_TIMEOUT
+        )
 
     async def _llm_call(
         self,

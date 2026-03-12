@@ -228,11 +228,12 @@ class TestHealthCheckEndpoint:
             client = TestClient(real_app)
             resp = client.get("/health")
 
-        assert resp.status_code == 200
+        # No agents alive → degraded → 503
+        assert resp.status_code == 503
         data = resp.json()
         assert data["redis"] == "ok"
         assert data["rabbitmq"] == "ok"
-        assert data["status"] in ("healthy", "degraded")
+        assert data["status"] == "degraded"
         assert "timestamp" in data
 
     def test_health_redis_error(self):
@@ -257,7 +258,7 @@ class TestHealthCheckEndpoint:
             client = TestClient(real_app)
             resp = client.get("/health")
 
-        assert resp.status_code == 200
+        assert resp.status_code == 503
         data = resp.json()
         assert data["redis"] == "error"
         assert data["status"] == "unhealthy"
@@ -288,7 +289,7 @@ class TestHealthCheckEndpoint:
             client = TestClient(real_app)
             resp = client.get("/health")
 
-        assert resp.status_code == 200
+        assert resp.status_code == 503
         data = resp.json()
         assert data["rabbitmq"] == "error"
         assert data["status"] == "degraded"
@@ -357,7 +358,7 @@ class TestHealthCheckEndpoint:
             client = TestClient(real_app)
             resp = client.get("/health")
 
-        assert resp.status_code == 200
+        assert resp.status_code == 503
         data = resp.json()
         # stale agent, infra ok → degraded
         agent_statuses = list(data["agents"].values())

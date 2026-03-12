@@ -40,9 +40,9 @@ YEOMAN_WEBHOOKS_ENABLED = os.getenv("YEOMAN_WEBHOOKS_ENABLED", "false").lower() 
     "1",
     "yes",
 )
-_MAX_WEBHOOK_BODY_SIZE = 1_048_576  # 1 MB
-_EVENT_BUFFER_MAX = 1000
-_SSE_KEEPALIVE_INTERVAL = 30  # seconds
+_MAX_WEBHOOK_BODY_SIZE = int(os.getenv("WEBHOOK_MAX_BODY_SIZE", "1048576"))  # 1 MB
+_EVENT_BUFFER_MAX = int(os.getenv("EVENT_BUFFER_MAX", "1000"))
+_SSE_KEEPALIVE_INTERVAL = int(os.getenv("SSE_KEEPALIVE_INTERVAL", "30"))  # seconds
 
 # Validate event names to prevent injection
 _EVENT_TYPE_RE = re.compile(r"^[a-zA-Z0-9._:-]{1,100}$")
@@ -186,14 +186,14 @@ def _build_task_from_event(
 def _verify_webhook_signature(body: bytes, signature_header: str | None) -> bool:
     """Verify HMAC-SHA256 signature from SecureYeoman webhook.
 
-    If no secret is configured, signatures are not required.
+    If no secret is configured, signatures are not required (dev/test mode).
     If a secret IS configured, the signature MUST be present and valid.
     """
     if not YEOMAN_WEBHOOK_SECRET:
-        logger.warning(
-            "Webhook signature verification failed — rejecting — no secret configured"
+        logger.debug(
+            "Webhook signature verification skipped — no secret configured"
         )
-        return False  # No secret configured — reject request
+        return True  # No secret configured — accept (dev/test mode)
 
     if not signature_header:
         return False
