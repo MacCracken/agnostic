@@ -4,7 +4,7 @@
 
 [package]
 name = "agnostic"
-version = "2026.3.9"
+version = "2026.3.12"
 description = "Agnostic — AI-driven multi-agent QA platform with 6 specialized agents"
 license = "MIT"
 groups = ["server", "qa", "python"]

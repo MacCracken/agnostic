@@ -40,7 +40,7 @@ Each Agnostic agent registers with:
   "agent_type": "qa",
   "description": "Coordinates multi-agent QA workflows",
   "capabilities": ["test_planning", "task_coordination", "fuzzy_verification"],
-  "version": "2026.3.9",
+  "version": "2026.3.12",
   "endpoint": "internal://agent-manager",
   "resource_limits": {
     "cpu": "2",

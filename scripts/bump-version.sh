@@ -8,6 +8,7 @@
 #
 # Updates:
 #   VERSION                              (source of truth)
+#   agnostic.agpkg.toml                  (AGNOS marketplace manifest)
 #   k8s/helm/agentic-qa/Chart.yaml       (version + appVersion)
 #   docker/README.md                     (example docker tag)
 #   docs/adr/022-agnosticos-agent-hud.md (example version)
@@ -45,7 +46,14 @@ echo ""
 printf '%s\n' "$NEW_VERSION" > "$VERSION_FILE"
 echo "  Updated VERSION"
 
-# 2. Helm Chart.yaml
+# 2. AGNOS marketplace manifest
+AGPKG="$PROJECT_ROOT/agnostic.agpkg.toml"
+if [[ -f "$AGPKG" ]]; then
+    sed -i "s/^version = \"${OLD_VERSION}\"/version = \"${NEW_VERSION}\"/" "$AGPKG"
+    echo "  Updated agnostic.agpkg.toml"
+fi
+
+# 3. Helm Chart.yaml
 CHART="$PROJECT_ROOT/k8s/helm/agentic-qa/Chart.yaml"
 if [[ -f "$CHART" ]]; then
     sed -i "s/^version: .*/version: $NEW_VERSION/" "$CHART"
@@ -53,14 +61,14 @@ if [[ -f "$CHART" ]]; then
     echo "  Updated k8s/helm/agentic-qa/Chart.yaml"
 fi
 
-# 3. Docker README example tag
+# 4. Docker README example tag
 DOCKER_README="$PROJECT_ROOT/docker/README.md"
 if [[ -f "$DOCKER_README" ]]; then
     sed -i "s/agnostic:${OLD_VERSION}/agnostic:${NEW_VERSION}/g" "$DOCKER_README"
     echo "  Updated docker/README.md"
 fi
 
-# 4. ADR-022 example version
+# 5. ADR-022 example version
 ADR022="$PROJECT_ROOT/docs/adr/022-agnosticos-agent-hud.md"
 if [[ -f "$ADR022" ]]; then
     sed -i "s/\"version\": \"${OLD_VERSION}\"/\"version\": \"${NEW_VERSION}\"/g" "$ADR022"
