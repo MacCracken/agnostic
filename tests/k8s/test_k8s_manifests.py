@@ -296,7 +296,7 @@ class TestHPA:
         "qa-analyst",
         "security-compliance",
         "performance-agent",
-        "webgui",
+        "agnostic",
     }
 
     def test_hpa_targets_exist(self):
@@ -353,7 +353,7 @@ class TestPDB:
         "qa-analyst",
         "security-compliance",
         "performance-agent",
-        "webgui",
+        "agnostic",
     }
 
     def test_all_agents_have_pdb(self):
@@ -395,7 +395,7 @@ class TestNetworkPolicies:
         "qa-agents-network-policy",
         "redis-network-policy",
         "rabbitmq-network-policy",
-        "webgui-network-policy",
+        "agnostic-network-policy",
     }
 
     def test_all_expected_policies_present(self):

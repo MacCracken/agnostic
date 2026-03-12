@@ -113,8 +113,8 @@ class TestHealthCheck:
         with patch("socket.create_connection") as mock_sock:
             mock_sock.return_value = MagicMock()
             response = client.get("/health")
-        # Degraded returns 503 for monitoring systems
-        assert response.status_code == 503
+        # Degraded returns 200 (only unhealthy returns 503)
+        assert response.status_code == 200
         data = response.json()
         assert "status" in data
         assert "redis" in data

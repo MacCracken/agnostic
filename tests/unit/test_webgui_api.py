@@ -228,8 +228,8 @@ class TestHealthCheckEndpoint:
             client = TestClient(real_app)
             resp = client.get("/health")
 
-        # No agents alive → degraded → 503
-        assert resp.status_code == 503
+        # No agents alive → degraded → 200 (degraded is not a critical failure)
+        assert resp.status_code == 200
         data = resp.json()
         assert data["redis"] == "ok"
         assert data["rabbitmq"] == "ok"
@@ -289,7 +289,7 @@ class TestHealthCheckEndpoint:
             client = TestClient(real_app)
             resp = client.get("/health")
 
-        assert resp.status_code == 503
+        assert resp.status_code == 200  # degraded is not a critical failure
         data = resp.json()
         assert data["rabbitmq"] == "error"
         assert data["status"] == "degraded"
@@ -358,7 +358,7 @@ class TestHealthCheckEndpoint:
             client = TestClient(real_app)
             resp = client.get("/health")
 
-        assert resp.status_code == 503
+        assert resp.status_code == 200  # degraded is not a critical failure
         data = resp.json()
         # stale agent, infra ok → degraded
         agent_statuses = list(data["agents"].values())

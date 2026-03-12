@@ -1160,7 +1160,7 @@ async def health_check() -> JSONResponse:
     status_details["status"] = overall
 
     # Return proper HTTP status code for monitoring systems
-    http_status = 200 if overall == "healthy" else 503
+    http_status = 503 if overall == "unhealthy" else 200
     return JSONResponse(content=status_details, status_code=http_status)
 
 
