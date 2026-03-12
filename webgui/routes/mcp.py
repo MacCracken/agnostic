@@ -638,9 +638,7 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
     if tool_name == "agnostic_subscribe_webhook":
         callback_url = arguments.get("callback_url")
         if not callback_url:
-            raise HTTPException(
-                status_code=400, detail="callback_url is required"
-            )
+            raise HTTPException(status_code=400, detail="callback_url is required")
         # Validate callback URL against SSRF
         from webgui.routes.dependencies import _validate_callback_url
 

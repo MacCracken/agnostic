@@ -102,6 +102,7 @@ class TestTelemetryInit:
 
 class TestCircuitBreakerMetrics:
     def test_llm_breaker_exports_gauge_on_state_change(self):
+        pytest.importorskip("litellm")
         from config.llm_integration import _on_llm_breaker_change
 
         # Should not raise

@@ -201,6 +201,7 @@ class TestSessionFiltering:
 
 class TestLLMStreamingTimeout:
     def test_timeout_attributes_exist(self):
+        pytest.importorskip("litellm")
         from config.llm_integration import LLMIntegrationService
 
         assert hasattr(LLMIntegrationService, "_STREAM_CHUNK_TIMEOUT")
@@ -212,6 +213,7 @@ class TestLLMStreamingTimeout:
         """_streaming_call should raise TimeoutError if stream takes too long."""
         import asyncio
 
+        pytest.importorskip("litellm")
         from config.llm_integration import LLMIntegrationService
 
         service = LLMIntegrationService.__new__(LLMIntegrationService)

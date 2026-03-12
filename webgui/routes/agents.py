@@ -41,7 +41,9 @@ class AgentMetricsResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/agents/registration-status", response_model=AgentRegistrationStatusResponse)
+@router.get(
+    "/agents/registration-status", response_model=AgentRegistrationStatusResponse
+)
 async def get_agent_registration_status(
     user: dict = Depends(get_current_user),
 ):
@@ -54,7 +56,9 @@ async def get_agent_registration_status(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/agents/register-agnostic", response_model=AgentRegistrationResultResponse)
+@router.post(
+    "/agents/register-agnostic", response_model=AgentRegistrationResultResponse
+)
 async def register_agnostic_agents(
     user: dict = Depends(get_current_user),
 ):
@@ -71,7 +75,9 @@ async def register_agnostic_agents(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/agents/deregister-agnostic", response_model=AgentRegistrationResultResponse)
+@router.post(
+    "/agents/deregister-agnostic", response_model=AgentRegistrationResultResponse
+)
 async def deregister_agnostic_agents(
     user: dict = Depends(get_current_user),
 ):

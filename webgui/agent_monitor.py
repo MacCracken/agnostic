@@ -169,9 +169,7 @@ class AgentMonitor:
         parsed = await self._mget_parsed(keys)
         return [d for d in parsed if d is not None]
 
-    async def _count_tasks_by_status(
-        self, agent_name: str
-    ) -> dict[str, int]:
+    async def _count_tasks_by_status(self, agent_name: str) -> dict[str, int]:
         """Count tasks grouped by status in a single SCAN + MGET pass."""
         tasks = await self._get_task_data_for_agent(agent_name)
         counts: dict[str, int] = {}
@@ -321,9 +319,7 @@ class AgentMonitor:
                             started_at = datetime.fromisoformat(data["started_at"])
                         completed_at = None
                         if data.get("completed_at"):
-                            completed_at = datetime.fromisoformat(
-                                data["completed_at"]
-                            )
+                            completed_at = datetime.fromisoformat(data["completed_at"])
 
                         task = TaskInfo(
                             task_id=data.get("task_id", ""),
@@ -392,13 +388,13 @@ class AgentMonitor:
             avg_duration = sum(durations) / len(durations) if durations else 0
 
             # Get performance data (single SCAN + MGET)
-            perf_data = await self._get_performance_data(
-                agent_name, start_time, now
-            )
+            perf_data = await self._get_performance_data(agent_name, start_time, now)
 
             # Error rate from same data (no extra scan)
             total_terminal = completed_tasks + failed_tasks
-            error_rate = (failed_tasks / total_terminal * 100) if total_terminal > 0 else 0.0
+            error_rate = (
+                (failed_tasks / total_terminal * 100) if total_terminal > 0 else 0.0
+            )
 
             metrics = AgentMetrics(
                 agent_name=agent_name,

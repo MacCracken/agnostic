@@ -33,7 +33,9 @@ class SessionCompareResponse(BaseModel):
 @router.get("/sessions", response_model=PaginatedResponse)
 async def get_sessions(
     user_id: str | None = Query(None),
-    status: str | None = Query(None, description="Filter by status: pending, running, completed, failed"),
+    status: str | None = Query(
+        None, description="Filter by status: pending, running, completed, failed"
+    ),
     created_after: str | None = Query(None, description="ISO 8601 date (inclusive)"),
     created_before: str | None = Query(None, description="ISO 8601 date (inclusive)"),
     sort_by: Literal["created_at", "updated_at", "status"] = Query("created_at"),

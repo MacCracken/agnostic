@@ -1137,7 +1137,6 @@ async def health_check() -> JSONResponse:
     # 7. LLM gateway health (if enabled)
     if os.getenv("AGNOS_LLM_GATEWAY_ENABLED", "").lower() in ("true", "1", "yes"):
         try:
-
             from config.llm_integration import _llm_circuit
 
             status_details["llm_gateway"] = _llm_circuit.state.value

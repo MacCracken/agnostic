@@ -123,10 +123,14 @@ async def generate_report(
     try:
         metadata = await report_generator.generate_report(report_req, user["user_id"])
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=f"Insufficient disk permissions: {e}") from e
+        raise HTTPException(
+            status_code=403, detail=f"Insufficient disk permissions: {e}"
+        ) from e
     except OSError as e:
         logger.error(f"Report generation I/O error: {e}", exc_info=True)
-        raise HTTPException(status_code=507, detail="Report generation failed: storage error") from e
+        raise HTTPException(
+            status_code=507, detail="Report generation failed: storage error"
+        ) from e
     except Exception as e:
         logger.error(f"Report generation failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Report generation failed") from e

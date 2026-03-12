@@ -247,7 +247,9 @@ async def add_test_result(
     return {"id": result.id, "test_id": result.test_id, "status": result.status}
 
 
-@router.get("/test-results/{session_id}/summary", response_model=TestResultsSummaryResponse)
+@router.get(
+    "/test-results/{session_id}/summary", response_model=TestResultsSummaryResponse
+)
 async def get_test_results_summary(
     session_id: str,
     user: dict = Depends(get_current_user),

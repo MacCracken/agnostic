@@ -308,7 +308,9 @@ async def invite_tenant_user(
     }
 
 
-@router.delete("/tenants/{tenant_id}/users/{user_id}", response_model=TenantUserDeleteResponse)
+@router.delete(
+    "/tenants/{tenant_id}/users/{user_id}", response_model=TenantUserDeleteResponse
+)
 async def remove_tenant_user(
     tenant_id: str,
     user_id: str,

@@ -454,7 +454,9 @@ async def cancel_task(task_id: str, user: dict = Depends(get_current_user)):
     )
 
 
-@router.post("/tasks/{task_id}/retry", response_model=TaskRetryResponse, status_code=201)
+@router.post(
+    "/tasks/{task_id}/retry", response_model=TaskRetryResponse, status_code=201
+)
 async def retry_task(task_id: str, user: dict = Depends(get_current_user)):
     """Retry a failed or cancelled task by creating a new task with the same parameters."""
     if not _TASK_ID_RE.match(task_id):
@@ -494,7 +496,9 @@ async def retry_task(task_id: str, user: dict = Depends(get_current_user)):
             priority=requirements.get("priority", "high"),
             agents=requirements.get("agents", []),
             standards=requirements.get("standards", []),
-            business_goals=requirements.get("business_goals", "Ensure quality and functionality"),
+            business_goals=requirements.get(
+                "business_goals", "Ensure quality and functionality"
+            ),
             constraints=requirements.get("constraints", "Standard testing environment"),
         )
     else:

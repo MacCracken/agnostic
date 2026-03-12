@@ -22,7 +22,9 @@ class StructuredResultsResponse(BaseModel):
     session_id: str | None = None
 
 
-@router.get("/results/structured/{session_id}", response_model=StructuredResultsResponse)
+@router.get(
+    "/results/structured/{session_id}", response_model=StructuredResultsResponse
+)
 async def get_structured_results(
     session_id: str,
     result_type: str | None = None,

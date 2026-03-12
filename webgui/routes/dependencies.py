@@ -40,7 +40,6 @@ class ErrorDetail(BaseModel):
     code: str | None = None
 
 
-
 # ---------------------------------------------------------------------------
 # SSRF protection — block callbacks to private/internal networks
 # ---------------------------------------------------------------------------
