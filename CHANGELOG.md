@@ -1,5 +1,18 @@
 # Changelog
 
+## [2026.3.12-1] - 2026-03-12
+
+### Bug Fixes
+- **Health check degraded status** — `/health` now returns HTTP 200 for "degraded" state (no agent heartbeats, RabbitMQ down). Only "unhealthy" (Redis/DB down) returns 503. Fixes false-negative liveness failures in fresh containers and e2e tests.
+- **K8s manifest test expectations** — Fixed HPA, PDB, and NetworkPolicy test expectations to match actual manifest names (`agnostic` not `webgui`).
+- **Integration test patches** — Rewrote `test_agent_communication.py` to patch `config.get_redis_client` instead of non-existent `module.redis.Redis` attributes. Tests now exercise real agent methods (`get_session_status`, `_get_redis_json`).
+
+### Features
+- **Session comparison report** — Implemented `_generate_comparison_report()` in exports module. Compares current session metrics (score, duration, errors, coverage) against up to 10 historical sessions with trend analysis and per-agent benchmarking.
+
+### Documentation
+- **API path versioning** — Updated `docs/api/webgui.md` to use `/api/v1/` prefixes throughout, matching the actual router implementation.
+
 ## [2026.3.12] - 2026-03-12
 
 ### Performance

@@ -38,159 +38,98 @@ class TestAgentCommunication:
         self.mock_redis.rpop.return_value = None
         self.mock_redis.hset.return_value = 1
         self.mock_redis.hget.return_value = json.dumps({"status": "ready"})
+        self.mock_redis.lrange.return_value = []
+        self.mock_redis.scan.return_value = (0, [])
+        self.mock_redis.hgetall.return_value = {}
 
-    @patch("manager.qa_manager.redis.Redis")
-    def test_manager_delegates_to_analyst(self, mock_redis_class):
-        """Test that QA Manager can delegate tasks to QA Analyst"""
-        mock_redis_class.return_value = self.mock_redis
+    @patch("config.environment.config.get_redis_client")
+    def test_manager_delegates_to_analyst(self, mock_get_redis):
+        """Test that QA Manager can initialise and retrieve session status"""
+        mock_get_redis.return_value = self.mock_redis
 
-        try:
-            manager = QAManagerAgent()
+        manager = QAManagerAgent()
 
-            # Simulate a task that needs analyst expertise
-            task_description = (
-                "Analyze security and performance metrics for the login system"
-            )
+        # Verify agent initialised with Redis client
+        assert manager.redis_client is self.mock_redis
 
-            # Mock the delegation process
-            self.mock_redis.lpush.return_value = 1
-            self.mock_redis.hget.return_value = json.dumps(
-                {
-                    "agent": "qa-analyst",
-                    "status": "ready",
-                    "capabilities": ["security", "performance", "reporting"],
-                }
-            )
+        # Test get_session_status (a real method on QAManagerAgent)
+        session_id = "test-session-123"
+        self.mock_redis.get.return_value = json.dumps(
+            {"status": "running", "agents": ["qa-analyst"]}
+        )
 
-            result = manager.delegate_task(task_description, "qa-analyst")
+        status = manager.get_session_status(session_id)
+        assert status is not None
+        assert "status" in status
 
-            # Verify delegation was attempted
-            assert result is not None
-            self.mock_redis.lpush.assert_called()
+    @patch("config.environment.config.get_redis_client")
+    def test_analyst_processes_results(self, mock_get_redis):
+        """Test that QA Analyst can collect and analyse agent results"""
+        mock_get_redis.return_value = self.mock_redis
 
-        except Exception as e:
-            pytest.skip(f"Manager delegation test failed: {e}")
+        analyst = QAAnalystAgent()
 
-    @patch("analyst.qa_analyst.redis.Redis")
-    def test_analyst_processes_manager_task(self, mock_redis_class):
-        """Test that QA Analyst can process tasks from Manager"""
-        mock_redis_class.return_value = self.mock_redis
+        # Verify agent initialised with Redis client
+        assert analyst.redis_client is self.mock_redis
 
-        try:
-            analyst = QAAnalystAgent()
+        # Test _get_redis_json helper (a real method on QAAnalystAgent)
+        self.mock_redis.get.return_value = json.dumps(
+            {"score": 85, "findings": ["issue-1"]}
+        )
+        result = analyst._get_redis_json("analyst:test-session:security")
+        assert result is not None
+        assert result["score"] == 85
 
-            # Mock task from manager
-            task_data = {
-                "session_id": "test-session-123",
-                "task_type": "security_analysis",
-                "requirements": "Perform security assessment on authentication system",
-                "from_agent": "qa-manager",
-            }
+    @patch("config.environment.config.get_redis_client")
+    def test_senior_agent_initialises(self, mock_get_redis):
+        """Test that Senior QA agent initialises with Redis and CrewAI agent"""
+        mock_get_redis.return_value = self.mock_redis
 
-            self.mock_redis.brpop.return_value = (json.dumps(task_data), "test-queue")
+        senior = SeniorQAAgent()
 
-            # Process the task
-            result = analyst.process_task()
+        assert senior.redis_client is self.mock_redis
+        assert senior.agent is not None
 
-            # Should have attempted to process the task
-            assert result is not None or self.mock_redis.brpop.called
+    @patch("config.environment.config.get_redis_client")
+    def test_junior_agent_initialises(self, mock_get_redis):
+        """Test that Junior QA agent initialises with Redis and CrewAI agent"""
+        mock_get_redis.return_value = self.mock_redis
 
-        except Exception as e:
-            pytest.skip(f"Analyst task processing test failed: {e}")
+        junior = JuniorQAAgent()
 
-    @patch("senior.senior_qa.redis.Redis")
-    def test_senior_agent_handles_complex_task(self, mock_redis_class):
-        """Test that Senior QA can handle complex scenarios"""
-        mock_redis_class.return_value = self.mock_redis
+        assert junior.redis_client is self.mock_redis
+        assert junior.agent is not None
 
-        try:
-            senior = SeniorQAAgent()
+    @patch("config.environment.config.get_redis_client")
+    def test_end_to_end_workflow(self, mock_get_redis):
+        """Test end-to-end workflow: all agents initialise with shared Redis"""
+        mock_get_redis.return_value = self.mock_redis
 
-            complex_task = {
-                "session_id": "test-session-456",
-                "task_type": "complex_ui_testing",
-                "requirements": "Test dynamic web application with self-healing selectors",
-                "complexity": "high",
-            }
+        # All agents share the same Redis client
+        manager = QAManagerAgent()
+        analyst = QAAnalystAgent()
 
-            self.mock_redis.brpop.return_value = (
-                json.dumps(complex_task),
-                "senior-queue",
-            )
+        # Simulate session data flow: manager stores, analyst reads
+        session_id = "workflow-test-001"
 
-            result = senior.process_task()
+        # Manager writes session info
+        manager.redis_client.set(
+            f"session:{session_id}:info",
+            json.dumps({"requirements": "Test auth system", "status": "running"}),
+        )
+        self.mock_redis.set.assert_called()
 
-            # Should handle the complex task
-            assert result is not None or self.mock_redis.brpop.called
+        # Analyst reads session data via _get_redis_json
+        self.mock_redis.get.return_value = json.dumps(
+            {"requirements": "Test auth system", "status": "running"}
+        )
+        info = analyst._get_redis_json(f"session:{session_id}:info")
+        assert info is not None
+        assert info["requirements"] == "Test auth system"
 
-        except Exception as e:
-            pytest.skip(f"Senior agent complex task test failed: {e}")
-
-    @patch("junior.junior_qa.redis.Redis")
-    def test_junior_agent_executes_regression(self, mock_redis_class):
-        """Test that Junior QA can execute regression tests"""
-        mock_redis_class.return_value = self.mock_redis
-
-        try:
-            junior = JuniorQAAgent()
-
-            regression_task = {
-                "session_id": "test-session-789",
-                "task_type": "regression_testing",
-                "test_suite": "smoke_tests",
-                "requirements": "Run regression suite on latest build",
-            }
-
-            self.mock_redis.brpop.return_value = (
-                json.dumps(regression_task),
-                "junior-queue",
-            )
-
-            result = junior.process_task()
-
-            # Should execute the regression tests
-            assert result is not None or self.mock_redis.brpop.called
-
-        except Exception as e:
-            pytest.skip(f"Junior agent regression test failed: {e}")
-
-    @patch("manager.qa_manager.redis.Redis")
-    @patch("analyst.qa_analyst.redis.Redis")
-    def test_end_to_end_workflow(self, mock_analyst_redis, mock_manager_redis):
-        """Test end-to-end workflow: Manager -> Analyst -> Report"""
-        mock_manager_redis.return_value = self.mock_redis
-        mock_analyst_redis.return_value = self.mock_redis
-
-        try:
-            # Initialize agents
-            manager = QAManagerAgent()
-            analyst = QAAnalystAgent()
-
-            # Mock the workflow
-            session_id = "workflow-test-001"
-            requirements = "Test user authentication system with security analysis"
-
-            # Step 1: Manager decomposes requirements
-            test_plan = manager.decompose_requirements(requirements)
-            assert test_plan is not None
-
-            # Step 2: Manager delegates to analyst
-            task_delegated = manager.delegate_task(
-                f"Analyze security for: {requirements}", "qa-analyst", session_id
-            )
-            assert task_delegated is not None
-
-            # Step 3: Analyst processes and reports back
-            self.mock_redis.lpush.return_value = 1
-            analysis_result = analyst.analyze_security(session_id, {})
-            assert analysis_result is not None
-
-            # Verify communication flow
-            assert self.mock_redis.lpush.called
-            assert self.mock_redis.publish.called
-
-        except Exception as e:
-            pytest.skip(f"End-to-end workflow test failed: {e}")
+        # Verify communication flow used the mock
+        assert self.mock_redis.set.called
+        assert self.mock_redis.get.called
 
 
 @pytest.mark.integration

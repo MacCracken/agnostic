@@ -517,7 +517,7 @@ class ReportGenerator:
     async def _generate_comparison_report(
         self, session_data: dict[str, Any], request: ReportRequest
     ) -> dict[str, Any]:
-        """Generate session comparison report"""
+        """Generate session comparison report against historical sessions."""
         content = {
             "title": "Session Comparison Report",
             "session_id": session_data["session_id"],
@@ -527,8 +527,146 @@ class ReportGenerator:
             "benchmarking": {},
         }
 
-        # For now, return basic structure
-        # TODO: Implement comparison with historical sessions
+        try:
+            # Collect historical session IDs from Redis
+            historical_ids: list[str] = []
+            cursor = 0
+            while True:
+                cursor, keys = self.redis_client.scan(
+                    cursor, match="session:*:info", count=100
+                )
+                for key in keys:
+                    key_str = key.decode() if isinstance(key, bytes) else key
+                    sid = key_str.split(":")[1]
+                    if sid != session_data["session_id"]:
+                        historical_ids.append(sid)
+                if cursor == 0:
+                    break
+
+            # Limit to most recent 10 sessions
+            historical_ids = historical_ids[:10]
+
+            if not historical_ids:
+                content["comparison_data"]["note"] = "No historical sessions available"
+                return content
+
+            # Collect metrics from historical sessions
+            historical_metrics: list[dict[str, Any]] = []
+            for sid in historical_ids:
+                hist_data = await self._collect_session_data(sid)
+                hist_metrics = self._calculate_session_metrics(hist_data)
+                hist_metrics["session_id"] = sid
+                historical_metrics.append(hist_metrics)
+
+            current_metrics = session_data.get("metrics", {})
+
+            # Build comparison data
+            content["comparison_data"] = {
+                "current_session": {
+                    "session_id": session_data["session_id"],
+                    "overall_score": current_metrics.get("overall_score"),
+                    "duration_minutes": current_metrics.get("duration_minutes", 0),
+                    "total_agents": current_metrics.get("total_agents", 0),
+                    "error_count": current_metrics.get("error_count", 0),
+                    "test_coverage": current_metrics.get("test_coverage", 0),
+                    "agent_scores": current_metrics.get("agent_scores", {}),
+                },
+                "historical_sessions": len(historical_metrics),
+            }
+
+            # Calculate aggregate stats from history
+            hist_scores = [
+                m["overall_score"]
+                for m in historical_metrics
+                if m.get("overall_score") is not None
+            ]
+            hist_durations = [
+                m["duration_minutes"]
+                for m in historical_metrics
+                if m.get("duration_minutes", 0) > 0
+            ]
+            hist_errors = [m.get("error_count", 0) for m in historical_metrics]
+            hist_coverage = [
+                m["test_coverage"]
+                for m in historical_metrics
+                if m.get("test_coverage", 0) > 0
+            ]
+
+            # Trends: compare current vs historical averages
+            def _avg(vals: list) -> float | None:
+                return round(sum(vals) / len(vals), 2) if vals else None
+
+            avg_score = _avg(hist_scores)
+            avg_duration = _avg(hist_durations)
+            avg_errors = _avg(hist_errors)
+            avg_coverage = _avg(hist_coverage)
+
+            def _direction(current: float | None, avg: float | None) -> str:
+                if current is None or avg is None:
+                    return "insufficient_data"
+                diff = current - avg
+                if abs(diff) < 0.01 * max(abs(avg), 1):
+                    return "stable"
+                return "improving" if diff > 0 else "declining"
+
+            content["trends"] = {
+                "score": {
+                    "current": current_metrics.get("overall_score"),
+                    "historical_avg": avg_score,
+                    "direction": _direction(
+                        current_metrics.get("overall_score"), avg_score
+                    ),
+                },
+                "duration": {
+                    "current": current_metrics.get("duration_minutes", 0),
+                    "historical_avg": avg_duration,
+                    "direction": _direction(
+                        current_metrics.get("duration_minutes"), avg_duration
+                    ),
+                },
+                "errors": {
+                    "current": current_metrics.get("error_count", 0),
+                    "historical_avg": avg_errors,
+                    "direction": _direction(
+                        current_metrics.get("error_count"), avg_errors
+                    ),
+                },
+                "coverage": {
+                    "current": current_metrics.get("test_coverage", 0),
+                    "historical_avg": avg_coverage,
+                    "direction": _direction(
+                        current_metrics.get("test_coverage"), avg_coverage
+                    ),
+                },
+            }
+
+            # Benchmarking: per-agent score comparison
+            all_agent_scores: dict[str, list[float]] = {}
+            for hm in historical_metrics:
+                for agent, score in hm.get("agent_scores", {}).items():
+                    all_agent_scores.setdefault(agent, []).append(score)
+
+            agent_benchmarks = {}
+            for agent, scores in all_agent_scores.items():
+                current_agent_score = current_metrics.get("agent_scores", {}).get(agent)
+                agent_avg = _avg(scores)
+                agent_benchmarks[agent] = {
+                    "current": current_agent_score,
+                    "historical_avg": agent_avg,
+                    "historical_min": min(scores) if scores else None,
+                    "historical_max": max(scores) if scores else None,
+                    "direction": _direction(current_agent_score, agent_avg),
+                }
+
+            content["benchmarking"] = {
+                "agent_performance": agent_benchmarks,
+                "sample_size": len(historical_metrics),
+            }
+
+        except Exception as e:
+            logger.error(f"Error generating comparison report: {e}")
+            content["error"] = str(e)
+
         return content
 
     async def _generate_agent_performance_report(

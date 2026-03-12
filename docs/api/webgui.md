@@ -2,7 +2,7 @@
 
 ## Overview
 
-The WebGUI exposes a Chainlit-based chat interface **and** a full REST API for machine-to-machine access. All REST routes are mounted under `/api`.
+The WebGUI exposes a Chainlit-based chat interface **and** a full REST API for machine-to-machine access. All REST routes are mounted under `/api/v1`.
 
 - **Base URL (local):** `http://localhost:8000`
 - **Framework:** Chainlit 2.x + FastAPI
@@ -17,7 +17,7 @@ The WebGUI exposes a Chainlit-based chat interface **and** a full REST API for m
 ### JWT (browser / interactive)
 
 ```http
-POST /api/auth/login
+POST /api/v1/auth/login
 Content-Type: application/json
 
 {"email": "user@example.com", "password": "secret"}
@@ -51,7 +51,7 @@ Two modes:
 | Mode | Configuration |
 |------|---------------|
 | Static (single key) | Set `AGNOSTIC_API_KEY` env var |
-| Per-client Redis-backed | Create via `POST /api/auth/api-keys` |
+| Per-client Redis-backed | Create via `POST /api/v1/auth/api-keys` |
 
 ---
 
@@ -61,15 +61,15 @@ Two modes:
 
 | Method | Path | Description | Auth required |
 |--------|------|-------------|---------------|
-| `POST` | `/api/auth/login` | Authenticate; get JWT tokens | No |
-| `POST` | `/api/auth/refresh` | Refresh access token | No |
-| `POST` | `/api/auth/logout` | Invalidate tokens | Yes |
-| `GET`  | `/api/auth/me` | Current user info | Yes |
-| `POST` | `/api/auth/api-keys` | Create API key | Yes + `system:configure` |
-| `GET`  | `/api/auth/api-keys` | List API key IDs | Yes + `system:configure` |
-| `DELETE` | `/api/auth/api-keys/{key_id}` | Revoke API key | Yes + `system:configure` |
+| `POST` | `/api/v1/auth/login` | Authenticate; get JWT tokens | No |
+| `POST` | `/api/v1/auth/refresh` | Refresh access token | No |
+| `POST` | `/api/v1/auth/logout` | Invalidate tokens | Yes |
+| `GET`  | `/api/v1/auth/me` | Current user info | Yes |
+| `POST` | `/api/v1/auth/api-keys` | Create API key | Yes + `system:configure` |
+| `GET`  | `/api/v1/auth/api-keys` | List API key IDs | Yes + `system:configure` |
+| `DELETE` | `/api/v1/auth/api-keys/{key_id}` | Revoke API key | Yes + `system:configure` |
 
-#### `POST /api/auth/api-keys`
+#### `POST /api/v1/auth/api-keys`
 
 Request:
 ```json
@@ -94,14 +94,14 @@ Response (raw key shown **once**):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/tasks` | Submit a QA task |
-| `GET`  | `/api/tasks/{task_id}` | Poll task status |
-| `POST` | `/api/tasks/security` | Security-focused task |
-| `POST` | `/api/tasks/performance` | Performance-focused task |
-| `POST` | `/api/tasks/regression` | Regression task (junior + analyst) |
-| `POST` | `/api/tasks/full` | Full 6-agent task |
+| `POST` | `/api/v1/tasks` | Submit a QA task |
+| `GET`  | `/api/v1/tasks/{task_id}` | Poll task status |
+| `POST` | `/api/v1/tasks/security` | Security-focused task |
+| `POST` | `/api/v1/tasks/performance` | Performance-focused task |
+| `POST` | `/api/v1/tasks/regression` | Regression task (junior + analyst) |
+| `POST` | `/api/v1/tasks/full` | Full 6-agent task |
 
-#### `POST /api/tasks`
+#### `POST /api/v1/tasks`
 
 Request:
 ```json
@@ -144,7 +144,7 @@ Response (immediate, status = `pending`):
 }
 ```
 
-#### `GET /api/tasks/{task_id}`
+#### `GET /api/v1/tasks/{task_id}`
 
 Response:
 ```json
@@ -169,10 +169,10 @@ All accept the same `TaskSubmitRequest` body. The `agents` field is **overridden
 
 | Endpoint | `agents` override |
 |----------|-------------------|
-| `/api/tasks/security` | `["security-compliance"]` |
-| `/api/tasks/performance` | `["performance"]` |
-| `/api/tasks/regression` | `["junior-qa", "qa-analyst"]` |
-| `/api/tasks/full` | `[]` (all 6 agents) |
+| `/api/v1/tasks/security` | `["security-compliance"]` |
+| `/api/v1/tasks/performance` | `["performance"]` |
+| `/api/v1/tasks/regression` | `["junior-qa", "qa-analyst"]` |
+| `/api/v1/tasks/full` | `[]` (all 6 agents) |
 
 #### Webhook Callback
 
@@ -200,10 +200,10 @@ assert request.headers["X-Signature"] == f"sha256={expected}"
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/dashboard` | Aggregate dashboard data |
-| `GET` | `/api/dashboard/sessions` | Active sessions |
-| `GET` | `/api/dashboard/agents` | Agent status |
-| `GET` | `/api/dashboard/metrics` | Resource metrics |
+| `GET` | `/api/v1/dashboard` | Aggregate dashboard data |
+| `GET` | `/api/v1/dashboard/sessions` | Active sessions |
+| `GET` | `/api/v1/dashboard/agents` | Agent status |
+| `GET` | `/api/v1/dashboard/metrics` | Resource metrics |
 
 ---
 
@@ -211,10 +211,10 @@ assert request.headers["X-Signature"] == f"sha256={expected}"
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/sessions` | Session history (pagination: `limit`, `offset`, `user_id`) |
-| `GET` | `/api/sessions/search?q=<query>` | Search sessions |
-| `GET` | `/api/sessions/{session_id}` | Session details |
-| `POST` | `/api/sessions/compare` | Compare two sessions |
+| `GET` | `/api/v1/sessions` | Session history (pagination: `limit`, `offset`, `user_id`) |
+| `GET` | `/api/v1/sessions/search?q=<query>` | Search sessions |
+| `GET` | `/api/v1/sessions/{session_id}` | Session details |
+| `POST` | `/api/v1/sessions/compare` | Compare two sessions |
 
 ---
 
@@ -222,9 +222,9 @@ assert request.headers["X-Signature"] == f"sha256={expected}"
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/reports` | List user's reports |
-| `POST` | `/api/reports/generate` | Generate a report |
-| `GET` | `/api/reports/{report_id}/download` | Download report file |
+| `GET` | `/api/v1/reports` | List user's reports |
+| `POST` | `/api/v1/reports/generate` | Generate a report |
+| `GET` | `/api/v1/reports/{report_id}/download` | Download report file |
 
 ---
 
@@ -232,9 +232,9 @@ assert request.headers["X-Signature"] == f"sha256={expected}"
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/api/agents` | Yes | All agent statuses |
-| `GET` | `/api/agents/queues` | Yes | Queue depths |
-| `GET` | `/api/agents/{agent_name}` | Yes | Agent metrics |
+| `GET` | `/api/v1/agents` | Yes | All agent statuses |
+| `GET` | `/api/v1/agents/queues` | Yes | Queue depths |
+| `GET` | `/api/v1/agents/{agent_name}` | Yes | Agent metrics |
 
 ---
 
@@ -285,7 +285,7 @@ Accepts any A2A envelope. Routing is performed on the `type` field:
 
 | `type` | Behaviour |
 |--------|-----------|
-| `a2a:delegate` | Extracts task fields from `payload`, submits via `POST /api/tasks`, returns `task_id` |
+| `a2a:delegate` | Extracts task fields from `payload`, submits via `POST /api/v1/tasks`, returns `task_id` |
 | `a2a:heartbeat` | Echoes `message_id` + `timestamp` |
 | *(anything else)* | Returns `accepted: true` with a `warning` field (forward-compatible) |
 
@@ -316,7 +316,7 @@ Accepts any A2A envelope. Routing is performed on the `type` field:
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/api/metrics` | None | Prometheus metrics (scrape endpoint) |
+| `GET` | `/api/v1/metrics` | None | Prometheus metrics (scrape endpoint) |
 | `GET` | `/health` | None | Infrastructure + agent liveness |
 
 #### `GET /health`
@@ -342,7 +342,7 @@ Accepts any A2A envelope. Routing is performed on the `type` field:
 |----------|---------|
 | `healthy` | Redis ok + RabbitMQ ok + ≥1 agent alive |
 | `degraded` | Infrastructure ok but all agents stale/offline |
-| `unhealthy` | Redis or RabbitMQ unreachable |
+| `unhealthy` | Redis or database unreachable |
 
 Agent heartbeat staleness threshold: `AGENT_STALE_THRESHOLD_SECONDS` (default: `300`).
 
