@@ -75,25 +75,27 @@ After all generalization phases are complete, the following work is needed in **
 
 ### Agnosticos (AGNOS OS)
 
-| Item | Effort | Notes |
-|------|--------|-------|
-| Update daimon agent registry schema | Small | Accept `domain` field on agent registration; update Agent HUD to display domain/crew info |
-| Capability negotiation for dynamic crews | Medium | Current capability negotiation assumes static QA capabilities. Update to handle dynamic capability names (`data-engineering_crew`, `devops_crew`, etc.) from `get_all_capabilities()` |
-| Agent HUD multi-domain UI | Medium | Group agents by domain in the HUD (currently assumes all are QA type). Add domain filter/tabs |
-| Token budget per-domain tracking | Small | `x-agent-id` headers already per-agent; add `x-domain` header for domain-level budget rollups in hoosh |
-| Update `agnostic_*` tool manifest in daimon MCP | Small | daimon's MCP auto-discovery will pick up new tools, but manual tests needed for the 5 new crew tools |
-| RPC method registration for crew agents | Medium | Current RPC registration covers 6 QA agents. Dynamic agents from presets need RPC methods registered on-the-fly |
+| Item | Effort | Status | Notes |
+|------|--------|--------|-------|
+| Daimon agent registry: `domain` field | Small | Done | `RegisterAgentRequest` + `AgentDetail` now accept `domain`; registry indexes by domain with `find_by_domain()` / `list_domains()` |
+| AgnosticBridge crew tools | Small | Done | 5 new bridge handlers: `handle_agnostic_run_crew`, `_crew_status`, `_list_presets`, `_list_definitions`, `_create_agent` |
+| MCP manifest: 5 new tools | Small | Done | `agnostic_run_crew`, `agnostic_crew_status`, `agnostic_list_presets`, `agnostic_list_definitions`, `agnostic_create_agent` (100 total) |
+| Dispatch wiring | Small | Done | All 5 new tools wired in `dispatch_tool_call()` |
+| Hoosh `X-Agent-Domain` header | Small | Done | LLM gateway extracts/echoes `X-Agent-Domain` + logs it; echoed on response |
+| Agent HUD multi-domain UI | Medium | Pending | Group agents by domain in the HUD. Add domain filter/tabs |
+| RPC method registration for crew agents | Medium | Pending | Dynamic agents from presets need RPC methods registered on-the-fly |
 
 ### SecureYeoman
 
-| Item | Effort | Notes |
-|------|--------|-------|
-| Update `agnostic-tools.ts` MCP bridge | Medium | Add 5 new tools: `agnostic_run_crew`, `agnostic_crew_status`, `agnostic_list_presets`, `agnostic_list_definitions`, `agnostic_create_agent` |
-| A2A crew delegation support | Small | SY's A2A delegate already works — just needs UI/CLI for specifying `preset` or `agent_definitions` in the payload |
-| A2A `create_agent` support | Small | Add SY command/action to create agent definitions on Agnostic via `a2a:create_agent` message type |
-| Preset selector UI | Medium | Connections > Agnostic panel should show available presets (from `/api/v1/presets`) and allow selecting which crew to run |
-| Multi-domain dashboard widget | Small | Update the embeddable Agnostic dashboard widget to show domain tabs/filters |
-| Update MCP auto-discovery | Small | SY auto-discovers MCP tools — the 5 new tools will appear automatically, but integration tests needed |
+| Item | Effort | Status | Notes |
+|------|--------|--------|-------|
+| MCP bridge: 5 new crew tools | Medium | Done | `agnostic_run_crew`, `agnostic_crew_status`, `agnostic_list_presets`, `agnostic_list_definitions`, `agnostic_create_agent` in `agnostic-tools.ts` |
+| A2A delegate: crew support | Small | Done | `agnostic_delegate_a2a` now accepts `preset` and `agent_definitions` fields |
+| A2A `create_agent` tool | Small | Done | New `agnostic_create_agent` MCP tool sends `a2a:create_agent` message |
+| Dashboard widget: multi-domain | Small | Done | `AgnosticMetricsWidget.tsx` shows preset domain tags, task domain labels |
+| Branding update | Small | Done | "AGNOSTIC QA" → "Agnostic" in widget, file header updated to AAS |
+| Preset selector UI | Medium | Pending | Connections > Agnostic panel should show presets and allow crew selection |
+| MCP auto-discovery integration test | Small | Pending | Verify the 5 new tools auto-appear in SY's MCP discovery |
 
 ### Shared / Cross-project
 
