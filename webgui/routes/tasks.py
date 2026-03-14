@@ -620,6 +620,39 @@ async def receive_a2a_message(
             raise HTTPException(
                 status_code=400, detail="Description is required for delegate tasks"
             )
+
+        # Check if the delegate specifies a preset or crew — route to crews API
+        if payload.get("preset") or payload.get("agent_definitions"):
+            from webgui.routes.crews import CrewRunRequest, run_crew
+
+            crew_req = CrewRunRequest(
+                preset=payload.get("preset"),
+                agent_keys=payload.get("agent_keys", []),
+                agent_definitions=payload.get("agent_definitions", []),
+                title=payload.get("title", "A2A Crew Task"),
+                description=payload.get("description", ""),
+                target_url=payload.get("target_url"),
+                priority=payload.get("priority", "high"),
+            )
+            crew_result = await run_crew(crew_req, user)
+            audit_log(
+                AuditAction.A2A_DELEGATE_RECEIVED,
+                actor=msg.fromPeerId,
+                resource_type="a2a",
+                detail={
+                    "message_id": msg.id,
+                    "crew_id": crew_result.crew_id,
+                    "task_id": crew_result.task_id,
+                },
+            )
+            return {
+                "accepted": True,
+                "crew_id": crew_result.crew_id,
+                "task_id": crew_result.task_id,
+                "message_id": msg.id,
+            }
+
+        # Default: QA task (backwards compatible)
         task_req = TaskSubmitRequest(
             title=payload.get("title", "A2A QA Task"),
             description=payload.get("description", ""),
@@ -636,6 +669,42 @@ async def receive_a2a_message(
             detail={"message_id": msg.id, "task_id": result.task_id},
         )
         return {"accepted": True, "task_id": result.task_id, "message_id": msg.id}
+
+    if msg.type == "a2a:create_agent":
+        # SY requesting dynamic agent creation
+        payload = msg.payload
+        required = {"agent_key", "name", "role", "goal", "backstory"}
+        missing = required - set(payload.keys())
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required fields for agent creation: {missing}",
+            )
+
+        from webgui.routes.definitions import (
+            AgentDefinitionRequest,
+            create_definition,
+        )
+
+        defn_req = AgentDefinitionRequest(**{
+            k: v for k, v in payload.items()
+            if k in AgentDefinitionRequest.model_fields
+        })
+        # Use the authenticated user context
+        await create_definition(defn_req, user)
+
+        audit_log(
+            AuditAction.A2A_DELEGATE_RECEIVED,
+            actor=msg.fromPeerId,
+            resource_type="a2a",
+            detail={"message_id": msg.id, "agent_key": payload["agent_key"], "type": "create_agent"},
+        )
+        return {
+            "accepted": True,
+            "message_id": msg.id,
+            "type": "agent_created",
+            "agent_key": payload["agent_key"],
+        }
 
     if msg.type == "a2a:heartbeat":
         return {"accepted": True, "message_id": msg.id, "timestamp": msg.timestamp}
@@ -709,24 +778,34 @@ async def a2a_capabilities():
     except ImportError:
         pass
 
-    return {
-        "capabilities": [
+    # Build dynamic capabilities from loaded presets
+    capabilities: list[dict[str, Any]] = []
+    try:
+        from agents.factory import AgentFactory
+
+        for preset in AgentFactory.list_presets():
+            capabilities.append({
+                "name": preset["name"],
+                "description": preset.get("description", ""),
+                "domain": preset.get("domain", "general"),
+                "agent_count": preset.get("agent_count", 0),
+                "version": "1.0",
+            })
+    except Exception:
+        pass
+
+    # Fallback: always advertise core QA if no presets loaded
+    if not capabilities:
+        capabilities = [
             {
                 "name": "qa",
                 "description": "6-agent QA pipeline (security, performance, regression, compliance)",
                 "version": "1.0",
             },
-            {
-                "name": "security-audit",
-                "description": "OWASP, GDPR, PCI DSS, SOC 2 compliance scanning",
-                "version": "1.0",
-            },
-            {
-                "name": "performance-test",
-                "description": "Load testing and P95/P99 latency profiling",
-                "version": "1.0",
-            },
-        ],
+        ]
+
+    return {
+        "capabilities": capabilities,
         "mcp": {
             "enabled": mcp_tool_count > 0,
             "tool_count": mcp_tool_count,

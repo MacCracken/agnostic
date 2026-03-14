@@ -18,7 +18,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from webgui.routes import (
     agents,
     auth,
+    crews,
     dashboard,
+    definitions,
     integration,
     mcp,
     persistence,
@@ -42,6 +44,8 @@ api_router.include_router(dashboard.router)
 api_router.include_router(sessions.router)
 api_router.include_router(reports.router)
 api_router.include_router(agents.router)
+api_router.include_router(definitions.router)
+api_router.include_router(crews.router)
 api_router.include_router(integration.router)
 api_router.include_router(persistence.router)
 api_router.include_router(tenants.router)

@@ -1,6 +1,6 @@
 # Agent Documentation
 
-Agnostic Agentics is a general-purpose agent platform. Agents are defined via JSON/YAML definitions, assembled into crews via `AgentFactory`, and executed on shared infrastructure (Redis, Celery, CrewAI, LLM).
+AAS (Agnostic Agentics Systems) is a general-purpose agent platform. Agents are defined via JSON/YAML definitions, assembled into crews via `AgentFactory`, and executed on shared infrastructure (Redis, Celery, CrewAI, LLM).
 
 ## Agent Framework
 
@@ -242,4 +242,4 @@ docker compose up -d
 ---
 
 *Last Updated: 2026-03-14*
-*Architecture: General-purpose agent platform with QA, Data Engineering, and DevOps presets*
+*Architecture: AAS — General-purpose agent platform with QA, Data Engineering, and DevOps presets*

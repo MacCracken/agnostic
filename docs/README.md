@@ -1,6 +1,6 @@
 # Documentation Index
 
-Welcome to the **Agnostic Agentics** documentation — a general-purpose agent platform powered by CrewAI.
+Welcome to the **AAS (Agnostic Agentics Systems)** documentation — a general-purpose agent platform powered by CrewAI.
 
 ## Getting Started
 - [Quick Start Guide](getting-started/quick-start.md) — Get running in 5 minutes

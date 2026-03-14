@@ -32,15 +32,18 @@ Expand Agnostic from QA-only to a platform that can create and run **any kind of
 | Example presets | Done | `data-engineering`, `devops` presets as templates |
 | Unit tests | Done | `tests/unit/test_base_agent.py` |
 
-### Phase 2: Generic Workflow Engine & API
+### Phase 2: Generic Workflow Engine & API (complete)
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Agent CRUD API endpoints | Pending | POST/GET/PUT/DELETE `/api/v1/agents/definitions` |
-| Crew builder endpoint | Pending | POST `/api/v1/crews` — assemble + run a crew from agent keys |
-| Generic workflow orchestrator | Pending | Replace hardcoded `orchestrate_qa_session` with definition-driven flow |
-| SY agent creation via A2A | Pending | A2A message type `a2a:create_agent` for dynamic agent provisioning |
-| Preset management API | Pending | List/load/create presets via REST |
+| Agent CRUD API endpoints | Done | `webgui/routes/definitions.py` — POST/GET/PUT/DELETE `/api/v1/definitions` |
+| Crew builder endpoint | Done | `webgui/routes/crews.py` — POST `/api/v1/crews` + GET `/api/v1/crews/{id}` |
+| Generic workflow orchestrator | Done | `_run_crew_async()` — builds agents from preset/keys/inline defs, runs sequentially |
+| SY agent creation via A2A | Done | `a2a:create_agent` message type creates definitions on disk |
+| Preset management API | Done | GET/POST/DELETE `/api/v1/presets` — list, create, delete crew presets |
+| A2A crew delegation | Done | `a2a:delegate` with `preset`/`agent_definitions` routes to crew builder |
+| Dynamic A2A capabilities | Done | `/a2a/capabilities` returns loaded presets dynamically |
+| Unit tests | Done | `test_definitions_api.py` (27 tests) + `test_crews_api.py` (12 tests) |
 
 ### Phase 3: Database & Integration Updates
 
@@ -48,7 +51,7 @@ Expand Agnostic from QA-only to a platform that can create and run **any kind of
 |------|--------|-------|
 | DB model renames | Pending | TestSession→AgentSession, TestResult→TaskResult, etc. + migration |
 | Dynamic MCP registration | Pending | MCP tools derived from loaded agent definitions, not hardcoded |
-| Dynamic A2A capabilities | Pending | `/a2a/capabilities` returns actual loaded agent types |
+| Dynamic A2A capabilities | Done | Moved to Phase 2 — `/a2a/capabilities` now returns loaded presets |
 | AGNOS capability registration | Pending | Register capabilities from definitions, not static dict |
 | Multi-domain dashboard | Pending | Dashboard supports QA + non-QA agent metrics |
 
@@ -89,4 +92,4 @@ Expand Agnostic from QA-only to a platform that can create and run **any kind of
 
 ---
 
-*Last Updated: 2026-03-14 · Version: 2026.3.14 · Test count: 865 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-14 · Version: 2026.3.14 · Test count: 904 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

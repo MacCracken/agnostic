@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.13-blue)
 ![Docker](https://img.shields.io/badge/docker-ready-blue)
 
-# Agnostic Agentics
+# AAS — Agnostic Agentics Systems
 
 A containerized, **general-purpose agent platform** powered by CrewAI. Define, assemble, and run any kind of AI agent crew — QA, data engineering, DevOps, or your own custom domain — via JSON/YAML definitions, API requests, or SecureYeoman orchestration.
 
