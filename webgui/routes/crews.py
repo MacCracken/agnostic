@@ -14,6 +14,8 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from agents.constants import DEFINITIONS_DIR, PRESETS_DIR, SAFE_KEY_RE
+
 from shared.audit import AuditAction, audit_log
 from webgui.routes.dependencies import get_current_user
 
@@ -136,31 +138,19 @@ async def _run_crew_async(
         agents = []
 
         def _build_agents() -> list:
-            import re
-
-            from agents.base import AgentDefinition, BaseAgent
             from agents.factory import AgentFactory
-
-            _key_re = re.compile(r"^[a-z0-9][a-z0-9\-]*$")
-            _required_inline = {"agent_key", "name", "role", "goal", "backstory"}
 
             built = []
             if source == "preset":
                 built = AgentFactory.from_preset(crew_config["preset"])
             elif source == "keys":
                 for key in crew_config["agent_keys"]:
-                    if not _key_re.match(key):
+                    if not SAFE_KEY_RE.match(key):
                         raise ValueError(f"Invalid agent key: {key!r}")
-                    from pathlib import Path
-
-                    defn_path = Path(__file__).parent.parent.parent / "agents" / "definitions" / f"{key}.json"
-                    agent = AgentFactory.from_file(defn_path)
+                    agent = AgentFactory.from_file(DEFINITIONS_DIR / f"{key}.json")
                     built.append(agent)
             elif source == "inline":
                 for defn_dict in crew_config["agent_definitions"]:
-                    missing = _required_inline - set(defn_dict.keys())
-                    if missing:
-                        raise ValueError(f"Inline definition missing fields: {missing}")
                     agent = AgentFactory.from_dict(defn_dict)
                     built.append(agent)
             return built
@@ -284,9 +274,7 @@ async def run_crew(
     if req.preset:
         source = "preset"
         # Read preset to get agent keys for the response
-        from pathlib import Path
-
-        preset_path = Path(__file__).parent.parent.parent / "agents" / "definitions" / "presets" / f"{req.preset}.json"
+        preset_path = PRESETS_DIR / f"{req.preset}.json"
         if not preset_path.exists():
             raise HTTPException(status_code=404, detail=f"Preset '{req.preset}' not found")
         with open(preset_path) as f:

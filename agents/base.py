@@ -18,7 +18,6 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from crewai import LLM, Agent, Crew, Process, Task

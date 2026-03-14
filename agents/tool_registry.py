@@ -38,7 +38,7 @@ def get_tool(name: str) -> type[BaseTool] | None:
     return _REGISTRY.get(name)
 
 
-# Module-level alias for BaseAgent._resolve_tools
+# Dict alias — BaseAgent._resolve_tools does tool_registry.get(name) on this
 tool_registry = _REGISTRY
 
 

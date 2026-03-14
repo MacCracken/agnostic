@@ -19,10 +19,6 @@ from agents.constants import DEFINITIONS_DIR, VERSIONS_DIR, validate_agent_key
 
 logger = logging.getLogger(__name__)
 
-_PROJECT_ROOT = Path(__file__).parent.parent
-DEFINITIONS_DIR = _PROJECT_ROOT / "agents" / "definitions"
-VERSIONS_DIR = DEFINITIONS_DIR / "versions"
-
 
 def _version_dir(agent_key: str) -> Path:
     return VERSIONS_DIR / agent_key

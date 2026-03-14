@@ -15,7 +15,6 @@ from __future__ import annotations
 import io
 import json
 import logging
-import os
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path

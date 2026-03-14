@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from agents.constants import DEFINITIONS_DIR, PRESETS_DIR, SAFE_KEY_RE
+from agents.constants import DEFINITIONS_DIR, PRESETS_DIR, validate_agent_key
 from webgui.routes.dependencies import PaginatedResponse, get_current_user
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 
 def _validate_path_key(key: str, label: str = "key") -> None:
     """Validate a path parameter used in file operations. Prevents path traversal."""
-    if not SAFE_KEY_RE.match(key):
+    try:
+        validate_agent_key(key, label)
+    except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid {label}: must match [a-z0-9][a-z0-9-]*")
 
 router = APIRouter()
