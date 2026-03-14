@@ -1,9 +1,13 @@
 # Documentation Index
 
-Welcome to the Agentic QA Team System documentation.
+Welcome to the **Agnostic Agentics** documentation — a general-purpose agent platform powered by CrewAI.
 
 ## Getting Started
 - [Quick Start Guide](getting-started/quick-start.md) — Get running in 5 minutes
+
+## Agent Framework
+- [Agent Documentation](agents/index.md) — BaseAgent, AgentFactory, presets, custom agents
+- [ADR Index](adr/README.md) — 28 architecture decision records
 
 ## Deployment
 - [Docker Compose](deployment/docker-compose.md) — Production, TLS, HA, and dev modes
@@ -15,10 +19,6 @@ Welcome to the Agentic QA Team System documentation.
 - [Contributing](development/contributing.md) — How to contribute
 - [Manual Testing](development/manual-testing.md) — Smoke, integration & E2E test sweep
 - [Dependency Watch](development/dependency-watch.md) — Upstream blockers
-
-## Architecture
-- [Agent Documentation](agents/index.md) — 6-agent architecture details
-- [ADR Index](adr/README.md) — 28 architecture decision records
 
 ## API Reference
 - [WebGUI REST API](api/webgui.md) — Endpoints, auth, task submission
@@ -41,4 +41,4 @@ Welcome to the Agentic QA Team System documentation.
 
 ---
 
-*Version 2026.3.9* | [Changelog](project/changelog.md) | [Roadmap](development/roadmap.md)
+*Version 2026.3.14* | [Changelog](project/changelog.md) | [Roadmap](development/roadmap.md)
