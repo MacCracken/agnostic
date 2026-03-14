@@ -330,7 +330,7 @@ class TestAgentFactory:
 
         preset_dir = tmp_path / "presets"
         preset_dir.mkdir()
-        monkeypatch.setattr(factory_mod, "_PRESETS_DIR", preset_dir)
+        monkeypatch.setattr(factory_mod, "PRESETS_DIR", preset_dir)
 
         preset_data = {
             "name": "test-preset",
@@ -364,7 +364,7 @@ class TestAgentFactory:
         from agents import factory as factory_mod
         from agents.factory import AgentFactory
 
-        monkeypatch.setattr(factory_mod, "_PRESETS_DIR", tmp_path)
+        monkeypatch.setattr(factory_mod, "PRESETS_DIR", tmp_path)
         with pytest.raises(FileNotFoundError):
             AgentFactory.from_preset("nonexistent")
 
@@ -374,7 +374,7 @@ class TestAgentFactory:
 
         preset_dir = tmp_path / "presets"
         preset_dir.mkdir()
-        monkeypatch.setattr(factory_mod, "_PRESETS_DIR", preset_dir)
+        monkeypatch.setattr(factory_mod, "PRESETS_DIR", preset_dir)
 
         (preset_dir / "alpha.json").write_text(json.dumps({
             "description": "Alpha crew",
@@ -392,7 +392,7 @@ class TestAgentFactory:
         from agents import factory as factory_mod
         from agents.factory import AgentFactory
 
-        monkeypatch.setattr(factory_mod, "_DEFINITIONS_DIR", tmp_path)
+        monkeypatch.setattr(factory_mod, "DEFINITIONS_DIR", tmp_path)
 
         (tmp_path / "my-agent.json").write_text(json.dumps({
             "agent_key": "my-agent",

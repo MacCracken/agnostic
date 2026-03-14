@@ -26,8 +26,8 @@ class TestPackaging:
         presets_dir = defs_dir / "presets"
         defs_dir.mkdir()
         presets_dir.mkdir()
-        monkeypatch.setattr(pkg, "_DEFINITIONS_DIR", defs_dir)
-        monkeypatch.setattr(pkg, "_PRESETS_DIR", presets_dir)
+        monkeypatch.setattr(pkg, "DEFINITIONS_DIR", defs_dir)
+        monkeypatch.setattr(pkg, "PRESETS_DIR", presets_dir)
 
         # Create a definition and a preset
         (defs_dir / "my-agent.json").write_text(json.dumps({
@@ -77,8 +77,8 @@ class TestPackaging:
         presets_dir = defs_dir / "presets"
         defs_dir.mkdir()
         presets_dir.mkdir()
-        monkeypatch.setattr(pkg, "_DEFINITIONS_DIR", defs_dir)
-        monkeypatch.setattr(pkg, "_PRESETS_DIR", presets_dir)
+        monkeypatch.setattr(pkg, "DEFINITIONS_DIR", defs_dir)
+        monkeypatch.setattr(pkg, "PRESETS_DIR", presets_dir)
 
         (defs_dir / "existing.json").write_text('{"agent_key": "existing"}')
 
@@ -99,8 +99,8 @@ class TestPackaging:
         presets_dir = defs_dir / "presets"
         defs_dir.mkdir()
         presets_dir.mkdir()
-        monkeypatch.setattr(pkg, "_DEFINITIONS_DIR", defs_dir)
-        monkeypatch.setattr(pkg, "_PRESETS_DIR", presets_dir)
+        monkeypatch.setattr(pkg, "DEFINITIONS_DIR", defs_dir)
+        monkeypatch.setattr(pkg, "PRESETS_DIR", presets_dir)
 
         (defs_dir / "existing.json").write_text('{"agent_key": "existing"}')
 
@@ -123,8 +123,8 @@ class TestPackaging:
 
         defs_dir = tmp_path / "definitions"
         defs_dir.mkdir()
-        monkeypatch.setattr(pkg, "_DEFINITIONS_DIR", defs_dir)
-        monkeypatch.setattr(pkg, "_PRESETS_DIR", defs_dir / "presets")
+        monkeypatch.setattr(pkg, "DEFINITIONS_DIR", defs_dir)
+        monkeypatch.setattr(pkg, "PRESETS_DIR", defs_dir / "presets")
 
         # Should not crash, just skip missing
         data = pkg.export_package("pkg", definition_keys=["nonexistent"])
@@ -144,8 +144,8 @@ class TestVersioning:
         defs_dir = tmp_path / "definitions"
         versions_dir = defs_dir / "versions"
         defs_dir.mkdir()
-        monkeypatch.setattr(ver, "_DEFINITIONS_DIR", defs_dir)
-        monkeypatch.setattr(ver, "_VERSIONS_DIR", versions_dir)
+        monkeypatch.setattr(ver, "DEFINITIONS_DIR", defs_dir)
+        monkeypatch.setattr(ver, "VERSIONS_DIR", versions_dir)
 
         # Create an active definition
         defn = {"agent_key": "test", "name": "Test", "domain": "qa"}
@@ -172,8 +172,8 @@ class TestVersioning:
 
         defs_dir = tmp_path / "definitions"
         defs_dir.mkdir()
-        monkeypatch.setattr(ver, "_DEFINITIONS_DIR", defs_dir)
-        monkeypatch.setattr(ver, "_VERSIONS_DIR", defs_dir / "versions")
+        monkeypatch.setattr(ver, "DEFINITIONS_DIR", defs_dir)
+        monkeypatch.setattr(ver, "VERSIONS_DIR", defs_dir / "versions")
 
         defn = {"agent_key": "test", "name": "Test"}
         (defs_dir / "test.json").write_text(json.dumps(defn))
@@ -190,8 +190,8 @@ class TestVersioning:
 
         defs_dir = tmp_path / "definitions"
         defs_dir.mkdir()
-        monkeypatch.setattr(ver, "_DEFINITIONS_DIR", defs_dir)
-        monkeypatch.setattr(ver, "_VERSIONS_DIR", defs_dir / "versions")
+        monkeypatch.setattr(ver, "DEFINITIONS_DIR", defs_dir)
+        monkeypatch.setattr(ver, "VERSIONS_DIR", defs_dir / "versions")
 
         # v1
         defn_v1 = {"agent_key": "test", "name": "V1"}
@@ -214,8 +214,8 @@ class TestVersioning:
     def test_rollback_nonexistent_version(self, tmp_path, monkeypatch):
         import agents.versioning as ver
 
-        monkeypatch.setattr(ver, "_DEFINITIONS_DIR", tmp_path)
-        monkeypatch.setattr(ver, "_VERSIONS_DIR", tmp_path / "versions")
+        monkeypatch.setattr(ver, "DEFINITIONS_DIR", tmp_path)
+        monkeypatch.setattr(ver, "VERSIONS_DIR", tmp_path / "versions")
 
         result = ver.rollback("test", 99)
         assert "error" in result
@@ -223,8 +223,8 @@ class TestVersioning:
     def test_save_version_no_active_definition(self, tmp_path, monkeypatch):
         import agents.versioning as ver
 
-        monkeypatch.setattr(ver, "_DEFINITIONS_DIR", tmp_path)
-        monkeypatch.setattr(ver, "_VERSIONS_DIR", tmp_path / "versions")
+        monkeypatch.setattr(ver, "DEFINITIONS_DIR", tmp_path)
+        monkeypatch.setattr(ver, "VERSIONS_DIR", tmp_path / "versions")
 
         result = ver.save_version("nonexistent")
         assert "error" in result
@@ -346,8 +346,8 @@ class TestPhase4Endpoints:
         self.presets_dir = self.defs_dir / "presets"
         self.defs_dir.mkdir()
         self.presets_dir.mkdir()
-        monkeypatch.setattr(defs_mod, "_DEFINITIONS_DIR", self.defs_dir)
-        monkeypatch.setattr(defs_mod, "_PRESETS_DIR", self.presets_dir)
+        monkeypatch.setattr(defs_mod, "DEFINITIONS_DIR", self.defs_dir)
+        monkeypatch.setattr(defs_mod, "PRESETS_DIR", self.presets_dir)
 
     @pytest.fixture()
     def admin_client(self):
@@ -379,8 +379,8 @@ class TestPhase4Endpoints:
         # Patch versioning paths
         import agents.versioning as ver
         ver_dir = self.defs_dir / "versions"
-        with patch.object(ver, "_DEFINITIONS_DIR", self.defs_dir), \
-             patch.object(ver, "_VERSIONS_DIR", ver_dir):
+        with patch.object(ver, "DEFINITIONS_DIR", self.defs_dir), \
+             patch.object(ver, "VERSIONS_DIR", ver_dir):
 
             # Save version
             resp = admin_client.post("/api/v1/definitions/ver-test/versions")

@@ -7,32 +7,23 @@ presets in agents/definitions/presets/.
 
 import json
 import logging
-import os
-import re
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from agents.constants import DEFINITIONS_DIR, PRESETS_DIR, SAFE_KEY_RE
 from webgui.routes.dependencies import PaginatedResponse, get_current_user
 
 logger = logging.getLogger(__name__)
 
-_SAFE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9\-]*$")
-
 
 def _validate_path_key(key: str, label: str = "key") -> None:
     """Validate a path parameter used in file operations. Prevents path traversal."""
-    if not _SAFE_KEY_RE.match(key):
+    if not SAFE_KEY_RE.match(key):
         raise HTTPException(status_code=400, detail=f"Invalid {label}: must match [a-z0-9][a-z0-9-]*")
 
 router = APIRouter()
-
-# Resolve paths relative to project root
-_PROJECT_ROOT = Path(__file__).parent.parent.parent
-_DEFINITIONS_DIR = _PROJECT_ROOT / "agents" / "definitions"
-_PRESETS_DIR = _DEFINITIONS_DIR / "presets"
 
 # Required fields for a valid agent definition
 _REQUIRED_FIELDS = {"agent_key", "name", "role", "goal", "backstory"}
@@ -123,8 +114,8 @@ async def list_definitions(
 ):
     """List all available agent definitions."""
     items = []
-    if _DEFINITIONS_DIR.exists():
-        for p in sorted(_DEFINITIONS_DIR.glob("*.json")):
+    if DEFINITIONS_DIR.exists():
+        for p in sorted(DEFINITIONS_DIR.glob("*.json")):
             try:
                 with open(p) as f:
                     data = json.load(f)
@@ -157,7 +148,7 @@ async def get_definition(
 ):
     """Get a single agent definition by key."""
     _validate_path_key(agent_key, "agent_key")
-    path = _DEFINITIONS_DIR / f"{agent_key}.json"
+    path = DEFINITIONS_DIR / f"{agent_key}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Definition '{agent_key}' not found")
 
@@ -175,14 +166,14 @@ async def create_definition(
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    path = _DEFINITIONS_DIR / f"{req.agent_key}.json"
+    path = DEFINITIONS_DIR / f"{req.agent_key}.json"
     if path.exists():
         raise HTTPException(
             status_code=409,
             detail=f"Definition '{req.agent_key}' already exists. Use PUT to update.",
         )
 
-    _DEFINITIONS_DIR.mkdir(parents=True, exist_ok=True)
+    DEFINITIONS_DIR.mkdir(parents=True, exist_ok=True)
     data = req.model_dump(mode="json")
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
@@ -207,7 +198,7 @@ async def update_definition(
             status_code=400, detail="agent_key in body must match URL parameter"
         )
 
-    path = _DEFINITIONS_DIR / f"{agent_key}.json"
+    path = DEFINITIONS_DIR / f"{agent_key}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Definition '{agent_key}' not found")
 
@@ -229,7 +220,7 @@ async def delete_definition(
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    path = _DEFINITIONS_DIR / f"{agent_key}.json"
+    path = DEFINITIONS_DIR / f"{agent_key}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Definition '{agent_key}' not found")
 
@@ -249,8 +240,8 @@ async def list_presets(
 ):
     """List available crew presets."""
     presets = []
-    if _PRESETS_DIR.exists():
-        for p in sorted(_PRESETS_DIR.glob("*.json")):
+    if PRESETS_DIR.exists():
+        for p in sorted(PRESETS_DIR.glob("*.json")):
             try:
                 with open(p) as f:
                     data = json.load(f)
@@ -274,7 +265,7 @@ async def get_preset(
 ):
     """Get full details of a crew preset."""
     _validate_path_key(preset_name, "preset_name")
-    path = _PRESETS_DIR / f"{preset_name}.json"
+    path = PRESETS_DIR / f"{preset_name}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Preset '{preset_name}' not found")
 
@@ -300,14 +291,14 @@ async def create_preset(
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    path = _PRESETS_DIR / f"{req.name}.json"
+    path = PRESETS_DIR / f"{req.name}.json"
     if path.exists():
         raise HTTPException(
             status_code=409,
             detail=f"Preset '{req.name}' already exists",
         )
 
-    _PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    PRESETS_DIR.mkdir(parents=True, exist_ok=True)
     data = {
         "name": req.name,
         "description": req.description,
@@ -343,7 +334,7 @@ async def delete_preset(
     if preset_name in ("qa-standard",):
         raise HTTPException(status_code=403, detail="Cannot delete built-in presets")
 
-    path = _PRESETS_DIR / f"{preset_name}.json"
+    path = PRESETS_DIR / f"{preset_name}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Preset '{preset_name}' not found")
 
@@ -464,49 +455,6 @@ async def export_package_endpoint(
         },
     )
 
-
-@router.post("/packages/import")
-async def import_package_endpoint(
-    user: dict = Depends(get_current_user),
-    overwrite: bool = Query(False, description="Overwrite existing definitions"),
-):
-    """Import a .agpkg bundle to install agent definitions and presets.
-
-    Send the .agpkg file as the raw request body with Content-Type: application/zip.
-    """
-    if user.get("role") not in ("super_admin", "org_admin"):
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    from fastapi import Request
-
-    # This endpoint needs the raw body — we import Request at call time
-    # because the body is consumed by FastAPI's normal parsing otherwise.
-    # The caller should send raw bytes with Content-Type: application/zip.
-    raise HTTPException(
-        status_code=501,
-        detail="Use POST /api/v1/packages/import/upload with multipart form data",
-    )
-
-
-@router.post("/packages/import/upload")
-async def import_package_upload(
-    user: dict = Depends(get_current_user),
-    overwrite: bool = Query(False, description="Overwrite existing definitions"),
-):
-    """Import a .agpkg bundle via file upload.
-
-    Send as multipart/form-data with field name 'file'.
-    """
-    if user.get("role") not in ("super_admin", "org_admin"):
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    # FastAPI file upload requires the UploadFile dependency
-    # For now, return guidance — full multipart is Phase 4+
-    raise HTTPException(
-        status_code=501,
-        detail="File upload endpoint pending. Use the Python API: "
-        "from agents.packaging import import_package; import_package(data)",
-    )
 
 
 # ---------------------------------------------------------------------------

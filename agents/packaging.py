@@ -21,18 +21,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from agents.constants import DEFINITIONS_DIR, PRESETS_DIR, SAFE_KEY_RE
 
-_PROJECT_ROOT = Path(__file__).parent.parent
-_DEFINITIONS_DIR = _PROJECT_ROOT / "agents" / "definitions"
-_PRESETS_DIR = _DEFINITIONS_DIR / "presets"
+logger = logging.getLogger(__name__)
 
 MANIFEST_FILENAME = "manifest.json"
 
 # Safety limits for ZIP import
 _MAX_UNCOMPRESSED_SIZE = 10 * 1024 * 1024  # 10 MB
 _MAX_ENTRY_COUNT = 100
-_SAFE_KEY_RE = __import__("re").compile(r"^[a-z0-9][a-z0-9\-]*$")
 
 
 class PackageManifest:
@@ -119,7 +116,7 @@ def export_package(
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         # Add definitions
         for key in (definition_keys or []):
-            path = _DEFINITIONS_DIR / f"{key}.json"
+            path = DEFINITIONS_DIR / f"{key}.json"
             if path.exists():
                 zf.write(path, f"definitions/{key}.json")
             else:
@@ -127,7 +124,7 @@ def export_package(
 
         # Add presets
         for preset_name in (preset_names or []):
-            path = _PRESETS_DIR / f"{preset_name}.json"
+            path = PRESETS_DIR / f"{preset_name}.json"
             if path.exists():
                 zf.write(path, f"presets/{preset_name}.json")
             else:
@@ -181,12 +178,12 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
             result["manifest"] = manifest.to_dict()
 
             # Install definitions
-            _DEFINITIONS_DIR.mkdir(parents=True, exist_ok=True)
+            DEFINITIONS_DIR.mkdir(parents=True, exist_ok=True)
             for name in zf.namelist():
                 if name.startswith("definitions/") and name.endswith(".json"):
                     key = Path(name).stem
                     # Validate key is safe (no path traversal)
-                    if not _SAFE_KEY_RE.match(key):
+                    if not SAFE_KEY_RE.match(key):
                         result["errors"].append(f"Invalid definition key: {key}")
                         continue
                     # Validate content is valid JSON
@@ -196,7 +193,7 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
                     except json.JSONDecodeError:
                         result["errors"].append(f"Invalid JSON in {name}")
                         continue
-                    target = _DEFINITIONS_DIR / f"{key}.json"
+                    target = DEFINITIONS_DIR / f"{key}.json"
                     if target.exists() and not overwrite:
                         result["skipped"].append(f"definition:{key}")
                         continue
@@ -204,11 +201,11 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
                     result["definitions_installed"].append(key)
 
             # Install presets
-            _PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+            PRESETS_DIR.mkdir(parents=True, exist_ok=True)
             for name in zf.namelist():
                 if name.startswith("presets/") and name.endswith(".json"):
                     preset_name = Path(name).stem
-                    if not _SAFE_KEY_RE.match(preset_name):
+                    if not SAFE_KEY_RE.match(preset_name):
                         result["errors"].append(f"Invalid preset name: {preset_name}")
                         continue
                     raw = zf.read(name)
@@ -217,7 +214,7 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
                     except json.JSONDecodeError:
                         result["errors"].append(f"Invalid JSON in {name}")
                         continue
-                    target = _PRESETS_DIR / f"{preset_name}.json"
+                    target = PRESETS_DIR / f"{preset_name}.json"
                     if target.exists() and not overwrite:
                         result["skipped"].append(f"preset:{preset_name}")
                         continue

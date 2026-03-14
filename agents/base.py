@@ -17,8 +17,7 @@ import asyncio
 import json
 import logging
 import os
-import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,16 +27,9 @@ from config.environment import config
 from config.llm_integration import llm_service
 from shared.crewai_compat import BaseTool
 
+from agents.constants import DEFINITIONS_DIR, validate_agent_key
+
 logger = logging.getLogger(__name__)
-
-_SAFE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9\-]*$")
-_DEFINITIONS_DIR = Path(__file__).parent / "definitions"
-
-
-def _validate_key(key: str, label: str = "key") -> None:
-    """Raise ValueError if key contains path traversal characters."""
-    if not _SAFE_KEY_RE.match(key):
-        raise ValueError(f"Invalid {label}: {key!r} (must match [a-z0-9][a-z0-9-]*)")
 
 
 class AgentDefinition:
@@ -258,7 +250,7 @@ class BaseAgent:
         """
         from agents.factory import AgentFactory
 
-        _validate_key(target_agent_key, "target_agent_key")
+        validate_agent_key(target_agent_key, "target_agent_key")
 
         self.logger.info(
             "Delegating from %s to %s",
@@ -266,7 +258,7 @@ class BaseAgent:
             target_agent_key,
         )
 
-        target = AgentFactory.from_file(_DEFINITIONS_DIR / f"{target_agent_key}.json")
+        target = AgentFactory.from_file(DEFINITIONS_DIR / f"{target_agent_key}.json")
 
         # Inject delegation context so the target knows who sent the task
         enriched = {
@@ -290,7 +282,7 @@ class BaseAgent:
         """Store task state in Redis under {prefix}:{session_id}:{scenario_id}."""
         payload = {
             "status": status,
-            "updated_at": datetime.now().isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
             **(extra or {}),
         }
         key = f"{self.definition.redis_prefix}:{session_id}:{scenario_id}"
@@ -306,7 +298,7 @@ class BaseAgent:
             "scenario_id": scenario_id,
             "status": "completed",
             "result": result,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         # Redis client is sync — run in executor to avoid blocking the loop
         loop = asyncio.get_running_loop()
@@ -344,7 +336,7 @@ class BaseAgent:
                 "scenario_id": scenario_id,
                 "status": "completed",
                 "result": str(result),
-                "completed_at": datetime.now().isoformat(),
+                "completed_at": datetime.now(UTC).isoformat(),
             }
 
             self.set_task_state(session_id, scenario_id, "completed", output)
@@ -359,7 +351,7 @@ class BaseAgent:
                 "scenario_id": scenario_id,
                 "status": "failed",
                 "error": str(exc),
-                "failed_at": datetime.now().isoformat(),
+                "failed_at": datetime.now(UTC).isoformat(),
             }
             self.set_task_state(session_id, scenario_id, "failed", error_output)
             return error_output

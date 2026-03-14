@@ -332,7 +332,7 @@ class TestA2ACrewDelegation:
 
         defs_dir = tmp_path / "definitions"
         defs_dir.mkdir()
-        monkeypatch.setattr(defs_mod, "_DEFINITIONS_DIR", defs_dir)
+        monkeypatch.setattr(defs_mod, "DEFINITIONS_DIR", defs_dir)
 
         # Need admin role for create_definition
         app = authed_client.app

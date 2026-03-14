@@ -9,18 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import re
 from pathlib import Path
 from typing import Any
 
 from agents.base import AgentDefinition, BaseAgent
+from agents.constants import DEFINITIONS_DIR, PRESETS_DIR, SAFE_KEY_RE
 
 logger = logging.getLogger(__name__)
-
-# Where YAML/JSON agent definitions live
-_DEFINITIONS_DIR = Path(__file__).parent / "definitions"
-_PRESETS_DIR = _DEFINITIONS_DIR / "presets"
 
 
 class AgentFactory:
@@ -55,8 +50,6 @@ class AgentFactory:
         defn = cls._load_definition_file(resolved)
         return BaseAgent(defn)
 
-    _SAFE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9\-]*$")
-
     @classmethod
     def invalidate_cache(cls, path: str | None = None) -> None:
         """Clear definition cache. Pass a path to clear a single entry, or None for all."""
@@ -68,9 +61,9 @@ class AgentFactory:
     @classmethod
     def from_preset(cls, preset_name: str) -> list[BaseAgent]:
         """Load all agents for a named preset (e.g. 'qa-standard')."""
-        if not cls._SAFE_KEY_RE.match(preset_name):
+        if not SAFE_KEY_RE.match(preset_name):
             raise ValueError(f"Invalid preset name: {preset_name!r}")
-        preset_path = _PRESETS_DIR / f"{preset_name}.json"
+        preset_path = PRESETS_DIR / f"{preset_name}.json"
         if not preset_path.exists():
             raise FileNotFoundError(f"Preset '{preset_name}' not found at {preset_path}")
 
@@ -89,8 +82,8 @@ class AgentFactory:
     def list_presets(cls) -> list[dict[str, Any]]:
         """List available presets with metadata."""
         presets = []
-        if _PRESETS_DIR.exists():
-            for p in sorted(_PRESETS_DIR.glob("*.json")):
+        if PRESETS_DIR.exists():
+            for p in sorted(PRESETS_DIR.glob("*.json")):
                 try:
                     with open(p) as f:
                         data = json.load(f)
@@ -108,8 +101,8 @@ class AgentFactory:
     def list_definitions(cls) -> list[dict[str, Any]]:
         """List individual agent definitions available in the definitions directory."""
         definitions = []
-        if _DEFINITIONS_DIR.exists():
-            for p in sorted(_DEFINITIONS_DIR.glob("*.json")):
+        if DEFINITIONS_DIR.exists():
+            for p in sorted(DEFINITIONS_DIR.glob("*.json")):
                 try:
                     with open(p) as f:
                         data = json.load(f)

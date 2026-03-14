@@ -87,8 +87,8 @@ def tmp_definitions(tmp_path, monkeypatch):
     defs_dir.mkdir()
     presets_dir.mkdir()
 
-    monkeypatch.setattr(defs_mod, "_DEFINITIONS_DIR", defs_dir)
-    monkeypatch.setattr(defs_mod, "_PRESETS_DIR", presets_dir)
+    monkeypatch.setattr(defs_mod, "DEFINITIONS_DIR", defs_dir)
+    monkeypatch.setattr(defs_mod, "PRESETS_DIR", presets_dir)
     return {"definitions": defs_dir, "presets": presets_dir}
 
 
