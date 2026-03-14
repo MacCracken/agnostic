@@ -23,14 +23,22 @@ _REGISTRY: dict[str, type[BaseTool]] = {}
 _REGISTRY_MAX_SIZE = 500
 
 
+def _check_registry_capacity(name: str) -> None:
+    """Raise ValueError if registry is full and name is not already registered."""
+    if len(_REGISTRY) >= _REGISTRY_MAX_SIZE and name not in _REGISTRY:
+        raise ValueError(f"Tool registry full ({_REGISTRY_MAX_SIZE} tools)")
+
+
 def register_tool(cls: type[BaseTool]) -> type[BaseTool]:
     """Decorator: register a BaseTool subclass by its class name."""
+    _check_registry_capacity(cls.__name__)
     _REGISTRY[cls.__name__] = cls
     return cls
 
 
 def register_tool_class(name: str, cls: type[BaseTool]) -> None:
     """Register a tool class under an explicit name."""
+    _check_registry_capacity(name)
     _REGISTRY[name] = cls
 
 
@@ -139,11 +147,7 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
         )
 
     tool_cls = tool_classes[0]
-    if len(_REGISTRY) >= _REGISTRY_MAX_SIZE and name not in _REGISTRY:
-        raise ValueError(
-            f"Tool registry full ({_REGISTRY_MAX_SIZE} tools). "
-            "Remove unused tools before uploading new ones."
-        )
+    _check_registry_capacity(name)
     _REGISTRY[name] = tool_cls
     logger.info("Loaded custom tool '%s' (%s)", name, tool_cls.__name__)
     return tool_cls

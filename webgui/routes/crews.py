@@ -206,15 +206,17 @@ async def _run_crew_async(
         except Exception:
             logger.exception("Crew %s: failed to update status", crew_id)
 
-    # Webhook callback
+    # Webhook callback — only fire if we have a valid record
     callback_url = crew_config.get("callback_url")
     if callback_url:
         try:
             from webgui.routes.tasks import _fire_webhook
 
             raw = await redis_client.get(crew_redis_key)
-            record = json.loads(raw) if raw else {}
-            await _fire_webhook(callback_url, crew_config.get("callback_secret"), record)
+            if raw:
+                record = json.loads(raw)
+                if record.get("status"):
+                    await _fire_webhook(callback_url, crew_config.get("callback_secret"), record)
         except Exception as exc:
             logger.warning("Crew %s webhook failed: %s", crew_id, exc)
 
