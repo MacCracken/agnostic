@@ -1,6 +1,10 @@
 """
-Database models for test result persistence.
+Database models for agent session and task result persistence.
 Uses SQLAlchemy with async support for PostgreSQL.
+
+Class aliases (AgentSession, TaskResult, TaskMetrics, TaskReport) are provided
+for the general-purpose agent platform.  The original Test* names and table
+names are retained for backwards compatibility — no migration required.
 """
 
 import asyncio
@@ -51,6 +55,8 @@ class TestSession(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="pending")
     priority: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    domain: Mapped[str | None] = mapped_column(String(100), nullable=True, default="qa")
+    crew_preset: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC)
@@ -82,6 +88,7 @@ class TestResult(Base):
     severity: Mapped[str | None] = mapped_column(String(20), nullable=True)
     category: Mapped[str | None] = mapped_column(String(50), nullable=True)
     component: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    domain: Mapped[str | None] = mapped_column(String(100), nullable=True, default="qa")
     agent_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     stack_trace: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -129,6 +136,7 @@ class TestReport(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     session_id: Mapped[str] = mapped_column(String(100), index=True)
     report_type: Mapped[str] = mapped_column(String(50))
+    domain: Mapped[str | None] = mapped_column(String(100), nullable=True, default="qa")
     summary: Mapped[dict[str, Any]] = mapped_column(JSON)
     details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     pass_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -217,3 +225,13 @@ async def close_db():
     global _engine
     if _engine:
         await _engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Generic aliases — new code should prefer these names
+# ---------------------------------------------------------------------------
+
+AgentSession = TestSession
+TaskResult = TestResult
+TaskMetrics = TestMetrics
+TaskReport = TestReport

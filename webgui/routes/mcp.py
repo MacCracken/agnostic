@@ -308,6 +308,75 @@ MCP_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    # --- Crew & Definition management (Phase 2+) ---
+    {
+        "name": "agnostic_run_crew",
+        "description": "Assemble and run an agent crew from a preset, agent keys, or inline definitions",
+        "category": "crews",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "preset": {"type": "string", "description": "Preset name (e.g. 'qa-standard', 'data-engineering')"},
+                "agent_keys": {"type": "array", "items": {"type": "string"}},
+                "agent_definitions": {"type": "array", "items": {"type": "object"}},
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "target_url": {"type": "string"},
+                "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+            },
+            "required": ["title", "description"],
+        },
+    },
+    {
+        "name": "agnostic_crew_status",
+        "description": "Get the status of a running or completed crew",
+        "category": "crews",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"crew_id": {"type": "string"}},
+            "required": ["crew_id"],
+        },
+    },
+    {
+        "name": "agnostic_list_presets",
+        "description": "List available agent crew presets (QA, data-engineering, devops, etc.)",
+        "category": "crews",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "domain": {"type": "string", "description": "Filter by domain"},
+            },
+        },
+    },
+    {
+        "name": "agnostic_list_definitions",
+        "description": "List available individual agent definitions",
+        "category": "crews",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "domain": {"type": "string", "description": "Filter by domain"},
+            },
+        },
+    },
+    {
+        "name": "agnostic_create_agent",
+        "description": "Create a new agent definition via A2A",
+        "category": "crews",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "agent_key": {"type": "string"},
+                "name": {"type": "string"},
+                "role": {"type": "string"},
+                "goal": {"type": "string"},
+                "backstory": {"type": "string"},
+                "domain": {"type": "string"},
+                "tools": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["agent_key", "name", "role", "goal", "backstory"],
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -341,6 +410,12 @@ _TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "agnostic_a2a_heartbeat": ("POST", "/api/v1/a2a/receive"),
     "agnostic_subscribe_webhook": ("POST", "/api/v1/tasks"),
     "agnostic_event_stream": ("GET", "/api/v1/yeoman/events/stream"),
+    # Crew & definition management
+    "agnostic_run_crew": ("POST", "/api/v1/crews"),
+    "agnostic_crew_status": ("GET", "/api/v1/crews/{crew_id}"),
+    "agnostic_list_presets": ("GET", "/api/v1/presets"),
+    "agnostic_list_definitions": ("GET", "/api/v1/definitions"),
+    "agnostic_create_agent": ("POST", "/api/v1/a2a/receive"),
 }
 
 
@@ -410,7 +485,7 @@ async def list_mcp_tools(
         "tools": tools,
         "total": len(tools),
         "server": {
-            "name": "agnostic-qa",
+            "name": "agnostic",
             "version": "1.0",
             "protocol": "mcp-http",
         },
@@ -422,7 +497,7 @@ async def mcp_server_info(_user: dict = Depends(get_current_user)):
     """MCP server metadata for auto-registration handshake."""
     _require_mcp_enabled()
     return {
-        "name": "agnostic-qa",
+        "name": "agnostic",
         "version": "1.0",
         "protocol_version": "2024-11-05",
         "capabilities": {
@@ -686,6 +761,55 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
             "This tool returns connection info — real-time streaming requires "
             "a persistent SSE connection.",
         }
+
+    # Crew management
+    if tool_name == "agnostic_run_crew":
+        from webgui.routes.crews import CrewRunRequest, run_crew
+
+        crew_req = CrewRunRequest(
+            preset=arguments.get("preset"),
+            agent_keys=arguments.get("agent_keys", []),
+            agent_definitions=arguments.get("agent_definitions", []),
+            title=arguments.get("title", f"MCP: {tool_name}"),
+            description=arguments.get("description", "Crew run via MCP"),
+            target_url=arguments.get("target_url"),
+            priority=arguments.get("priority", "high"),
+        )
+        result = await run_crew(crew_req, user)
+        return {
+            "crew_id": result.crew_id,
+            "task_id": result.task_id,
+            "status": result.status,
+            "agents": result.agents,
+        }
+
+    if tool_name == "agnostic_crew_status":
+        from webgui.routes.crews import get_crew_status
+
+        return await get_crew_status(arguments["crew_id"], user)
+
+    if tool_name == "agnostic_list_presets":
+        from webgui.routes.definitions import list_presets
+
+        return await list_presets(arguments.get("domain"), user)
+
+    if tool_name == "agnostic_list_definitions":
+        from webgui.routes.definitions import list_definitions
+
+        return await list_definitions(arguments.get("domain"), 50, 0, user)
+
+    if tool_name == "agnostic_create_agent":
+        from webgui.routes.tasks import A2AMessage, receive_a2a_message
+
+        msg = A2AMessage(
+            id=str(uuid.uuid4()),
+            type="a2a:create_agent",
+            fromPeerId="secureyeoman",
+            toPeerId="agnostic",
+            payload=arguments,
+            timestamp=int(datetime.now(UTC).timestamp() * 1000),
+        )
+        return await receive_a2a_message(msg, user)
 
     # Health
     if tool_name == "agnostic_health":

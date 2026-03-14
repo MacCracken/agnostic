@@ -341,15 +341,35 @@ class DashboardManager:
         timeline = []
 
         try:
-            # Get notifications from all agents
-            for agent_name in [
+            # Get notifications from all agents (static QA + dynamic via SCAN)
+            agent_names = [
                 "manager",
                 "senior",
                 "junior",
                 "analyst",
                 "security_compliance",
                 "performance",
-            ]:
+            ]
+            # Also discover dynamic agent prefixes from Redis
+            try:
+                cursor = b"0"
+                while cursor:
+                    cursor, keys = await self.redis_client.scan(
+                        cursor=cursor,
+                        match=f"*:{session_id}:notifications",
+                        count=50,
+                    )
+                    for key in keys:
+                        key_str = key.decode() if isinstance(key, bytes) else key
+                        prefix = key_str.split(f":{session_id}:")[0]
+                        if prefix not in agent_names:
+                            agent_names.append(prefix)
+                    if cursor == b"0":
+                        break
+            except Exception:
+                pass  # Fall back to static list
+
+            for agent_name in agent_names:
                 notif_key = f"{agent_name}:{session_id}:notifications"
                 notifications = await self.redis_client.lrange(notif_key, 0, -1)
 

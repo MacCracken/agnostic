@@ -45,15 +45,15 @@ Expand Agnostic from QA-only to a platform that can create and run **any kind of
 | Dynamic A2A capabilities | Done | `/a2a/capabilities` returns loaded presets dynamically |
 | Unit tests | Done | `test_definitions_api.py` (27 tests) + `test_crews_api.py` (12 tests) |
 
-### Phase 3: Database & Integration Updates
+### Phase 3: Database & Integration Updates (complete)
 
 | Item | Status | Notes |
 |------|--------|-------|
-| DB model renames | Pending | TestSession→AgentSession, TestResult→TaskResult, etc. + migration |
-| Dynamic MCP registration | Pending | MCP tools derived from loaded agent definitions, not hardcoded |
-| Dynamic A2A capabilities | Done | Moved to Phase 2 — `/a2a/capabilities` now returns loaded presets |
-| AGNOS capability registration | Pending | Register capabilities from definitions, not static dict |
-| Multi-domain dashboard | Pending | Dashboard supports QA + non-QA agent metrics |
+| DB model aliases | Done | `AgentSession`, `TaskResult`, `TaskMetrics`, `TaskReport` aliases + `domain`/`crew_preset` columns |
+| Dynamic MCP tools | Done | 5 new crew MCP tools (`agnostic_run_crew`, `agnostic_crew_status`, `agnostic_list_presets`, `agnostic_list_definitions`, `agnostic_create_agent`) + dispatch |
+| Dynamic A2A capabilities | Done | Phase 2 — `/a2a/capabilities` returns loaded presets |
+| AGNOS dynamic registration | Done | `get_all_agents()` / `get_all_capabilities()` merge static QA agents with preset-loaded agents |
+| Multi-domain dashboard | Done | `_get_session_timeline()` discovers dynamic agent prefixes via Redis SCAN |
 
 ### Phase 4: Advanced Features
 
@@ -63,6 +63,42 @@ Expand Agnostic from QA-only to a platform that can create and run **any kind of
 | Inter-crew delegation | Pending | Agents from different domains can delegate to each other |
 | Custom tool upload | Pending | Users can upload BaseTool implementations at runtime |
 | Agent versioning | Pending | Version agent definitions, rollback support |
+
+---
+
+## Downstream Integration (post-generalization)
+
+After all generalization phases are complete, the following work is needed in **Agnosticos** and **SecureYeoman** to consume the new AAS capabilities.
+
+### Agnosticos (AGNOS OS)
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| Update daimon agent registry schema | Small | Accept `domain` field on agent registration; update Agent HUD to display domain/crew info |
+| Capability negotiation for dynamic crews | Medium | Current capability negotiation assumes static QA capabilities. Update to handle dynamic capability names (`data-engineering_crew`, `devops_crew`, etc.) from `get_all_capabilities()` |
+| Agent HUD multi-domain UI | Medium | Group agents by domain in the HUD (currently assumes all are QA type). Add domain filter/tabs |
+| Token budget per-domain tracking | Small | `x-agent-id` headers already per-agent; add `x-domain` header for domain-level budget rollups in hoosh |
+| Update `agnostic_*` tool manifest in daimon MCP | Small | daimon's MCP auto-discovery will pick up new tools, but manual tests needed for the 5 new crew tools |
+| RPC method registration for crew agents | Medium | Current RPC registration covers 6 QA agents. Dynamic agents from presets need RPC methods registered on-the-fly |
+
+### SecureYeoman
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| Update `agnostic-tools.ts` MCP bridge | Medium | Add 5 new tools: `agnostic_run_crew`, `agnostic_crew_status`, `agnostic_list_presets`, `agnostic_list_definitions`, `agnostic_create_agent` |
+| A2A crew delegation support | Small | SY's A2A delegate already works — just needs UI/CLI for specifying `preset` or `agent_definitions` in the payload |
+| A2A `create_agent` support | Small | Add SY command/action to create agent definitions on Agnostic via `a2a:create_agent` message type |
+| Preset selector UI | Medium | Connections > Agnostic panel should show available presets (from `/api/v1/presets`) and allow selecting which crew to run |
+| Multi-domain dashboard widget | Small | Update the embeddable Agnostic dashboard widget to show domain tabs/filters |
+| Update MCP auto-discovery | Small | SY auto-discovers MCP tools — the 5 new tools will appear automatically, but integration tests needed |
+
+### Shared / Cross-project
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| E2E test: SY → Agnostic crew delegation | Medium | End-to-end test that SY can delegate a non-QA crew task to Agnostic and poll status |
+| E2E test: dynamic agent creation via A2A | Small | SY creates an agent definition on Agnostic via A2A, then runs a crew with it |
+| Documentation: cross-project API contract | Small | Document the new API surface (crew endpoints, preset endpoints, A2A message types) as a shared contract |
 
 ---
 
@@ -92,4 +128,4 @@ Expand Agnostic from QA-only to a platform that can create and run **any kind of
 
 ---
 
-*Last Updated: 2026-03-14 · Version: 2026.3.14 · Test count: 904 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-14 · Version: 2026.3.14-p3 · Test count: 904 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

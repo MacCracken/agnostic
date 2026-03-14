@@ -1,12 +1,15 @@
 """
 AGNOS OS Agent Registration Module
 
-Registers Agnostic QA agents with agnosticos Agent HUD.
+Registers Agnostic agents with agnosticos Agent HUD.
 Phase 2 of AGNOS OS integration (ADR-022).
 
 Phase 3 Item 7: Capability advertisement — advertises structured capability
-definitions so native AGNOS agents can discover and request QA services
+definitions so native AGNOS agents can discover and request services
 without direct AGNOSTIC knowledge.
+
+Supports both the static QA agent list (backwards compatible) and dynamic
+agents loaded from presets via AgentFactory.
 """
 
 import asyncio
@@ -273,6 +276,92 @@ CAPABILITY_DEFINITIONS: dict[str, dict] = {
 }
 
 
+def get_all_agents() -> dict[str, dict]:
+    """Return all agents: static QA agents merged with any dynamically loaded presets.
+
+    Dynamic agents are loaded lazily from presets so this doesn't break
+    when the agents/ directory isn't on the path (e.g. in unit tests).
+    """
+    agents = dict(AGNOSTIC_AGENTS)
+    try:
+        from agents.factory import AgentFactory
+
+        for preset_info in AgentFactory.list_presets():
+            preset_name = preset_info["name"]
+            if preset_name == "qa-standard":
+                continue  # Already covered by AGNOSTIC_AGENTS
+            from pathlib import Path
+
+            preset_path = (
+                Path(__file__).parent.parent
+                / "agents"
+                / "definitions"
+                / "presets"
+                / f"{preset_name}.json"
+            )
+            if not preset_path.exists():
+                continue
+            import json
+
+            with open(preset_path) as f:
+                preset_data = json.load(f)
+            domain = preset_data.get("domain", "general")
+            for agent_def in preset_data.get("agents", []):
+                key = agent_def.get("agent_key", "")
+                if key and key not in agents:
+                    agents[key] = {
+                        "agent_id": f"agnostic-{key}",
+                        "agent_name": agent_def.get("name", key),
+                        "agent_type": domain,
+                        "description": agent_def.get("goal", ""),
+                        "capabilities": [],
+                        "resource_limits": {"cpu": "1", "memory": "1Gi"},
+                    }
+    except Exception:
+        pass  # Fall back to static list
+    return agents
+
+
+def get_all_capabilities() -> dict[str, dict]:
+    """Return all capabilities: static definitions merged with dynamic presets."""
+    caps = dict(CAPABILITY_DEFINITIONS)
+    try:
+        from agents.factory import AgentFactory
+
+        for preset_info in AgentFactory.list_presets():
+            preset_name = preset_info["name"]
+            domain = preset_info.get("domain", "general")
+            cap_name = f"{domain}_crew"
+            if cap_name not in caps:
+                caps[cap_name] = {
+                    "name": cap_name,
+                    "description": f"{preset_info.get('description', domain)} crew execution",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                    },
+                    "output_schema": {
+                        "type": "object",
+                        "properties": {
+                            "status": {"type": "string"},
+                            "results": {"type": "object"},
+                        },
+                    },
+                    "agents": [
+                        f"agnostic-{a.get('agent_key', '')}"
+                        for a in (preset_info.get("agents") or [])
+                    ],
+                    "estimated_duration_seconds": 300,
+                    "requires_auth": True,
+                }
+    except Exception:
+        pass
+    return caps
+
+
 class AgentRegistryClient:
     """Client for agnosticos Agent Registry REST API."""
 
@@ -307,11 +396,12 @@ class AgentRegistryClient:
             logger.debug(f"Agent registration disabled, skipping {agent_key}")
             return {"status": "disabled"}
 
-        if agent_key not in AGNOSTIC_AGENTS:
+        all_agents = get_all_agents()
+        if agent_key not in all_agents:
             logger.warning(f"Unknown agent key: {agent_key}")
             return {"status": "error", "message": "Unknown agent"}
 
-        agent_config = AGNOSTIC_AGENTS[agent_key].copy()
+        agent_config = all_agents[agent_key].copy()
         agent_config["version"] = self.version
         # daimon expects "name", not "agent_name"
         if "agent_name" in agent_config and "name" not in agent_config:
@@ -347,7 +437,7 @@ class AgentRegistryClient:
         if not self.enabled:
             return {"status": "disabled"}
 
-        if agent_key not in AGNOSTIC_AGENTS:
+        if agent_key not in get_all_agents():
             return {"status": "error", "message": "Unknown agent"}
 
         try:
@@ -373,7 +463,7 @@ class AgentRegistryClient:
         if not self.enabled or not self._registered_agents.get(agent_key):
             return {"status": "skipped"}
 
-        if agent_key not in AGNOSTIC_AGENTS:
+        if agent_key not in get_all_agents():
             return {"status": "error", "message": "Unknown agent"}
 
         try:
@@ -408,11 +498,12 @@ class AgentRegistryClient:
             logger.debug("Capability advertisement disabled, skipping")
             return {"status": "disabled"}
 
+        all_caps = get_all_capabilities()
         payload = {
-            "provider": "agnostic-qa",
+            "provider": "agnostic",
             "version": self.version,
             "timestamp": datetime.now(UTC).isoformat(),
-            "capabilities": list(CAPABILITY_DEFINITIONS.values()),
+            "capabilities": list(all_caps.values()),
         }
 
         try:
@@ -425,12 +516,12 @@ class AgentRegistryClient:
             self._capabilities_advertised = True
             logger.info(
                 "Advertised %d capabilities to AGNOS",
-                len(CAPABILITY_DEFINITIONS),
+                len(all_caps),
             )
             return {
                 "status": "advertised",
-                "capabilities": list(CAPABILITY_DEFINITIONS.keys()),
-                "count": len(CAPABILITY_DEFINITIONS),
+                "capabilities": list(all_caps.keys()),
+                "count": len(all_caps),
             }
         except httpx.HTTPError as e:
             logger.warning(f"Failed to advertise capabilities: {e}")
@@ -444,7 +535,7 @@ class AgentRegistryClient:
         try:
             client = await self._get_client()
             response = await client.delete(
-                f"{AGNOS_PATH_PREFIX}/capabilities/agnostic-qa",
+                f"{AGNOS_PATH_PREFIX}/capabilities/agnostic",
             )
             response.raise_for_status()
             self._capabilities_advertised = False
@@ -472,15 +563,16 @@ class AgentRegistryClient:
             Acknowledgment dict with task_id placeholder and capability
             metadata, or an error dict if the capability is unknown.
         """
-        if capability_name not in CAPABILITY_DEFINITIONS:
+        all_caps = get_all_capabilities()
+        if capability_name not in all_caps:
             logger.warning(f"Unknown capability requested: {capability_name}")
             return {
                 "status": "error",
                 "message": f"Unknown capability: {capability_name}",
-                "available_capabilities": list(CAPABILITY_DEFINITIONS.keys()),
+                "available_capabilities": list(all_caps.keys()),
             }
 
-        capability = CAPABILITY_DEFINITIONS[capability_name]
+        capability = all_caps[capability_name]
         task_id = (
             f"agnostic-{capability_name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
         )
@@ -506,7 +598,7 @@ class AgentRegistryClient:
 
     async def register_all_agents(self) -> dict[str, dict[str, Any]]:
         """Register all Agnostic agents, advertise capabilities, and register RPC methods."""
-        agent_keys = list(AGNOSTIC_AGENTS.keys())
+        agent_keys = list(get_all_agents().keys())
         agent_results = await asyncio.gather(
             *[self.register_agent(k) for k in agent_keys]
         )
@@ -548,7 +640,7 @@ class AgentRegistryClient:
             results["capabilities"] = await self.withdraw_capabilities()
 
         keys_to_deregister = [
-            k for k in AGNOSTIC_AGENTS if self._registered_agents.get(k)
+            k for k in get_all_agents() if self._registered_agents.get(k)
         ]
         deregister_results = await asyncio.gather(
             *[self.deregister_agent(k) for k in keys_to_deregister]
@@ -575,10 +667,10 @@ class AgentRegistryClient:
             "enabled": self.enabled,
             "base_url": self.base_url,
             "registered_agents": self._registered_agents,
-            "total_agents": len(AGNOSTIC_AGENTS),
+            "total_agents": len(get_all_agents()),
             "capability_advertise_enabled": self.capability_advertise_enabled,
             "capabilities_advertised": self._capabilities_advertised,
-            "total_capabilities": len(CAPABILITY_DEFINITIONS),
+            "total_capabilities": len(get_all_capabilities()),
             "rpc_methods_registered": rpc_registered,
         }
 

@@ -402,7 +402,7 @@ class TestGetRegistrationStatus:
             assert "registered_agents" in status
             assert "total_agents" in status
             assert status["enabled"] is True
-            assert status["total_agents"] == 6
+            assert status["total_agents"] >= 6  # 6 static QA + dynamic presets
 
     def test_status_reflects_registrations(self):
         from config.agnos_agent_registration import AgentRegistryClient
