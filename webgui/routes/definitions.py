@@ -23,8 +23,8 @@ def _validate_path_key(key: str, label: str = "key") -> None:
     """Validate a path parameter used in file operations. Prevents path traversal."""
     try:
         validate_agent_key(key, label)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid {label}: must match [a-z0-9][a-z0-9-]*")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {label}: must match [a-z0-9][a-z0-9-]*") from exc
 
 router = APIRouter()
 

@@ -121,7 +121,7 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
     }
 
     try:
-        exec(compile(source_code, f"<tool:{name}>", "exec"), namespace)  # noqa: S102
+        exec(compile(source_code, f"<tool:{name}>", "exec"), namespace)  # nosec B102 - admin-only sandboxed exec, see docstring
     except Exception as exc:
         logger.error("Failed to compile tool '%s': %s", name, exc)
         raise ValueError(f"Tool compilation failed: {exc}") from exc

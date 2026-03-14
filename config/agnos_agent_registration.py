@@ -329,7 +329,6 @@ def get_all_capabilities() -> dict[str, dict]:
         from agents.factory import AgentFactory
 
         for preset_info in AgentFactory.list_presets():
-            preset_name = preset_info["name"]
             domain = preset_info.get("domain", "general")
             cap_name = f"{domain}_crew"
             if cap_name not in caps:

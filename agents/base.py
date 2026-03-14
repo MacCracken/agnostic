@@ -18,15 +18,16 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from crewai import LLM, Agent, Crew, Process, Task
 
+from agents.constants import DEFINITIONS_DIR, validate_agent_key
 from config.environment import config
 from config.llm_integration import llm_service
-from shared.crewai_compat import BaseTool
 
-from agents.constants import DEFINITIONS_DIR, validate_agent_key
+if TYPE_CHECKING:
+    from shared.crewai_compat import BaseTool
 
 logger = logging.getLogger(__name__)
 

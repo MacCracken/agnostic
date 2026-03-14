@@ -138,11 +138,11 @@ class AgentFactory:
                     import yaml
 
                     data = yaml.safe_load(f)
-                except ImportError:
+                except ImportError as exc:
                     raise ImportError(
                         "PyYAML is required to load YAML agent definitions. "
                         "Install it with: pip install pyyaml"
-                    )
+                    ) from exc
             else:
                 data = json.load(f)
 
