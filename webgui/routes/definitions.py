@@ -8,6 +8,7 @@ presets in agents/definitions/presets/.
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,14 @@ from pydantic import BaseModel, Field
 from webgui.routes.dependencies import PaginatedResponse, get_current_user
 
 logger = logging.getLogger(__name__)
+
+_SAFE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9\-]*$")
+
+
+def _validate_path_key(key: str, label: str = "key") -> None:
+    """Validate a path parameter used in file operations. Prevents path traversal."""
+    if not _SAFE_KEY_RE.match(key):
+        raise HTTPException(status_code=400, detail=f"Invalid {label}: must match [a-z0-9][a-z0-9-]*")
 
 router = APIRouter()
 
@@ -147,6 +156,7 @@ async def get_definition(
     user: dict = Depends(get_current_user),
 ):
     """Get a single agent definition by key."""
+    _validate_path_key(agent_key, "agent_key")
     path = _DEFINITIONS_DIR / f"{agent_key}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Definition '{agent_key}' not found")
@@ -188,6 +198,7 @@ async def update_definition(
     user: dict = Depends(get_current_user),
 ):
     """Update an existing agent definition."""
+    _validate_path_key(agent_key, "agent_key")
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -214,6 +225,7 @@ async def delete_definition(
     user: dict = Depends(get_current_user),
 ):
     """Delete an agent definition."""
+    _validate_path_key(agent_key, "agent_key")
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -261,6 +273,7 @@ async def get_preset(
     user: dict = Depends(get_current_user),
 ):
     """Get full details of a crew preset."""
+    _validate_path_key(preset_name, "preset_name")
     path = _PRESETS_DIR / f"{preset_name}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Preset '{preset_name}' not found")
@@ -322,6 +335,7 @@ async def delete_preset(
     user: dict = Depends(get_current_user),
 ):
     """Delete a crew preset."""
+    _validate_path_key(preset_name, "preset_name")
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -364,6 +378,7 @@ async def list_definition_versions(
     user: dict = Depends(get_current_user),
 ):
     """List all saved versions of an agent definition."""
+    _validate_path_key(agent_key, "agent_key")
     from agents.versioning import list_versions
 
     versions = list_versions(agent_key)
@@ -376,6 +391,7 @@ async def save_definition_version(
     user: dict = Depends(get_current_user),
 ):
     """Save the current definition as a versioned snapshot."""
+    _validate_path_key(agent_key, "agent_key")
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -394,6 +410,7 @@ async def rollback_definition(
     user: dict = Depends(get_current_user),
 ):
     """Rollback an agent definition to a previous version."""
+    _validate_path_key(agent_key, "agent_key")
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 

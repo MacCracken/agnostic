@@ -29,6 +29,11 @@ _PRESETS_DIR = _DEFINITIONS_DIR / "presets"
 
 MANIFEST_FILENAME = "manifest.json"
 
+# Safety limits for ZIP import
+_MAX_UNCOMPRESSED_SIZE = 10 * 1024 * 1024  # 10 MB
+_MAX_ENTRY_COUNT = 100
+_SAFE_KEY_RE = __import__("re").compile(r"^[a-z0-9][a-z0-9\-]*$")
+
 
 class PackageManifest:
     """Metadata for an .agpkg bundle."""
@@ -159,6 +164,14 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
 
     try:
         with zipfile.ZipFile(buf, "r") as zf:
+            # Safety: check entry count and total uncompressed size
+            infos = zf.infolist()
+            if len(infos) > _MAX_ENTRY_COUNT:
+                return {"errors": [f"Package has {len(infos)} entries (max {_MAX_ENTRY_COUNT})"]}
+            total_size = sum(i.file_size for i in infos)
+            if total_size > _MAX_UNCOMPRESSED_SIZE:
+                return {"errors": [f"Total uncompressed size {total_size} exceeds {_MAX_UNCOMPRESSED_SIZE} bytes"]}
+
             # Read manifest
             if MANIFEST_FILENAME not in zf.namelist():
                 return {"errors": ["Missing manifest.json in package"]}
@@ -172,11 +185,22 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
             for name in zf.namelist():
                 if name.startswith("definitions/") and name.endswith(".json"):
                     key = Path(name).stem
+                    # Validate key is safe (no path traversal)
+                    if not _SAFE_KEY_RE.match(key):
+                        result["errors"].append(f"Invalid definition key: {key}")
+                        continue
+                    # Validate content is valid JSON
+                    raw = zf.read(name)
+                    try:
+                        json.loads(raw)
+                    except json.JSONDecodeError:
+                        result["errors"].append(f"Invalid JSON in {name}")
+                        continue
                     target = _DEFINITIONS_DIR / f"{key}.json"
                     if target.exists() and not overwrite:
                         result["skipped"].append(f"definition:{key}")
                         continue
-                    target.write_bytes(zf.read(name))
+                    target.write_bytes(raw)
                     result["definitions_installed"].append(key)
 
             # Install presets
@@ -184,11 +208,20 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
             for name in zf.namelist():
                 if name.startswith("presets/") and name.endswith(".json"):
                     preset_name = Path(name).stem
+                    if not _SAFE_KEY_RE.match(preset_name):
+                        result["errors"].append(f"Invalid preset name: {preset_name}")
+                        continue
+                    raw = zf.read(name)
+                    try:
+                        json.loads(raw)
+                    except json.JSONDecodeError:
+                        result["errors"].append(f"Invalid JSON in {name}")
+                        continue
                     target = _PRESETS_DIR / f"{preset_name}.json"
                     if target.exists() and not overwrite:
                         result["skipped"].append(f"preset:{preset_name}")
                         continue
-                    target.write_bytes(zf.read(name))
+                    target.write_bytes(raw)
                     result["presets_installed"].append(preset_name)
 
     except zipfile.BadZipFile:

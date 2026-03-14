@@ -12,11 +12,19 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_SAFE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9\-]*$")
+
+
+def _validate_key(key: str) -> None:
+    if not _SAFE_KEY_RE.match(key):
+        raise ValueError(f"Invalid agent_key: {key!r}")
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 _DEFINITIONS_DIR = _PROJECT_ROOT / "agents" / "definitions"
@@ -53,6 +61,7 @@ def save_version(agent_key: str, definition_data: dict[str, Any] | None = None) 
 
     Returns metadata about the saved version.
     """
+    _validate_key(agent_key)
     active_path = _DEFINITIONS_DIR / f"{agent_key}.json"
 
     if definition_data is None:
@@ -79,6 +88,7 @@ def save_version(agent_key: str, definition_data: dict[str, Any] | None = None) 
 
 def list_versions(agent_key: str) -> list[dict[str, Any]]:
     """List all saved versions for an agent definition."""
+    _validate_key(agent_key)
     vdir = _version_dir(agent_key)
     if not vdir.exists():
         return []
@@ -102,6 +112,7 @@ def list_versions(agent_key: str) -> list[dict[str, Any]]:
 
 def get_version(agent_key: str, version: int) -> dict[str, Any] | None:
     """Get a specific version of an agent definition."""
+    _validate_key(agent_key)
     path = _version_dir(agent_key) / f"v{version}.json"
     if not path.exists():
         return None
@@ -115,6 +126,7 @@ def rollback(agent_key: str, version: int) -> dict[str, Any]:
     Saves the current active definition as a new version first, then
     replaces the active definition with the specified version.
     """
+    _validate_key(agent_key)
     # Verify the target version exists
     target_data = get_version(agent_key, version)
     if target_data is None:

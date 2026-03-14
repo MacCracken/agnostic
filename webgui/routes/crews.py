@@ -31,7 +31,7 @@ class CrewRunRequest(BaseModel):
     """Request to assemble and run a crew."""
 
     # Source: either a preset name OR a list of agent keys/definitions
-    preset: str | None = Field(None, description="Preset name (e.g. 'qa-standard')")
+    preset: str | None = Field(None, description="Preset name (e.g. 'qa-standard')", pattern=r"^[a-z0-9][a-z0-9\-]*$")
     agent_keys: list[str] = Field(
         default_factory=list,
         description="Agent keys from definitions directory",
@@ -39,6 +39,7 @@ class CrewRunRequest(BaseModel):
     agent_definitions: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Inline agent definitions (for ad-hoc crews)",
+        max_length=20,
     )
 
     # Task to execute
@@ -135,20 +136,31 @@ async def _run_crew_async(
         agents = []
 
         def _build_agents() -> list:
+            import re
+
             from agents.base import AgentDefinition, BaseAgent
             from agents.factory import AgentFactory
+
+            _key_re = re.compile(r"^[a-z0-9][a-z0-9\-]*$")
+            _required_inline = {"agent_key", "name", "role", "goal", "backstory"}
 
             built = []
             if source == "preset":
                 built = AgentFactory.from_preset(crew_config["preset"])
             elif source == "keys":
                 for key in crew_config["agent_keys"]:
-                    agent = AgentFactory.from_file(
-                        f"agents/definitions/{key}.json"
-                    )
+                    if not _key_re.match(key):
+                        raise ValueError(f"Invalid agent key: {key!r}")
+                    from pathlib import Path
+
+                    defn_path = Path(__file__).parent.parent.parent / "agents" / "definitions" / f"{key}.json"
+                    agent = AgentFactory.from_file(defn_path)
                     built.append(agent)
             elif source == "inline":
                 for defn_dict in crew_config["agent_definitions"]:
+                    missing = _required_inline - set(defn_dict.keys())
+                    if missing:
+                        raise ValueError(f"Inline definition missing fields: {missing}")
                     agent = AgentFactory.from_dict(defn_dict)
                     built.append(agent)
             return built

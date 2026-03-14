@@ -1,6 +1,6 @@
 # Docker Build
 
-Single image build for the Agnostic QA Platform.
+Single image build for the AAS (Agnostic Agentics Systems) platform.
 
 ## Build
 
@@ -25,10 +25,11 @@ docker compose --profile dev --profile workers up -d
 
 ## Image
 
-One image serves all roles:
+One image serves all roles and agent domains (QA, data-engineering, devops, custom):
 
 - **webgui** (default CMD) — Chainlit + FastAPI web interface, agents run in-process
 - **workers** (via `agent-entrypoint.sh`) — distributed agent workers selected by `AGENT_ROLE` env var
+- **crews** — any domain crew can be assembled and run via the `/api/v1/crews` endpoint or presets
 
 ```
 ┌──────────────────────────────────────┐
@@ -43,6 +44,7 @@ One image serves all roles:
 │                                      │
 │  Application code:                   │
 │  • webgui/  agents/  config/  shared/│
+│  • agents/definitions/presets/       │
 │                                      │
 │  CMD: chainlit run webgui/app.py     │
 │  ALT: ./agent-entrypoint.sh (worker) │

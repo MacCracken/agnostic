@@ -17,7 +17,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from crewai import LLM, Agent, Crew, Process, Task
@@ -27,6 +29,15 @@ from config.llm_integration import llm_service
 from shared.crewai_compat import BaseTool
 
 logger = logging.getLogger(__name__)
+
+_SAFE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9\-]*$")
+_DEFINITIONS_DIR = Path(__file__).parent / "definitions"
+
+
+def _validate_key(key: str, label: str = "key") -> None:
+    """Raise ValueError if key contains path traversal characters."""
+    if not _SAFE_KEY_RE.match(key):
+        raise ValueError(f"Invalid {label}: {key!r} (must match [a-z0-9][a-z0-9-]*)")
 
 
 class AgentDefinition:
@@ -203,7 +214,7 @@ class BaseAgent:
             verbose=self.definition.verbose,
         )
         # CrewAI is sync — run in executor to avoid blocking the event loop
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, crew.kickoff)
         return result
 
@@ -220,7 +231,7 @@ class BaseAgent:
             process=process,
             verbose=self.definition.verbose,
         )
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, crew.kickoff)
 
     # ------------------------------------------------------------------
@@ -247,13 +258,15 @@ class BaseAgent:
         """
         from agents.factory import AgentFactory
 
+        _validate_key(target_agent_key, "target_agent_key")
+
         self.logger.info(
             "Delegating from %s to %s",
             self.definition.agent_key,
             target_agent_key,
         )
 
-        target = AgentFactory.from_file(f"agents/definitions/{target_agent_key}.json")
+        target = AgentFactory.from_file(_DEFINITIONS_DIR / f"{target_agent_key}.json")
 
         # Inject delegation context so the target knows who sent the task
         enriched = {
@@ -295,8 +308,13 @@ class BaseAgent:
             "result": result,
             "timestamp": datetime.now().isoformat(),
         }
-        self.redis_client.publish(
-            f"manager:{session_id}:notifications", json.dumps(notification)
+        # Redis client is sync — run in executor to avoid blocking the loop
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            self.redis_client.publish,
+            f"manager:{session_id}:notifications",
+            json.dumps(notification),
         )
 
     # ------------------------------------------------------------------

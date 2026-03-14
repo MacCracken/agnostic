@@ -1,12 +1,46 @@
 # Changelog
 
-All notable changes to the Agentic QA Team System are documented here.
+All notable changes to AAS (Agnostic Agentics Systems) are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versions use **YYYY.M.D** (calendar versioning) for git tags and releases.
 Same-day patches use **YYYY.M.D-N** suffix (e.g. `2026.3.8-1`, `2026.3.8-2`).
 Build artifacts use **agnostic-VERSION** (e.g. `agnostic-2026.3.8-1`).
 See `scripts/build-release.sh` for the build-and-rename workflow.
+
+---
+
+## [2026.3.14]
+
+### Added
+
+- **General-purpose agent platform** — expanded from QA-only to support any domain (data-engineering, DevOps, custom). QA remains a first-class preset. See ADR-029
+- **`BaseAgent` class** (`agents/base.py`) — generic agent foundation with shared Redis/Celery/LLM/CrewAI init, task lifecycle, inter-crew delegation via `delegate_to()`
+- **`AgentDefinition` schema** — runtime-loadable agent definitions from JSON, YAML, or API dicts
+- **`AgentFactory`** (`agents/factory.py`) — create agents from files, dicts, presets, or definitions with caching
+- **Tool registry** (`agents/tool_registry.py`) — global `@register_tool` decorator, name-based lookup, `load_tool_from_source()` for dynamic tool upload with sandboxed exec
+- **Crew presets** — `qa-standard` (6 agents), `data-engineering` (3 agents), `devops` (3 agents) in `agents/definitions/presets/`
+- **Agent definition CRUD API** — POST/GET/PUT/DELETE `/api/v1/definitions/{key}` with admin auth, domain filtering, pagination
+- **Preset management API** — GET/POST/DELETE `/api/v1/presets/{name}` with built-in preset protection
+- **Crew builder API** — POST `/api/v1/crews` assembles and runs crews from presets, agent keys, or inline definitions; GET `/api/v1/crews/{id}` for status polling
+- **Agent versioning** (`agents/versioning.py`) — save/list/get/rollback versions via API at `/api/v1/definitions/{key}/versions`
+- **Agent packaging** (`agents/packaging.py`) — `.agpkg` ZIP bundles with manifest for export (POST `/api/v1/packages/export`) and import
+- **Custom tool upload** — POST `/api/v1/tools/upload` with sandboxed compilation; GET `/api/v1/tools` lists all registered tools
+- **5 new MCP tools** — `agnostic_run_crew`, `agnostic_crew_status`, `agnostic_list_presets`, `agnostic_list_definitions`, `agnostic_create_agent` with dispatch routing (32 total)
+- **A2A `a2a:create_agent`** — new message type for dynamic agent creation via SecureYeoman or other A2A peers
+- **A2A crew delegation** — `a2a:delegate` now routes to crew builder when `preset` or `agent_definitions` are present in the payload
+- **Dynamic A2A capabilities** — `/a2a/capabilities` returns loaded presets instead of hardcoded QA list
+- **89 new unit tests** — `test_base_agent.py` (32), `test_definitions_api.py` (27), `test_crews_api.py` (12), `test_phase4.py` (18). Total: 922 unit tests
+
+### Changed
+
+- **Branding** — "Agentic QA Team System" → "AAS — Agnostic Agentics Systems" in README, docs, dashboard. Container/artifact names remain `agnostic`
+- **Database models** — added `domain` and `crew_preset` columns to `TestSession`; added `domain` to `TestResult` and `TestReport`; new aliases `AgentSession`, `TaskResult`, `TaskMetrics`, `TaskReport` (table names unchanged, no migration needed)
+- **AGNOS registration** — `get_all_agents()` and `get_all_capabilities()` merge static QA agents with dynamically-loaded preset agents; capability advertisement uses dynamic list
+- **Dashboard timeline** — `_get_session_timeline()` discovers dynamic agent prefixes via Redis SCAN (not limited to 6 QA agents)
+- **MCP server name** — `agnostic-qa` → `agnostic`
+- **Router aggregation** — `webgui/api.py` includes new `definitions` and `crews` routers
+- **Documentation** — README.md, docs/README.md, docs/agents/index.md, docker/README.md all updated for multi-domain platform. ADR-029 added (29 total)
 
 ---
 

@@ -63,8 +63,16 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
     """Dynamically load a BaseTool subclass from Python source code.
 
     The source must define exactly one class that inherits from BaseTool.
-    The class is compiled in a restricted namespace and registered in the
-    global tool registry.
+    The class is compiled in a namespace with limited builtins.
+
+    **SECURITY WARNING**: The restricted builtins are defense-in-depth only,
+    NOT a real sandbox.  CPython ``exec()`` cannot be securely sandboxed — a
+    determined attacker can escape via MRO walking (``__subclasses__``,
+    ``__globals__``).  This endpoint is gated behind ``super_admin``/
+    ``org_admin`` auth.  Only upload tool code from trusted sources.
+
+    For production hardening, consider process-level isolation (nsjail,
+    gVisor, or WASM runtime) around this function.
 
     Args:
         name: Name to register the tool under.

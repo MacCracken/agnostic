@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -41,14 +42,34 @@ class AgentFactory:
 
     @classmethod
     def from_file(cls, path: str | Path) -> BaseAgent:
-        """Load an agent definition from a JSON or YAML file."""
+        """Load an agent definition from a JSON or YAML file.
+
+        The resolved path must be under the project's definitions directory
+        or an explicit absolute path. Relative paths containing '..' are rejected.
+        """
         path = Path(path)
-        defn = cls._load_definition_file(path)
+        resolved = path.resolve()
+        # Block obvious traversal attempts
+        if ".." in str(path):
+            raise ValueError(f"Path traversal not allowed: {path}")
+        defn = cls._load_definition_file(resolved)
         return BaseAgent(defn)
+
+    _SAFE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9\-]*$")
+
+    @classmethod
+    def invalidate_cache(cls, path: str | None = None) -> None:
+        """Clear definition cache. Pass a path to clear a single entry, or None for all."""
+        if path is None:
+            cls._definition_cache.clear()
+        else:
+            cls._definition_cache.pop(str(Path(path).resolve()), None)
 
     @classmethod
     def from_preset(cls, preset_name: str) -> list[BaseAgent]:
         """Load all agents for a named preset (e.g. 'qa-standard')."""
+        if not cls._SAFE_KEY_RE.match(preset_name):
+            raise ValueError(f"Invalid preset name: {preset_name!r}")
         preset_path = _PRESETS_DIR / f"{preset_name}.json"
         if not preset_path.exists():
             raise FileNotFoundError(f"Preset '{preset_name}' not found at {preset_path}")
