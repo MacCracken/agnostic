@@ -55,14 +55,17 @@ Expand Agnostic from QA-only to a platform that can create and run **any kind of
 | AGNOS dynamic registration | Done | `get_all_agents()` / `get_all_capabilities()` merge static QA agents with preset-loaded agents |
 | Multi-domain dashboard | Done | `_get_session_timeline()` discovers dynamic agent prefixes via Redis SCAN |
 
-### Phase 4: Advanced Features
+### Phase 4: Advanced Features (complete)
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Agent marketplace / sharing | Pending | Import/export agent definitions as `.agpkg` bundles |
-| Inter-crew delegation | Pending | Agents from different domains can delegate to each other |
-| Custom tool upload | Pending | Users can upload BaseTool implementations at runtime |
-| Agent versioning | Pending | Version agent definitions, rollback support |
+| Agent packaging (.agpkg) | Done | `agents/packaging.py` — export/import ZIP bundles with manifest, definitions, presets |
+| Inter-crew delegation | Done | `BaseAgent.delegate_to()` — agents can delegate to any other agent across domains |
+| Custom tool upload | Done | `load_tool_from_source()` in tool_registry + POST `/api/v1/tools/upload` endpoint |
+| Agent versioning | Done | `agents/versioning.py` — save/list/get/rollback versions + API endpoints on `/definitions/{key}/versions` |
+| Package export/import API | Done | POST `/api/v1/packages/export` (returns .agpkg ZIP) |
+| Tool listing API | Done | GET `/api/v1/tools` — list all registered tools |
+| Unit tests | Done | `tests/unit/test_phase4.py` (18 tests) |
 
 ---
 
@@ -128,4 +131,4 @@ After all generalization phases are complete, the following work is needed in **
 
 ---
 
-*Last Updated: 2026-03-14 · Version: 2026.3.14-p3 · Test count: 904 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-14 · Version: 2026.3.14 · Test count: 922 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

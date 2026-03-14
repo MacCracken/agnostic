@@ -224,6 +224,46 @@ class BaseAgent:
         return await loop.run_in_executor(None, crew.kickoff)
 
     # ------------------------------------------------------------------
+    # Inter-crew delegation
+    # ------------------------------------------------------------------
+
+    async def delegate_to(
+        self,
+        target_agent_key: str,
+        task_data: dict[str, Any],
+        *,
+        source: str = "key",
+    ) -> dict[str, Any]:
+        """Delegate a task to another agent (potentially from a different domain/crew).
+
+        Args:
+            target_agent_key: The agent_key of the target agent (must have a
+                definition file in agents/definitions/).
+            task_data: Task data dict passed to the target agent's handle_task().
+            source: How to resolve the target — "key" loads from definitions dir.
+
+        Returns:
+            The result from the target agent's handle_task().
+        """
+        from agents.factory import AgentFactory
+
+        self.logger.info(
+            "Delegating from %s to %s",
+            self.definition.agent_key,
+            target_agent_key,
+        )
+
+        target = AgentFactory.from_file(f"agents/definitions/{target_agent_key}.json")
+
+        # Inject delegation context so the target knows who sent the task
+        enriched = {
+            **task_data,
+            "_delegated_from": self.definition.agent_key,
+            "_delegated_domain": self.definition.domain,
+        }
+        return await target.handle_task(enriched)
+
+    # ------------------------------------------------------------------
     # Redis state helpers
     # ------------------------------------------------------------------
 

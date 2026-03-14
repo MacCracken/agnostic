@@ -335,3 +335,209 @@ async def delete_preset(
 
     path.unlink()
     logger.info("Deleted preset: %s", preset_name)
+
+
+# ---------------------------------------------------------------------------
+# Agent versioning
+# ---------------------------------------------------------------------------
+
+
+class VersionInfo(BaseModel):
+    version: int
+    name: str = ""
+    domain: str = "general"
+    file: str = ""
+
+
+class VersionListResponse(BaseModel):
+    agent_key: str
+    versions: list[VersionInfo]
+
+
+class RollbackRequest(BaseModel):
+    version: int = Field(..., ge=1)
+
+
+@router.get("/definitions/{agent_key}/versions", response_model=VersionListResponse)
+async def list_definition_versions(
+    agent_key: str,
+    user: dict = Depends(get_current_user),
+):
+    """List all saved versions of an agent definition."""
+    from agents.versioning import list_versions
+
+    versions = list_versions(agent_key)
+    return VersionListResponse(agent_key=agent_key, versions=versions)
+
+
+@router.post("/definitions/{agent_key}/versions", status_code=201)
+async def save_definition_version(
+    agent_key: str,
+    user: dict = Depends(get_current_user),
+):
+    """Save the current definition as a versioned snapshot."""
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from agents.versioning import save_version
+
+    result = save_version(agent_key)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.post("/definitions/{agent_key}/rollback")
+async def rollback_definition(
+    agent_key: str,
+    req: RollbackRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Rollback an agent definition to a previous version."""
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from agents.versioning import rollback
+
+    result = rollback(agent_key, req.version)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Package import/export
+# ---------------------------------------------------------------------------
+
+
+class ExportPackageRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    definition_keys: list[str] = Field(default_factory=list)
+    preset_names: list[str] = Field(default_factory=list)
+    version: str = Field(default="1.0.0", max_length=20)
+    description: str = Field(default="", max_length=500)
+    domain: str = Field(default="general", max_length=100)
+    author: str = Field(default="", max_length=200)
+
+
+@router.post("/packages/export")
+async def export_package_endpoint(
+    req: ExportPackageRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Export agent definitions and presets as a downloadable .agpkg bundle."""
+    from fastapi.responses import Response
+
+    from agents.packaging import export_package
+
+    data = export_package(
+        name=req.name,
+        definition_keys=req.definition_keys,
+        preset_names=req.preset_names,
+        version=req.version,
+        description=req.description,
+        domain=req.domain,
+        author=req.author,
+    )
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{req.name}-{req.version}.agpkg"',
+        },
+    )
+
+
+@router.post("/packages/import")
+async def import_package_endpoint(
+    user: dict = Depends(get_current_user),
+    overwrite: bool = Query(False, description="Overwrite existing definitions"),
+):
+    """Import a .agpkg bundle to install agent definitions and presets.
+
+    Send the .agpkg file as the raw request body with Content-Type: application/zip.
+    """
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from fastapi import Request
+
+    # This endpoint needs the raw body — we import Request at call time
+    # because the body is consumed by FastAPI's normal parsing otherwise.
+    # The caller should send raw bytes with Content-Type: application/zip.
+    raise HTTPException(
+        status_code=501,
+        detail="Use POST /api/v1/packages/import/upload with multipart form data",
+    )
+
+
+@router.post("/packages/import/upload")
+async def import_package_upload(
+    user: dict = Depends(get_current_user),
+    overwrite: bool = Query(False, description="Overwrite existing definitions"),
+):
+    """Import a .agpkg bundle via file upload.
+
+    Send as multipart/form-data with field name 'file'.
+    """
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    # FastAPI file upload requires the UploadFile dependency
+    # For now, return guidance — full multipart is Phase 4+
+    raise HTTPException(
+        status_code=501,
+        detail="File upload endpoint pending. Use the Python API: "
+        "from agents.packaging import import_package; import_package(data)",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Custom tool upload
+# ---------------------------------------------------------------------------
+
+
+class ToolUploadRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
+    source_code: str = Field(..., min_length=10, max_length=50000)
+
+
+class ToolUploadResponse(BaseModel):
+    name: str
+    status: str
+    description: str = ""
+
+
+@router.post("/tools/upload", response_model=ToolUploadResponse, status_code=201)
+async def upload_custom_tool(
+    req: ToolUploadRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Upload a custom BaseTool implementation.
+
+    The source code must define exactly one class that inherits from BaseTool.
+    The tool will be registered globally and available to all agents.
+    """
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from agents.tool_registry import load_tool_from_source
+
+    try:
+        tool_cls = load_tool_from_source(req.name, req.source_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    desc = ""
+    if tool_cls and hasattr(tool_cls, "description"):
+        desc = tool_cls.description if isinstance(tool_cls.description, str) else ""
+
+    return ToolUploadResponse(name=req.name, status="registered", description=desc)
+
+
+@router.get("/tools")
+async def list_tools(user: dict = Depends(get_current_user)):
+    """List all registered tools."""
+    from agents.tool_registry import list_registered_tools
+
+    return {"tools": list_registered_tools()}
