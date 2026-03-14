@@ -18,8 +18,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# name -> tool class (not instance)
+# name -> tool class (not instance). Bounded to prevent unbounded growth.
 _REGISTRY: dict[str, type[BaseTool]] = {}
+_REGISTRY_MAX_SIZE = 500
 
 
 def register_tool(cls: type[BaseTool]) -> type[BaseTool]:
@@ -138,6 +139,11 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
         )
 
     tool_cls = tool_classes[0]
+    if len(_REGISTRY) >= _REGISTRY_MAX_SIZE and name not in _REGISTRY:
+        raise ValueError(
+            f"Tool registry full ({_REGISTRY_MAX_SIZE} tools). "
+            "Remove unused tools before uploading new ones."
+        )
     _REGISTRY[name] = tool_cls
     logger.info("Loaded custom tool '%s' (%s)", name, tool_cls.__name__)
     return tool_cls

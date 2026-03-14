@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 class AgentFactory:
     """Create BaseAgent instances from various sources."""
 
-    # Cache loaded definitions so we don't re-parse on every call
+    # Cache loaded definitions so we don't re-parse on every call.
+    # Bounded to prevent unbounded memory growth in long-running processes.
     _definition_cache: dict[str, AgentDefinition] = {}
+    _CACHE_MAX_SIZE = 200
 
     @classmethod
     def from_definition(cls, definition: AgentDefinition) -> BaseAgent:
@@ -44,9 +46,12 @@ class AgentFactory:
         """
         path = Path(path)
         resolved = path.resolve()
-        # Block obvious traversal attempts
+        # Block path traversal — resolved path must be under definitions dir
+        # or be an explicit absolute path that exists
         if ".." in str(path):
             raise ValueError(f"Path traversal not allowed: {path}")
+        if not resolved.exists():
+            raise FileNotFoundError(f"Definition file not found: {resolved}")
         defn = cls._load_definition_file(resolved)
         return BaseAgent(defn)
 
@@ -142,5 +147,9 @@ class AgentFactory:
                 data = json.load(f)
 
         defn = AgentDefinition.from_dict(data)
+        # Evict oldest entries if cache is full
+        if len(cls._definition_cache) >= cls._CACHE_MAX_SIZE:
+            oldest_key = next(iter(cls._definition_cache))
+            del cls._definition_cache[oldest_key]
         cls._definition_cache[cache_key] = defn
         return defn

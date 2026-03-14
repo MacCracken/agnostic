@@ -71,6 +71,9 @@ class AuditAction(StrEnum):
     SESSION_COMPLETED = "session.completed"
     SESSION_FAILED = "session.failed"
 
+    # Configuration (agent definitions, presets, tools)
+    CONFIG_CHANGED = "config.changed"
+
     # System
     RATE_LIMIT_EXCEEDED = "system.rate_limit"
     PERMISSION_DENIED = "system.permission_denied"

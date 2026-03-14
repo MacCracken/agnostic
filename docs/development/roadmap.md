@@ -43,31 +43,54 @@ Items identified during code review and audit. Not blocking, but should be addre
 | Item | Effort | Notes |
 |------|--------|-------|
 | Process-level sandbox for `load_tool_from_source()` | Medium | Current `exec()` restricted builtins is defense-in-depth only. Add nsjail/gVisor/WASM isolation for untrusted tool code |
-| `.agpkg` import: multipart file upload endpoint | Small | Currently only Python API; HTTP file upload endpoint is a stub (removed). Implement via FastAPI `UploadFile` |
-| Symlink traversal in `factory.from_file()` | Small | `Path.resolve()` is called but not validated against an allowed base directory. Symlinks could escape |
+| `.agpkg` import: multipart file upload endpoint | Small | Currently only Python API; HTTP file upload endpoint removed. Implement via FastAPI `UploadFile` |
+| Symlink traversal in `factory.from_file()` | Small | Add `resolved.is_relative_to(DEFINITIONS_DIR)` check after `Path.resolve()` |
+| Rate limiting on definition/preset/tool endpoints | Small | No per-user rate limits on CRUD mutations or tool upload |
+| Re-validate callback URL at webhook fire time in `_run_crew_async` | Small | SSRF check only at request time; stored config could be tampered |
+
+### Performance
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| Async file I/O in definition/preset endpoints | Medium | `list_definitions`, `get_definition`, `create_definition`, etc. do sync `open()`/`json.load()` on the event loop. Use `aiofiles` or `run_in_executor` |
+| TTL cache for `list_definitions` / `list_presets` | Small | Re-scans filesystem on every request. Add 5s in-memory TTL cache (matches dashboard pattern) |
+| Shared infrastructure for crew agents | Medium | Each `BaseAgent` creates own Redis client + Celery app. Crew of 6 = 6 connections. Share across agents in same crew |
+| `export_package` sync ZIP on event loop | Small | Synchronous `zipfile.ZipFile` in async handler blocks under load |
 
 ### Code Quality
 
 | Item | Effort | Notes |
 |------|--------|-------|
 | `AgentDefinition` → Pydantic model or dataclass | Medium | Currently a plain class with manual `__init__`/`to_dict`/`from_dict`. Inconsistent with rest of codebase |
-| Extract `require_admin` FastAPI dependency | Small | Admin role check `user.get("role") not in ("super_admin", "org_admin")` duplicated 7+ times. Should be a reusable `Depends()` |
-| Status string enum | Small | `"completed"`, `"failed"`, `"pending"`, `"running"`, `"partial"` scattered as bare strings. Should be a shared `Status` enum |
-| `_run_crew_async()` function split | Small | 147 lines with 2 nested functions. Split into `_build_agents`, `_execute_agents`, `_finalize_crew` |
-| `import_package()` loop dedup | Small | Definition and preset install loops are nearly identical. Extract `_install_entries()` helper |
-| Background task reference tracking | Small | `asyncio.create_task` references not tracked in a set. Standard pattern: `tasks.add(t); t.add_done_callback(tasks.discard)` |
-| `asyncio.Lock()` at module scope in `tasks.py` | Small | Pre-existing. `_webhook_client_lock` created at import time; may fail in Python 3.12+ if imported before event loop |
+| Extract `require_admin` FastAPI dependency | Small | Admin role check duplicated 7+ times. Should be reusable `Depends()` |
+| Status string enum | Small | `"completed"`, `"failed"`, `"pending"`, `"running"`, `"partial"` scattered as bare strings |
+| `_run_crew_async()` function split | Small | 147 lines. Split into `_build_agents`, `_execute_agents`, `_finalize_crew` |
+| `import_package()` loop dedup | Small | Definition and preset install loops nearly identical |
+| Background task reference tracking | Small | `asyncio.create_task` refs not tracked in a set |
+| `asyncio.Lock()` at module scope in `tasks.py` | Small | Pre-existing; may fail in Python 3.12+ |
+| Version pruning | Small | `save_version` creates unlimited `v{N}.json` files. Add max-versions cap with oldest eviction |
 
 ### Test Coverage
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| ZIP bomb / entry count limit tests | Small | `_MAX_UNCOMPRESSED_SIZE` and `_MAX_ENTRY_COUNT` checks have no test |
-| `AgentFactory.invalidate_cache()` selective test | Small | Only full-clear tested; path-specific invalidation untested |
+| ZIP bomb / entry count limit tests | Small | `_MAX_UNCOMPRESSED_SIZE` and `_MAX_ENTRY_COUNT` checks untested |
+| `AgentFactory.invalidate_cache()` selective test | Small | Path-specific invalidation untested |
 | YAML definition loading test | Small | `factory.from_file()` YAML branch untested |
 | `_run_crew_async()` integration test | Medium | Background execution mocked away in current tests |
 | `delegate_to()` edge cases | Small | Invalid key rejection, missing file, delegation failure untested |
 | `rollback_definition` endpoint test | Small | API-level rollback test missing |
+| Factory/registry cache bounds tests | Small | Eviction behavior at `_CACHE_MAX_SIZE` / `_REGISTRY_MAX_SIZE` untested |
+
+### Benchmarking
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| Definition list scalability | Small | Measure `GET /definitions` at 10/50/200/500 files |
+| Crew creation throughput | Medium | Concurrent `POST /crews` (1/5/10/20 simultaneous) — thread pool saturation |
+| Crew execution by agent count | Medium | Wall time for 1/3/6/10 agent crews |
+| Package import/export large bundles | Small | 50 definitions + 10 presets export; 100-entry import |
+| Production metrics | Medium | Add Prometheus gauges: `agnostic_crew_run_duration_seconds`, `agnostic_tool_registry_size`, `agnostic_active_crew_tasks`, `agnostic_definition_cache_hits` |
 
 ---
 

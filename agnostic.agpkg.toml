@@ -54,7 +54,7 @@ names = [
 ]
 
 [marketplace.capabilities]
-mcp_tools = 27
+mcp_tools = 32
 rpc_methods = 16
 a2a_protocol = true
 webhook_events = 6

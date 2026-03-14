@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from agents.constants import DEFINITIONS_DIR, PRESETS_DIR, validate_agent_key
+from shared.audit import AuditAction, audit_log
 from webgui.routes.dependencies import PaginatedResponse, get_current_user
 
 logger = logging.getLogger(__name__)
@@ -180,6 +181,7 @@ async def create_definition(
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
+    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="definition", resource_id=req.agent_key, detail={"action": "create"})
     logger.info("Created agent definition: %s", req.agent_key)
     return AgentDefinitionResponse(**data)
 
@@ -208,6 +210,7 @@ async def update_definition(
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
+    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="definition", resource_id=agent_key, detail={"action": "update"})
     logger.info("Updated agent definition: %s", agent_key)
     return AgentDefinitionResponse(**data)
 
@@ -227,6 +230,7 @@ async def delete_definition(
         raise HTTPException(status_code=404, detail=f"Definition '{agent_key}' not found")
 
     path.unlink()
+    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="definition", resource_id=agent_key, detail={"action": "delete"})
     logger.info("Deleted agent definition: %s", agent_key)
 
 
@@ -311,6 +315,7 @@ async def create_preset(
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
+    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="preset", resource_id=req.name, detail={"action": "create", "agent_count": len(req.agents)})
     logger.info("Created preset: %s with %d agents", req.name, len(req.agents))
     return PresetResponse(
         name=req.name,
@@ -341,6 +346,7 @@ async def delete_preset(
         raise HTTPException(status_code=404, detail=f"Preset '{preset_name}' not found")
 
     path.unlink()
+    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="preset", resource_id=preset_name, detail={"action": "delete"})
     logger.info("Deleted preset: %s", preset_name)
 
 
@@ -453,7 +459,7 @@ async def export_package_endpoint(
         content=data,
         media_type="application/zip",
         headers={
-            "Content-Disposition": f'attachment; filename="{req.name}-{req.version}.agpkg"',
+            "Content-Disposition": f'attachment; filename="{req.name.replace(chr(34), "")}-{req.version.replace(chr(34), "")}.agpkg"',
         },
     )
 
@@ -499,6 +505,7 @@ async def upload_custom_tool(
     if tool_cls and hasattr(tool_cls, "description"):
         desc = tool_cls.description if isinstance(tool_cls.description, str) else ""
 
+    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="tool", resource_id=req.name, detail={"action": "upload"})
     return ToolUploadResponse(name=req.name, status="registered", description=desc)
 
 
