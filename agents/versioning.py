@@ -44,7 +44,9 @@ def _next_version(agent_key: str) -> int:
     return (max(nums) + 1) if nums else 1
 
 
-def save_version(agent_key: str, definition_data: dict[str, Any] | None = None) -> dict[str, Any]:
+def save_version(
+    agent_key: str, definition_data: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Save the current definition as a versioned snapshot.
 
     If definition_data is provided, it's used directly. Otherwise, reads from
@@ -90,12 +92,14 @@ def list_versions(agent_key: str) -> list[dict[str, Any]]:
             num = int(p.stem[1:])
             with open(p) as f:
                 data = json.load(f)
-            versions.append({
-                "version": num,
-                "name": data.get("name", agent_key),
-                "domain": data.get("domain", "general"),
-                "file": p.name,
-            })
+            versions.append(
+                {
+                    "version": num,
+                    "name": data.get("name", agent_key),
+                    "domain": data.get("domain", "general"),
+                    "file": p.name,
+                }
+            )
         except Exception:
             continue
     return versions

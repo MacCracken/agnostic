@@ -57,12 +57,15 @@ def register_existing_qa_tools() -> None:
     This is called lazily on first tool resolution so we don't
     break imports if agent modules aren't available (e.g. in tests).
     """
-    _import_safe("agents.performance.qa_performance", [
-        "PerformanceMonitoringTool",
-        "LoadTestingTool",
-        "ResilienceValidationTool",
-        "AdvancedProfilingTool",
-    ])
+    _import_safe(
+        "agents.performance.qa_performance",
+        [
+            "PerformanceMonitoringTool",
+            "LoadTestingTool",
+            "ResilienceValidationTool",
+            "AdvancedProfilingTool",
+        ],
+    )
     # Add other agent modules as needed — the modules are large,
     # so we only register the tool classes we can find.
     logger.info("Registered %d tools from existing QA agents", len(_REGISTRY))
@@ -96,20 +99,44 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
     from shared.crewai_compat import BaseTool as _BaseTool
 
     # Compile in a restricted namespace — no builtins except safe ones
-    _real_builtins = __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)
+    _real_builtins = (
+        __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)
+    )
     _SAFE_BUILTINS = {
-        "True": True, "False": False, "None": None,
-        "int": int, "float": float, "str": str, "bool": bool,
-        "list": list, "dict": dict, "set": set, "tuple": tuple,
-        "len": len, "range": range, "enumerate": enumerate,
-        "zip": zip, "map": map, "filter": filter,
-        "min": min, "max": max, "sum": sum, "abs": abs, "round": round,
-        "sorted": sorted, "reversed": reversed,
-        "isinstance": isinstance, "issubclass": issubclass,
-        "type": type, "hasattr": hasattr, "getattr": getattr,
+        "True": True,
+        "False": False,
+        "None": None,
+        "int": int,
+        "float": float,
+        "str": str,
+        "bool": bool,
+        "list": list,
+        "dict": dict,
+        "set": set,
+        "tuple": tuple,
+        "len": len,
+        "range": range,
+        "enumerate": enumerate,
+        "zip": zip,
+        "map": map,
+        "filter": filter,
+        "min": min,
+        "max": max,
+        "sum": sum,
+        "abs": abs,
+        "round": round,
+        "sorted": sorted,
+        "reversed": reversed,
+        "isinstance": isinstance,
+        "issubclass": issubclass,
+        "type": type,
+        "hasattr": hasattr,
+        "getattr": getattr,
         "print": print,
-        "Exception": Exception, "ValueError": ValueError,
-        "TypeError": TypeError, "KeyError": KeyError,
+        "Exception": Exception,
+        "ValueError": ValueError,
+        "TypeError": TypeError,
+        "KeyError": KeyError,
         "__name__": f"__tool_{name}__",
         "__build_class__": _real_builtins["__build_class__"],
     }
@@ -128,7 +155,8 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
 
     # Find the BaseTool subclass in the namespace
     tool_classes = [
-        v for k, v in namespace.items()
+        v
+        for k, v in namespace.items()
         if isinstance(v, type)
         and issubclass(v, _BaseTool)
         and v is not _BaseTool
@@ -136,14 +164,13 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
     ]
 
     if not tool_classes:
-        raise ValueError(
-            f"No BaseTool subclass found in source for '{name}'"
-        )
+        raise ValueError(f"No BaseTool subclass found in source for '{name}'")
 
     if len(tool_classes) > 1:
         logger.warning(
             "Multiple BaseTool subclasses in '%s', using first: %s",
-            name, tool_classes[0].__name__,
+            name,
+            tool_classes[0].__name__,
         )
 
     tool_cls = tool_classes[0]

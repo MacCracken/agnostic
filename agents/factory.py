@@ -70,7 +70,9 @@ class AgentFactory:
             raise ValueError(f"Invalid preset name: {preset_name!r}")
         preset_path = PRESETS_DIR / f"{preset_name}.json"
         if not preset_path.exists():
-            raise FileNotFoundError(f"Preset '{preset_name}' not found at {preset_path}")
+            raise FileNotFoundError(
+                f"Preset '{preset_name}' not found at {preset_path}"
+            )
 
         with open(preset_path) as f:
             preset_data = json.load(f)
@@ -92,12 +94,14 @@ class AgentFactory:
         for name in agent_registry.list_presets():
             data = agent_registry.get_preset(name)
             if data:
-                presets.append({
-                    "name": name,
-                    "description": data.get("description", ""),
-                    "domain": data.get("domain", "general"),
-                    "agent_count": len(data.get("agents", [])),
-                })
+                presets.append(
+                    {
+                        "name": name,
+                        "description": data.get("description", ""),
+                        "domain": data.get("domain", "general"),
+                        "agent_count": len(data.get("agents", [])),
+                    }
+                )
         return presets
 
     @classmethod
@@ -109,12 +113,14 @@ class AgentFactory:
                 try:
                     with open(p) as f:
                         data = json.load(f)
-                    definitions.append({
-                        "agent_key": data.get("agent_key", p.stem),
-                        "name": data.get("name", p.stem),
-                        "domain": data.get("domain", "general"),
-                        "description": data.get("focus", ""),
-                    })
+                    definitions.append(
+                        {
+                            "agent_key": data.get("agent_key", p.stem),
+                            "name": data.get("name", p.stem),
+                            "domain": data.get("domain", "general"),
+                            "description": data.get("focus", ""),
+                        }
+                    )
                 except Exception as exc:
                     logger.warning("Skipping invalid definition %s: %s", p, exc)
         return definitions

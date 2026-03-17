@@ -127,6 +127,7 @@ class BaseAgent:
         self.redis_client = config.get_redis_client()
         self.celery_app = config.get_celery_app(definition.celery_queue)
         from config.llm_integration import llm_service
+
         self.llm_service = llm_service
         self.llm = LLM(
             model=definition.llm_model,
@@ -322,7 +323,9 @@ class BaseAgent:
         session_id = task_data.get("session_id", "unknown")
         scenario_id = scenario.get("id", "task")
 
-        self.set_task_state(session_id, scenario_id, "in_progress", {"scenario": scenario})
+        self.set_task_state(
+            session_id, scenario_id, "in_progress", {"scenario": scenario}
+        )
 
         try:
             result = await self.run_task(

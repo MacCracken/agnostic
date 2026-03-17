@@ -344,7 +344,13 @@ MCP_TOOLS: list[dict[str, Any]] = [
                 "domain": {
                     "type": "string",
                     "description": "Crew domain — used with size to auto-select preset",
-                    "enum": ["quality", "software-engineering", "design", "data-engineering", "devops"],
+                    "enum": [
+                        "quality",
+                        "software-engineering",
+                        "design",
+                        "data-engineering",
+                        "devops",
+                    ],
                 },
                 "size": {
                     "type": "string",
@@ -352,7 +358,10 @@ MCP_TOOLS: list[dict[str, Any]] = [
                     "enum": ["lean", "standard", "large"],
                     "default": "standard",
                 },
-                "preset": {"type": "string", "description": "Explicit preset name (overrides domain+size)"},
+                "preset": {
+                    "type": "string",
+                    "description": "Explicit preset name (overrides domain+size)",
+                },
                 "agent_keys": {"type": "array", "items": {"type": "string"}},
                 "agent_definitions": {"type": "array", "items": {"type": "object"}},
                 "team": {
@@ -364,21 +373,36 @@ MCP_TOOLS: list[dict[str, Any]] = [
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "role": {"type": "string", "description": "Role title (e.g. 'Game Designer')"},
-                                    "context": {"type": "string", "description": "Focus area for this member"},
-                                    "lead": {"type": "boolean", "description": "Whether this member leads the team"},
+                                    "role": {
+                                        "type": "string",
+                                        "description": "Role title (e.g. 'Game Designer')",
+                                    },
+                                    "context": {
+                                        "type": "string",
+                                        "description": "Focus area for this member",
+                                    },
+                                    "lead": {
+                                        "type": "boolean",
+                                        "description": "Whether this member leads the team",
+                                    },
                                 },
                                 "required": ["role"],
                             },
                         },
-                        "project_context": {"type": "string", "description": "Overall project description"},
+                        "project_context": {
+                            "type": "string",
+                            "description": "Overall project description",
+                        },
                     },
                     "required": ["members"],
                 },
                 "title": {"type": "string"},
                 "description": {"type": "string"},
                 "target_url": {"type": "string"},
-                "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+                "priority": {
+                    "type": "string",
+                    "enum": ["critical", "high", "medium", "low"],
+                },
             },
             "required": ["title", "description"],
         },
@@ -406,7 +430,13 @@ MCP_TOOLS: list[dict[str, Any]] = [
                 "domain": {
                     "type": "string",
                     "description": "Filter by domain",
-                    "enum": ["quality", "software-engineering", "design", "data-engineering", "devops"],
+                    "enum": [
+                        "quality",
+                        "software-engineering",
+                        "design",
+                        "data-engineering",
+                        "devops",
+                    ],
                 },
                 "size": {
                     "type": "string",
@@ -503,7 +533,10 @@ _TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "agnostic_list_presets": ("GET", "/api/v1/presets"),
     "agnostic_list_definitions": ("GET", "/api/v1/definitions"),
     "agnostic_create_agent": ("POST", "/api/v1/a2a/receive"),
-    "agnostic_preset_recommend": ("POST", "/api/v1/presets/recommend"),  # dispatched directly, no real route
+    "agnostic_preset_recommend": (
+        "POST",
+        "/api/v1/presets/recommend",
+    ),  # dispatched directly, no real route
 }
 
 
@@ -657,14 +690,21 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
         # Determine QA preset size
         size = arguments.get("size", "standard")
         if tool_name == "agnostic_qa_orchestrate":
-            scope_map = {"quick": "lean", "standard": "standard", "comprehensive": "large"}
+            scope_map = {
+                "quick": "lean",
+                "standard": "standard",
+                "comprehensive": "large",
+            }
             size = scope_map.get(arguments.get("scope", "standard"), "standard")
 
         # Build description with tool-specific context
         desc = arguments.get("description", "")
         if tool_name == "agnostic_security_scan":
             standards = arguments.get("standards", [])
-            desc = desc or f"Security scan: {', '.join(standards) if standards else 'OWASP/GDPR/PCI DSS'}"
+            desc = (
+                desc
+                or f"Security scan: {', '.join(standards) if standards else 'OWASP/GDPR/PCI DSS'}"
+            )
         elif tool_name == "agnostic_performance_test":
             duration = arguments.get("duration_seconds", 60)
             concurrency = arguments.get("concurrency", 10)

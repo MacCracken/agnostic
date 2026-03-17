@@ -24,7 +24,10 @@ def _validate_path_key(key: str, label: str = "key") -> None:
     try:
         validate_agent_key(key, label)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid {label}: must match [a-z0-9][a-z0-9-]*") from exc
+        raise HTTPException(
+            status_code=400, detail=f"Invalid {label}: must match [a-z0-9][a-z0-9-]*"
+        ) from exc
+
 
 router = APIRouter()
 
@@ -40,7 +43,9 @@ _REQUIRED_FIELDS = {"agent_key", "name", "role", "goal", "backstory"}
 class AgentDefinitionRequest(BaseModel):
     """Request body for creating/updating an agent definition."""
 
-    agent_key: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9\-]*$")
+    agent_key: str = Field(
+        ..., min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9\-]*$"
+    )
     name: str = Field(..., min_length=1, max_length=200)
     role: str = Field(..., min_length=1, max_length=500)
     goal: str = Field(..., min_length=1, max_length=2000)
@@ -80,7 +85,9 @@ class AgentDefinitionResponse(BaseModel):
 class PresetCreateRequest(BaseModel):
     """Request body for creating a crew preset."""
 
-    name: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9\-]*$")
+    name: str = Field(
+        ..., min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9\-]*$"
+    )
     description: str = Field(..., min_length=1, max_length=500)
     domain: str = Field(default="general", max_length=100)
     size: str = Field(default="standard", pattern=r"^(lean|standard|large)$")
@@ -135,14 +142,16 @@ async def list_definitions(
                     data = json.load(f)
                 if domain and data.get("domain", "general") != domain:
                     continue
-                items.append({
-                    "agent_key": data.get("agent_key", p.stem),
-                    "name": data.get("name", p.stem),
-                    "domain": data.get("domain", "general"),
-                    "focus": data.get("focus", ""),
-                    "complexity": data.get("complexity", "medium"),
-                    "tools": data.get("tools", []),
-                })
+                items.append(
+                    {
+                        "agent_key": data.get("agent_key", p.stem),
+                        "name": data.get("name", p.stem),
+                        "domain": data.get("domain", "general"),
+                        "focus": data.get("focus", ""),
+                        "complexity": data.get("complexity", "medium"),
+                        "tools": data.get("tools", []),
+                    }
+                )
             except Exception:
                 continue
 
@@ -164,7 +173,9 @@ async def get_definition(
     _validate_path_key(agent_key, "agent_key")
     path = DEFINITIONS_DIR / f"{agent_key}.json"
     if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Definition '{agent_key}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Definition '{agent_key}' not found"
+        )
 
     with open(path) as f:
         data = json.load(f)
@@ -192,7 +203,13 @@ async def create_definition(
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
-    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="definition", resource_id=req.agent_key, detail={"action": "create"})
+    audit_log(
+        AuditAction.CONFIG_CHANGED,
+        actor=user.get("user_id"),
+        resource_type="definition",
+        resource_id=req.agent_key,
+        detail={"action": "create"},
+    )
     logger.info("Created agent definition: %s", req.agent_key)
     return AgentDefinitionResponse(**data)
 
@@ -215,13 +232,21 @@ async def update_definition(
 
     path = DEFINITIONS_DIR / f"{agent_key}.json"
     if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Definition '{agent_key}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Definition '{agent_key}' not found"
+        )
 
     data = req.model_dump(mode="json")
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
-    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="definition", resource_id=agent_key, detail={"action": "update"})
+    audit_log(
+        AuditAction.CONFIG_CHANGED,
+        actor=user.get("user_id"),
+        resource_type="definition",
+        resource_id=agent_key,
+        detail={"action": "update"},
+    )
     logger.info("Updated agent definition: %s", agent_key)
     return AgentDefinitionResponse(**data)
 
@@ -238,10 +263,18 @@ async def delete_definition(
 
     path = DEFINITIONS_DIR / f"{agent_key}.json"
     if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Definition '{agent_key}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Definition '{agent_key}' not found"
+        )
 
     path.unlink()
-    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="definition", resource_id=agent_key, detail={"action": "delete"})
+    audit_log(
+        AuditAction.CONFIG_CHANGED,
+        actor=user.get("user_id"),
+        resource_type="definition",
+        resource_id=agent_key,
+        detail={"action": "delete"},
+    )
     logger.info("Deleted agent definition: %s", agent_key)
 
 
@@ -252,8 +285,13 @@ async def delete_definition(
 
 @router.get("/presets", response_model=list[PresetListItem])
 async def list_presets(
-    domain: str | None = Query(None, description="Filter by domain (e.g. 'qa', 'design', 'software-engineering')"),
-    size: str | None = Query(None, description="Filter by team size: lean, standard, large"),
+    domain: str | None = Query(
+        None,
+        description="Filter by domain (e.g. 'qa', 'design', 'software-engineering')",
+    ),
+    size: str | None = Query(
+        None, description="Filter by team size: lean, standard, large"
+    ),
     user: dict = Depends(get_current_user),
 ):
     """List available crew presets (registry cache + user-created on disk)."""
@@ -296,14 +334,16 @@ async def list_presets(
             )
             for a in data.get("agents", [])
         ]
-        presets.append(PresetListItem(
-            name=name,
-            description=data.get("description", ""),
-            domain=data.get("domain", "general"),
-            size=data.get("size", "standard"),
-            agent_count=len(data.get("agents", [])),
-            agents=agent_summaries,
-        ))
+        presets.append(
+            PresetListItem(
+                name=name,
+                description=data.get("description", ""),
+                domain=data.get("domain", "general"),
+                size=data.get("size", "standard"),
+                agent_count=len(data.get("agents", [])),
+                agents=agent_summaries,
+            )
+        )
     return presets
 
 
@@ -322,7 +362,9 @@ async def get_preset(
         # Fall back to file for user-created presets not in registry
         path = PRESETS_DIR / f"{preset_name}.json"
         if not path.exists():
-            raise HTTPException(status_code=404, detail=f"Preset '{preset_name}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Preset '{preset_name}' not found"
+            )
         with open(path) as f:
             data = json.load(f)
 
@@ -364,7 +406,13 @@ async def create_preset(
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
-    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="preset", resource_id=req.name, detail={"action": "create", "agent_count": len(req.agents)})
+    audit_log(
+        AuditAction.CONFIG_CHANGED,
+        actor=user.get("user_id"),
+        resource_type="preset",
+        resource_id=req.name,
+        detail={"action": "create", "agent_count": len(req.agents)},
+    )
     logger.info("Created preset: %s with %d agents", req.name, len(req.agents))
     return PresetResponse(
         name=req.name,
@@ -395,7 +443,13 @@ async def delete_preset(
         raise HTTPException(status_code=404, detail=f"Preset '{preset_name}' not found")
 
     path.unlink()
-    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="preset", resource_id=preset_name, detail={"action": "delete"})
+    audit_log(
+        AuditAction.CONFIG_CHANGED,
+        actor=user.get("user_id"),
+        resource_type="preset",
+        resource_id=preset_name,
+        detail={"action": "delete"},
+    )
     logger.info("Deleted preset: %s", preset_name)
 
 
@@ -513,14 +567,15 @@ async def export_package_endpoint(
     )
 
 
-
 # ---------------------------------------------------------------------------
 # Custom tool upload
 # ---------------------------------------------------------------------------
 
 
 class ToolUploadRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
+    name: str = Field(
+        ..., min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_]*$"
+    )
     source_code: str = Field(..., min_length=10, max_length=50000)
 
 
@@ -554,7 +609,13 @@ async def upload_custom_tool(
     if tool_cls and hasattr(tool_cls, "description"):
         desc = tool_cls.description if isinstance(tool_cls.description, str) else ""
 
-    audit_log(AuditAction.CONFIG_CHANGED, actor=user.get("user_id"), resource_type="tool", resource_id=req.name, detail={"action": "upload"})
+    audit_log(
+        AuditAction.CONFIG_CHANGED,
+        actor=user.get("user_id"),
+        resource_type="tool",
+        resource_id=req.name,
+        detail={"action": "upload"},
+    )
     return ToolUploadResponse(name=req.name, status="registered", description=desc)
 
 

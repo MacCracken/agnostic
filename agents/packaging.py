@@ -79,11 +79,26 @@ class PackageManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PackageManifest:
-        return cls(**{k: v for k, v in data.items() if k in {
-            "name", "version", "description", "domain", "author",
-            "license", "min_aas_version", "definitions", "presets",
-            "tools", "metadata",
-        }})
+        return cls(
+            **{
+                k: v
+                for k, v in data.items()
+                if k
+                in {
+                    "name",
+                    "version",
+                    "description",
+                    "domain",
+                    "author",
+                    "license",
+                    "min_aas_version",
+                    "definitions",
+                    "presets",
+                    "tools",
+                    "metadata",
+                }
+            }
+        )
 
 
 def export_package(
@@ -114,7 +129,7 @@ def export_package(
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         # Add definitions
-        for key in (definition_keys or []):
+        for key in definition_keys or []:
             path = DEFINITIONS_DIR / f"{key}.json"
             if path.exists():
                 zf.write(path, f"definitions/{key}.json")
@@ -122,7 +137,7 @@ def export_package(
                 logger.warning("Definition '%s' not found, skipping", key)
 
         # Add presets
-        for preset_name in (preset_names or []):
+        for preset_name in preset_names or []:
             path = PRESETS_DIR / f"{preset_name}.json"
             if path.exists():
                 zf.write(path, f"presets/{preset_name}.json")
@@ -134,7 +149,8 @@ def export_package(
 
     logger.info(
         "Exported package '%s' v%s (%d definitions, %d presets)",
-        name, version,
+        name,
+        version,
         len(definition_keys or []),
         len(preset_names or []),
     )
@@ -163,10 +179,18 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
             # Safety: check entry count and total uncompressed size
             infos = zf.infolist()
             if len(infos) > _MAX_ENTRY_COUNT:
-                return {"errors": [f"Package has {len(infos)} entries (max {_MAX_ENTRY_COUNT})"]}
+                return {
+                    "errors": [
+                        f"Package has {len(infos)} entries (max {_MAX_ENTRY_COUNT})"
+                    ]
+                }
             total_size = sum(i.file_size for i in infos)
             if total_size > _MAX_UNCOMPRESSED_SIZE:
-                return {"errors": [f"Total uncompressed size {total_size} exceeds {_MAX_UNCOMPRESSED_SIZE} bytes"]}
+                return {
+                    "errors": [
+                        f"Total uncompressed size {total_size} exceeds {_MAX_UNCOMPRESSED_SIZE} bytes"
+                    ]
+                }
 
             # Read manifest
             if MANIFEST_FILENAME not in zf.namelist():

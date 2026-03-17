@@ -129,26 +129,74 @@ def recommend_preset(description: str) -> dict:
     # Keyword → domain scoring
     domain_signals: dict[str, list[str]] = {
         "quality": [
-            "test", "qa", "quality", "bug", "regression", "security scan",
-            "performance test", "load test", "compliance", "audit",
+            "test",
+            "qa",
+            "quality",
+            "bug",
+            "regression",
+            "security scan",
+            "performance test",
+            "load test",
+            "compliance",
+            "audit",
         ],
         "software-engineering": [
-            "code", "implement", "build", "develop", "refactor", "api",
-            "backend", "frontend", "engineer", "architect", "review code",
-            "pr review", "pull request", "technical debt", "migration",
+            "code",
+            "implement",
+            "build",
+            "develop",
+            "refactor",
+            "api",
+            "backend",
+            "frontend",
+            "engineer",
+            "architect",
+            "review code",
+            "pr review",
+            "pull request",
+            "technical debt",
+            "migration",
         ],
         "design": [
-            "design", "ux", "ui", "wireframe", "mockup", "prototype",
-            "accessibility", "wcag", "usability", "figma", "sketch",
-            "user research", "a11y",
+            "design",
+            "ux",
+            "ui",
+            "wireframe",
+            "mockup",
+            "prototype",
+            "accessibility",
+            "wcag",
+            "usability",
+            "figma",
+            "sketch",
+            "user research",
+            "a11y",
         ],
         "data-engineering": [
-            "data", "pipeline", "etl", "elt", "warehouse", "lake",
-            "spark", "kafka", "airflow", "dbt", "schema", "analytics",
+            "data",
+            "pipeline",
+            "etl",
+            "elt",
+            "warehouse",
+            "lake",
+            "spark",
+            "kafka",
+            "airflow",
+            "dbt",
+            "schema",
+            "analytics",
         ],
         "devops": [
-            "deploy", "ci/cd", "infrastructure", "kubernetes", "docker",
-            "monitoring", "incident", "sre", "terraform", "helm",
+            "deploy",
+            "ci/cd",
+            "infrastructure",
+            "kubernetes",
+            "docker",
+            "monitoring",
+            "incident",
+            "sre",
+            "terraform",
+            "helm",
         ],
     }
 
@@ -167,7 +215,10 @@ def recommend_preset(description: str) -> dict:
             "reason": "No strong domain signal detected — recommending cross-functional lean team",
             "alternatives": [
                 {"preset": "quality-standard", "reason": "If this is a testing task"},
-                {"preset": "software-engineering-standard", "reason": "If this is a development task"},
+                {
+                    "preset": "software-engineering-standard",
+                    "reason": "If this is a development task",
+                },
             ],
         }
 
@@ -175,7 +226,14 @@ def recommend_preset(description: str) -> dict:
 
     # Size heuristic
     size_signals = {
-        "large": ["enterprise", "comprehensive", "full", "thorough", "extensive", "large"],
+        "large": [
+            "enterprise",
+            "comprehensive",
+            "full",
+            "thorough",
+            "extensive",
+            "large",
+        ],
         "lean": ["quick", "small", "simple", "mvp", "prototype", "lean", "minimal"],
     }
 
@@ -190,16 +248,21 @@ def recommend_preset(description: str) -> dict:
     alternatives = []
     for domain, score in sorted(scores.items(), key=lambda x: -x[1]):
         if domain != best_domain:
-            alternatives.append({
-                "preset": f"{domain}-{size}",
-                "reason": f"Also matches: {domain} (score: {score})",
-            })
+            alternatives.append(
+                {
+                    "preset": f"{domain}-{size}",
+                    "reason": f"Also matches: {domain} (score: {score})",
+                }
+            )
 
     if size != "standard":
-        alternatives.insert(0, {
-            "preset": f"{best_domain}-standard",
-            "reason": f"Standard-size {best_domain} team as middle ground",
-        })
+        alternatives.insert(
+            0,
+            {
+                "preset": f"{best_domain}-standard",
+                "reason": f"Standard-size {best_domain} team as middle ground",
+            },
+        )
 
     return {
         "preset": preset,
@@ -208,7 +271,6 @@ def recommend_preset(description: str) -> dict:
         "reason": f"Best match for description: {best_domain} domain (score: {scores[best_domain]})",
         "alternatives": alternatives[:3],
     }
-
 
 
 # ---------------------------------------------------------------------------

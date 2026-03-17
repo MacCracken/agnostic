@@ -522,7 +522,11 @@ async def receive_a2a_message(
         if not preset and payload.get("domain") and not payload.get("team"):
             size = payload.get("size", "standard")
             preset = f"{payload['domain']}-{size}"
-        if not preset and not payload.get("team") and not payload.get("agent_definitions"):
+        if (
+            not preset
+            and not payload.get("team")
+            and not payload.get("agent_definitions")
+        ):
             preset = "quality-standard"
 
         crew_req = CrewRunRequest(
@@ -569,10 +573,13 @@ async def receive_a2a_message(
             create_definition,
         )
 
-        defn_req = AgentDefinitionRequest(**{
-            k: v for k, v in payload.items()
-            if k in AgentDefinitionRequest.model_fields
-        })
+        defn_req = AgentDefinitionRequest(
+            **{
+                k: v
+                for k, v in payload.items()
+                if k in AgentDefinitionRequest.model_fields
+            }
+        )
         # Use the authenticated user context
         await create_definition(defn_req, user)
 
@@ -580,7 +587,11 @@ async def receive_a2a_message(
             AuditAction.A2A_DELEGATE_RECEIVED,
             actor=msg.fromPeerId,
             resource_type="a2a",
-            detail={"message_id": msg.id, "agent_key": payload["agent_key"], "type": "create_agent"},
+            detail={
+                "message_id": msg.id,
+                "agent_key": payload["agent_key"],
+                "type": "create_agent",
+            },
         )
         return {
             "accepted": True,
@@ -667,13 +678,15 @@ async def a2a_capabilities():
         from agents.factory import AgentFactory
 
         for preset in AgentFactory.list_presets():
-            capabilities.append({
-                "name": preset["name"],
-                "description": preset.get("description", ""),
-                "domain": preset.get("domain", "general"),
-                "agent_count": preset.get("agent_count", 0),
-                "version": "1.0",
-            })
+            capabilities.append(
+                {
+                    "name": preset["name"],
+                    "description": preset.get("description", ""),
+                    "domain": preset.get("domain", "general"),
+                    "agent_count": preset.get("agent_count", 0),
+                    "version": "1.0",
+                }
+            )
     except Exception:
         pass
 

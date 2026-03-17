@@ -31,17 +31,33 @@ router = APIRouter()
 class TeamMember(BaseModel):
     """A member in a custom team specification."""
 
-    role: str = Field(..., min_length=1, max_length=200, description="Role title (e.g. 'Game Designer', 'UX Researcher')")
-    context: str = Field(default="", max_length=1000, description="What this member should focus on")
-    tools: list[str] = Field(default_factory=list, description="Specific tools for this agent")
+    role: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Role title (e.g. 'Game Designer', 'UX Researcher')",
+    )
+    context: str = Field(
+        default="", max_length=1000, description="What this member should focus on"
+    )
+    tools: list[str] = Field(
+        default_factory=list, description="Specific tools for this agent"
+    )
     lead: bool = Field(default=False, description="Whether this member leads the team")
 
 
 class TeamSpec(BaseModel):
     """Structured team specification for custom crew assembly."""
 
-    members: list[TeamMember] = Field(..., min_length=1, max_length=20, description="Team members with roles and context")
-    project_context: str = Field(default="", max_length=2000, description="Overall project description")
+    members: list[TeamMember] = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        description="Team members with roles and context",
+    )
+    project_context: str = Field(
+        default="", max_length=2000, description="Overall project description"
+    )
 
     @classmethod
     def from_payload(cls, data: dict | None) -> "TeamSpec | None":
@@ -55,7 +71,11 @@ class CrewRunRequest(BaseModel):
     """Request to assemble and run a crew."""
 
     # Source: preset name, agent keys, inline definitions, OR team spec
-    preset: str | None = Field(None, description="Preset name (e.g. 'quality-standard', 'design-lean')", pattern=r"^[a-z0-9][a-z0-9\-]*$")
+    preset: str | None = Field(
+        None,
+        description="Preset name (e.g. 'quality-standard', 'design-lean')",
+        pattern=r"^[a-z0-9][a-z0-9\-]*$",
+    )
     agent_keys: list[str] = Field(
         default_factory=list,
         description="Agent keys from definitions directory",
@@ -146,13 +166,15 @@ async def _run_crew_async(
         # Publish status update
         await redis_client.publish(
             f"task:{task_id}",
-            json.dumps({
-                "type": "crew_status_changed",
-                "crew_id": crew_id,
-                "task_id": task_id,
-                "status": status,
-                "timestamp": now,
-            }),
+            json.dumps(
+                {
+                    "type": "crew_status_changed",
+                    "crew_id": crew_id,
+                    "task_id": task_id,
+                    "status": status,
+                    "timestamp": now,
+                }
+            ),
         )
 
         return crew_record
@@ -208,7 +230,9 @@ async def _run_crew_async(
             except Exception as exc:
                 logger.error(
                     "Agent %s failed in crew %s: %s",
-                    agent.definition.agent_key, crew_id, exc,
+                    agent.definition.agent_key,
+                    crew_id,
+                    exc,
                 )
                 results[agent.definition.agent_key] = {
                     "status": "failed",
@@ -219,12 +243,19 @@ async def _run_crew_async(
         all_ok = all(r.get("status") == "completed" for r in results.values())
         final_status = "completed" if all_ok else "partial"
 
-        await _update_status(final_status, {
-            "agent_results": results,
-            "agents_succeeded": sum(1 for r in results.values() if r.get("status") == "completed"),
-            "agents_failed": sum(1 for r in results.values() if r.get("status") == "failed"),
-            "completed_at": datetime.now(UTC).isoformat(),
-        })
+        await _update_status(
+            final_status,
+            {
+                "agent_results": results,
+                "agents_succeeded": sum(
+                    1 for r in results.values() if r.get("status") == "completed"
+                ),
+                "agents_failed": sum(
+                    1 for r in results.values() if r.get("status") == "failed"
+                ),
+                "completed_at": datetime.now(UTC).isoformat(),
+            },
+        )
 
     except Exception as exc:
         logger.error("Crew %s failed: %s", crew_id, exc, exc_info=True)
@@ -243,7 +274,9 @@ async def _run_crew_async(
             if raw:
                 record = json.loads(raw)
                 if record.get("status"):
-                    await _fire_webhook(callback_url, crew_config.get("callback_secret"), record)
+                    await _fire_webhook(
+                        callback_url, crew_config.get("callback_secret"), record
+                    )
         except Exception as exc:
             logger.warning("Crew %s webhook failed: %s", crew_id, exc)
 
@@ -314,14 +347,21 @@ async def run_crew(
 
         preset_data = agent_registry.get_preset(req.preset)
         if not preset_data:
-            raise HTTPException(status_code=404, detail=f"Preset '{req.preset}' not found")
-        agent_names = [a.get("agent_key", "unknown") for a in preset_data.get("agents", [])]
+            raise HTTPException(
+                status_code=404, detail=f"Preset '{req.preset}' not found"
+            )
+        agent_names = [
+            a.get("agent_key", "unknown") for a in preset_data.get("agents", [])
+        ]
     elif req.agent_keys:
         source = "keys"
         agent_names = list(req.agent_keys)
     else:
         source = "inline"
-        agent_names = [d.get("agent_key", f"inline-{i}") for i, d in enumerate(req.agent_definitions)]
+        agent_names = [
+            d.get("agent_key", f"inline-{i}")
+            for i, d in enumerate(req.agent_definitions)
+        ]
 
     from config.environment import config
 

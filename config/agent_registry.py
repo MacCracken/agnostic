@@ -185,14 +185,18 @@ class AgentRegistry:
         """Map a domain + size to a preset name (e.g. 'design' + 'large' -> 'design-large')."""
         return f"{domain}-{size}"
 
-    def get_agents_for_team(self, size: str | None = None, domain: str = "quality") -> list[AgentDefinition]:
+    def get_agents_for_team(
+        self, size: str | None = None, domain: str = "quality"
+    ) -> list[AgentDefinition]:
         """Return agents for the given domain and team size."""
         size = size or self.get_default_size()
         preset_name = self.get_preset_name(domain, size)
         preset = self._presets.get(preset_name)
         if not preset:
             # Fall back to domain-standard, then quality-standard
-            preset = self._presets.get(f"{domain}-standard", self._presets.get("quality-standard", {}))
+            preset = self._presets.get(
+                f"{domain}-standard", self._presets.get("quality-standard", {})
+            )
 
         agent_keys = [a.get("agent_key") for a in preset.get("agents", [])]
         return [self._agents[k] for k in agent_keys if k in self._agents]
@@ -201,7 +205,9 @@ class AgentRegistry:
         """Get a loaded preset by name."""
         return self._presets.get(name)
 
-    def list_presets(self, domain: str | None = None, size: str | None = None) -> list[str]:
+    def list_presets(
+        self, domain: str | None = None, size: str | None = None
+    ) -> list[str]:
         """Return loaded preset names, optionally filtered by domain and/or size."""
         results = []
         for name, data in self._presets.items():
