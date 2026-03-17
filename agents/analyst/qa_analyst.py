@@ -95,7 +95,7 @@ class DataOrganizationReportingTool(BaseTool):
                     results.append(json.loads(item))
                 except (TypeError, json.JSONDecodeError):
                     continue
-        except Exception:
+        except (ConnectionError, OSError, TypeError):
             pass
 
         if results:
@@ -116,7 +116,7 @@ class DataOrganizationReportingTool(BaseTool):
                             continue
                 if cursor == 0:
                     break
-        except Exception:
+        except (ConnectionError, OSError, TypeError):
             return results
         return results
 
@@ -372,7 +372,7 @@ class SecurityAssessmentTool(BaseTool):
             logger.info(f"Performed LLM-based security analysis for {url}")
             return analysis
 
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Failed to perform LLM security analysis: {e}")
             # Fallback to basic analysis
             return self._fallback_security_analysis(target)
@@ -533,7 +533,7 @@ class SecurityAssessmentTool(BaseTool):
                 result["grade"] = "A"
             else:
                 result["grade"] = "C"
-        except Exception as e:
+        except (TimeoutError, OSError, ssl.SSLError, ValueError) as e:
             result["grade"] = "F"
             result["issues"].append(f"TLS connection failed: {e!s}")
 
@@ -704,7 +704,7 @@ class PerformanceProfilingTool(BaseTool):
             )
             return analysis
 
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Failed to perform LLM performance profiling: {e}")
             # Fallback to basic analysis
             return self._fallback_performance_analysis(target_config, load_profile)
@@ -2505,7 +2505,7 @@ async def main() -> None:
         from config.agnos_environment import apply_agnos_profile
 
         apply_agnos_profile()
-    except Exception:
+    except ImportError:
         pass
 
     analyst = QAAnalystAgent()
@@ -2519,7 +2519,7 @@ async def main() -> None:
             task_data = json.loads(task_data_json)
             result = asyncio.run(analyst.analyze_and_report(task_data))
             return {"status": "success", "result": result}
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Celery report task failed: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -2530,7 +2530,7 @@ async def main() -> None:
             task_data = json.loads(task_data_json)
             result = asyncio.run(analyst.run_security_assessment(task_data))
             return {"status": "success", "result": result}
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Celery security task failed: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -2541,7 +2541,7 @@ async def main() -> None:
             task_data = json.loads(task_data_json)
             result = asyncio.run(analyst.profile_performance(task_data))
             return {"status": "success", "result": result}
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Celery performance task failed: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -2553,7 +2553,7 @@ async def main() -> None:
         try:
             result = asyncio.run(analyst.generate_comprehensive_report(session_id))
             return {"status": "success", "result": result}
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Celery comprehensive report task failed: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -2586,7 +2586,7 @@ async def main() -> None:
                         logger.info(
                             f"Analyst task completed: {result.get('status', 'unknown')}"
                         )
-                    except Exception as e:
+                    except Exception as e:  # Catch-all: tool must not crash the crew
                         logger.error(f"Redis task processing failed: {e}")
         finally:
             pubsub.close()

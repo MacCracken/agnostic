@@ -505,7 +505,7 @@ async def main() -> None:
         from config.agnos_environment import apply_agnos_profile
 
         apply_agnos_profile()
-    except Exception:
+    except ImportError:
         pass
 
     agent = QAPerformanceAgent()
@@ -519,7 +519,7 @@ async def main() -> None:
             task_data = json.loads(task_data_json)
             result = asyncio.run(agent.run_performance_suite(task_data))
             return {"status": "success", "result": result}
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Celery performance task failed: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -539,7 +539,7 @@ async def main() -> None:
                         logger.info(
                             f"Performance task completed: {result.get('suite_type', 'unknown')}"
                         )
-                    except Exception as e:
+                    except Exception as e:  # Catch-all: tool must not crash the crew
                         logger.error(f"Redis task processing failed: {e}")
         finally:
             pubsub.close()

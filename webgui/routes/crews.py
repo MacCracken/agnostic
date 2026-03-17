@@ -150,35 +150,39 @@ async def _run_crew_async(
     ) -> dict[str, Any]:
         now = datetime.now(UTC).isoformat()
 
-        # Update crew record
-        raw = await redis_client.get(crew_redis_key)
-        crew_record = json.loads(raw) if raw else {}
+        # Read both records concurrently (2 round-trips → 1)
+        raw_crew, raw_task = await asyncio.gather(
+            redis_client.get(crew_redis_key),
+            redis_client.get(task_redis_key),
+        )
+
+        # Update in-memory
+        crew_record: dict[str, Any] = json.loads(raw_crew) if raw_crew else {}
         crew_record["status"] = status
         crew_record["updated_at"] = now
         if result:
             crew_record["result"] = result
-        await redis_client.setex(crew_redis_key, 86400, json.dumps(crew_record))
 
-        # Update task record
-        task_raw = await redis_client.get(task_redis_key)
-        task_record = json.loads(task_raw) if task_raw else {}
+        task_record: dict[str, Any] = json.loads(raw_task) if raw_task else {}
         task_record["status"] = status
         task_record["updated_at"] = now
         task_record["result"] = result
-        await redis_client.setex(task_redis_key, 86400, json.dumps(task_record))
 
-        # Publish status update
-        await redis_client.publish(
-            f"task:{task_id}",
-            json.dumps(
-                {
-                    "type": "crew_status_changed",
-                    "crew_id": crew_id,
-                    "task_id": task_id,
-                    "status": status,
-                    "timestamp": now,
-                }
-            ),
+        status_msg = json.dumps(
+            {
+                "type": "crew_status_changed",
+                "crew_id": crew_id,
+                "task_id": task_id,
+                "status": status,
+                "timestamp": now,
+            }
+        )
+
+        # Write both records + publish concurrently (3 round-trips → 1)
+        await asyncio.gather(
+            redis_client.setex(crew_redis_key, 86400, json.dumps(crew_record)),
+            redis_client.setex(task_redis_key, 86400, json.dumps(task_record)),
+            redis_client.publish(f"task:{task_id}", status_msg),
         )
 
         return crew_record

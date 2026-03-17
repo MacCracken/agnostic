@@ -219,7 +219,7 @@ class ComprehensiveSecurityAssessmentTool(BaseTool):
                 result["grade"] = "A"
             else:
                 result["grade"] = "C"
-        except Exception as e:
+        except (TimeoutError, OSError, ssl.SSLError, ValueError) as e:
             result["grade"] = "F"
             result["issues"].append(f"TLS connection failed: {e!s}")
 
@@ -1780,7 +1780,7 @@ async def main() -> None:
         from config.agnos_environment import apply_agnos_profile
 
         apply_agnos_profile()
-    except Exception:
+    except ImportError:
         pass
 
     agent = SecurityComplianceAgent()
@@ -1796,7 +1796,7 @@ async def main() -> None:
             task_data = json.loads(task_data_json)
             result = asyncio.run(agent.run_security_compliance_audit(task_data))
             return {"status": "success", "result": result}
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Celery security/compliance task failed: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -1816,7 +1816,7 @@ async def main() -> None:
                         logger.info(
                             f"Security & Compliance task completed: {result.get('status', 'unknown')}"
                         )
-                    except Exception as e:
+                    except Exception as e:  # Catch-all: tool must not crash the crew
                         logger.error(f"Redis task processing failed: {e}")
         finally:
             pubsub.close()

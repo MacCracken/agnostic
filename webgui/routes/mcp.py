@@ -680,308 +680,321 @@ async def invoke_mcp_tool(
         )
 
 
+async def _handle_qa_task(
+    tool_name: str, arguments: dict[str, Any], user: dict[str, Any]
+) -> dict[str, Any]:
+    """Handle QA task submission tools."""
+    from webgui.routes.crews import CrewRunRequest, run_crew
+
+    size = arguments.get("size", "standard")
+    if tool_name == "agnostic_qa_orchestrate":
+        scope_map = {"quick": "lean", "standard": "standard", "comprehensive": "large"}
+        size = scope_map.get(arguments.get("scope", "standard"), "standard")
+
+    desc = arguments.get("description", "")
+    if tool_name == "agnostic_security_scan":
+        standards = arguments.get("standards", [])
+        desc = (
+            desc
+            or f"Security scan: {', '.join(standards) if standards else 'OWASP/GDPR/PCI DSS'}"
+        )
+    elif tool_name == "agnostic_performance_test":
+        duration = arguments.get("duration_seconds", 60)
+        concurrency = arguments.get("concurrency", 10)
+        desc = desc or f"Performance test: {duration}s, {concurrency} concurrent"
+    elif not desc:
+        desc = f"QA task via MCP tool {tool_name}"
+
+    crew_req = CrewRunRequest(
+        preset=f"quality-{size}",
+        team=None,
+        title=arguments.get("title", f"MCP: {tool_name}"),
+        description=desc,
+        target_url=arguments.get("target_url"),
+        priority=arguments.get("priority", "high"),
+    )
+    result = await run_crew(crew_req, user)
+    return {
+        "task_id": result.task_id,
+        "crew_id": result.crew_id,
+        "session_id": result.session_id,
+        "status": result.status,
+        "agents": result.agents,
+    }
+
+
+async def _handle_structured_results(
+    tool_name: str, arguments: dict[str, Any], user: dict[str, Any]
+) -> Any:
+    """Handle structured result queries."""
+    from webgui.routes.integration import get_structured_results
+
+    result_type = arguments.get("result_type")
+    if tool_name == "agnostic_security_findings":
+        result_type = "security"
+    elif tool_name == "agnostic_performance_results":
+        result_type = "performance"
+    return await get_structured_results(arguments["session_id"], result_type, user)
+
+
+async def _handle_a2a(
+    msg_type: str, arguments: dict[str, Any], user: dict[str, Any]
+) -> Any:
+    """Handle A2A protocol messages."""
+    from webgui.routes.tasks import A2AMessage, receive_a2a_message
+
+    payload = arguments if msg_type != "a2a:heartbeat" else {}
+    msg = A2AMessage(
+        id=str(uuid.uuid4()),
+        type=msg_type,
+        fromPeerId="secureyeoman",
+        toPeerId="agnostic-qa",
+        payload=payload,
+        timestamp=int(datetime.now(UTC).timestamp() * 1000),
+    )
+    return await receive_a2a_message(msg, user)
+
+
+async def _handle_subscribe_webhook(
+    _tool_name: str, arguments: dict[str, Any], user: dict[str, Any]
+) -> dict[str, Any]:
+    """Handle webhook subscription."""
+    callback_url = arguments.get("callback_url")
+    if not callback_url:
+        raise HTTPException(status_code=400, detail="callback_url is required")
+    from webgui.routes.dependencies import _validate_callback_url
+
+    try:
+        _validate_callback_url(callback_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    events = arguments.get("events", ["task.completed"])
+    secret = arguments.get("secret")
+    sub_id = str(uuid.uuid4())
+
+    from config.environment import config as app_config
+
+    redis_client = app_config.get_async_redis_client()
+    import json as _json
+
+    sub_data = {
+        "id": sub_id,
+        "callback_url": callback_url,
+        "events": events,
+        "has_secret": bool(secret),
+        "created_by": user.get("user_id", "unknown"),
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    await redis_client.setex(f"webhook_sub:{sub_id}", 86400 * 30, _json.dumps(sub_data))
+    return {
+        "subscription_id": sub_id,
+        "callback_url": callback_url,
+        "events": events,
+        "status": "active",
+    }
+
+
+async def _handle_run_crew(
+    _tool_name: str, arguments: dict[str, Any], user: dict[str, Any]
+) -> dict[str, Any]:
+    """Handle generic crew run via MCP."""
+    from webgui.routes.crews import CrewRunRequest, TeamSpec, run_crew
+
+    preset = arguments.get("preset")
+    if not preset and arguments.get("domain") and not arguments.get("team"):
+        size = arguments.get("size", "standard")
+        preset = f"{arguments['domain']}-{size}"
+
+    crew_req = CrewRunRequest(
+        preset=preset,
+        agent_keys=arguments.get("agent_keys", []),
+        agent_definitions=arguments.get("agent_definitions", []),
+        team=TeamSpec.from_payload(arguments.get("team")),
+        title=arguments.get("title", "MCP: agnostic_run_crew"),
+        description=arguments.get("description", "Crew run via MCP"),
+        target_url=arguments.get("target_url"),
+        priority=arguments.get("priority", "high"),
+    )
+    result = await run_crew(crew_req, user)
+    return {
+        "crew_id": result.crew_id,
+        "task_id": result.task_id,
+        "status": result.status,
+        "agents": result.agents,
+    }
+
+
 async def _dispatch_tool(
     tool_name: str, arguments: dict[str, Any], user: dict[str, Any]
 ) -> Any:
-    """Route MCP tool invocations to internal API handlers."""
-    # Task submission tools — all route through crew builder
-    if tool_name in (
+    """Route MCP tool invocations to internal API handlers via dispatch table."""
+    # Tools that share a handler are grouped with their handler
+    _QA_TASK_TOOLS = {
         "agnostic_submit_task",
         "agnostic_security_scan",
         "agnostic_performance_test",
         "agnostic_qa_orchestrate",
-    ):
-        from webgui.routes.crews import CrewRunRequest, run_crew
-
-        # Determine QA preset size
-        size = arguments.get("size", "standard")
-        if tool_name == "agnostic_qa_orchestrate":
-            scope_map = {
-                "quick": "lean",
-                "standard": "standard",
-                "comprehensive": "large",
-            }
-            size = scope_map.get(arguments.get("scope", "standard"), "standard")
-
-        # Build description with tool-specific context
-        desc = arguments.get("description", "")
-        if tool_name == "agnostic_security_scan":
-            standards = arguments.get("standards", [])
-            desc = (
-                desc
-                or f"Security scan: {', '.join(standards) if standards else 'OWASP/GDPR/PCI DSS'}"
-            )
-        elif tool_name == "agnostic_performance_test":
-            duration = arguments.get("duration_seconds", 60)
-            concurrency = arguments.get("concurrency", 10)
-            desc = desc or f"Performance test: {duration}s, {concurrency} concurrent"
-        elif not desc:
-            desc = f"QA task via MCP tool {tool_name}"
-
-        crew_req = CrewRunRequest(
-            preset=f"quality-{size}",
-            team=None,
-            title=arguments.get("title", f"MCP: {tool_name}"),
-            description=desc,
-            target_url=arguments.get("target_url"),
-            priority=arguments.get("priority", "high"),
-        )
-        result = await run_crew(crew_req, user)
-        return {
-            "task_id": result.task_id,
-            "crew_id": result.crew_id,
-            "session_id": result.session_id,
-            "status": result.status,
-            "agents": result.agents,
-        }
-
-    # Task status
-    if tool_name == "agnostic_task_status":
-        from webgui.routes.tasks import get_task
-
-        return await get_task(arguments["task_id"], user)
-
-    # Dashboard tools
-    if tool_name == "agnostic_dashboard":
-        from webgui.routes.dashboard import get_dashboard
-
-        return await get_dashboard(user)
-
-    if tool_name == "agnostic_list_sessions":
-        from webgui.routes.dashboard import get_dashboard_sessions
-
-        return await get_dashboard_sessions(user)
-
-    if tool_name == "agnostic_agent_status":
-        from webgui.routes.dashboard import get_dashboard_agents
-
-        return await get_dashboard_agents(user)
-
-    if tool_name == "agnostic_agent_metrics":
-        from webgui.routes.dashboard import get_agent_dashboard
-
-        return await get_agent_dashboard(user)
-
-    if tool_name == "agnostic_llm_usage":
-        from webgui.routes.dashboard import get_llm_dashboard
-
-        return await get_llm_dashboard(user)
-
-    if tool_name == "agnostic_quality_dashboard":
-        from webgui.routes.dashboard import get_embeddable_widget
-
-        return await get_embeddable_widget(user)
-
-    # Structured results
-    if tool_name in (
+    }
+    _STRUCTURED_RESULT_TOOLS = {
         "agnostic_structured_results",
         "agnostic_security_findings",
         "agnostic_performance_results",
-    ):
-        from webgui.routes.integration import get_structured_results
+    }
 
-        result_type = arguments.get("result_type")
-        if tool_name == "agnostic_security_findings":
-            result_type = "security"
-        elif tool_name == "agnostic_performance_results":
-            result_type = "performance"
-        return await get_structured_results(arguments["session_id"], result_type, user)
+    # Check grouped handlers first
+    if tool_name in _QA_TASK_TOOLS:
+        return await _handle_qa_task(tool_name, arguments, user)
+    if tool_name in _STRUCTURED_RESULT_TOOLS:
+        return await _handle_structured_results(tool_name, arguments, user)
 
-    # Session diff
-    if tool_name == "agnostic_session_diff":
+    # Simple dispatch table: tool_name → async handler(tool_name, args, user)
+    async def _task_status(_tn: str, args: dict[str, Any], u: dict[str, Any]) -> Any:
+        from webgui.routes.tasks import get_task
+
+        return await get_task(args["task_id"], u)
+
+    async def _dashboard(_tn: str, _a: dict[str, Any], u: dict[str, Any]) -> Any:
+        from webgui.routes.dashboard import get_dashboard
+
+        return await get_dashboard(u)
+
+    async def _list_sessions(_tn: str, _a: dict[str, Any], u: dict[str, Any]) -> Any:
+        from webgui.routes.dashboard import get_dashboard_sessions
+
+        return await get_dashboard_sessions(u)
+
+    async def _agent_status(_tn: str, _a: dict[str, Any], u: dict[str, Any]) -> Any:
+        from webgui.routes.dashboard import get_dashboard_agents
+
+        return await get_dashboard_agents(u)
+
+    async def _agent_metrics(_tn: str, _a: dict[str, Any], u: dict[str, Any]) -> Any:
+        from webgui.routes.dashboard import get_agent_dashboard
+
+        return await get_agent_dashboard(u)
+
+    async def _llm_usage(_tn: str, _a: dict[str, Any], u: dict[str, Any]) -> Any:
+        from webgui.routes.dashboard import get_llm_dashboard
+
+        return await get_llm_dashboard(u)
+
+    async def _quality_dashboard(
+        _tn: str, _a: dict[str, Any], u: dict[str, Any]
+    ) -> Any:
+        from webgui.routes.dashboard import get_embeddable_widget
+
+        return await get_embeddable_widget(u)
+
+    async def _session_diff(_tn: str, args: dict[str, Any], u: dict[str, Any]) -> Any:
         from webgui.routes.sessions import SessionCompareRequest, compare_sessions
 
-        compare_req = SessionCompareRequest(
-            session1_id=arguments["session_a"],
-            session2_id=arguments["session_b"],
+        req = SessionCompareRequest(
+            session1_id=args["session_a"], session2_id=args["session_b"]
         )
-        return await compare_sessions(compare_req, user)
+        return await compare_sessions(req, u)
 
-    # Quality trends
-    if tool_name == "agnostic_quality_trends":
+    async def _quality_trends(_tn: str, _a: dict[str, Any], u: dict[str, Any]) -> Any:
         from webgui.routes.dashboard import get_dashboard_metrics
 
-        return await get_dashboard_metrics(user)
+        return await get_dashboard_metrics(u)
 
-    # Reports
-    if tool_name == "agnostic_generate_report":
+    async def _generate_report(
+        _tn: str, args: dict[str, Any], u: dict[str, Any]
+    ) -> Any:
         from webgui.routes.reports import ReportGenerateRequest, generate_report
 
-        report_req = ReportGenerateRequest(
-            session_id=arguments["session_id"],
-            format=arguments.get("format", "json"),
+        req = ReportGenerateRequest(
+            session_id=args["session_id"], format=args.get("format", "json")
         )
-        return await generate_report(report_req, user)
+        return await generate_report(req, u)
 
-    if tool_name == "agnostic_list_reports":
+    async def _list_reports(_tn: str, _a: dict[str, Any], u: dict[str, Any]) -> Any:
         from webgui.routes.reports import list_reports
 
-        return await list_reports(50, 0, user)
+        return await list_reports(50, 0, u)
 
-    # A2A delegation
-    if tool_name == "agnostic_a2a_delegate":
-        from webgui.routes.tasks import A2AMessage, receive_a2a_message
-
-        msg = A2AMessage(
-            id=str(uuid.uuid4()),
-            type="a2a:delegate",
-            fromPeerId="secureyeoman",
-            toPeerId="agnostic-qa",
-            payload=arguments,
-            timestamp=int(datetime.now(UTC).timestamp() * 1000),
-        )
-        return await receive_a2a_message(msg, user)
-
-    if tool_name == "agnostic_a2a_status":
-        from webgui.routes.tasks import A2AMessage, receive_a2a_message
-
-        msg = A2AMessage(
-            id=str(uuid.uuid4()),
-            type="a2a:status_query",
-            fromPeerId="secureyeoman",
-            toPeerId="agnostic-qa",
-            payload=arguments,
-            timestamp=int(datetime.now(UTC).timestamp() * 1000),
-        )
-        return await receive_a2a_message(msg, user)
-
-    if tool_name == "agnostic_a2a_heartbeat":
-        from webgui.routes.tasks import A2AMessage, receive_a2a_message
-
-        msg = A2AMessage(
-            id=str(uuid.uuid4()),
-            type="a2a:heartbeat",
-            fromPeerId="secureyeoman",
-            toPeerId="agnostic-qa",
-            payload={},
-            timestamp=int(datetime.now(UTC).timestamp() * 1000),
-        )
-        return await receive_a2a_message(msg, user)
-
-    # Webhook subscription
-    if tool_name == "agnostic_subscribe_webhook":
-        callback_url = arguments.get("callback_url")
-        if not callback_url:
-            raise HTTPException(status_code=400, detail="callback_url is required")
-        # Validate callback URL against SSRF
-        from webgui.routes.dependencies import _validate_callback_url
-
-        try:
-            _validate_callback_url(callback_url)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-        events = arguments.get("events", ["task.completed"])
-        secret = arguments.get("secret")
-        sub_id = str(uuid.uuid4())
-
-        # Store subscription in Redis for webhook delivery
-        from config.environment import config as app_config
-
-        redis_client = app_config.get_async_redis_client()
-        sub_data = {
-            "id": sub_id,
-            "callback_url": callback_url,
-            "events": events,
-            "has_secret": bool(secret),
-            "created_by": user.get("user_id", "unknown"),
-            "created_at": datetime.now(UTC).isoformat(),
-        }
-        import json as _json
-
-        await redis_client.setex(
-            f"webhook_sub:{sub_id}", 86400 * 30, _json.dumps(sub_data)
-        )
-        return {
-            "subscription_id": sub_id,
-            "callback_url": callback_url,
-            "events": events,
-            "status": "active",
-        }
-
-    # Event stream info (SSE is not invocable via MCP — return connection info)
-    if tool_name == "agnostic_event_stream":
-        channels = arguments.get("channels", ["all"])
+    async def _event_stream(
+        _tn: str, args: dict[str, Any], _u: dict[str, Any]
+    ) -> dict[str, Any]:
         return {
             "stream_url": "/api/v1/yeoman/events/stream",
             "protocol": "text/event-stream",
-            "channels": channels,
+            "channels": args.get("channels", ["all"]),
             "note": "Connect via SSE client to the stream_url with Bearer auth. "
             "This tool returns connection info — real-time streaming requires "
             "a persistent SSE connection.",
         }
 
-    # Crew management
-    if tool_name == "agnostic_run_crew":
-        from webgui.routes.crews import CrewRunRequest, TeamSpec, run_crew
-
-        # Resolve domain+size into preset name if no explicit preset given
-        preset = arguments.get("preset")
-        if not preset and arguments.get("domain") and not arguments.get("team"):
-            size = arguments.get("size", "standard")
-            preset = f"{arguments['domain']}-{size}"
-
-        crew_req = CrewRunRequest(
-            preset=preset,
-            agent_keys=arguments.get("agent_keys", []),
-            agent_definitions=arguments.get("agent_definitions", []),
-            team=TeamSpec.from_payload(arguments.get("team")),
-            title=arguments.get("title", f"MCP: {tool_name}"),
-            description=arguments.get("description", "Crew run via MCP"),
-            target_url=arguments.get("target_url"),
-            priority=arguments.get("priority", "high"),
-        )
-        result = await run_crew(crew_req, user)
-        return {
-            "crew_id": result.crew_id,
-            "task_id": result.task_id,
-            "status": result.status,
-            "agents": result.agents,
-        }
-
-    if tool_name == "agnostic_crew_status":
+    async def _crew_status(_tn: str, args: dict[str, Any], u: dict[str, Any]) -> Any:
         from webgui.routes.crews import get_crew_status
 
-        return await get_crew_status(arguments["crew_id"], user)
+        return await get_crew_status(args["crew_id"], u)
 
-    if tool_name == "agnostic_list_presets":
+    async def _list_presets(_tn: str, args: dict[str, Any], u: dict[str, Any]) -> Any:
         from webgui.routes.definitions import list_presets
 
-        return await list_presets(arguments.get("domain"), arguments.get("size"), user)
+        return await list_presets(args.get("domain"), args.get("size"), u)
 
-    if tool_name == "agnostic_list_definitions":
+    async def _list_definitions(
+        _tn: str, args: dict[str, Any], u: dict[str, Any]
+    ) -> Any:
         from webgui.routes.definitions import list_definitions
 
-        return await list_definitions(arguments.get("domain"), 50, 0, user)
+        return await list_definitions(args.get("domain"), 50, 0, u)
 
-    if tool_name == "agnostic_create_agent":
-        from webgui.routes.tasks import A2AMessage, receive_a2a_message
+    async def _create_agent(_tn: str, args: dict[str, Any], u: dict[str, Any]) -> Any:
+        return await _handle_a2a("a2a:create_agent", args, u)
 
-        msg = A2AMessage(
-            id=str(uuid.uuid4()),
-            type="a2a:create_agent",
-            fromPeerId="secureyeoman",
-            toPeerId="agnostic",
-            payload=arguments,
-            timestamp=int(datetime.now(UTC).timestamp() * 1000),
-        )
-        return await receive_a2a_message(msg, user)
-
-    if tool_name == "agnostic_preset_recommend":
+    async def _preset_recommend(
+        _tn: str, args: dict[str, Any], _u: dict[str, Any]
+    ) -> dict[str, Any]:
         from agents.crew_assembler import recommend_preset
 
-        return recommend_preset(arguments.get("description", ""))
+        return recommend_preset(args.get("description", ""))
 
-    # Health
-    if tool_name == "agnostic_health":
-        # Import the app-level health check
+    async def _health(
+        _tn: str, _a: dict[str, Any], _u: dict[str, Any]
+    ) -> dict[str, str]:
         return {"status": "ok", "note": "Use GET /health for full details"}
 
-    if tool_name == "agnostic_metrics":
+    async def _metrics(
+        _tn: str, _a: dict[str, Any], _u: dict[str, Any]
+    ) -> dict[str, str]:
         from shared.metrics import get_metrics_text
 
         return {"metrics": get_metrics_text()}
 
-    raise HTTPException(
-        status_code=404, detail=f"Tool dispatch not implemented: {tool_name}"
-    )
+    dispatch: dict[str, Any] = {
+        "agnostic_task_status": _task_status,
+        "agnostic_dashboard": _dashboard,
+        "agnostic_list_sessions": _list_sessions,
+        "agnostic_agent_status": _agent_status,
+        "agnostic_agent_metrics": _agent_metrics,
+        "agnostic_llm_usage": _llm_usage,
+        "agnostic_quality_dashboard": _quality_dashboard,
+        "agnostic_session_diff": _session_diff,
+        "agnostic_quality_trends": _quality_trends,
+        "agnostic_generate_report": _generate_report,
+        "agnostic_list_reports": _list_reports,
+        "agnostic_a2a_delegate": lambda tn, a, u: _handle_a2a("a2a:delegate", a, u),
+        "agnostic_a2a_status": lambda tn, a, u: _handle_a2a("a2a:status_query", a, u),
+        "agnostic_a2a_heartbeat": lambda tn, a, u: _handle_a2a("a2a:heartbeat", a, u),
+        "agnostic_subscribe_webhook": _handle_subscribe_webhook,
+        "agnostic_event_stream": _event_stream,
+        "agnostic_run_crew": _handle_run_crew,
+        "agnostic_crew_status": _crew_status,
+        "agnostic_list_presets": _list_presets,
+        "agnostic_list_definitions": _list_definitions,
+        "agnostic_create_agent": _create_agent,
+        "agnostic_preset_recommend": _preset_recommend,
+        "agnostic_health": _health,
+        "agnostic_metrics": _metrics,
+    }
+
+    handler = dispatch.get(tool_name)
+    if handler is None:
+        raise HTTPException(
+            status_code=404, detail=f"Tool dispatch not implemented: {tool_name}"
+        )
+    return await handler(tool_name, arguments, user)

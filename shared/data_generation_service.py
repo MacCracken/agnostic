@@ -777,4 +777,4 @@ if __name__ == "__main__":
         {"target_endpoint": "/api/users", "load_size": 50, "method": "GET"},
     )
 
-    print(f"Generated data: {json.dumps(result, indent=2)}")
+    logger.debug("Generated data: %s", json.dumps(result, indent=2))

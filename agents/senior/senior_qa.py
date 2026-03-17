@@ -142,7 +142,7 @@ class SelfHealingTool(BaseTool):
                     "template_used": best_match["template"],
                 }
 
-        except Exception as e:
+        except (OSError, ValueError, TypeError) as e:
             logger.error(f"Computer vision healing failed: {e}")
 
         return {"confidence": 0.0, "method": "cv_no_match"}
@@ -449,7 +449,7 @@ class SelfHealingTool(BaseTool):
                         else f"element-at-{location[0]}-{location[1]}"
                     )
 
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             logger.error(f"Playwright selector generation failed: {e}")
 
         # Fallback selector
@@ -765,7 +765,13 @@ Return as a JSON array of test cases."""
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_functional_tests()
-        except Exception:
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            RuntimeError,
+        ):
             return self._fallback_functional_tests()
 
     async def _generate_edge_case_tests(
@@ -783,7 +789,13 @@ Return as JSON with: test_id, test_name, description, edge_condition, test_data,
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_edge_case_tests()
-        except Exception:
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            RuntimeError,
+        ):
             return self._fallback_edge_case_tests()
 
     async def _generate_negative_tests(
@@ -801,7 +813,13 @@ Return as JSON with: test_id, test_name, description, invalid_input, expected_er
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_negative_tests()
-        except Exception:
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            RuntimeError,
+        ):
             return self._fallback_negative_tests()
 
     async def _generate_boundary_tests(
@@ -819,7 +837,13 @@ Return as JSON with: test_id, test_name, boundary_type, boundary_value, test_dat
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_boundary_tests()
-        except Exception:
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            RuntimeError,
+        ):
             return self._fallback_boundary_tests()
 
     async def _generate_integration_tests(
@@ -837,7 +861,13 @@ Return as JSON with: test_id, test_name, components_involved, test_sequence, exp
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_integration_tests()
-        except Exception:
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            RuntimeError,
+        ):
             return self._fallback_integration_tests()
 
     async def _generate_ui_tests(
@@ -855,7 +885,13 @@ Return as JSON with: test_id, test_name, ui_element, test_action, validation_cri
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_ui_tests()
-        except Exception:
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            RuntimeError,
+        ):
             return self._fallback_ui_tests()
 
     def _parse_llm_response(self, content: str) -> list[dict[str, Any]]:
@@ -1697,7 +1733,7 @@ async def main() -> None:
             task_data = json.loads(task_data_json)
             result = asyncio.run(senior_agent.handle_complex_scenario(task_data))
             return {"status": "success", "result": result}
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Celery task failed: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -1724,7 +1760,7 @@ async def main() -> None:
                             f"Task completed: {result.get('status', 'unknown')}"
                         )
 
-                    except Exception as e:
+                    except Exception as e:  # Catch-all: tool must not crash the crew
                         logger.error(f"Redis task processing failed: {e}")
         finally:
             pubsub.close()

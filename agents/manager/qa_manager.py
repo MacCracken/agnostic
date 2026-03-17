@@ -15,7 +15,7 @@ from shared.crewai_compat import BaseTool
 
 try:
     from config.llm_integration import llm_service
-except Exception:
+except ImportError:
     llm_service = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class TestPlanDecompositionTool(BaseTool):
             scenarios_list: list[str] = scenarios_result
             logger.info(f"Generated {len(scenarios_list)} test scenarios using LLM")
             return scenarios_list
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Failed to generate scenarios with LLM: {e}")
             return [
                 "User authentication flow",
@@ -85,7 +85,7 @@ class TestPlanDecompositionTool(BaseTool):
             criteria_list: list[str] = criteria_result
             logger.info(f"Generated {len(criteria_list)} acceptance criteria using LLM")
             return criteria_list
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Failed to extract criteria with LLM: {e}")
             return [
                 "System responds within 2 seconds",
@@ -112,7 +112,7 @@ class TestPlanDecompositionTool(BaseTool):
             risks_list: list[str] = risks_result
             logger.info(f"Identified {len(risks_list)} test risks using LLM")
             return risks_list
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Failed to identify risks with LLM: {e}")
             return [
                 "Authentication bypass",
@@ -147,7 +147,7 @@ class FuzzyVerificationTool(BaseTool):
                 f"Performed LLM-based fuzzy verification with score: {verification.get('overall_score', 0)}"
             )
             return verification
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Failed to perform LLM fuzzy verification: {e}")
             verification_score = self._calculate_verification_score(
                 test_results, business_goals

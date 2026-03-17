@@ -190,7 +190,7 @@ class RegressionTestingTool(BaseTool):
                     result["status"] = "passed"
                     await page.close()
 
-                except Exception as e:
+                except Exception as e:  # Catch-all: tool must not crash the crew
                     result["status"] = "failed"
                     result["error"] = str(e)
                     result["stack_trace"] = traceback.format_exc()
@@ -327,7 +327,7 @@ class RegressionTestingTool(BaseTool):
                 result["response_data"] = response_data
                 result["status_code"] = status_code
 
-            except Exception as e:
+            except Exception as e:  # Catch-all: tool must not crash the crew
                 result["status"] = "failed"
                 result["error"] = str(e)
                 result["stack_trace"] = traceback.format_exc()
@@ -421,7 +421,7 @@ class RegressionTestingTool(BaseTool):
                     result["status"] = "failed"
                     result["error"] = f"Pytest exited with code {pytest_result}"
 
-            except Exception as e:
+            except Exception as e:  # Catch-all: tool must not crash the crew
                 result["status"] = "failed"
                 result["error"] = str(e)
                 result["stack_trace"] = traceback.format_exc()
@@ -3482,7 +3482,7 @@ async def main() -> None:
         from config.agnos_environment import apply_agnos_profile
 
         apply_agnos_profile()
-    except Exception:
+    except ImportError:
         pass
 
     junior_agent = JuniorQAAgent()
@@ -3500,7 +3500,7 @@ async def main() -> None:
             task_data = json.loads(task_data_json)
             result = asyncio.run(junior_agent.execute_regression_test(task_data))
             return {"status": "success", "result": result}
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Celery regression task failed: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -3514,7 +3514,7 @@ async def main() -> None:
             task_data = json.loads(task_data_json)
             result = asyncio.run(junior_agent.generate_test_data(task_data))  # type: ignore[attr-defined]
             return {"status": "success", "result": result}
-        except Exception as e:
+        except Exception as e:  # Catch-all: tool must not crash the crew
             logger.error(f"Celery data generation task failed: {e}")
             return {"status": "error", "error": str(e)}
 
@@ -3553,7 +3553,7 @@ async def main() -> None:
                             f"Task completed: {result.get('status', 'unknown')}"
                         )
 
-                    except Exception as e:
+                    except Exception as e:  # Catch-all: tool must not crash the crew
                         logger.error(f"Redis task processing failed: {e}")
         finally:
             pubsub.close()
