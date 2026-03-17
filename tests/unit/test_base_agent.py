@@ -138,7 +138,7 @@ class TestBaseAgent:
         """Mock Redis, Celery, LLM, and CrewAI Agent so we can test BaseAgent logic."""
         with (
             patch("agents.base.config") as mock_config,
-            patch("agents.base.llm_service"),
+            patch("config.llm_integration.llm_service"),
             patch("agents.base.LLM") as mock_llm_cls,
             patch("agents.base.Agent") as mock_agent_cls,
         ):
@@ -273,7 +273,7 @@ class TestAgentFactory:
     def _mock_infra(self):
         with (
             patch("agents.base.config") as mock_config,
-            patch("agents.base.llm_service"),
+            patch("config.llm_integration.llm_service"),
             patch("agents.base.LLM"),
             patch("agents.base.Agent"),
         ):
@@ -368,26 +368,6 @@ class TestAgentFactory:
         with pytest.raises(FileNotFoundError):
             AgentFactory.from_preset("nonexistent")
 
-    def test_list_presets(self, monkeypatch):
-        from unittest.mock import MagicMock
-
-        from agents.factory import AgentFactory
-
-        mock_registry = MagicMock()
-        mock_registry.list_presets.return_value = ["alpha"]
-        mock_registry.get_preset.return_value = {
-            "description": "Alpha crew",
-            "domain": "alpha",
-            "agents": [{"agent_key": "a1", "name": "A1", "role": "R", "goal": "G", "backstory": "B"}],
-        }
-        monkeypatch.setattr("config.agent_registry.agent_registry", mock_registry)
-
-        presets = AgentFactory.list_presets()
-        assert len(presets) == 1
-        assert presets[0]["name"] == "alpha"
-        assert presets[0]["domain"] == "alpha"
-        assert presets[0]["agent_count"] == 1
-
     def test_list_definitions(self, tmp_path, monkeypatch):
         from agents import factory as factory_mod
         from agents.factory import AgentFactory
@@ -410,6 +390,26 @@ class TestAgentFactory:
 # ---------------------------------------------------------------------------
 # Preset file validation
 # ---------------------------------------------------------------------------
+
+
+def test_factory_list_presets(monkeypatch):
+    """AgentFactory.list_presets reads from the agent registry cache."""
+    from agents.factory import AgentFactory
+
+    mock_registry = MagicMock()
+    mock_registry.list_presets.return_value = ["alpha"]
+    mock_registry.get_preset.return_value = {
+        "description": "Alpha crew",
+        "domain": "alpha",
+        "agents": [{"agent_key": "a1", "name": "A1", "role": "R", "goal": "G", "backstory": "B"}],
+    }
+    monkeypatch.setattr("config.agent_registry.agent_registry", mock_registry)
+
+    presets = AgentFactory.list_presets()
+    assert len(presets) == 1
+    assert presets[0]["name"] == "alpha"
+    assert presets[0]["domain"] == "alpha"
+    assert presets[0]["agent_count"] == 1
 
 
 class TestPresetFiles:

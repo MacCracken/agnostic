@@ -240,7 +240,7 @@ class TestInterCrewDelegation:
     def _mock_infra(self):
         with (
             patch("agents.base.config") as mock_config,
-            patch("agents.base.llm_service"),
+            patch("config.llm_integration.llm_service"),
             patch("agents.base.LLM"),
             patch("agents.base.Agent"),
         ):
