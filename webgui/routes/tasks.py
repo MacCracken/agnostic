@@ -38,7 +38,6 @@ class TaskSubmitRequest(BaseModel):
     target_url: str | None = None
     priority: Literal["critical", "high", "medium", "low"] = "high"
     standards: list[str] = Field(default_factory=list)
-    agents: list[str] = Field(default_factory=list)
     business_goals: str = Field(
         default="Ensure quality and functionality", max_length=500
     )
@@ -161,15 +160,34 @@ async def _fire_webhook(
 # ---------------------------------------------------------------------------
 
 
+def _crew_to_task_response(crew_result) -> TaskStatusResponse:
+    """Convert a CrewRunResponse to a TaskStatusResponse for backward compat."""
+    return TaskStatusResponse(
+        task_id=crew_result.task_id,
+        session_id=crew_result.session_id,
+        status=crew_result.status,
+        created_at=crew_result.created_at,
+        updated_at=crew_result.created_at,
+        result=None,
+    )
+
+
 @router.post("/tasks", response_model=TaskStatusResponse, status_code=201)
 async def submit_task(
     req: TaskSubmitRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Submit a new QA task. Routes through the generic crew builder."""
+    """Submit a quality task. Routes through the generic crew builder."""
     from config.environment import config
     from shared.database.tenants import tenant_manager
     from webgui.routes.crews import CrewRunRequest, run_crew
+
+    # SSRF validation on callback URL
+    if req.callback_url:
+        try:
+            _validate_callback_url(req.callback_url)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     # Tenant rate limit check
     tenant_id = user.get("tenant_id", tenant_manager.default_tenant_id)
@@ -203,15 +221,14 @@ async def submit_task(
     )
     crew_result = await run_crew(crew_req, user)
 
-    # Return TaskStatusResponse for backward compatibility
-    return TaskStatusResponse(
-        task_id=crew_result.task_id,
-        session_id=crew_result.session_id,
-        status=crew_result.status,
-        created_at=crew_result.created_at,
-        updated_at=crew_result.created_at,
-        result=None,
+    audit_log(
+        AuditAction.TASK_SUBMITTED,
+        actor=user.get("user_id"),
+        resource_type="task",
+        resource_id=crew_result.task_id,
     )
+
+    return _crew_to_task_response(crew_result)
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
@@ -395,11 +412,7 @@ async def submit_security_task(
         priority=req.priority,
     )
     result = await run_crew(crew_req, user)
-    return TaskStatusResponse(
-        task_id=result.task_id, session_id=result.session_id,
-        status=result.status, created_at=result.created_at,
-        updated_at=result.created_at, result=None,
-    )
+    return _crew_to_task_response(result)
 
 
 @router.post("/tasks/performance", response_model=TaskStatusResponse)
@@ -425,11 +438,7 @@ async def submit_performance_task(
         priority=req.priority,
     )
     result = await run_crew(crew_req, user)
-    return TaskStatusResponse(
-        task_id=result.task_id, session_id=result.session_id,
-        status=result.status, created_at=result.created_at,
-        updated_at=result.created_at, result=None,
-    )
+    return _crew_to_task_response(result)
 
 
 @router.post("/tasks/regression", response_model=TaskStatusResponse)
@@ -448,11 +457,7 @@ async def submit_regression_task(
         priority=req.priority,
     )
     result = await run_crew(crew_req, user)
-    return TaskStatusResponse(
-        task_id=result.task_id, session_id=result.session_id,
-        status=result.status, created_at=result.created_at,
-        updated_at=result.created_at, result=None,
-    )
+    return _crew_to_task_response(result)
 
 
 @router.post("/tasks/full", response_model=TaskStatusResponse)
@@ -471,11 +476,7 @@ async def submit_full_task(
         priority=req.priority,
     )
     result = await run_crew(crew_req, user)
-    return TaskStatusResponse(
-        task_id=result.task_id, session_id=result.session_id,
-        status=result.status, created_at=result.created_at,
-        updated_at=result.created_at, result=None,
-    )
+    return _crew_to_task_response(result)
 
 
 # ---------------------------------------------------------------------------
@@ -539,17 +540,11 @@ async def receive_a2a_message(
         if not preset and not payload.get("team") and not payload.get("agent_definitions"):
             preset = "quality-standard"
 
-        # Build team spec if provided
-        team_spec = None
-        team_data = payload.get("team")
-        if team_data and isinstance(team_data, dict):
-            team_spec = TeamSpec(**team_data)
-
         crew_req = CrewRunRequest(
             preset=preset,
             agent_keys=payload.get("agent_keys", []),
             agent_definitions=payload.get("agent_definitions", []),
-            team=team_spec,
+            team=TeamSpec.from_payload(payload.get("team")),
             title=payload.get("title", "A2A Crew Task"),
             description=payload.get("description", ""),
             target_url=payload.get("target_url"),

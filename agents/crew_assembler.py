@@ -12,18 +12,18 @@ The assembler:
 3. Returns a list of agent definition dicts ready for the crew builder
 """
 
-import json
 import logging
-import os
-from pathlib import Path
+import re
 
 logger = logging.getLogger(__name__)
 
-_PRESETS_DIR = Path(__file__).parent / "definitions" / "presets"
+# Minimum word-overlap score to consider a fuzzy match valid.
+# 2+ prevents false positives from single common words like "engineer".
+_MIN_FUZZY_SCORE = 2
 
 
 # ---------------------------------------------------------------------------
-# Models (plain dicts — no pydantic dependency here)
+# Public API
 # ---------------------------------------------------------------------------
 
 
@@ -45,9 +45,7 @@ def assemble_team(members: list[dict], project_context: str = "") -> list[dict]:
     if not members:
         return []
 
-    # Load all known agents from presets for matching
-    known_agents = _load_known_agents()
-
+    known_agents = _get_known_agents()
     definitions = []
     used_keys: set[str] = set()
 
@@ -60,13 +58,49 @@ def assemble_team(members: list[dict], project_context: str = "") -> list[dict]:
         tools = member.get("tools", [])
         is_lead = member.get("lead", False) or i == 0
 
-        # Try to find a matching known agent
         match = _find_best_match(role, known_agents)
 
         if match:
-            defn = _adapt_known_agent(match, role, context, tools, is_lead)
+            defn = _build_agent_dict(
+                agent_key=match.get("agent_key", make_agent_key(role)),
+                name=match.get("name", role),
+                role_str=match.get("role", role),
+                goal=match.get("goal", ""),
+                backstory=match.get("backstory", ""),
+                focus=match.get("focus", ""),
+                domain=match.get("domain", "general"),
+                tools=tools or match.get("tools", []),
+                complexity=match.get("complexity", "medium"),
+                celery_queue=match.get("celery_queue"),
+                redis_prefix=match.get("redis_prefix"),
+                context=context,
+                is_lead=is_lead,
+            )
         else:
-            defn = _generate_agent_definition(role, context, tools, is_lead, project_context)
+            key = make_agent_key(role)
+            goal = f"Fulfill the role of {role}"
+            if context:
+                goal += f" with focus on: {context}"
+            backstory = (
+                f"You are an experienced {role} with deep expertise in your domain. "
+                f"You bring professionalism, attention to detail, and strong collaboration skills."
+            )
+            if project_context:
+                backstory += f" Project context: {project_context}"
+
+            defn = _build_agent_dict(
+                agent_key=key,
+                name=role,
+                role_str=role,
+                goal=goal,
+                backstory=backstory,
+                focus=context or f"Core {role} responsibilities",
+                domain="custom",
+                tools=tools,
+                complexity="high" if is_lead else "medium",
+                context="",  # already baked into goal/backstory
+                is_lead=is_lead,
+            )
 
         # Ensure unique agent keys
         base_key = defn["agent_key"]
@@ -125,19 +159,17 @@ def recommend_preset(description: str) -> dict:
             scores[domain] = score
 
     if not scores:
-        # Default to complete-lean for ambiguous requests
         return {
             "preset": "complete-lean",
             "domain": "complete",
             "size": "lean",
             "reason": "No strong domain signal detected — recommending cross-functional lean team",
             "alternatives": [
-                {"preset": "qa-standard", "reason": "If this is a testing task"},
+                {"preset": "quality-standard", "reason": "If this is a testing task"},
                 {"preset": "software-engineering-standard", "reason": "If this is a development task"},
             ],
         }
 
-    # Pick top domain
     best_domain = max(scores, key=lambda d: scores[d])
 
     # Size heuristic
@@ -154,7 +186,6 @@ def recommend_preset(description: str) -> dict:
 
     preset = f"{best_domain}-{size}"
 
-    # Build alternatives
     alternatives = []
     for domain, score in sorted(scores.items(), key=lambda x: -x[1]):
         if domain != best_domain:
@@ -178,28 +209,35 @@ def recommend_preset(description: str) -> dict:
     }
 
 
+def make_agent_key(role: str) -> str:
+    """Convert a role name to a safe agent key (kebab-case)."""
+    key = role.lower().strip()
+    key = re.sub(r"[^a-z0-9]+", "-", key)
+    key = key.strip("-")
+    return key or "agent"
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 
-def _load_known_agents() -> list[dict]:
-    """Load all agent definitions from preset files."""
-    agents = []
-    if not _PRESETS_DIR.is_dir():
-        return agents
+def _get_known_agents() -> list[dict]:
+    """Get all agent definitions from the agent registry singleton."""
+    try:
+        from config.agent_registry import agent_registry
 
-    for path in sorted(_PRESETS_DIR.glob("*.json")):
-        try:
-            with open(path) as f:
-                data = json.load(f)
-            for agent in data.get("agents", []):
-                agent["_preset"] = path.stem
-                agent["_domain"] = data.get("domain", "general")
-                agents.append(agent)
-        except Exception:
-            continue
-    return agents
+        agents = []
+        for name, preset_data in agent_registry._presets.items():
+            for agent in preset_data.get("agents", []):
+                # Shallow copy to avoid mutating cached data
+                entry = dict(agent)
+                entry["_domain"] = preset_data.get("domain", "general")
+                agents.append(entry)
+        return agents
+    except Exception:
+        logger.warning("Could not load agents from registry, returning empty list")
+        return []
 
 
 def _normalize(text: str) -> str:
@@ -237,29 +275,43 @@ def _find_best_match(role: str, known_agents: list[dict]) -> dict | None:
             best_score = overlap
             best_match = agent
 
-    # Only return if we have meaningful overlap (at least 1 significant word)
-    if best_score >= 1 and best_match:
+    # Require 2+ word overlap to prevent false positives from
+    # single common words like "engineer" or "lead"
+    if best_score >= _MIN_FUZZY_SCORE and best_match:
         return best_match
 
     return None
 
 
-def _adapt_known_agent(
-    agent: dict, requested_role: str, context: str, tools: list[str], is_lead: bool,
+def _build_agent_dict(
+    *,
+    agent_key: str,
+    name: str,
+    role_str: str,
+    goal: str,
+    backstory: str,
+    focus: str,
+    domain: str,
+    tools: list[str],
+    complexity: str = "medium",
+    celery_queue: str | None = None,
+    redis_prefix: str | None = None,
+    context: str = "",
+    is_lead: bool = False,
 ) -> dict:
-    """Adapt a known agent definition with custom context."""
+    """Build a canonical agent definition dict."""
     defn = {
-        "agent_key": agent.get("agent_key", _make_key(requested_role)),
-        "name": agent.get("name", requested_role),
-        "role": agent.get("role", requested_role),
-        "goal": agent.get("goal", ""),
-        "backstory": agent.get("backstory", ""),
-        "focus": agent.get("focus", ""),
-        "domain": agent.get("domain", agent.get("_domain", "general")),
-        "tools": tools or agent.get("tools", []),
-        "complexity": agent.get("complexity", "medium"),
-        "celery_queue": agent.get("celery_queue", _make_key(requested_role).replace("-", "_")),
-        "redis_prefix": agent.get("redis_prefix", _make_key(requested_role).split("-")[0]),
+        "agent_key": agent_key,
+        "name": name,
+        "role": role_str,
+        "goal": goal,
+        "backstory": backstory,
+        "focus": focus,
+        "domain": domain,
+        "tools": tools,
+        "complexity": complexity,
+        "celery_queue": celery_queue or agent_key.replace("-", "_"),
+        "redis_prefix": redis_prefix or agent_key.split("-")[0],
     }
 
     if context:
@@ -270,48 +322,3 @@ def _adapt_known_agent(
         defn["allow_delegation"] = True
 
     return defn
-
-
-def _generate_agent_definition(
-    role: str, context: str, tools: list[str], is_lead: bool, project_context: str,
-) -> dict:
-    """Generate an inline agent definition for a novel role."""
-    key = _make_key(role)
-    goal = f"Fulfill the role of {role}"
-    if context:
-        goal += f" with focus on: {context}"
-
-    backstory = (
-        f"You are an experienced {role} with deep expertise in your domain. "
-        f"You bring professionalism, attention to detail, and strong collaboration skills."
-    )
-    if project_context:
-        backstory += f" Project context: {project_context}"
-
-    defn = {
-        "agent_key": key,
-        "name": role,
-        "role": role,
-        "goal": goal,
-        "backstory": backstory,
-        "focus": context or f"Core {role} responsibilities",
-        "domain": "custom",
-        "tools": tools,
-        "complexity": "high" if is_lead else "medium",
-        "celery_queue": key.replace("-", "_"),
-        "redis_prefix": key.split("-")[0],
-    }
-
-    if is_lead:
-        defn["allow_delegation"] = True
-
-    return defn
-
-
-def _make_key(role: str) -> str:
-    """Convert a role name to a safe agent key."""
-    import re
-    key = role.lower().strip()
-    key = re.sub(r"[^a-z0-9]+", "-", key)
-    key = key.strip("-")
-    return key or "agent"

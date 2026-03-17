@@ -124,7 +124,7 @@ class AgenticQAGUI:
 
                     user = {"user_id": "web_user"}
                     crew_status = await get_crew_status(crew_id, user)
-                    session["status"] = crew_status.get("status", session["status"])
+                    session["status"] = getattr(crew_status, "status", session["status"])
                 except Exception:
                     pass
 

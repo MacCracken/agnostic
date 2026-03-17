@@ -870,17 +870,11 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
             size = arguments.get("size", "standard")
             preset = f"{arguments['domain']}-{size}"
 
-        # Build team spec if provided
-        team_spec = None
-        team_data = arguments.get("team")
-        if team_data and isinstance(team_data, dict):
-            team_spec = TeamSpec(**team_data)
-
         crew_req = CrewRunRequest(
             preset=preset,
             agent_keys=arguments.get("agent_keys", []),
             agent_definitions=arguments.get("agent_definitions", []),
-            team=team_spec,
+            team=TeamSpec.from_payload(arguments.get("team")),
             title=arguments.get("title", f"MCP: {tool_name}"),
             description=arguments.get("description", "Crew run via MCP"),
             target_url=arguments.get("target_url"),

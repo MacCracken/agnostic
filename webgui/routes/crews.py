@@ -43,6 +43,13 @@ class TeamSpec(BaseModel):
     members: list[TeamMember] = Field(..., min_length=1, max_length=20, description="Team members with roles and context")
     project_context: str = Field(default="", max_length=2000, description="Overall project description")
 
+    @classmethod
+    def from_payload(cls, data: dict | None) -> "TeamSpec | None":
+        """Build a TeamSpec from a raw dict payload, or return None."""
+        if data and isinstance(data, dict):
+            return cls(**data)
+        return None
+
 
 class CrewRunRequest(BaseModel):
     """Request to assemble and run a crew."""
@@ -302,12 +309,12 @@ async def run_crew(
     # Determine source and agent list for the response
     if req.preset:
         source = "preset"
-        # Read preset to get agent keys for the response
-        preset_path = PRESETS_DIR / f"{req.preset}.json"
-        if not preset_path.exists():
+        # Read preset to get agent keys — use registry cache when available
+        from config.agent_registry import agent_registry
+
+        preset_data = agent_registry.get_preset(req.preset)
+        if not preset_data:
             raise HTTPException(status_code=404, detail=f"Preset '{req.preset}' not found")
-        with open(preset_path) as f:
-            preset_data = json.load(f)
         agent_names = [a.get("agent_key", "unknown") for a in preset_data.get("agents", [])]
     elif req.agent_keys:
         source = "keys"
