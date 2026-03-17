@@ -197,6 +197,15 @@ async def on_chat_start() -> None:
     cl.user_session.set("session_id", session_id)  # type: ignore[no-untyped-call]
     cl.user_session.set("gui", gui)  # type: ignore[no-untyped-call]
 
+    await cl.Message(
+        content="💡 **Quick Commands:**\n"
+        "• **help** — list all available commands\n"
+        "• **status** — check session status\n"
+        "• **presets** — browse available agent teams\n"
+        "• **recommend <description>** — get a team recommendation\n"
+        "• **cancel** — cancel the active task\n"
+    ).send()  # type: ignore[no-untyped-call]
+
 
 @cl.on_message
 async def on_message(message: cl.Message):  # type: ignore[no-untyped-def]
@@ -727,26 +736,112 @@ async def on_message(message: cl.Message):  # type: ignore[no-untyped-def]
                 content="📝 No AI test generation data available yet."
             ).send()  # type: ignore[no-untyped-call]
 
-    else:
-        # General help message
+    elif user_input.lower() in ("help", "?", "commands"):
+        # Explicit help command
         await cl.Message(
             content="💡 **Available Commands:**\n\n"
-            "• **Describe your testing requirements** - Start a new test plan\n"
-            "• **'status'** - Check current session status\n"
-            "• **'trace'** - View reasoning trace and agent collaboration\n"
-            "• **'report'** - View comprehensive QA analyst report\n"
-            "• **'security'** - View security assessment\n"
-            "• **'performance'** - View performance profile\n"
-            "• **'resilience'** - View resilience validation\n"
-            "• **'compliance'** - View compliance (GDPR/PCI/SOC2/ISO27001/HIPAA)\n"
-            "• **'predict'** - View defect prediction & risk analysis\n"
-            "• **'trend'** - View quality trend analysis\n"
-            "• **'risk'** - View risk scoring\n"
-            "• **'release'** - View release readiness assessment\n"
-            "• **'mobile'** - View cross-platform mobile testing\n"
-            "• **'ai test'** - View AI-generated test cases\n"
-            "• **'help'** - Show this help message\n\n"
-            "You can also upload a PR or feature document to get started!"
+            "**Getting Started:**\n"
+            "• **Describe your testing requirements** — Start a new test plan\n"
+            "• **Upload a PR or feature document** — Analyze and generate tests\n\n"
+            "**Session & Status:**\n"
+            "• **status** — Check current session status\n"
+            "• **trace** — View reasoning trace and agent collaboration\n"
+            "• **cancel** — Cancel the active task\n\n"
+            "**Reports:**\n"
+            "• **report** — View comprehensive QA analyst report\n"
+            "• **security** — View security assessment\n"
+            "• **performance** — View performance profile\n"
+            "• **resilience** — View resilience validation\n"
+            "• **compliance** — View compliance (GDPR/PCI/SOC2/ISO27001/HIPAA)\n"
+            "• **predict** — View defect prediction & risk analysis\n"
+            "• **trend** — View quality trend analysis\n"
+            "• **risk** — View risk scoring\n"
+            "• **release** — View release readiness assessment\n"
+            "• **mobile** — View cross-platform mobile testing\n"
+            "• **ai test** — View AI-generated test cases\n\n"
+            "**Teams & Presets:**\n"
+            "• **presets** — Browse available agent team presets\n"
+            "• **recommend <description>** — Get a team recommendation for your task\n"
+        ).send()  # type: ignore[no-untyped-call]
+
+    elif user_input.lower() in ("presets", "list presets", "teams"):
+        # List available presets
+        preset_names = _agent_registry.list_presets()
+        if not preset_names:
+            await cl.Message(content="📝 No presets are currently loaded.").send()  # type: ignore[no-untyped-call]
+        else:
+            response = "📋 **Available Agent Team Presets:**\n\n"
+            for name in preset_names:
+                preset = _agent_registry.get_preset(name)
+                if preset:
+                    domain = preset.get("domain", "general")
+                    size = preset.get("size", "standard")
+                    agent_count = len(preset.get("agents", []))
+                    response += (
+                        f"• **{name}** — {domain} / {size} ({agent_count} agents)\n"
+                    )
+            response += "\n💡 Use **recommend <description>** to find the best team for your task."
+            await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
+
+    elif user_input.lower().startswith(("recommend", "suggest")):
+        # Recommend a preset based on task description
+        from agents.crew_assembler import recommend_preset
+
+        # Strip the keyword prefix
+        stripped = user_input.strip()
+        for prefix in ("recommend", "suggest"):
+            if stripped.lower().startswith(prefix):
+                stripped = stripped[len(prefix) :].strip()
+                break
+
+        if not stripped:
+            await cl.Message(
+                content="💡 Please provide a description of your task, e.g.:\n"
+                "**recommend security audit for a REST API**"
+            ).send()  # type: ignore[no-untyped-call]
+        else:
+            recommendation = recommend_preset(stripped)
+            response = "🎯 **Recommended Team:**\n\n"
+            response += f"**Preset:** {recommendation.get('preset', 'N/A')}\n"
+            response += f"**Domain:** {recommendation.get('domain', 'N/A')}\n"
+            response += f"**Size:** {recommendation.get('size', 'N/A')}\n"
+            response += f"**Reason:** {recommendation.get('reason', 'N/A')}\n"
+
+            alternatives = recommendation.get("alternatives", [])
+            if alternatives:
+                response += "\n**Alternatives:**\n"
+                for alt in alternatives:
+                    response += f"  • {alt}\n"
+
+            await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
+
+    elif user_input.lower() in ("cancel", "stop", "abort"):
+        # Cancel the active task for this session
+        try:
+            task_key = f"session:{session_id}:status"
+            current = gui_instance.redis_client.get(task_key)
+            if current and current in ("running", "pending", "in_progress"):
+                gui_instance.redis_client.set(task_key, "cancelled")
+                await cl.Message(
+                    content="🛑 Task cancelled. You can start a new task whenever you're ready."
+                ).send()  # type: ignore[no-untyped-call]
+            elif current == "cancelled":
+                await cl.Message(content="ℹ️ The task was already cancelled.").send()  # type: ignore[no-untyped-call]
+            else:
+                await cl.Message(
+                    content="ℹ️ No active task to cancel. Current status: "
+                    f"**{current or 'none'}**"
+                ).send()  # type: ignore[no-untyped-call]
+        except Exception as e:
+            logger.error(f"Error cancelling task: {e}")
+            await cl.Message(
+                content="❌ Could not cancel the task. Please try again."
+            ).send()  # type: ignore[no-untyped-call]
+
+    else:
+        # Unrecognized input
+        await cl.Message(
+            content="🤔 I didn't recognize that command. Type **help** to see available commands."
         ).send()  # type: ignore[no-untyped-call]
 
 

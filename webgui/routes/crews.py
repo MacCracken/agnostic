@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from agents.constants import DEFINITIONS_DIR, SAFE_KEY_RE
@@ -473,3 +473,124 @@ async def get_crew_status(
 
     record = json.loads(data)
     return CrewStatusResponse(**record)
+
+
+@router.get("/crews")
+async def list_crews(
+    status: str | None = Query(None, description="Filter by status"),
+    limit: int = Query(20, ge=1, le=100, description="Max results per page"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """List crews with optional status filter and pagination."""
+    from config.environment import config
+    from shared.database.tenants import tenant_manager
+
+    redis_client = config.get_async_redis_client()
+    tenant_id = user.get("tenant_id", tenant_manager.default_tenant_id)
+
+    # Build scan pattern scoped to tenant
+    scan_pattern = tenant_manager.task_key(tenant_id, "crew:*")
+
+    # Collect all crew keys via SCAN
+    crew_keys: list[str] = []
+    cursor: int = 0
+    while True:
+        cursor, keys = await redis_client.scan(
+            cursor=cursor, match=scan_pattern, count=100
+        )
+        crew_keys.extend(keys)
+        if cursor == 0:
+            break
+
+    # Fetch all crew records
+    crews: list[dict[str, Any]] = []
+    for key in crew_keys:
+        raw = await redis_client.get(key)
+        if not raw:
+            continue
+        record = json.loads(raw)
+        if status and record.get("status") != status:
+            continue
+        crews.append(record)
+
+    # Sort by created_at descending (newest first)
+    crews.sort(key=lambda c: c.get("created_at", ""), reverse=True)
+
+    total = len(crews)
+    paginated = crews[offset : offset + limit]
+
+    return {
+        "crews": paginated,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.post("/crews/{crew_id}/cancel")
+async def cancel_crew(
+    crew_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Cancel a running or pending crew."""
+    from config.environment import config
+    from shared.database.tenants import tenant_manager
+
+    redis_client = config.get_async_redis_client()
+    tenant_id = user.get("tenant_id", tenant_manager.default_tenant_id)
+    crew_redis_key = tenant_manager.task_key(tenant_id, f"crew:{crew_id}")
+
+    raw = await redis_client.get(crew_redis_key)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Crew not found")
+
+    record: dict[str, Any] = json.loads(raw)
+    current_status = record.get("status")
+
+    if current_status not in ("running", "pending"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Crew cannot be cancelled — current status is '{current_status}'",
+        )
+
+    now = datetime.now(UTC).isoformat()
+    record["status"] = "cancelled"
+    record["updated_at"] = now
+    await redis_client.setex(crew_redis_key, 86400, json.dumps(record))
+
+    # Update the associated task record
+    task_id = record.get("task_id")
+    if task_id:
+        task_redis_key = tenant_manager.task_key(tenant_id, task_id)
+        task_raw = await redis_client.get(task_redis_key)
+        if task_raw:
+            task_record: dict[str, Any] = json.loads(task_raw)
+            task_record["status"] = "cancelled"
+            task_record["updated_at"] = now
+            await redis_client.setex(task_redis_key, 86400, json.dumps(task_record))
+
+    # Publish status update
+    if task_id:
+        await redis_client.publish(
+            f"task:{task_id}",
+            json.dumps(
+                {
+                    "type": "crew_status_changed",
+                    "crew_id": crew_id,
+                    "task_id": task_id,
+                    "status": "cancelled",
+                    "timestamp": now,
+                }
+            ),
+        )
+
+    audit_log(
+        AuditAction.TASK_SUBMITTED,
+        actor=user.get("user_id"),
+        resource_type="crew",
+        resource_id=crew_id,
+        detail={"action": "cancel", "previous_status": current_status},
+    )
+
+    return record

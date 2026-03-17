@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to AAS (Agnostic Agentics Systems) are documented here.
+All notable changes to AAS (Agnostic Agent System) are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versions use **YYYY.M.D** (calendar versioning) for git tags and releases.
@@ -64,7 +64,7 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ### Changed
 
-- **Branding** — "Agentic QA Team System" → "AAS — Agnostic Agentics Systems". Container/artifact names remain `agnostic`
+- **Branding** — "Agentic QA Team System" → "AAS — Agnostic Agent System". Container/artifact names remain `agnostic`
 - **Database models** — added `domain` and `crew_preset` columns (no migration needed)
 - **AGNOS registration** — merges static + dynamic preset agents
 - **Dashboard timeline** — discovers dynamic agent prefixes via Redis SCAN

@@ -12,7 +12,7 @@ SecureYeoman and other AGNOS ecosystem consumers requested the ability to create
 
 ## Decision
 
-Expand Agnostic into **AAS (Agnostic Agentics Systems)** — a general-purpose agent platform where:
+Expand Agnostic into **AAS (Agnostic Agent System)** — a general-purpose agent platform where:
 
 1. **Agents are defined declaratively** via JSON/YAML definitions, not hardcoded Python classes
 2. **Crews are assembled dynamically** from presets, agent keys, or inline definitions via API

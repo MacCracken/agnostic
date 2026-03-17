@@ -15,9 +15,12 @@ class Dashboard {
 
     async loadDashboard() {
         try {
-            const response = await fetch('/api/dashboard');
+            const response = await fetch('/api/v1/dashboard');
+            if (!response.ok) {
+                throw new Error(`Dashboard API returned ${response.status}`);
+            }
             const data = await response.json();
-            
+
             this.updateMetrics(data.metrics);
             this.updateSessions(data.sessions);
             this.updateAgents(data.agents);

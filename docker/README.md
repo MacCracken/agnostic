@@ -1,6 +1,6 @@
 # Docker Build
 
-Single image build for the AAS (Agnostic Agentics Systems) platform.
+Single image build for the AAS (Agnostic Agent System) platform.
 
 ## Build
 
