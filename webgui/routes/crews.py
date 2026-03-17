@@ -152,7 +152,16 @@ async def _run_crew_async(
     tenant_id: str = "default",
 ) -> None:
     """Run a generic crew asynchronously."""
+    import time as _time
+
     from shared.database.tenants import tenant_manager
+    from shared.metrics import (
+        ACTIVE_CREW_TASKS,
+    )
+
+    crew_start = _time.monotonic()
+    source = crew_config.get("source", "unknown")
+    ACTIVE_CREW_TASKS.inc()
 
     crew_redis_key = tenant_manager.task_key(tenant_id, f"crew:{crew_id}")
     task_redis_key = tenant_manager.task_key(tenant_id, task_id)
@@ -333,6 +342,16 @@ async def _run_crew_async(
         # Release GPU reservations now that all agents are done
         gpu_slot_tracker.release(crew_id)
 
+        # Record metrics
+        from shared.metrics import CREW_AGENT_COUNT, CREW_RUN_DURATION, CREW_RUNS_TOTAL
+
+        CREW_RUNS_TOTAL.labels(source=source, status=final_status).inc()
+        CREW_RUN_DURATION.labels(source=source).observe(_time.monotonic() - crew_start)
+        CREW_AGENT_COUNT.labels(source=source).observe(len(agents))
+        for ga in gpu_plan.gpu_agents:
+            GPU_AGENTS_SCHEDULED.inc()
+        ACTIVE_CREW_TASKS.dec()
+
         await _update_status(
             final_status,
             {
@@ -350,6 +369,10 @@ async def _run_crew_async(
 
     except Exception as exc:
         logger.error("Crew %s failed: %s", crew_id, exc, exc_info=True)
+        ACTIVE_CREW_TASKS.dec()
+        from shared.metrics import CREW_RUNS_TOTAL as _CRT
+
+        _CRT.labels(source=source, status="failed").inc()
         # Release GPU slots on failure to prevent leaks
         try:
             from config.gpu_scheduler import gpu_slot_tracker as _tracker

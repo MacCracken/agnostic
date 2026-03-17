@@ -37,7 +37,9 @@ class TestMakeAgentKey:
         assert make_agent_key("QA Manager") == "qa-manager"
 
     def test_special_chars(self):
-        assert make_agent_key("Senior QA Engineer & Tester") == "senior-qa-engineer-tester"
+        assert (
+            make_agent_key("Senior QA Engineer & Tester") == "senior-qa-engineer-tester"
+        )
 
     def test_empty(self):
         assert make_agent_key("") == "agent"
@@ -48,12 +50,17 @@ class TestMakeAgentKey:
     def test_output_matches_safe_key_re(self):
         """Generated keys must pass SAFE_KEY_RE validation."""
         test_roles = [
-            "UX Lead", "Game Designer", "Backend Engineer",
-            "Performance & Resilience Specialist", "CI/CD Expert",
+            "UX Lead",
+            "Game Designer",
+            "Backend Engineer",
+            "Performance & Resilience Specialist",
+            "CI/CD Expert",
         ]
         for role in test_roles:
             key = make_agent_key(role)
-            assert SAFE_KEY_RE.match(key), f"Key {key!r} from {role!r} doesn't match SAFE_KEY_RE"
+            assert SAFE_KEY_RE.match(key), (
+                f"Key {key!r} from {role!r} doesn't match SAFE_KEY_RE"
+            )
 
 
 class TestValidateAgentKey:
@@ -64,6 +71,7 @@ class TestValidateAgentKey:
 
     def test_invalid_raises(self):
         import pytest
+
         with pytest.raises(ValueError):
             validate_agent_key("../path-traversal")
         with pytest.raises(ValueError):

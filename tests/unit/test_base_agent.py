@@ -204,10 +204,12 @@ class TestBaseAgent:
         agent = self._make_agent()
         # Mock run_task to return a result
         with patch.object(agent, "run_task", return_value="crew output"):
-            result = await agent.handle_task({
-                "scenario": {"id": "s1", "name": "Test scenario"},
-                "session_id": "sess1",
-            })
+            result = await agent.handle_task(
+                {
+                    "scenario": {"id": "s1", "name": "Test scenario"},
+                    "session_id": "sess1",
+                }
+            )
         assert result["status"] == "completed"
         assert result["agent"] == "test-agent"
 
@@ -215,22 +217,26 @@ class TestBaseAgent:
     async def test_handle_task_failure(self):
         agent = self._make_agent()
         with patch.object(agent, "run_task", side_effect=RuntimeError("boom")):
-            result = await agent.handle_task({
-                "scenario": {"id": "s1"},
-                "session_id": "sess1",
-            })
+            result = await agent.handle_task(
+                {
+                    "scenario": {"id": "s1"},
+                    "session_id": "sess1",
+                }
+            )
         assert result["status"] == "failed"
         assert "boom" in result["error"]
 
     def test_build_task_description(self):
         agent = self._make_agent(focus="Testing stuff")
-        desc = agent._build_task_description({
-            "scenario": {
-                "name": "Regression",
-                "description": "Run regression suite",
-                "target_url": "https://example.com",
-            },
-        })
+        desc = agent._build_task_description(
+            {
+                "scenario": {
+                    "name": "Regression",
+                    "description": "Run regression suite",
+                    "target_url": "https://example.com",
+                },
+            }
+        )
         assert "Regression" in desc
         assert "Testing stuff" in desc
         assert "https://example.com" in desc
@@ -290,13 +296,15 @@ class TestAgentFactory:
     def test_from_dict(self):
         from agents.factory import AgentFactory
 
-        agent = AgentFactory.from_dict({
-            "agent_key": "test",
-            "name": "Test",
-            "role": "R",
-            "goal": "G",
-            "backstory": "B",
-        })
+        agent = AgentFactory.from_dict(
+            {
+                "agent_key": "test",
+                "name": "Test",
+                "role": "R",
+                "goal": "G",
+                "backstory": "B",
+            }
+        )
         assert agent.definition.agent_key == "test"
 
     def test_from_definition(self):
@@ -380,12 +388,16 @@ class TestAgentFactory:
 
         monkeypatch.setattr(factory_mod, "DEFINITIONS_DIR", tmp_path)
 
-        (tmp_path / "my-agent.json").write_text(json.dumps({
-            "agent_key": "my-agent",
-            "name": "My Agent",
-            "domain": "custom",
-            "focus": "Custom stuff",
-        }))
+        (tmp_path / "my-agent.json").write_text(
+            json.dumps(
+                {
+                    "agent_key": "my-agent",
+                    "name": "My Agent",
+                    "domain": "custom",
+                    "focus": "Custom stuff",
+                }
+            )
+        )
 
         defs = AgentFactory.list_definitions()
         assert len(defs) == 1
@@ -407,7 +419,15 @@ def test_factory_list_presets(monkeypatch):
     mock_registry.get_preset.return_value = {
         "description": "Alpha crew",
         "domain": "alpha",
-        "agents": [{"agent_key": "a1", "name": "A1", "role": "R", "goal": "G", "backstory": "B"}],
+        "agents": [
+            {
+                "agent_key": "a1",
+                "name": "A1",
+                "role": "R",
+                "goal": "G",
+                "backstory": "B",
+            }
+        ],
     }
     monkeypatch.setattr("config.agent_registry.agent_registry", mock_registry)
 
@@ -421,7 +441,9 @@ def test_factory_list_presets(monkeypatch):
 class TestPresetFiles:
     """Validate the actual preset JSON files ship valid definitions."""
 
-    PRESETS_DIR = Path(__file__).parent.parent.parent / "agents" / "definitions" / "presets"
+    PRESETS_DIR = (
+        Path(__file__).parent.parent.parent / "agents" / "definitions" / "presets"
+    )
 
     def _load_preset(self, name: str) -> dict:
         path = self.PRESETS_DIR / f"{name}.json"
@@ -429,13 +451,26 @@ class TestPresetFiles:
         with open(path) as f:
             return json.load(f)
 
-    @pytest.mark.parametrize("preset_name", [
-        "quality-lean", "quality-standard", "quality-large",
-        "software-engineering-lean", "software-engineering-standard", "software-engineering-large",
-        "design-lean", "design-standard", "design-large",
-        "data-engineering-lean", "data-engineering-standard", "data-engineering-large",
-        "devops-lean", "devops-standard", "devops-large",
-    ])
+    @pytest.mark.parametrize(
+        "preset_name",
+        [
+            "quality-lean",
+            "quality-standard",
+            "quality-large",
+            "software-engineering-lean",
+            "software-engineering-standard",
+            "software-engineering-large",
+            "design-lean",
+            "design-standard",
+            "design-large",
+            "data-engineering-lean",
+            "data-engineering-standard",
+            "data-engineering-large",
+            "devops-lean",
+            "devops-standard",
+            "devops-large",
+        ],
+    )
     def test_preset_structure(self, preset_name):
         data = self._load_preset(preset_name)
         assert "name" in data
@@ -445,19 +480,34 @@ class TestPresetFiles:
         assert "agents" in data
         assert len(data["agents"]) > 0
 
-    @pytest.mark.parametrize("preset_name", [
-        "quality-lean", "quality-standard", "quality-large",
-        "software-engineering-lean", "software-engineering-standard", "software-engineering-large",
-        "design-lean", "design-standard", "design-large",
-        "data-engineering-lean", "data-engineering-standard", "data-engineering-large",
-        "devops-lean", "devops-standard", "devops-large",
-    ])
+    @pytest.mark.parametrize(
+        "preset_name",
+        [
+            "quality-lean",
+            "quality-standard",
+            "quality-large",
+            "software-engineering-lean",
+            "software-engineering-standard",
+            "software-engineering-large",
+            "design-lean",
+            "design-standard",
+            "design-large",
+            "data-engineering-lean",
+            "data-engineering-standard",
+            "data-engineering-large",
+            "devops-lean",
+            "devops-standard",
+            "devops-large",
+        ],
+    )
     def test_preset_agents_have_required_fields(self, preset_name):
         data = self._load_preset(preset_name)
         required = {"agent_key", "name", "role", "goal", "backstory"}
         for agent in data["agents"]:
             missing = required - set(agent.keys())
-            assert not missing, f"Agent {agent.get('agent_key', '?')} missing: {missing}"
+            assert not missing, (
+                f"Agent {agent.get('agent_key', '?')} missing: {missing}"
+            )
 
     def test_qa_standard_has_six_agents(self):
         data = self._load_preset("quality-standard")
@@ -466,5 +516,12 @@ class TestPresetFiles:
     def test_qa_standard_agent_keys_match_existing(self):
         data = self._load_preset("quality-standard")
         keys = {a["agent_key"] for a in data["agents"]}
-        expected = {"qa-manager", "senior-qa", "junior-qa", "qa-analyst", "security-compliance", "performance"}
+        expected = {
+            "qa-manager",
+            "senior-qa",
+            "junior-qa",
+            "qa-analyst",
+            "security-compliance",
+            "performance",
+        }
         assert keys == expected

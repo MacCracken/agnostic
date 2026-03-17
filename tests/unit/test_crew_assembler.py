@@ -137,7 +137,11 @@ class TestFindBestMatch:
     def test_single_word_overlap_rejected(self):
         """Single common word like 'engineer' should not match."""
         agents = [
-            {"agent_key": "backend-engineer", "name": "Backend Engineer", "role": "Backend & API Engineer"},
+            {
+                "agent_key": "backend-engineer",
+                "name": "Backend Engineer",
+                "role": "Backend & API Engineer",
+            },
         ]
         match = _find_best_match("Sales Engineer", agents)
         assert match is None
@@ -160,17 +164,21 @@ class TestAssembleTeam:
         assert result[0]["agent_key"] == "qa-analyst"
 
     def test_unique_keys_enforced(self):
-        result = assemble_team([
-            {"role": "Engineer"},
-            {"role": "Engineer"},
-        ])
+        result = assemble_team(
+            [
+                {"role": "Engineer"},
+                {"role": "Engineer"},
+            ]
+        )
         keys = [r["agent_key"] for r in result]
         assert len(keys) == len(set(keys))
 
     def test_context_passed_through(self):
-        result = assemble_team([
-            {"role": "Designer", "context": "Mobile gaming UX"},
-        ])
+        result = assemble_team(
+            [
+                {"role": "Designer", "context": "Mobile gaming UX"},
+            ]
+        )
         assert "Mobile gaming UX" in result[0]["goal"]
 
     def test_project_context_in_novel_backstory(self):

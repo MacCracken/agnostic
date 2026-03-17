@@ -20,7 +20,13 @@ class TestPresetLoading:
     def test_loads_all_domains_all_sizes(self):
         registry = AgentRegistry()
         names = registry.list_presets()
-        for domain in ["quality", "software-engineering", "design", "data-engineering", "devops"]:
+        for domain in [
+            "quality",
+            "software-engineering",
+            "design",
+            "data-engineering",
+            "devops",
+        ]:
             for size in ["lean", "standard", "large"]:
                 assert f"{domain}-{size}" in names, f"Missing preset {domain}-{size}"
 
@@ -77,7 +83,13 @@ class TestListPresetsFiltering:
     def test_list_domains(self):
         registry = AgentRegistry()
         domains = registry.list_domains()
-        for expected in ["quality", "software-engineering", "design", "data-engineering", "devops"]:
+        for expected in [
+            "quality",
+            "software-engineering",
+            "design",
+            "data-engineering",
+            "devops",
+        ]:
             assert expected in domains
 
 
@@ -101,7 +113,10 @@ class TestQATeamSize:
         registry = AgentRegistry()
         assert registry.get_preset_name("design", "large") == "design-large"
         assert registry.get_preset_name("devops", "lean") == "devops-lean"
-        assert registry.get_preset_name("software-engineering", "standard") == "software-engineering-standard"
+        assert (
+            registry.get_preset_name("software-engineering", "standard")
+            == "software-engineering-standard"
+        )
 
 
 class TestTeamAgents:
@@ -164,8 +179,13 @@ class TestTeamAgents:
     def test_data_engineering_sizes(self):
         registry = AgentRegistry()
         assert len(registry.get_agents_for_team("lean", domain="data-engineering")) == 2
-        assert len(registry.get_agents_for_team("standard", domain="data-engineering")) == 3
-        assert len(registry.get_agents_for_team("large", domain="data-engineering")) == 6
+        assert (
+            len(registry.get_agents_for_team("standard", domain="data-engineering"))
+            == 3
+        )
+        assert (
+            len(registry.get_agents_for_team("large", domain="data-engineering")) == 6
+        )
 
     def test_devops_sizes(self):
         registry = AgentRegistry()

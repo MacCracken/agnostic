@@ -231,6 +231,41 @@ def require_permission(permission: Permission) -> Any:
     return _check
 
 
+def require_rate_limit(
+    key_prefix: str, max_requests: int = 30, window_seconds: int = 60
+) -> Any:
+    """Factory for Redis-backed per-user rate limiting dependencies.
+
+    Returns a FastAPI dependency that raises 429 if the user exceeds
+    *max_requests* within *window_seconds*.
+    """
+
+    async def _check(
+        user: dict[str, Any] = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        user_id = user.get("user_id", "anonymous")
+        try:
+            from config.environment import config
+
+            redis_client = config.get_async_redis_client()
+            key = f"rate:{key_prefix}:{user_id}"
+            current = await redis_client.incr(key)
+            if current == 1:
+                await redis_client.expire(key, window_seconds)
+            if current > max_requests:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Rate limit exceeded ({max_requests} requests per {window_seconds}s)",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # fail open if Redis unavailable
+        return user
+
+    return _check
+
+
 async def require_admin(
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:

@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -128,6 +128,21 @@ class PresetListItem(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# TTL cache for definition/preset listing
+# ---------------------------------------------------------------------------
+
+_definitions_cache: list[dict[str, Any]] | None = None
+_definitions_cache_ts: float = 0.0
+_DEFINITIONS_CACHE_TTL = 5.0  # seconds
+
+
+def _invalidate_definitions_cache() -> None:
+    global _definitions_cache, _definitions_cache_ts
+    _definitions_cache = None
+    _definitions_cache_ts = 0.0
+
+
+# ---------------------------------------------------------------------------
 # Agent definition CRUD
 # ---------------------------------------------------------------------------
 
@@ -141,32 +156,49 @@ async def list_definitions(
 ) -> dict[str, Any]:
     """List all available agent definitions."""
     import asyncio
+    import time
 
-    def _scan() -> list[dict[str, Any]]:
-        items = []
-        if DEFINITIONS_DIR.exists():
-            for p in sorted(DEFINITIONS_DIR.glob("*.json")):
-                try:
-                    with open(p) as f:
-                        data = json.load(f)
-                    if domain and data.get("domain", "general") != domain:
+    global _definitions_cache, _definitions_cache_ts
+
+    now = time.monotonic()
+    if (
+        _definitions_cache is not None
+        and (now - _definitions_cache_ts) < _DEFINITIONS_CACHE_TTL
+    ):
+        all_items = _definitions_cache
+    else:
+
+        def _scan() -> list[dict[str, Any]]:
+            items = []
+            if DEFINITIONS_DIR.exists():
+                for p in sorted(DEFINITIONS_DIR.glob("*.json")):
+                    try:
+                        with open(p) as f:
+                            data = json.load(f)
+                        items.append(
+                            {
+                                "agent_key": data.get("agent_key", p.stem),
+                                "name": data.get("name", p.stem),
+                                "domain": data.get("domain", "general"),
+                                "focus": data.get("focus", ""),
+                                "complexity": data.get("complexity", "medium"),
+                                "tools": data.get("tools", []),
+                            }
+                        )
+                    except Exception:
                         continue
-                    items.append(
-                        {
-                            "agent_key": data.get("agent_key", p.stem),
-                            "name": data.get("name", p.stem),
-                            "domain": data.get("domain", "general"),
-                            "focus": data.get("focus", ""),
-                            "complexity": data.get("complexity", "medium"),
-                            "tools": data.get("tools", []),
-                        }
-                    )
-                except Exception:
-                    continue
-        return items
+            return items
 
-    loop = asyncio.get_running_loop()
-    items = await loop.run_in_executor(None, _scan)
+        loop = asyncio.get_running_loop()
+        all_items = await loop.run_in_executor(None, _scan)
+        _definitions_cache = all_items
+        _definitions_cache_ts = now
+
+    # Filter by domain after cache (cache stores all domains)
+    if domain:
+        items = [i for i in all_items if i.get("domain", "general") == domain]
+    else:
+        items = all_items
 
     total = len(items)
     return {
@@ -224,6 +256,7 @@ async def create_definition(
         resource_id=req.agent_key,
         detail={"action": "create"},
     )
+    _invalidate_definitions_cache()
     logger.info("Created agent definition: %s", req.agent_key)
     return AgentDefinitionResponse(**data)
 
@@ -261,6 +294,7 @@ async def update_definition(
         resource_id=agent_key,
         detail={"action": "update"},
     )
+    _invalidate_definitions_cache()
     logger.info("Updated agent definition: %s", agent_key)
     return AgentDefinitionResponse(**data)
 
@@ -289,6 +323,7 @@ async def delete_definition(
         resource_id=agent_key,
         detail={"action": "delete"},
     )
+    _invalidate_definitions_cache()
     logger.info("Deleted agent definition: %s", agent_key)
 
 
@@ -586,6 +621,43 @@ async def export_package_endpoint(
             "Content-Disposition": f'attachment; filename="{req.name.replace(chr(34), "")}-{req.version.replace(chr(34), "")}.agpkg"',
         },
     )
+
+
+@router.post("/packages/import")
+async def import_package_endpoint(
+    file: UploadFile,
+    overwrite: bool = False,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Import a .agpkg bundle via multipart file upload.
+
+    Send as ``multipart/form-data`` with the file in a field named ``file``.
+    """
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    data = await file.read()
+
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
+
+    from agents.packaging import import_package
+
+    result = import_package(data, overwrite=overwrite)
+
+    _invalidate_definitions_cache()
+
+    audit_log(
+        AuditAction.CONFIG_CHANGED,
+        actor=user.get("user_id"),
+        resource_type="package",
+        resource_id="import",
+        detail={
+            "definitions": len(result.get("definitions_installed", [])),
+            "presets": len(result.get("presets_installed", [])),
+        },
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------

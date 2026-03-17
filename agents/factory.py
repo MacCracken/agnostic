@@ -135,9 +135,13 @@ class AgentFactory:
     @classmethod
     def _load_definition_file(cls, path: Path) -> AgentDefinition:
         """Parse a JSON or YAML file into an AgentDefinition."""
+        from shared.metrics import DEFINITION_CACHE_HITS, DEFINITION_CACHE_MISSES
+
         cache_key = str(path.resolve())
         if cache_key in cls._definition_cache:
+            DEFINITION_CACHE_HITS.inc()
             return cls._definition_cache[cache_key]
+        DEFINITION_CACHE_MISSES.inc()
 
         with open(path) as f:
             if path.suffix in (".yaml", ".yml"):

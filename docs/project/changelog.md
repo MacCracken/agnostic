@@ -31,6 +31,12 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 - **Module-scope `asyncio.Lock` fix** — `_webhook_client_lock` in tasks.py lazily created via `_get_webhook_lock()` to avoid binding to wrong event loop
 - **Async file I/O** — `list_definitions` and `export_package` endpoints now use `run_in_executor` to avoid blocking the event loop
 - **`import_package()` dedup** — definition and preset install loops consolidated into shared loop
+- **Prometheus crew metrics** — `agnostic_crew_runs_total`, `agnostic_crew_run_duration_seconds`, `agnostic_crew_agent_count`, `agnostic_active_crew_tasks`, `agnostic_tool_registry_size`, `agnostic_definition_cache_hits/misses_total`, `agnostic_gpu_agents_scheduled_total`, `agnostic_gpu_memory_reserved_mb`
+- **Definition cache metrics** — `AgentFactory._load_definition_file` records cache hit/miss counters
+- **TTL cache for `list_definitions`** — 5-second in-memory cache, invalidated on create/update/delete
+- **`.agpkg` multipart file upload** — `POST /api/v1/packages/import` accepts `multipart/form-data` with 10 MB limit
+- **`require_rate_limit` dependency** — Redis-backed per-user rate limiter factory in `dependencies.py`
+- **Benchmark scripts** — `tests/benchmarks/bench_definitions.py` (10/50/200/500 files) and `tests/benchmarks/bench_packaging.py` (50 defs + 10 presets export/import)
 - **18 crew presets** — 5 domains (quality, software-engineering, design, data-engineering, devops) x 3 sizes (lean, standard, large) + `complete-lean` + `quality-security` + `quality-performance`
 - **Crew assembler** (`agents/crew_assembler.py`) — `assemble_team()` builds agent definitions from natural-language team specs; `recommend_preset()` suggests best preset from task description
 - **Custom team composition** — `CrewRunRequest.team` (TeamSpec) enables "I need a 4-person team: UX, game engineer, game designer, project lead" style requests

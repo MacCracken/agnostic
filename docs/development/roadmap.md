@@ -125,14 +125,11 @@ Items identified during code review and audit. Not blocking, but should be addre
 | Item | Effort | Notes |
 |------|--------|-------|
 | Process-level sandbox for `load_tool_from_source()` | Medium | Current `exec()` restricted builtins is defense-in-depth only. Add nsjail/gVisor/WASM isolation for untrusted tool code |
-| `.agpkg` import: multipart file upload endpoint | Small | Currently only Python API; HTTP file upload endpoint removed. Implement via FastAPI `UploadFile` |
-| Rate limiting on definition/preset/tool endpoints | Small | No per-user rate limits on CRUD mutations or tool upload |
 
 ### Performance
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| TTL cache for `list_definitions` / `list_presets` | Small | Re-scans filesystem on every request. Add 5s in-memory TTL cache (matches dashboard pattern) |
 | Shared infrastructure for crew agents | Medium | Each `BaseAgent` creates own Redis client + Celery app. Crew of 6 = 6 connections. Share across agents in same crew |
 
 ### Code Quality
@@ -158,11 +155,8 @@ Items identified during code review and audit. Not blocking, but should be addre
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| Definition list scalability | Small | Measure `GET /definitions` at 10/50/200/500 files |
 | Crew creation throughput | Medium | Concurrent `POST /crews` (1/5/10/20 simultaneous) — thread pool saturation |
 | Crew execution by agent count | Medium | Wall time for 1/3/6/10 agent crews |
-| Package import/export large bundles | Small | 50 definitions + 10 presets export; 100-entry import |
-| Production metrics | Medium | Add Prometheus gauges: `agnostic_crew_run_duration_seconds`, `agnostic_tool_registry_size`, `agnostic_active_crew_tasks`, `agnostic_definition_cache_hits` |
 
 ---
 

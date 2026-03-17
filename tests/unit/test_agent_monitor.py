@@ -152,9 +152,7 @@ class TestGetAgentStatus:
             "uptime_seconds": 7200,
         }
         # get(cache_key) = None, get(status_key) = data
-        _mock_redis.get = AsyncMock(
-            side_effect=[None, json.dumps(status_data)]
-        )
+        _mock_redis.get = AsyncMock(side_effect=[None, json.dumps(status_data)])
         _set_scan_iter([])
         _mock_redis.mget = AsyncMock(return_value=[])
         _mock_redis.setex = AsyncMock()
@@ -238,12 +236,14 @@ class TestCountTasksByStatus:
     async def test_counts_correctly(self):
         completed = {"status": "completed"}
         failed = {"status": "failed"}
-        _set_scan_iter([
-            "task:qa-manager:1",
-            "task:qa-manager:2",
-            "task:qa-manager:3",
-            "task:qa-manager:4",
-        ])
+        _set_scan_iter(
+            [
+                "task:qa-manager:1",
+                "task:qa-manager:2",
+                "task:qa-manager:3",
+                "task:qa-manager:4",
+            ]
+        )
         _mock_redis.mget = AsyncMock(
             return_value=[
                 json.dumps(completed),
@@ -262,12 +262,14 @@ class TestCountTasksByStatus:
         """Error rate is calculated from single SCAN+MGET pass, not 3 separate scans."""
         completed = {"status": "completed"}
         failed = {"status": "failed"}
-        _set_scan_iter([
-            "task:qa-manager:1",
-            "task:qa-manager:2",
-            "task:qa-manager:3",
-            "task:qa-manager:4",
-        ])
+        _set_scan_iter(
+            [
+                "task:qa-manager:1",
+                "task:qa-manager:2",
+                "task:qa-manager:3",
+                "task:qa-manager:4",
+            ]
+        )
         _mock_redis.mget = AsyncMock(
             return_value=[
                 json.dumps(completed),

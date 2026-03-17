@@ -689,7 +689,9 @@ class TestTenantEndpoints:
         ):
             app.dependency_overrides[_tenant_repo_dependency] = override
             try:
-                resp = admin_client.put("/api/v1/tenants/nonexistent", json={"name": "New"})
+                resp = admin_client.put(
+                    "/api/v1/tenants/nonexistent", json={"name": "New"}
+                )
                 assert resp.status_code == 404
             finally:
                 app.dependency_overrides.pop(_tenant_repo_dependency, None)

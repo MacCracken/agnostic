@@ -338,9 +338,7 @@ class TestCompareSessions:
         cached = {"session_id": "s1", "overall_score": 80}
         _mock_redis.get.side_effect = [
             json.dumps(cached),  # cache hit for s1
-            json.dumps(
-                {"session_id": "s2", "overall_score": 90}
-            ),  # cache hit for s2
+            json.dumps({"session_id": "s2", "overall_score": 90}),  # cache hit for s2
         ]
         mgr = _make_manager()
         result = await mgr.compare_sessions("s1", "s2")

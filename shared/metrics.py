@@ -133,6 +133,59 @@ CIRCUIT_BREAKER_STATE = _gauge(
     ("service",),
 )
 
+# Crew execution metrics
+CREW_RUNS_TOTAL = _counter(
+    "agnostic_crew_runs_total",
+    "Total crew runs by preset/source and final status",
+    ("source", "status"),
+)
+CREW_RUN_DURATION = _histogram(
+    "agnostic_crew_run_duration_seconds",
+    "End-to-end crew execution time in seconds",
+    ("source",),
+)
+CREW_AGENT_COUNT = _histogram(
+    "agnostic_crew_agent_count",
+    "Number of agents per crew run",
+    ("source",),
+)
+ACTIVE_CREW_TASKS = _gauge(
+    "agnostic_active_crew_tasks",
+    "Currently running crew tasks",
+    (),
+)
+
+# Tool registry metrics
+TOOL_REGISTRY_SIZE = _gauge(
+    "agnostic_tool_registry_size",
+    "Number of tools in the global tool registry",
+    (),
+)
+
+# Definition cache metrics
+DEFINITION_CACHE_HITS = _counter(
+    "agnostic_definition_cache_hits_total",
+    "Definition cache hits in AgentFactory",
+    (),
+)
+DEFINITION_CACHE_MISSES = _counter(
+    "agnostic_definition_cache_misses_total",
+    "Definition cache misses in AgentFactory",
+    (),
+)
+
+# GPU metrics
+GPU_AGENTS_SCHEDULED = _counter(
+    "agnostic_gpu_agents_scheduled_total",
+    "Total agents scheduled on GPU",
+    (),
+)
+GPU_MEMORY_RESERVED_MB = _gauge(
+    "agnostic_gpu_memory_reserved_mb",
+    "Total GPU memory currently reserved across active crews",
+    (),
+)
+
 
 # ------------------------------------------------------------------
 # Exposition helpers
