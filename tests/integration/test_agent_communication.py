@@ -12,7 +12,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "agents")
 try:
     from analyst.qa_analyst import QAAnalystAgent
     from junior.junior_qa import JuniorQAAgent
-    from manager.qa_manager import QAManagerAgent
     from senior.senior_qa import SeniorQAAgent
 except Exception as e:
     pytest.skip(f"Agent modules not available: {e}", allow_module_level=True)
@@ -41,26 +40,6 @@ class TestAgentCommunication:
         self.mock_redis.lrange.return_value = []
         self.mock_redis.scan.return_value = (0, [])
         self.mock_redis.hgetall.return_value = {}
-
-    @patch("config.environment.config.get_redis_client")
-    def test_manager_delegates_to_analyst(self, mock_get_redis):
-        """Test that QA Manager can initialise and retrieve session status"""
-        mock_get_redis.return_value = self.mock_redis
-
-        manager = QAManagerAgent()
-
-        # Verify agent initialised with Redis client
-        assert manager.redis_client is self.mock_redis
-
-        # Test get_session_status (a real method on QAManagerAgent)
-        session_id = "test-session-123"
-        self.mock_redis.get.return_value = json.dumps(
-            {"status": "running", "agents": ["qa-analyst"]}
-        )
-
-        status = manager.get_session_status(session_id)
-        assert status is not None
-        assert "status" in status
 
     @patch("config.environment.config.get_redis_client")
     def test_analyst_processes_results(self, mock_get_redis):
@@ -102,22 +81,13 @@ class TestAgentCommunication:
 
     @patch("config.environment.config.get_redis_client")
     def test_end_to_end_workflow(self, mock_get_redis):
-        """Test end-to-end workflow: all agents initialise with shared Redis"""
+        """Test end-to-end workflow: analyst reads session data from Redis"""
         mock_get_redis.return_value = self.mock_redis
 
-        # All agents share the same Redis client
-        manager = QAManagerAgent()
         analyst = QAAnalystAgent()
 
-        # Simulate session data flow: manager stores, analyst reads
+        # Simulate session data flow
         session_id = "workflow-test-001"
-
-        # Manager writes session info
-        manager.redis_client.set(
-            f"session:{session_id}:info",
-            json.dumps({"requirements": "Test auth system", "status": "running"}),
-        )
-        self.mock_redis.set.assert_called()
 
         # Analyst reads session data via _get_redis_json
         self.mock_redis.get.return_value = json.dumps(
@@ -126,9 +96,6 @@ class TestAgentCommunication:
         info = analyst._get_redis_json(f"session:{session_id}:info")
         assert info is not None
         assert info["requirements"] == "Test auth system"
-
-        # Verify communication flow used the mock
-        assert self.mock_redis.set.called
         assert self.mock_redis.get.called
 
 

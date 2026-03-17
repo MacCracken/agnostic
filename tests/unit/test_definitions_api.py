@@ -290,21 +290,21 @@ class TestPresetManagement:
         assert resp.status_code == 204
 
     def test_delete_builtin_preset_blocked(self, admin_client, tmp_definitions):
-        # Create a qa-standard preset to make it exist
-        (tmp_definitions["presets"] / "qa-standard.json").write_text(json.dumps({
-            "name": "qa-standard",
+        # Create a quality-standard preset to make it exist
+        (tmp_definitions["presets"] / "quality-standard.json").write_text(json.dumps({
+            "name": "quality-standard",
             "description": "QA",
-            "domain": "qa",
+            "domain": "quality",
             "agents": SAMPLE_PRESET_AGENTS,
         }))
-        resp = admin_client.delete("/api/v1/presets/qa-standard")
+        resp = admin_client.delete("/api/v1/presets/quality-standard")
         assert resp.status_code == 403
 
     def test_list_presets_with_domain_filter(self, admin_client, tmp_definitions):
         admin_client.post("/api/v1/presets", json={
             "name": "crew-a",
             "description": "A",
-            "domain": "qa",
+            "domain": "quality",
             "agents": SAMPLE_PRESET_AGENTS,
         })
         admin_client.post("/api/v1/presets", json={
@@ -314,7 +314,7 @@ class TestPresetManagement:
             "agents": SAMPLE_PRESET_AGENTS,
         })
 
-        resp = admin_client.get("/api/v1/presets?domain=qa")
+        resp = admin_client.get("/api/v1/presets?domain=quality")
         assert len(resp.json()) == 1
         assert resp.json()[0]["name"] == "crew-a"
 

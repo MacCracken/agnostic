@@ -1,18 +1,27 @@
 """
-Agent Registry — config-driven agent discovery and task routing.
+Agent Registry — preset-driven agent discovery and task routing.
 
-Reads agent definitions from team_config.json and provides:
+Reads agent definitions from preset JSON files in agents/definitions/presets/
+and provides:
 - Agent lookup by key, role, or complexity
 - Task routing (replaces hardcoded if/elif in qa_manager.py)
 - Team-aware agent lists for WebGUI and orchestration
 """
 
+import json
 import logging
+import os
 from dataclasses import dataclass
 
-from config.team_config_loader import team_config
-
 logger = logging.getLogger(__name__)
+
+_PRESETS_DIR = os.path.join(
+    os.path.dirname(__file__), "..", "agents", "definitions", "presets"
+)
+
+# All domains follow {domain}-{size} naming convention.
+_DOMAINS = ["quality", "software-engineering", "design", "data-engineering", "devops"]
+_SIZES = ["lean", "standard", "large"]
 
 
 @dataclass(frozen=True)
@@ -31,8 +40,7 @@ class AgentDefinition:
         return hash(self.agent_key)
 
 
-# Default mappings for agents that don't have explicit fields in config.
-# Convention: key "senior-qa" -> role "senior_qa" -> queue "senior_qa" -> prefix = first segment.
+# Default celery task/queue mappings for core QA agents.
 _AGENT_DEFAULTS = {
     "qa-manager": {
         "role": "qa_manager",
@@ -82,49 +90,88 @@ _ASSIGNED_TO_AGENT_KEY = {
     "manager": "qa-manager",
 }
 
+# Complexity → agent routing (previously in team_config.json).
+_COMPLEXITY_ROUTING = {
+    "trivial": "junior-qa",
+    "simple": "junior-qa",
+    "moderate": "junior-qa",
+    "complex": "senior-qa",
+    "critical": "senior-qa",
+}
+
+
+def _load_preset(name: str) -> dict | None:
+    """Load a preset JSON file by name."""
+    path = os.path.join(_PRESETS_DIR, f"{name}.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning(f"Could not load preset {name}: {e}")
+        return None
+
+
+def _agent_def_from_info(key: str, info: dict) -> AgentDefinition:
+    """Build an AgentDefinition from a preset agent entry."""
+    defaults = _AGENT_DEFAULTS.get(key, {})
+    # Internal role identifier (e.g. "senior_qa"), NOT the display role string.
+    role = defaults.get("role", key.replace("-", "_"))
+    celery_task = info.get(
+        "celery_task",
+        defaults.get("celery_task", f"{role}.handle_task"),
+    )
+    celery_queue = info.get("celery_queue", defaults.get("celery_queue", role))
+    redis_prefix = info.get(
+        "redis_prefix", defaults.get("redis_prefix", key.split("-")[0])
+    )
+
+    return AgentDefinition(
+        agent_key=key,
+        name=info.get("name", key),
+        role=role,
+        focus=info.get("focus", ""),
+        tools=info.get("tools", []),
+        complexity=info.get("complexity", "medium"),
+        celery_task=celery_task,
+        celery_queue=celery_queue,
+        redis_prefix=redis_prefix,
+    )
+
 
 class AgentRegistry:
-    """Config-driven agent registry.
+    """Preset-driven agent registry.
 
-    Loads agent definitions from team_config.json once and provides
+    Loads agent definitions from preset JSON files and provides
     fast lookups for routing, display, and orchestration.
     """
 
     def __init__(self):
         self._agents: dict[str, AgentDefinition] = {}
-        self._load_agents()
+        self._presets: dict[str, dict] = {}
+        self._load_all_presets()
 
-    def _load_agents(self):
-        """Build AgentDefinition objects from team_config agent_roles."""
-        config = team_config._config  # raw config dict
-        agent_roles = config.get("agent_roles", {})
+    def _load_all_presets(self):
+        """Load all preset files and index their agents."""
+        if not os.path.isdir(_PRESETS_DIR):
+            logger.warning(f"Presets directory not found: {_PRESETS_DIR}")
+            return
 
-        for key, info in agent_roles.items():
-            defaults = _AGENT_DEFAULTS.get(key, {})
-            # Explicit config fields override defaults; fall back to convention.
-            role = info.get("role", defaults.get("role", key.replace("-", "_")))
-            celery_task = info.get(
-                "celery_task",
-                defaults.get("celery_task", f"{role}.handle_task"),
-            )
-            celery_queue = info.get("celery_queue", defaults.get("celery_queue", role))
-            redis_prefix = info.get(
-                "redis_prefix", defaults.get("redis_prefix", key.split("-")[0])
-            )
+        for filename in sorted(os.listdir(_PRESETS_DIR)):
+            if not filename.endswith(".json"):
+                continue
+            name = filename.removesuffix(".json")
+            preset = _load_preset(name)
+            if preset:
+                self._presets[name] = preset
+                for agent_info in preset.get("agents", []):
+                    key = agent_info.get("agent_key", "")
+                    if key and key not in self._agents:
+                        self._agents[key] = _agent_def_from_info(key, agent_info)
 
-            self._agents[key] = AgentDefinition(
-                agent_key=key,
-                name=info.get("name", key),
-                role=role,
-                focus=info.get("focus", ""),
-                tools=info.get("tools", []),
-                complexity=info.get("complexity", "medium"),
-                celery_task=celery_task,
-                celery_queue=celery_queue,
-                redis_prefix=redis_prefix,
-            )
-
-        logger.info(f"AgentRegistry loaded {len(self._agents)} agent definitions")
+        logger.info(
+            f"AgentRegistry loaded {len(self._agents)} agent definitions "
+            f"from {len(self._presets)} presets"
+        )
 
     def get_agent(self, key: str) -> AgentDefinition | None:
         """Get agent definition by config key (e.g. 'senior-qa')."""
@@ -134,14 +181,44 @@ class AgentRegistry:
         """Return all registered agent definitions."""
         return list(self._agents.values())
 
-    def get_agents_for_team(self, size: str | None = None) -> list[AgentDefinition]:
-        """Return agents for the given team size (or current default)."""
-        agent_keys = team_config.get_all_agents_for_current_team()
-        if size:
-            preset = team_config.get_team_preset(size)
-            agent_keys = preset.get("agents", agent_keys)
+    def get_default_size(self) -> str:
+        """Return default team size from env var or 'standard'."""
+        return os.getenv("QA_TEAM_SIZE", "standard")
 
+    def get_preset_name(self, domain: str, size: str = "standard") -> str:
+        """Map a domain + size to a preset name (e.g. 'design' + 'large' -> 'design-large')."""
+        return f"{domain}-{size}"
+
+    def get_agents_for_team(self, size: str | None = None, domain: str = "quality") -> list[AgentDefinition]:
+        """Return agents for the given domain and team size."""
+        size = size or self.get_default_size()
+        preset_name = self.get_preset_name(domain, size)
+        preset = self._presets.get(preset_name)
+        if not preset:
+            # Fall back to domain-standard, then quality-standard
+            preset = self._presets.get(f"{domain}-standard", self._presets.get("quality-standard", {}))
+
+        agent_keys = [a.get("agent_key") for a in preset.get("agents", [])]
         return [self._agents[k] for k in agent_keys if k in self._agents]
+
+    def get_preset(self, name: str) -> dict | None:
+        """Get a loaded preset by name."""
+        return self._presets.get(name)
+
+    def list_presets(self, domain: str | None = None, size: str | None = None) -> list[str]:
+        """Return loaded preset names, optionally filtered by domain and/or size."""
+        results = []
+        for name, data in self._presets.items():
+            if domain and data.get("domain") != domain:
+                continue
+            if size and data.get("size", "standard") != size:
+                continue
+            results.append(name)
+        return results
+
+    def list_domains(self) -> list[str]:
+        """Return unique domains across all loaded presets."""
+        return sorted({d.get("domain", "general") for d in self._presets.values()})
 
     def route_task(self, scenario: dict) -> AgentDefinition | None:
         """Route a scenario to the appropriate agent.
@@ -165,8 +242,8 @@ class AgentRegistry:
         return self.get_agent_for_complexity(complexity)
 
     def get_agent_for_complexity(self, complexity: str) -> AgentDefinition | None:
-        """Route by complexity using team_config complexity_routing."""
-        route_to = team_config.get_routing_for_complexity(complexity)
+        """Route by complexity level."""
+        route_to = _COMPLEXITY_ROUTING.get(complexity, "junior-qa")
         return self._agents.get(route_to)
 
 

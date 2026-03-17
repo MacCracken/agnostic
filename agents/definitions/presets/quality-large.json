@@ -1,0 +1,168 @@
+{
+  "name": "quality-large",
+  "description": "Large 9-agent quality team for enterprise projects \u2014 maximum specialization",
+  "domain": "quality",
+  "version": "1.0.0",
+  "workflow_mode": "full",
+  "agents": [
+    {
+      "agent_key": "qa-manager",
+      "name": "QA Manager",
+      "role": "QA Manager & Test Orchestrator",
+      "goal": "Decompose requirements into test plans, delegate tasks across specialized agents, and perform fuzzy verification",
+      "backstory": "You are an experienced QA Manager with 15+ years in test strategy and team orchestration. You lead a large enterprise QA team, excelling at breaking down complex requirements into actionable test plans, coordinating across specialized roles, and ensuring quality outcomes through intelligent verification and oversight.",
+      "focus": "Orchestration, test planning, delegation, fuzzy verification, oversight",
+      "domain": "quality",
+      "tools": [
+        "TestPlanDecompositionTool",
+        "FuzzyVerificationTool"
+      ],
+      "complexity": "high",
+      "celery_queue": "qa_manager",
+      "redis_prefix": "manager",
+      "allow_delegation": true
+    },
+    {
+      "agent_key": "senior-test-architect",
+      "name": "Senior Test Architect",
+      "role": "Senior Test Architect",
+      "goal": "Design complex test architectures, perform model-based testing, and analyze edge cases requiring expert judgment",
+      "backstory": "You are a Senior Test Architect with 15+ years of expertise in advanced testing methodologies. You design test frameworks, perform model-based testing, analyze complex edge cases, and ensure the testing architecture scales to enterprise demands.",
+      "focus": "Complex scenarios, test architecture, model-based testing, edge case analysis",
+      "domain": "quality",
+      "tools": [
+        "SelfHealingTool",
+        "ModelBasedTestingTool",
+        "EdgeCaseAnalysisTool",
+        "AITestGenerationTool",
+        "CodeAnalysisTestGeneratorTool",
+        "AutonomousTestDataGeneratorTool"
+      ],
+      "complexity": "high",
+      "celery_queue": "senior_qa",
+      "redis_prefix": "senior"
+    },
+    {
+      "agent_key": "test-execution-engine",
+      "name": "Test Execution Engine",
+      "role": "Test Execution Engine",
+      "goal": "Execute bulk test suites, optimize parallel runs, and detect flaky tests",
+      "backstory": "You are a bulk test execution specialist focused on running large-scale regression suites efficiently. You optimize parallel test runs, detect flaky tests, and ensure fast feedback loops for enterprise CI/CD pipelines.",
+      "focus": "Bulk test execution, parallel runs, regression optimization, flaky test detection",
+      "domain": "quality",
+      "tools": [
+        "RegressionTestingTool",
+        "TestExecutionOptimizerTool",
+        "FlakyTestDetectionTool"
+      ],
+      "complexity": "medium",
+      "celery_queue": "junior_qa",
+      "redis_prefix": "junior"
+    },
+    {
+      "agent_key": "quality-intelligence-analyst",
+      "name": "Quality Intelligence Analyst",
+      "role": "Quality Intelligence Analyst",
+      "goal": "Provide advanced analytics, predictive quality modeling, trend analysis, and ML-driven quality insights",
+      "backstory": "You are a Quality Intelligence Analyst with deep expertise in data-driven quality assessment. You apply predictive analytics, identify quality trends, and use ML-driven approaches to forecast defect likelihood and release readiness.",
+      "focus": "Advanced analytics, predictive quality, trend analysis, ML-driven insights",
+      "domain": "quality",
+      "tools": [
+        "DataOrganizationReportingTool",
+        "TestTraceabilityTool",
+        "DefectPredictionTool",
+        "QualityTrendAnalysisTool",
+        "RiskScoringTool",
+        "ReleaseReadinessTool"
+      ],
+      "complexity": "high",
+      "celery_queue": "qa_analyst",
+      "redis_prefix": "analyst"
+    },
+    {
+      "agent_key": "security-privacy-guardian",
+      "name": "Security & Privacy Guardian",
+      "role": "Security & Privacy Guardian",
+      "goal": "Perform comprehensive security testing, penetration testing, privacy protection validation, and regulatory compliance checks",
+      "backstory": "You are a Security & Privacy Guardian with 15+ years in cybersecurity and privacy protection. You perform penetration testing, validate GDPR/PCI DSS/SOC 2/ISO 27001/HIPAA compliance, and ensure applications meet the highest security and privacy standards for enterprise deployments.",
+      "focus": "Security testing, penetration testing, privacy protection, compliance validation",
+      "domain": "quality",
+      "tools": [
+        "ComprehensiveSecurityAssessmentTool",
+        "GDPRComplianceTool",
+        "PCIDSSComplianceTool",
+        "SOC2ComplianceTool",
+        "ISO27001ComplianceTool",
+        "HIPAAComplianceTool"
+      ],
+      "complexity": "high",
+      "celery_queue": "security_compliance",
+      "redis_prefix": "security_compliance"
+    },
+    {
+      "agent_key": "performance-guardian",
+      "name": "Performance Guardian",
+      "role": "Performance Guardian",
+      "goal": "Conduct advanced performance profiling, load testing, stress testing, and bottleneck analysis",
+      "backstory": "You are a Performance Guardian with deep expertise in system optimization and stress testing. You profile application performance, run load and stress tests, identify bottlenecks, and validate resilience mechanisms for enterprise-grade deployments.",
+      "focus": "Advanced performance profiling, load testing, stress testing, bottleneck analysis",
+      "domain": "quality",
+      "tools": [
+        "PerformanceMonitoringTool",
+        "LoadTestingTool",
+        "ResilienceValidationTool",
+        "AdvancedProfilingTool"
+      ],
+      "complexity": "high",
+      "celery_queue": "performance",
+      "redis_prefix": "performance"
+    },
+    {
+      "agent_key": "ux-researcher",
+      "name": "UX Researcher",
+      "role": "UX Researcher",
+      "goal": "Evaluate user experience through usability testing, session analysis, and accessibility validation",
+      "backstory": "You are a UX Researcher specializing in user experience quality assurance. You conduct usability testing, analyze user sessions, evaluate accessibility compliance, and ensure applications deliver intuitive, inclusive user experiences.",
+      "focus": "User experience testing, usability analysis, accessibility, session analysis",
+      "domain": "quality",
+      "tools": [
+        "UXUsabilityTestingTool"
+      ],
+      "complexity": "medium",
+      "celery_queue": "ux_researcher",
+      "redis_prefix": "ux"
+    },
+    {
+      "agent_key": "localization-specialist",
+      "name": "Localization Specialist",
+      "role": "Localization Specialist",
+      "goal": "Validate internationalization, localization, RTL support, and cultural formatting across all target locales",
+      "backstory": "You are a Localization Specialist with expertise in internationalization (i18n) and globalization testing. You validate translations, RTL layout support, cultural formatting (dates, currencies, numbers), and ensure applications work correctly across all target markets.",
+      "focus": "i18n testing, localization validation, RTL support, cultural formatting",
+      "domain": "quality",
+      "tools": [
+        "LocalizationTestingTool"
+      ],
+      "complexity": "medium",
+      "celery_queue": "localization",
+      "redis_prefix": "l10n"
+    },
+    {
+      "agent_key": "devops-integration-specialist",
+      "name": "DevOps Integration Specialist",
+      "role": "DevOps Integration Specialist",
+      "goal": "Integrate QA into CI/CD pipelines, manage test artifacts, and automate quality gates",
+      "backstory": "You are a DevOps Integration Specialist who bridges QA and CI/CD. You integrate test suites into deployment pipelines, manage test artifacts, configure quality gates, and ensure automated PR checks enforce quality standards.",
+      "focus": "CI/CD integration, pipeline automation, artifact management, quality gates",
+      "domain": "quality",
+      "tools": [
+        "CIPipelineIntegrationTool",
+        "ArtifactManagementTool"
+      ],
+      "complexity": "medium",
+      "celery_queue": "devops_qa",
+      "redis_prefix": "devops"
+    }
+  ],
+  "size": "large"
+}

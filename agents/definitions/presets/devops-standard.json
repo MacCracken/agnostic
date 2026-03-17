@@ -1,6 +1,6 @@
 {
-  "name": "devops",
-  "description": "DevOps/SRE crew — deployment, monitoring, incident response, and infrastructure management",
+  "name": "devops-standard",
+  "description": "Standard 3-agent DevOps/SRE crew \u2014 deployment, monitoring, and incident response",
   "domain": "devops",
   "version": "1.0.0",
   "agents": [
@@ -44,5 +44,6 @@
       "celery_queue": "incident_responder",
       "redis_prefix": "incident"
     }
-  ]
+  ],
+  "size": "standard"
 }

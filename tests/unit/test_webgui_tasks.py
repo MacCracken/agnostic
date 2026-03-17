@@ -20,7 +20,6 @@ try:
         TaskStatusResponse,
         TaskSubmitRequest,
         _fire_webhook,
-        _run_task_async,
         api_router,
         get_current_user,
     )
@@ -300,124 +299,6 @@ class TestGetTask:
         data = resp.json()
         assert data["task_id"] == "task-abc"
         assert data["status"] == "running"
-
-
-# ---------------------------------------------------------------------------
-# _run_task_async — status transitions and webhook
-# ---------------------------------------------------------------------------
-
-
-def _make_mock_redis_store():
-    """Helper: Redis mock that stores values in an in-memory dict."""
-    stored: dict = {}
-    mock_redis = Mock()
-
-    def fake_get(key):
-        v = stored.get(key)
-        return json.dumps(v).encode() if v is not None else None
-
-    def fake_setex(key, ttl, value):
-        stored[key] = json.loads(value)
-
-    mock_redis.get = fake_get
-    mock_redis.setex = fake_setex
-    mock_redis._store = stored
-    return mock_redis
-
-
-def _make_mock_optimized_manager(result=None):
-    """Helper: mock OptimizedQAManager module + class."""
-    mod = MagicMock()
-    manager_instance = AsyncMock()
-    manager_instance.orchestrate_qa_session.return_value = result or {"pass_rate": 100}
-    mod.OptimizedQAManager.return_value = manager_instance
-    return mod
-
-
-class TestRunTaskAsync:
-    @pytest.mark.asyncio
-    @patch("webgui.api._fire_webhook", new_callable=AsyncMock)
-    async def test_success_transitions(self, mock_webhook):
-        mock_redis = _make_mock_redis_store()
-        mock_mod = _make_mock_optimized_manager({"pass_rate": 100})
-
-        with patch.dict(
-            "sys.modules",
-            {
-                "agents.manager.qa_manager_optimized": mock_mod,
-            },
-        ):
-            await _run_task_async(
-                task_id="t1",
-                session_id="s1",
-                requirements={"title": "T", "description": "D"},
-                redis_client=mock_redis,
-                callback_url=None,
-                callback_secret=None,
-            )
-
-        final = mock_redis._store.get("task:t1", {})
-        assert final.get("status") == "completed"
-        assert final.get("result", {}).get("pass_rate") == 100
-        mock_webhook.assert_not_called()
-
-    @pytest.mark.asyncio
-    @patch("webgui.api._fire_webhook", new_callable=AsyncMock)
-    async def test_failure_sets_failed_status(self, mock_webhook):
-        mock_redis = _make_mock_redis_store()
-
-        # Both manager imports fail → task should be marked failed
-        bad_opt_mod = MagicMock()
-        bad_opt_mod.OptimizedQAManager.side_effect = Exception("boom")
-
-        bad_qa_mod = MagicMock()
-        bad_qa_mod.QAManagerAgent.side_effect = RuntimeError("manager down")
-
-        with patch.dict(
-            "sys.modules",
-            {
-                "agents.manager.qa_manager_optimized": bad_opt_mod,
-                "agents.manager.qa_manager": bad_qa_mod,
-            },
-        ):
-            await _run_task_async(
-                task_id="t2",
-                session_id="s2",
-                requirements={"title": "T", "description": "D"},
-                redis_client=mock_redis,
-                callback_url=None,
-                callback_secret=None,
-            )
-
-        final = mock_redis._store.get("task:t2", {})
-        assert final.get("status") == "failed"
-        assert "error" in final.get("result", {})
-
-    @pytest.mark.asyncio
-    @patch("webgui.api._fire_webhook", new_callable=AsyncMock)
-    async def test_webhook_fired_on_completion(self, mock_webhook):
-        mock_redis = _make_mock_redis_store()
-        mock_mod = _make_mock_optimized_manager({"done": True})
-
-        with patch.dict(
-            "sys.modules",
-            {
-                "agents.manager.qa_manager_optimized": mock_mod,
-            },
-        ):
-            await _run_task_async(
-                task_id="t3",
-                session_id="s3",
-                requirements={"title": "T", "description": "D"},
-                redis_client=mock_redis,
-                callback_url="https://hook.example.com/cb",
-                callback_secret="secret123",
-            )
-
-        mock_webhook.assert_called_once()
-        args = mock_webhook.call_args[0]
-        assert args[0] == "https://hook.example.com/cb"
-        assert args[1] == "secret123"
 
 
 # ---------------------------------------------------------------------------

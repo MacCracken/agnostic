@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 from shared.audit import AuditAction, audit_log
 from webgui.routes.dependencies import (
     YEOMAN_A2A_ENABLED,
-    _normalize_agent_name,
     _validate_callback_url,
     get_current_user,
 )
@@ -158,123 +157,6 @@ async def _fire_webhook(
 
 
 # ---------------------------------------------------------------------------
-# Async task runner
-# ---------------------------------------------------------------------------
-
-
-async def _run_task_async(
-    task_id: str,
-    session_id: str,
-    requirements: dict[str, Any],
-    redis_client: Any,
-    callback_url: str | None,
-    callback_secret: str | None,
-    tenant_id: str = "default",
-) -> None:
-    """Run a QA task asynchronously, updating Redis through status transitions."""
-    from shared.database.tenants import tenant_manager
-
-    task_redis_key = tenant_manager.task_key(tenant_id, task_id)
-
-    async def _update_task(status: str, result: dict | None = None) -> dict[str, Any]:
-        raw = await redis_client.get(task_redis_key)
-        record: dict[str, Any] = (
-            json.loads(raw)
-            if raw
-            else {
-                "task_id": task_id,
-                "session_id": session_id,
-                "created_at": datetime.now(UTC).isoformat(),
-            }
-        )
-        record["status"] = status
-        record["updated_at"] = datetime.now(UTC).isoformat()
-        record["result"] = result
-        await redis_client.setex(task_redis_key, 86400, json.dumps(record))
-
-        # Publish task update to WebSocket subscribers
-        await redis_client.publish(
-            f"task:{task_id}",
-            json.dumps(
-                {
-                    "type": "task_status_changed",
-                    "task_id": task_id,
-                    "status": status,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                    "result": result,
-                }
-            ),
-        )
-
-        return record
-
-    final_record: dict[str, Any] = {}
-    try:
-        await _update_task("running")
-
-        # Run agent import + execution in a thread so import-time failures
-        # (crewai init, Redis/Celery singletons, missing deps) cannot corrupt
-        # the main event loop.
-        def _run_agent_sync() -> Any:
-            """Import and execute the agent manager synchronously."""
-            try:
-                from agents.manager.qa_manager_optimized import OptimizedQAManager
-
-                manager = OptimizedQAManager()
-                return manager  # return manager for async orchestration
-            except ImportError:
-                from agents.manager.qa_manager import QAManagerAgent
-
-                return QAManagerAgent()
-
-        try:
-            loop = asyncio.get_running_loop()
-            manager = await loop.run_in_executor(None, _run_agent_sync)
-        except BaseException as import_err:
-            logger.error(
-                "Task %s: agent import failed: %s", task_id, import_err, exc_info=True
-            )
-            final_record = await _update_task(
-                "failed", {"error": f"Agent runtime unavailable: {import_err}"}
-            )
-            if callback_url and final_record:
-                await _fire_webhook(callback_url, callback_secret, final_record)
-            return
-
-        # Orchestrate — the manager is already instantiated safely
-        if hasattr(manager, "orchestrate_qa_session"):
-            result = await manager.orchestrate_qa_session(
-                {"session_id": session_id, **requirements}
-            )
-        else:
-            result = await manager.process_requirements(
-                {"session_id": session_id, **requirements}
-            )
-
-        final_record = await _update_task("completed", result)
-
-    except BaseException as e:
-        logger.error("Task %s failed: %s", task_id, e, exc_info=True)
-        try:
-            final_record = await _update_task("failed", {"error": str(e)})
-        except Exception:
-            logger.exception("Task %s: failed to update status to 'failed'", task_id)
-
-    # P3 — Webhook callback on completion
-    if callback_url and final_record:
-        await _fire_webhook(callback_url, callback_secret, final_record)
-
-
-def _task_done_callback(task: asyncio.Task) -> None:  # type: ignore[type-arg]
-    """Log unhandled exceptions from fire-and-forget task coroutines."""
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.error("Background task crashed: %s", exc, exc_info=exc)
-
-
-# ---------------------------------------------------------------------------
 # Task submission endpoints
 # ---------------------------------------------------------------------------
 
@@ -284,93 +166,52 @@ async def submit_task(
     req: TaskSubmitRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Submit a new QA task. Returns immediately with task_id for polling."""
-    # Validate callback URL against SSRF
-    if req.callback_url:
-        try:
-            _validate_callback_url(req.callback_url)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    # Normalize agent names (accept both snake_case and kebab-case)
-    if req.agents:
-        req.agents = [_normalize_agent_name(a) for a in req.agents]
-
+    """Submit a new QA task. Routes through the generic crew builder."""
     from config.environment import config
-
-    task_id = str(uuid.uuid4())
-    session_id = f"session_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{task_id[:8]}"
-    now = datetime.now(UTC).isoformat()
-
-    requirements = {
-        "title": req.title,
-        "description": req.description,
-        "priority": req.priority,
-        "standards": req.standards,
-        "agents": req.agents,
-        "business_goals": req.business_goals,
-        "constraints": req.constraints,
-        "target_url": req.target_url,
-        "submitted_by": user.get("user_id", "api-user"),
-        "submitted_at": now,
-    }
-
-    task_record: dict[str, Any] = {
-        "task_id": task_id,
-        "session_id": session_id,
-        "status": "pending",
-        "created_at": now,
-        "updated_at": now,
-        "result": None,
-    }
-
-    redis_client = config.get_async_redis_client()
-
-    # Tenant-scoped Redis key when multi-tenant is enabled
     from shared.database.tenants import tenant_manager
+    from webgui.routes.crews import CrewRunRequest, run_crew
 
+    # Tenant rate limit check
     tenant_id = user.get("tenant_id", tenant_manager.default_tenant_id)
-    task_redis_key = tenant_manager.task_key(tenant_id, task_id)
+    if tenant_manager.enabled:
+        redis_client = config.get_async_redis_client()
+        if not await tenant_manager.check_rate_limit(redis_client, tenant_id):
+            audit_log(
+                AuditAction.RATE_LIMIT_EXCEEDED,
+                actor=user.get("user_id"),
+                tenant_id=tenant_id,
+            )
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
-    # Rate limit check for tenant
-    if tenant_manager.enabled and not await tenant_manager.check_rate_limit(
-        redis_client, tenant_id
-    ):
-        audit_log(
-            AuditAction.RATE_LIMIT_EXCEEDED,
-            actor=user.get("user_id"),
-            tenant_id=tenant_id,
-        )
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    # Build description with standards/goals context
+    desc_parts = [req.description]
+    if req.standards:
+        desc_parts.append(f"Standards: {', '.join(req.standards)}")
+    if req.business_goals and req.business_goals != "Ensure quality and functionality":
+        desc_parts.append(f"Business goals: {req.business_goals}")
+    if req.constraints and req.constraints != "Standard testing environment":
+        desc_parts.append(f"Constraints: {req.constraints}")
 
-    await redis_client.setex(task_redis_key, 86400, json.dumps(task_record))
-
-    # Store requirements for retry support
-    req_key = tenant_manager.task_key(tenant_id, f"req:{task_id}")
-    await redis_client.setex(req_key, 86400, json.dumps(requirements))
-
-    # Fire-and-forget async execution with crash containment
-    task = asyncio.create_task(
-        _run_task_async(
-            task_id=task_id,
-            session_id=session_id,
-            requirements=requirements,
-            redis_client=redis_client,
-            callback_url=req.callback_url,
-            callback_secret=req.callback_secret,
-            tenant_id=tenant_id,
-        )
+    crew_req = CrewRunRequest(
+        preset="quality-standard",
+        title=req.title,
+        description="\n".join(desc_parts),
+        target_url=req.target_url,
+        priority=req.priority,
+        callback_url=req.callback_url,
+        callback_secret=req.callback_secret,
     )
-    task.add_done_callback(_task_done_callback)
+    crew_result = await run_crew(crew_req, user)
 
-    audit_log(
-        AuditAction.TASK_SUBMITTED,
-        actor=user.get("user_id"),
-        resource_type="task",
-        resource_id=task_id,
+    # Return TaskStatusResponse for backward compatibility
+    return TaskStatusResponse(
+        task_id=crew_result.task_id,
+        session_id=crew_result.session_id,
+        status=crew_result.status,
+        created_at=crew_result.created_at,
+        updated_at=crew_result.created_at,
+        result=None,
     )
-
-    return TaskStatusResponse(**task_record)
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
@@ -535,9 +376,30 @@ async def submit_security_task(
     req: TaskSubmitRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Submit a security-focused QA task (routes to security-compliance agent)."""
-    req.agents = ["security-compliance"]
-    return await submit_task(req, user)
+    """Submit a security-focused task with a targeted security crew."""
+    from webgui.routes.crews import CrewRunRequest, TeamSpec, run_crew
+
+    standards = req.standards or ["OWASP", "GDPR", "PCI DSS"]
+    crew_req = CrewRunRequest(
+        team=TeamSpec(
+            members=[
+                {"role": "Security Lead", "context": f"Standards: {', '.join(standards)}", "lead": True},
+                {"role": "Security & Compliance Specialist", "context": "Vulnerability scanning, penetration testing"},
+                {"role": "QA Analyst", "context": "Security findings aggregation and risk scoring"},
+            ],
+            project_context=req.description,
+        ),
+        title=req.title,
+        description=f"{req.description}\nStandards: {', '.join(standards)}",
+        target_url=req.target_url,
+        priority=req.priority,
+    )
+    result = await run_crew(crew_req, user)
+    return TaskStatusResponse(
+        task_id=result.task_id, session_id=result.session_id,
+        status=result.status, created_at=result.created_at,
+        updated_at=result.created_at, result=None,
+    )
 
 
 @router.post("/tasks/performance", response_model=TaskStatusResponse)
@@ -545,9 +407,29 @@ async def submit_performance_task(
     req: TaskSubmitRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Submit a performance-focused QA task (routes to performance agent)."""
-    req.agents = ["performance"]
-    return await submit_task(req, user)
+    """Submit a performance-focused task with a targeted performance crew."""
+    from webgui.routes.crews import CrewRunRequest, TeamSpec, run_crew
+
+    crew_req = CrewRunRequest(
+        team=TeamSpec(
+            members=[
+                {"role": "Performance & Resilience Specialist", "context": "Load testing, latency profiling, stress testing", "lead": True},
+                {"role": "Infrastructure Monitor", "context": "System health, resource usage during tests"},
+                {"role": "QA Analyst", "context": "Performance metrics aggregation and reporting"},
+            ],
+            project_context=req.description,
+        ),
+        title=req.title,
+        description=f"{req.description}\nFocus: performance testing, load testing, latency profiling",
+        target_url=req.target_url,
+        priority=req.priority,
+    )
+    result = await run_crew(crew_req, user)
+    return TaskStatusResponse(
+        task_id=result.task_id, session_id=result.session_id,
+        status=result.status, created_at=result.created_at,
+        updated_at=result.created_at, result=None,
+    )
 
 
 @router.post("/tasks/regression", response_model=TaskStatusResponse)
@@ -555,9 +437,22 @@ async def submit_regression_task(
     req: TaskSubmitRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Submit a regression QA task (routes to junior-qa + qa-analyst)."""
-    req.agents = ["junior-qa", "qa-analyst"]
-    return await submit_task(req, user)
+    """Submit a regression-focused task with a lean regression crew."""
+    from webgui.routes.crews import CrewRunRequest, run_crew
+
+    crew_req = CrewRunRequest(
+        preset="quality-lean",
+        title=req.title,
+        description=f"{req.description}\nFocus: regression testing and test analysis",
+        target_url=req.target_url,
+        priority=req.priority,
+    )
+    result = await run_crew(crew_req, user)
+    return TaskStatusResponse(
+        task_id=result.task_id, session_id=result.session_id,
+        status=result.status, created_at=result.created_at,
+        updated_at=result.created_at, result=None,
+    )
 
 
 @router.post("/tasks/full", response_model=TaskStatusResponse)
@@ -565,9 +460,22 @@ async def submit_full_task(
     req: TaskSubmitRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Submit a full QA task (uses all 6 agents)."""
-    req.agents = []
-    return await submit_task(req, user)
+    """Submit a comprehensive quality task with the large team."""
+    from webgui.routes.crews import CrewRunRequest, run_crew
+
+    crew_req = CrewRunRequest(
+        preset="quality-large",
+        title=req.title,
+        description=req.description,
+        target_url=req.target_url,
+        priority=req.priority,
+    )
+    result = await run_crew(crew_req, user)
+    return TaskStatusResponse(
+        task_id=result.task_id, session_id=result.session_id,
+        status=result.status, created_at=result.created_at,
+        updated_at=result.created_at, result=None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -621,54 +529,49 @@ async def receive_a2a_message(
                 status_code=400, detail="Description is required for delegate tasks"
             )
 
-        # Check if the delegate specifies a preset or crew — route to crews API
-        if payload.get("preset") or payload.get("agent_definitions"):
-            from webgui.routes.crews import CrewRunRequest, run_crew
+        from webgui.routes.crews import CrewRunRequest, TeamSpec, run_crew
 
-            crew_req = CrewRunRequest(
-                preset=payload.get("preset"),
-                agent_keys=payload.get("agent_keys", []),
-                agent_definitions=payload.get("agent_definitions", []),
-                title=payload.get("title", "A2A Crew Task"),
-                description=payload.get("description", ""),
-                target_url=payload.get("target_url"),
-                priority=payload.get("priority", "high"),
-            )
-            crew_result = await run_crew(crew_req, user)
-            audit_log(
-                AuditAction.A2A_DELEGATE_RECEIVED,
-                actor=msg.fromPeerId,
-                resource_type="a2a",
-                detail={
-                    "message_id": msg.id,
-                    "crew_id": crew_result.crew_id,
-                    "task_id": crew_result.task_id,
-                },
-            )
-            return {
-                "accepted": True,
-                "crew_id": crew_result.crew_id,
-                "task_id": crew_result.task_id,
-                "message_id": msg.id,
-            }
+        # Resolve preset: explicit > domain+size > default quality-standard
+        preset = payload.get("preset")
+        if not preset and payload.get("domain") and not payload.get("team"):
+            size = payload.get("size", "standard")
+            preset = f"{payload['domain']}-{size}"
+        if not preset and not payload.get("team") and not payload.get("agent_definitions"):
+            preset = "quality-standard"
 
-        # Default: QA task (backwards compatible)
-        task_req = TaskSubmitRequest(
-            title=payload.get("title", "A2A QA Task"),
+        # Build team spec if provided
+        team_spec = None
+        team_data = payload.get("team")
+        if team_data and isinstance(team_data, dict):
+            team_spec = TeamSpec(**team_data)
+
+        crew_req = CrewRunRequest(
+            preset=preset,
+            agent_keys=payload.get("agent_keys", []),
+            agent_definitions=payload.get("agent_definitions", []),
+            team=team_spec,
+            title=payload.get("title", "A2A Crew Task"),
             description=payload.get("description", ""),
             target_url=payload.get("target_url"),
             priority=payload.get("priority", "high"),
-            agents=payload.get("agents", []),
-            standards=payload.get("standards", []),
         )
-        result = await submit_task(task_req, user)
+        crew_result = await run_crew(crew_req, user)
         audit_log(
             AuditAction.A2A_DELEGATE_RECEIVED,
             actor=msg.fromPeerId,
             resource_type="a2a",
-            detail={"message_id": msg.id, "task_id": result.task_id},
+            detail={
+                "message_id": msg.id,
+                "crew_id": crew_result.crew_id,
+                "task_id": crew_result.task_id,
+            },
         )
-        return {"accepted": True, "task_id": result.task_id, "message_id": msg.id}
+        return {
+            "accepted": True,
+            "crew_id": crew_result.crew_id,
+            "task_id": crew_result.task_id,
+            "message_id": msg.id,
+        }
 
     if msg.type == "a2a:create_agent":
         # SY requesting dynamic agent creation
@@ -794,12 +697,12 @@ async def a2a_capabilities():
     except Exception:
         pass
 
-    # Fallback: always advertise core QA if no presets loaded
+    # Fallback: always advertise core quality preset if no presets loaded
     if not capabilities:
         capabilities = [
             {
-                "name": "qa",
-                "description": "6-agent QA pipeline (security, performance, regression, compliance)",
+                "name": "quality",
+                "description": "Quality crew — security, performance, regression, compliance",
                 "version": "1.0",
             },
         ]

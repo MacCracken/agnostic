@@ -95,11 +95,11 @@ class TestCrewRunRequest:
         from webgui.routes.crews import CrewRunRequest
 
         req = CrewRunRequest(
-            preset="qa-standard",
+            preset="quality-standard",
             title="Run QA",
             description="Full QA suite",
         )
-        assert req.preset == "qa-standard"
+        assert req.preset == "quality-standard"
         assert req.agent_keys == []
         assert req.agent_definitions == []
 
@@ -142,7 +142,7 @@ class TestCrewEndpoints:
 
     def test_multiple_sources_returns_400(self, authed_client):
         resp = authed_client.post("/api/v1/crews", json={
-            "preset": "qa-standard",
+            "preset": "quality-standard",
             "agent_keys": ["agent-a"],
             "title": "Both",
             "description": "Both sources",
@@ -306,7 +306,7 @@ class TestA2ACrewDelegation:
             tm.enabled = False
             tm.task_key = lambda tid, key: f"{tid}:{key}"
 
-            # The preset needs to exist on disk — use qa-standard which is in the repo
+            # The preset needs to exist on disk — use quality-standard which is in the repo
             resp = authed_client.post("/api/v1/a2a/receive", json={
                 "id": "msg-1",
                 "type": "a2a:delegate",
@@ -314,7 +314,7 @@ class TestA2ACrewDelegation:
                 "toPeerId": "agnostic",
                 "timestamp": 1710000000000,
                 "payload": {
-                    "preset": "qa-standard",
+                    "preset": "quality-standard",
                     "title": "Delegated crew task",
                     "description": "Run the QA preset via A2A",
                 },

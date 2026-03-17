@@ -31,8 +31,8 @@ MCP_TOOLS: list[dict[str, Any]] = [
     # --- Core QA tools ---
     {
         "name": "agnostic_submit_task",
-        "description": "Submit a QA task to the 6-agent pipeline",
-        "category": "qa",
+        "description": "Submit a quality task. Runs a quality crew (default: quality-standard).",
+        "category": "quality",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -43,8 +43,12 @@ MCP_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "enum": ["critical", "high", "medium", "low"],
                 },
-                "agents": {"type": "array", "items": {"type": "string"}},
-                "standards": {"type": "array", "items": {"type": "string"}},
+                "size": {
+                    "type": "string",
+                    "enum": ["lean", "standard", "large"],
+                    "default": "standard",
+                    "description": "Quality team size",
+                },
             },
             "required": ["title", "description"],
         },
@@ -52,7 +56,7 @@ MCP_TOOLS: list[dict[str, Any]] = [
     {
         "name": "agnostic_task_status",
         "description": "Get the status of a QA task by ID",
-        "category": "qa",
+        "category": "quality",
         "inputSchema": {
             "type": "object",
             "properties": {"task_id": {"type": "string"}},
@@ -62,33 +66,40 @@ MCP_TOOLS: list[dict[str, Any]] = [
     {
         "name": "agnostic_list_sessions",
         "description": "List active QA sessions",
-        "category": "qa",
+        "category": "quality",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "agnostic_agent_status",
         "description": "Get status of all 6 QA agents",
-        "category": "qa",
+        "category": "quality",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "agnostic_dashboard",
         "description": "Full dashboard snapshot: agents, sessions, metrics",
-        "category": "qa",
+        "category": "quality",
         "inputSchema": {"type": "object", "properties": {}},
     },
     # --- Security tools ---
     {
         "name": "agnostic_security_scan",
-        "description": "Run OWASP/GDPR/PCI DSS/SOC 2 compliance scan",
+        "description": "Run OWASP/GDPR/PCI DSS/SOC 2 compliance scan via quality crew",
         "category": "security",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "target_url": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string"},
                 "standards": {
                     "type": "array",
                     "items": {"type": "string"},
+                },
+                "size": {
+                    "type": "string",
+                    "enum": ["lean", "standard", "large"],
+                    "default": "standard",
                 },
             },
             "required": ["target_url"],
@@ -107,14 +118,21 @@ MCP_TOOLS: list[dict[str, Any]] = [
     # --- Performance tools ---
     {
         "name": "agnostic_performance_test",
-        "description": "Run load testing and P95/P99 latency profiling",
+        "description": "Run load testing and P95/P99 latency profiling via quality crew",
         "category": "performance",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "target_url": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string"},
                 "duration_seconds": {"type": "integer", "default": 60},
                 "concurrency": {"type": "integer", "default": 10},
+                "size": {
+                    "type": "string",
+                    "enum": ["lean", "standard", "large"],
+                    "default": "standard",
+                },
             },
             "required": ["target_url"],
         },
@@ -133,7 +151,7 @@ MCP_TOOLS: list[dict[str, Any]] = [
     {
         "name": "agnostic_structured_results",
         "description": "Get typed results (security, perf, tests) for YEOMAN actions",
-        "category": "qa",
+        "category": "quality",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -149,7 +167,7 @@ MCP_TOOLS: list[dict[str, Any]] = [
     {
         "name": "agnostic_session_diff",
         "description": "Compare two QA sessions for regression analysis",
-        "category": "qa",
+        "category": "quality",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -162,7 +180,7 @@ MCP_TOOLS: list[dict[str, Any]] = [
     {
         "name": "agnostic_quality_trends",
         "description": "Quality metrics over time: pass rates, regression frequency",
-        "category": "qa",
+        "category": "quality",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -173,21 +191,24 @@ MCP_TOOLS: list[dict[str, Any]] = [
     {
         "name": "agnostic_quality_dashboard",
         "description": "Embeddable quality summary: pass/fail, compliance, coverage",
-        "category": "qa",
+        "category": "quality",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "agnostic_qa_orchestrate",
         "description": "Orchestrate a full QA run: plan, execute, analyse, report",
-        "category": "qa",
+        "category": "quality",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "target_url": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string"},
                 "scope": {
                     "type": "string",
                     "enum": ["quick", "standard", "comprehensive"],
                     "default": "standard",
+                    "description": "Maps to team size: quick=lean, standard=standard, comprehensive=large",
                 },
             },
             "required": ["target_url"],
@@ -311,14 +332,49 @@ MCP_TOOLS: list[dict[str, Any]] = [
     # --- Crew & Definition management (Phase 2+) ---
     {
         "name": "agnostic_run_crew",
-        "description": "Assemble and run an agent crew from a preset, agent keys, or inline definitions",
+        "description": (
+            "Assemble and run an agent crew. Specify a domain and size to auto-select "
+            "a preset (e.g. domain='qa', size='large'), or provide a preset name directly, "
+            "or supply agent_keys / inline agent_definitions."
+        ),
         "category": "crews",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "preset": {"type": "string", "description": "Preset name (e.g. 'qa-standard', 'data-engineering')"},
+                "domain": {
+                    "type": "string",
+                    "description": "Crew domain — used with size to auto-select preset",
+                    "enum": ["quality", "software-engineering", "design", "data-engineering", "devops"],
+                },
+                "size": {
+                    "type": "string",
+                    "description": "Team size (lean, standard, large). Defaults to standard",
+                    "enum": ["lean", "standard", "large"],
+                    "default": "standard",
+                },
+                "preset": {"type": "string", "description": "Explicit preset name (overrides domain+size)"},
                 "agent_keys": {"type": "array", "items": {"type": "string"}},
                 "agent_definitions": {"type": "array", "items": {"type": "object"}},
+                "team": {
+                    "type": "object",
+                    "description": "Custom team spec — describe members by role and context",
+                    "properties": {
+                        "members": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "role": {"type": "string", "description": "Role title (e.g. 'Game Designer')"},
+                                    "context": {"type": "string", "description": "Focus area for this member"},
+                                    "lead": {"type": "boolean", "description": "Whether this member leads the team"},
+                                },
+                                "required": ["role"],
+                            },
+                        },
+                        "project_context": {"type": "string", "description": "Overall project description"},
+                    },
+                    "required": ["members"],
+                },
                 "title": {"type": "string"},
                 "description": {"type": "string"},
                 "target_url": {"type": "string"},
@@ -339,12 +395,24 @@ MCP_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "agnostic_list_presets",
-        "description": "List available agent crew presets (QA, data-engineering, devops, etc.)",
+        "description": (
+            "List available agent crew presets. Each domain (qa, software-engineering, "
+            "design, data-engineering, devops) has lean, standard, and large sizes."
+        ),
         "category": "crews",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "domain": {"type": "string", "description": "Filter by domain"},
+                "domain": {
+                    "type": "string",
+                    "description": "Filter by domain",
+                    "enum": ["quality", "software-engineering", "design", "data-engineering", "devops"],
+                },
+                "size": {
+                    "type": "string",
+                    "description": "Filter by team size",
+                    "enum": ["lean", "standard", "large"],
+                },
             },
         },
     },
@@ -375,6 +443,25 @@ MCP_TOOLS: list[dict[str, Any]] = [
                 "tools": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["agent_key", "name", "role", "goal", "backstory"],
+        },
+    },
+    {
+        "name": "agnostic_preset_recommend",
+        "description": (
+            "Given a description of what needs to be done, recommends the best "
+            "preset (domain + size) and alternatives. Call this first when the user "
+            "doesn't specify a domain — then pass the result to agnostic_run_crew."
+        ),
+        "category": "crews",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "What the user wants to accomplish",
+                },
+            },
+            "required": ["description"],
         },
     },
 ]
@@ -416,6 +503,7 @@ _TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "agnostic_list_presets": ("GET", "/api/v1/presets"),
     "agnostic_list_definitions": ("GET", "/api/v1/definitions"),
     "agnostic_create_agent": ("POST", "/api/v1/a2a/receive"),
+    "agnostic_preset_recommend": ("POST", "/api/v1/crews"),  # handled directly
 }
 
 
@@ -557,37 +645,47 @@ async def invoke_mcp_tool(
 
 async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) -> Any:
     """Route MCP tool invocations to internal API handlers."""
-    # Task submission tools
+    # Task submission tools — all route through crew builder
     if tool_name in (
         "agnostic_submit_task",
         "agnostic_security_scan",
         "agnostic_performance_test",
         "agnostic_qa_orchestrate",
     ):
-        from webgui.routes.tasks import TaskSubmitRequest, submit_task
+        from webgui.routes.crews import CrewRunRequest, run_crew
 
-        # Map tool-specific args to TaskSubmitRequest
-        agents: list[str] = arguments.get("agents", [])
+        # Determine QA preset size
+        size = arguments.get("size", "standard")
+        if tool_name == "agnostic_qa_orchestrate":
+            scope_map = {"quick": "lean", "standard": "standard", "comprehensive": "large"}
+            size = scope_map.get(arguments.get("scope", "standard"), "standard")
+
+        # Build description with tool-specific context
+        desc = arguments.get("description", "")
         if tool_name == "agnostic_security_scan":
-            agents = agents or ["security-compliance"]
+            standards = arguments.get("standards", [])
+            desc = desc or f"Security scan: {', '.join(standards) if standards else 'OWASP/GDPR/PCI DSS'}"
         elif tool_name == "agnostic_performance_test":
-            agents = agents or ["performance"]
+            duration = arguments.get("duration_seconds", 60)
+            concurrency = arguments.get("concurrency", 10)
+            desc = desc or f"Performance test: {duration}s, {concurrency} concurrent"
+        elif not desc:
+            desc = f"QA task via MCP tool {tool_name}"
 
-        task_req = TaskSubmitRequest(
+        crew_req = CrewRunRequest(
+            preset=f"quality-{size}",
             title=arguments.get("title", f"MCP: {tool_name}"),
-            description=arguments.get(
-                "description", f"Invoked via MCP tool {tool_name}"
-            ),
+            description=desc,
             target_url=arguments.get("target_url"),
             priority=arguments.get("priority", "high"),
-            agents=agents,
-            standards=arguments.get("standards", []),
         )
-        result = await submit_task(task_req, user)
+        result = await run_crew(crew_req, user)
         return {
             "task_id": result.task_id,
+            "crew_id": result.crew_id,
             "session_id": result.session_id,
             "status": result.status,
+            "agents": result.agents,
         }
 
     # Task status
@@ -764,12 +862,25 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
 
     # Crew management
     if tool_name == "agnostic_run_crew":
-        from webgui.routes.crews import CrewRunRequest, run_crew
+        from webgui.routes.crews import CrewRunRequest, TeamSpec, run_crew
+
+        # Resolve domain+size into preset name if no explicit preset given
+        preset = arguments.get("preset")
+        if not preset and arguments.get("domain") and not arguments.get("team"):
+            size = arguments.get("size", "standard")
+            preset = f"{arguments['domain']}-{size}"
+
+        # Build team spec if provided
+        team_spec = None
+        team_data = arguments.get("team")
+        if team_data and isinstance(team_data, dict):
+            team_spec = TeamSpec(**team_data)
 
         crew_req = CrewRunRequest(
-            preset=arguments.get("preset"),
+            preset=preset,
             agent_keys=arguments.get("agent_keys", []),
             agent_definitions=arguments.get("agent_definitions", []),
+            team=team_spec,
             title=arguments.get("title", f"MCP: {tool_name}"),
             description=arguments.get("description", "Crew run via MCP"),
             target_url=arguments.get("target_url"),
@@ -791,7 +902,7 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
     if tool_name == "agnostic_list_presets":
         from webgui.routes.definitions import list_presets
 
-        return await list_presets(arguments.get("domain"), user)
+        return await list_presets(arguments.get("domain"), arguments.get("size"), user)
 
     if tool_name == "agnostic_list_definitions":
         from webgui.routes.definitions import list_definitions
@@ -810,6 +921,11 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
             timestamp=int(datetime.now(UTC).timestamp() * 1000),
         )
         return await receive_a2a_message(msg, user)
+
+    if tool_name == "agnostic_preset_recommend":
+        from agents.crew_assembler import recommend_preset
+
+        return recommend_preset(arguments.get("description", ""))
 
     # Health
     if tool_name == "agnostic_health":

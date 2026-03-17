@@ -66,18 +66,41 @@ class AgenticQAGUI:
     async def submit_requirements(
         self, session_id: str, requirements: dict[str, Any]
     ) -> dict[str, Any]:
-        """Submit requirements to QA Manager"""
+        """Submit requirements via the generic crew builder."""
         try:
-            # Import here to avoid circular imports
-            from agents.manager.qa_manager import QAManagerAgent
+            from webgui.routes.crews import CrewRunRequest, run_crew
 
-            manager = QAManagerAgent()
-            result = await manager.process_requirements(requirements)
+            crew_req = CrewRunRequest(
+                preset="quality-standard",
+                title=requirements.get("title", "WebGUI QA Task"),
+                description=requirements.get("description", ""),
+                target_url=requirements.get("target_url"),
+                priority=requirements.get("priority", "high"),
+            )
+
+            # Create a minimal user dict for the crew builder
+            user = {"user_id": requirements.get("submitted_by", "web_user")}
+            crew_result = await run_crew(crew_req, user)
+
+            result = {
+                "session_id": crew_result.session_id,
+                "crew_id": crew_result.crew_id,
+                "task_id": crew_result.task_id,
+                "status": crew_result.status,
+                "agents": crew_result.agents,
+                "test_plan": {
+                    "scenarios": [
+                        {"name": agent, "priority": "high", "assigned_to": agent}
+                        for agent in crew_result.agents
+                    ],
+                },
+            }
 
             # Update session
             self.active_sessions[session_id]["requirements"] = requirements
             self.active_sessions[session_id]["test_plan"] = result.get("test_plan")
             self.active_sessions[session_id]["status"] = "planning_completed"
+            self.active_sessions[session_id]["crew_id"] = crew_result.crew_id
 
             return result
 
@@ -88,15 +111,24 @@ class AgenticQAGUI:
     async def get_session_status(self, session_id: str) -> dict[str, Any]:
         """Get current session status"""
         try:
-            # Get status from Redis if not in active sessions
             if session_id not in self.active_sessions:
-                from agents.manager.qa_manager import QAManagerAgent
+                return {"status": "unknown", "session_id": session_id}
 
-                manager = QAManagerAgent()
-                status = manager.get_session_status(session_id)
-                return status
+            session = self.active_sessions[session_id]
 
-            return self.active_sessions[session_id]
+            # If we have a crew_id, check crew status
+            crew_id = session.get("crew_id")
+            if crew_id:
+                try:
+                    from webgui.routes.crews import get_crew_status
+
+                    user = {"user_id": "web_user"}
+                    crew_status = await get_crew_status(crew_id, user)
+                    session["status"] = crew_status.get("status", session["status"])
+                except Exception:
+                    pass
+
+            return session
 
         except Exception as e:
             logger.error(f"Error getting session status: {e}")

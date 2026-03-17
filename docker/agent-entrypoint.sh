@@ -3,7 +3,7 @@
 set -e
 
 case "${AGENT_ROLE}" in
-    manager)              exec python -m agents.manager.qa_manager ;;
+    manager)              echo "WARN: Legacy manager role — orchestration is now handled by the crew builder"; exit 0 ;;
     senior)               exec python -m agents.senior.senior_qa ;;
     junior)               exec python -m agents.junior.junior_qa ;;
     analyst)              exec python -m agents.analyst.qa_analyst ;;

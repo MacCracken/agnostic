@@ -1,7 +1,7 @@
 {
-  "name": "qa-standard",
-  "description": "Standard 6-agent QA team — the original Agnostic QA crew",
-  "domain": "qa",
+  "name": "quality-standard",
+  "description": "Standard 6-agent quality team \u2014 the original Agnostic quality crew",
+  "domain": "quality",
   "version": "1.0.0",
   "agents": [
     {
@@ -11,8 +11,11 @@
       "goal": "Decompose requirements into test plans, delegate tasks, and perform fuzzy verification",
       "backstory": "You are an experienced QA Manager with 15+ years in test strategy and team orchestration. You excel at breaking down complex requirements into actionable test plans and ensuring quality outcomes through intelligent verification.",
       "focus": "Orchestration, test planning, delegation, fuzzy verification",
-      "domain": "qa",
-      "tools": ["TestPlanDecompositionTool", "FuzzyVerificationTool"],
+      "domain": "quality",
+      "tools": [
+        "TestPlanDecompositionTool",
+        "FuzzyVerificationTool"
+      ],
       "complexity": "high",
       "celery_queue": "qa_manager",
       "redis_prefix": "manager",
@@ -25,8 +28,15 @@
       "goal": "Specialize in self-healing scripts, complex edge-case analysis, model-based testing, and AI-driven test generation",
       "backstory": "You are a Senior QA Engineer with 12+ years of expertise in advanced testing methodologies. You excel at self-healing automation, complex edge case analysis, model-based testing approaches, and AI-powered autonomous test generation.",
       "focus": "Self-healing UI, model-based testing, edge case analysis, complex scenarios",
-      "domain": "qa",
-      "tools": ["SelfHealingTool", "ModelBasedTestingTool", "EdgeCaseAnalysisTool", "AITestGenerationTool", "CodeAnalysisTestGeneratorTool", "AutonomousTestDataGeneratorTool"],
+      "domain": "quality",
+      "tools": [
+        "SelfHealingTool",
+        "ModelBasedTestingTool",
+        "EdgeCaseAnalysisTool",
+        "AITestGenerationTool",
+        "CodeAnalysisTestGeneratorTool",
+        "AutonomousTestDataGeneratorTool"
+      ],
       "complexity": "high",
       "celery_queue": "senior_qa",
       "redis_prefix": "senior"
@@ -38,8 +48,19 @@
       "goal": "Focus on regression testing, automated root cause detection, and synthetic data generation",
       "backstory": "You are a detail-oriented Junior QA Engineer focused on thorough test execution, regression testing, data generation, and cross-platform testing. You excel at identifying patterns in test failures, creating comprehensive test datasets, and ensuring applications work consistently across web, mobile, and desktop platforms.",
       "focus": "Regression execution, synthetic data generation, test optimization",
-      "domain": "qa",
-      "tools": ["RegressionTestingTool", "SyntheticDataGeneratorTool", "TestExecutionOptimizerTool", "VisualRegressionTool", "FlakyTestDetectionTool", "UXUsabilityTestingTool", "LocalizationTestingTool", "MobileAppTestingTool", "DesktopAppTestingTool", "CrossPlatformTestingTool"],
+      "domain": "quality",
+      "tools": [
+        "RegressionTestingTool",
+        "SyntheticDataGeneratorTool",
+        "TestExecutionOptimizerTool",
+        "VisualRegressionTool",
+        "FlakyTestDetectionTool",
+        "UXUsabilityTestingTool",
+        "LocalizationTestingTool",
+        "MobileAppTestingTool",
+        "DesktopAppTestingTool",
+        "CrossPlatformTestingTool"
+      ],
       "complexity": "medium",
       "celery_queue": "junior_qa",
       "redis_prefix": "junior"
@@ -51,8 +72,17 @@
       "goal": "Organize test data into actionable reports, perform security assessments, profile performance, and predict quality trends",
       "backstory": "You are a QA Analyst with 10+ years of experience in test analytics, security auditing, and predictive quality modeling. You excel at transforming raw test data into clear, prioritized reports, predicting defect likelihood, analyzing quality trends, and determining release readiness using ML-driven approaches.",
       "focus": "Reporting, data aggregation, traceability, coverage analysis",
-      "domain": "qa",
-      "tools": ["DataOrganizationReportingTool", "SecurityAssessmentTool", "PerformanceProfilingTool", "TestTraceabilityTool", "DefectPredictionTool", "QualityTrendAnalysisTool", "RiskScoringTool", "ReleaseReadinessTool"],
+      "domain": "quality",
+      "tools": [
+        "DataOrganizationReportingTool",
+        "SecurityAssessmentTool",
+        "PerformanceProfilingTool",
+        "TestTraceabilityTool",
+        "DefectPredictionTool",
+        "QualityTrendAnalysisTool",
+        "RiskScoringTool",
+        "ReleaseReadinessTool"
+      ],
       "complexity": "medium",
       "celery_queue": "qa_analyst",
       "redis_prefix": "analyst"
@@ -64,8 +94,15 @@
       "goal": "Ensure comprehensive security and regulatory compliance through integrated security assessment, GDPR validation, PCI DSS compliance, SOC 2, ISO 27001, and HIPAA validation",
       "backstory": "You are a Security & Compliance specialist with 12+ years of experience in cybersecurity, regulatory compliance, and audit preparation. You excel at identifying security vulnerabilities, validating GDPR data protection requirements, ensuring PCI DSS payment security standards, SOC 2 Type II trust service criteria, ISO 27001 information security controls, HIPAA Privacy and Security Rules, and providing actionable remediation guidance.",
       "focus": "OWASP testing, GDPR/PCI DSS compliance, vulnerability scanning",
-      "domain": "qa",
-      "tools": ["ComprehensiveSecurityAssessmentTool", "GDPRComplianceTool", "PCIDSSComplianceTool", "SOC2ComplianceTool", "ISO27001ComplianceTool", "HIPAAComplianceTool"],
+      "domain": "quality",
+      "tools": [
+        "ComprehensiveSecurityAssessmentTool",
+        "GDPRComplianceTool",
+        "PCIDSSComplianceTool",
+        "SOC2ComplianceTool",
+        "ISO27001ComplianceTool",
+        "HIPAAComplianceTool"
+      ],
       "complexity": "high",
       "celery_queue": "security_compliance",
       "redis_prefix": "security_compliance"
@@ -77,11 +114,17 @@
       "goal": "Monitor system performance, conduct load testing, and validate resilience mechanisms",
       "backstory": "You are a performance and resilience specialist with deep expertise in system optimization, load testing, chaos engineering, and infrastructure resilience. You ensure systems can handle expected loads and recover gracefully from failures.",
       "focus": "Performance monitoring, load testing, resilience validation",
-      "domain": "qa",
-      "tools": ["PerformanceMonitoringTool", "LoadTestingTool", "ResilienceValidationTool", "AdvancedProfilingTool"],
+      "domain": "quality",
+      "tools": [
+        "PerformanceMonitoringTool",
+        "LoadTestingTool",
+        "ResilienceValidationTool",
+        "AdvancedProfilingTool"
+      ],
       "complexity": "high",
       "celery_queue": "performance",
       "redis_prefix": "performance"
     }
-  ]
+  ],
+  "size": "standard"
 }

@@ -1,6 +1,6 @@
 {
-  "name": "data-engineering",
-  "description": "Data engineering crew — pipeline orchestration, quality checks, and monitoring",
+  "name": "data-engineering-standard",
+  "description": "Standard 3-agent data engineering crew \u2014 pipeline orchestration, quality checks, and monitoring",
   "domain": "data-engineering",
   "version": "1.0.0",
   "agents": [
@@ -44,5 +44,6 @@
       "celery_queue": "data_ops",
       "redis_prefix": "dataops"
     }
-  ]
+  ],
+  "size": "standard"
 }

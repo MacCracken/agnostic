@@ -43,14 +43,14 @@ class TestAgentDefinition:
 
     def test_custom_values(self):
         defn = self._make(
-            domain="qa",
+            domain="quality",
             complexity="high",
             celery_queue="custom_q",
             redis_prefix="custom",
             allow_delegation=True,
             tools=["ToolA", "ToolB"],
         )
-        assert defn.domain == "qa"
+        assert defn.domain == "quality"
         assert defn.complexity == "high"
         assert defn.celery_queue == "custom_q"
         assert defn.redis_prefix == "custom"
@@ -423,16 +423,29 @@ class TestPresetFiles:
         with open(path) as f:
             return json.load(f)
 
-    @pytest.mark.parametrize("preset_name", ["qa-standard", "data-engineering", "devops"])
+    @pytest.mark.parametrize("preset_name", [
+        "quality-lean", "quality-standard", "quality-large",
+        "software-engineering-lean", "software-engineering-standard", "software-engineering-large",
+        "design-lean", "design-standard", "design-large",
+        "data-engineering-lean", "data-engineering-standard", "data-engineering-large",
+        "devops-lean", "devops-standard", "devops-large",
+    ])
     def test_preset_structure(self, preset_name):
         data = self._load_preset(preset_name)
         assert "name" in data
         assert "description" in data
         assert "domain" in data
+        assert "size" in data
         assert "agents" in data
         assert len(data["agents"]) > 0
 
-    @pytest.mark.parametrize("preset_name", ["qa-standard", "data-engineering", "devops"])
+    @pytest.mark.parametrize("preset_name", [
+        "quality-lean", "quality-standard", "quality-large",
+        "software-engineering-lean", "software-engineering-standard", "software-engineering-large",
+        "design-lean", "design-standard", "design-large",
+        "data-engineering-lean", "data-engineering-standard", "data-engineering-large",
+        "devops-lean", "devops-standard", "devops-large",
+    ])
     def test_preset_agents_have_required_fields(self, preset_name):
         data = self._load_preset(preset_name)
         required = {"agent_key", "name", "role", "goal", "backstory"}
@@ -441,11 +454,11 @@ class TestPresetFiles:
             assert not missing, f"Agent {agent.get('agent_key', '?')} missing: {missing}"
 
     def test_qa_standard_has_six_agents(self):
-        data = self._load_preset("qa-standard")
+        data = self._load_preset("quality-standard")
         assert len(data["agents"]) == 6
 
     def test_qa_standard_agent_keys_match_existing(self):
-        data = self._load_preset("qa-standard")
+        data = self._load_preset("quality-standard")
         keys = {a["agent_key"] for a in data["agents"]}
         expected = {"qa-manager", "senior-qa", "junior-qa", "qa-analyst", "security-compliance", "performance"}
         assert keys == expected

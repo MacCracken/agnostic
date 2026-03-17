@@ -83,6 +83,7 @@ class PresetCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9\-]*$")
     description: str = Field(..., min_length=1, max_length=500)
     domain: str = Field(default="general", max_length=100)
+    size: str = Field(default="standard", pattern=r"^(lean|standard|large)$")
     version: str = Field(default="1.0.0", max_length=20)
     agents: list[AgentDefinitionRequest] = Field(..., min_length=1)
 
@@ -91,16 +92,26 @@ class PresetResponse(BaseModel):
     name: str
     description: str
     domain: str
+    size: str = "standard"
     version: str = "1.0.0"
     agent_count: int
     agents: list[dict[str, Any]] = []
+
+
+class PresetAgentSummary(BaseModel):
+    agent_key: str
+    name: str
+    role: str
+    focus: str = ""
 
 
 class PresetListItem(BaseModel):
     name: str
     description: str
     domain: str
+    size: str = "standard"
     agent_count: int
+    agents: list[PresetAgentSummary] = []
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +252,8 @@ async def delete_definition(
 
 @router.get("/presets", response_model=list[PresetListItem])
 async def list_presets(
-    domain: str | None = Query(None, description="Filter by domain"),
+    domain: str | None = Query(None, description="Filter by domain (e.g. 'qa', 'design', 'software-engineering')"),
+    size: str | None = Query(None, description="Filter by team size: lean, standard, large"),
     user: dict = Depends(get_current_user),
 ):
     """List available crew presets."""
@@ -253,11 +265,24 @@ async def list_presets(
                     data = json.load(f)
                 if domain and data.get("domain", "general") != domain:
                     continue
+                if size and data.get("size", "standard") != size:
+                    continue
+                agent_summaries = [
+                    PresetAgentSummary(
+                        agent_key=a.get("agent_key", ""),
+                        name=a.get("name", ""),
+                        role=a.get("role", ""),
+                        focus=a.get("focus", ""),
+                    )
+                    for a in data.get("agents", [])
+                ]
                 presets.append(PresetListItem(
                     name=p.stem,
                     description=data.get("description", ""),
                     domain=data.get("domain", "general"),
+                    size=data.get("size", "standard"),
                     agent_count=len(data.get("agents", [])),
+                    agents=agent_summaries,
                 ))
             except Exception:
                 continue
@@ -282,6 +307,7 @@ async def get_preset(
         name=data.get("name", preset_name),
         description=data.get("description", ""),
         domain=data.get("domain", "general"),
+        size=data.get("size", "standard"),
         version=data.get("version", "1.0.0"),
         agent_count=len(data.get("agents", [])),
         agents=data.get("agents", []),
@@ -338,7 +364,7 @@ async def delete_preset(
         raise HTTPException(status_code=403, detail="Admin access required")
 
     # Protect built-in presets
-    if preset_name in ("qa-standard",):
+    if preset_name in ("quality-standard",):
         raise HTTPException(status_code=403, detail="Cannot delete built-in presets")
 
     path = PRESETS_DIR / f"{preset_name}.json"

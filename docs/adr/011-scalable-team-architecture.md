@@ -28,9 +28,11 @@ We will implement a three-tier team configuration system:
 - **Best practices**: Aligns with industry QA role specialization (ISTQB/IREB standards)
 
 ## Implementation
-- `config/team_config.json` - Defines all presets, roles, workflows
-- `config/team_config_loader.py` - Runtime configuration loader
-- Environment variable `QA_TEAM_SIZE` controls team size
+- `agents/definitions/presets/qa-lean.json` - Lean 3-agent preset
+- `agents/definitions/presets/qa-standard.json` - Standard 6-agent preset
+- `agents/definitions/presets/qa-large.json` - Large 9-agent preset
+- `config/agent_registry.py` - Loads presets, provides agent lookup and task routing
+- Environment variable `QA_TEAM_SIZE` controls team size (lean/standard/large)
 - QA Manager routes tasks based on team configuration
 - All new tools added to appropriate agent roles
 

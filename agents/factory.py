@@ -65,7 +65,7 @@ class AgentFactory:
 
     @classmethod
     def from_preset(cls, preset_name: str) -> list[BaseAgent]:
-        """Load all agents for a named preset (e.g. 'qa-standard')."""
+        """Load all agents for a named preset (e.g. 'quality-standard')."""
         if not SAFE_KEY_RE.match(preset_name):
             raise ValueError(f"Invalid preset name: {preset_name!r}")
         preset_path = PRESETS_DIR / f"{preset_name}.json"

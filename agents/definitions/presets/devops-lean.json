@@ -1,0 +1,37 @@
+{
+  "name": "devops-lean",
+  "description": "Lean 2-agent DevOps crew for small projects \u2014 deployment and monitoring combined",
+  "domain": "devops",
+  "version": "1.0.0",
+  "workflow_mode": "consolidated",
+  "agents": [
+    {
+      "agent_key": "deploy-manager",
+      "name": "Deployment Manager",
+      "role": "Deployment & Release Manager",
+      "goal": "Orchestrate safe deployments with rollback plans, canary analysis, and release coordination",
+      "backstory": "You are a deployment specialist with deep experience in CI/CD, blue-green deployments, canary releases, and rollback strategies. You ensure zero-downtime deployments and coordinate release trains across teams.",
+      "focus": "CI/CD orchestration, canary analysis, rollback planning, release coordination, incident response",
+      "domain": "devops",
+      "tools": [],
+      "complexity": "high",
+      "celery_queue": "deploy_manager",
+      "redis_prefix": "deploy",
+      "allow_delegation": true
+    },
+    {
+      "agent_key": "infra-monitor",
+      "name": "Infrastructure Monitor",
+      "role": "Infrastructure, Observability & Incident Specialist",
+      "goal": "Monitor system health, detect anomalies, manage alerts, triage incidents, and ensure SLA compliance",
+      "backstory": "You are an SRE who combines monitoring and incident response for lean teams. You manage observability stacks (Prometheus, Grafana, OpenTelemetry), detect anomalies, triage incidents, run post-mortems, and build runbooks \u2014 keeping systems healthy and recovering fast when things go wrong.",
+      "focus": "Monitoring, alerting, SLA tracking, anomaly detection, incident triage, RCA, runbooks",
+      "domain": "devops",
+      "tools": [],
+      "complexity": "medium",
+      "celery_queue": "infra_monitor",
+      "redis_prefix": "infra"
+    }
+  ],
+  "size": "lean"
+}

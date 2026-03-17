@@ -28,11 +28,27 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 
+class TeamMember(BaseModel):
+    """A member in a custom team specification."""
+
+    role: str = Field(..., min_length=1, max_length=200, description="Role title (e.g. 'Game Designer', 'UX Researcher')")
+    context: str = Field(default="", max_length=1000, description="What this member should focus on")
+    tools: list[str] = Field(default_factory=list, description="Specific tools for this agent")
+    lead: bool = Field(default=False, description="Whether this member leads the team")
+
+
+class TeamSpec(BaseModel):
+    """Structured team specification for custom crew assembly."""
+
+    members: list[TeamMember] = Field(..., min_length=1, max_length=20, description="Team members with roles and context")
+    project_context: str = Field(default="", max_length=2000, description="Overall project description")
+
+
 class CrewRunRequest(BaseModel):
     """Request to assemble and run a crew."""
 
-    # Source: either a preset name OR a list of agent keys/definitions
-    preset: str | None = Field(None, description="Preset name (e.g. 'qa-standard')", pattern=r"^[a-z0-9][a-z0-9\-]*$")
+    # Source: preset name, agent keys, inline definitions, OR team spec
+    preset: str | None = Field(None, description="Preset name (e.g. 'quality-standard', 'design-lean')", pattern=r"^[a-z0-9][a-z0-9\-]*$")
     agent_keys: list[str] = Field(
         default_factory=list,
         description="Agent keys from definitions directory",
@@ -41,6 +57,11 @@ class CrewRunRequest(BaseModel):
         default_factory=list,
         description="Inline agent definitions (for ad-hoc crews)",
         max_length=20,
+    )
+    team: TeamSpec | None = Field(
+        None,
+        description="Custom team spec — describe members by role and context, "
+        "and the system assembles the right agents automatically",
     )
 
     # Task to execute
@@ -241,10 +262,17 @@ async def run_crew(
     """Assemble and run an agent crew.
 
     Provide one of:
-    - ``preset``: name of a preset (e.g. "qa-standard", "data-engineering")
+    - ``preset``: name of a preset (e.g. "quality-standard", "design-lean")
     - ``agent_keys``: list of agent definition keys from the definitions directory
     - ``agent_definitions``: inline agent definitions for ad-hoc crews
     """
+    # If team spec provided, assemble into inline definitions
+    if req.team and not req.agent_definitions:
+        from agents.crew_assembler import assemble_team
+
+        members_raw = [m.model_dump() for m in req.team.members]
+        req.agent_definitions = assemble_team(members_raw, req.team.project_context)
+
     # Validate exactly one source
     sources = [
         bool(req.preset),
@@ -254,12 +282,12 @@ async def run_crew(
     if sum(sources) == 0:
         raise HTTPException(
             status_code=400,
-            detail="Provide one of: preset, agent_keys, or agent_definitions",
+            detail="Provide one of: preset, agent_keys, agent_definitions, or team",
         )
     if sum(sources) > 1:
         raise HTTPException(
             status_code=400,
-            detail="Provide only one of: preset, agent_keys, or agent_definitions",
+            detail="Provide only one of: preset, agent_keys, agent_definitions, or team",
         )
 
     # Validate callback URL

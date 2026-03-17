@@ -288,7 +288,7 @@ def get_all_agents() -> dict[str, dict]:
 
         for preset_info in AgentFactory.list_presets():
             preset_name = preset_info["name"]
-            if preset_name == "qa-standard":
+            if preset_name == "quality-standard":
                 continue  # Already covered by AGNOSTIC_AGENTS
             from pathlib import Path
 
