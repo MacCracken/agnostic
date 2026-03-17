@@ -1,7 +1,9 @@
 """Tests for the generic agent framework: BaseAgent, AgentDefinition, AgentFactory, tool_registry."""
 
 import json
+import sys
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -136,6 +138,10 @@ class TestBaseAgent:
     @pytest.fixture(autouse=True)
     def _mock_infra(self):
         """Mock Redis, Celery, LLM, and CrewAI Agent so we can test BaseAgent logic."""
+        # Ensure config.llm_integration is importable even when deps are missing
+        fake_llm_mod = ModuleType("config.llm_integration")
+        fake_llm_mod.llm_service = MagicMock()  # type: ignore[attr-defined]
+        sys.modules.setdefault("config.llm_integration", fake_llm_mod)
         with (
             patch("agents.base.config") as mock_config,
             patch("config.llm_integration.llm_service"),

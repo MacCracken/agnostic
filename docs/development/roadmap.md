@@ -94,11 +94,26 @@ Items identified during code review and audit. Not blocking, but should be addre
 
 ---
 
+## crewAI 1.11.0 Upgrade (watching RC1)
+
+RC1 released 2026-03-16. Items for when stable lands.
+
+| Priority | Item | Effort | Notes |
+|----------|------|--------|-------|
+| **P0** | Docker now required for CodeInterpreterTool | Medium | No fallback sandbox — fails closed. Ensure our Docker containers provide the runtime crewAI expects |
+| **P1** | A2A Plus API token auth | Small | New enterprise auth for A2A. Update A2A handler if token required |
+| **P2** | Validate concurrency fixes | Small | ContextVar propagation + locking fixes. Run integration tests |
+| **P3** | Evaluate plan-execute pattern | Small | New orchestration mode — try with quality presets |
+
+See also [Dependency Watch](dependency-watch.md).
+
+---
+
 ## Long-term / Blocked
 
 | Item | Blocker |
 |------|---------|
-| Python 3.14 support | crewai 1.10.1 `requires-python <3.14` — sole remaining blocker. chromadb 1.1.1 is now unblocked (`>=3.9`). See [Dependency Watch](dependency-watch.md) |
+| Python 3.14 support | crewai 1.11.0rc1 still `requires-python <3.14` — sole remaining blocker. chromadb 1.1.1 is now unblocked (`>=3.9`). See [Dependency Watch](dependency-watch.md) |
 
 ---
 
@@ -120,4 +135,4 @@ Items identified during code review and audit. Not blocking, but should be addre
 
 ---
 
-*Last Updated: 2026-03-14 · Version: 2026.3.14 · Test count: 922 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-17 · Version: 2026.3.16 · Test count: 922 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

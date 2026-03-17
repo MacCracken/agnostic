@@ -10,10 +10,10 @@ This document tracks third-party dependencies that are currently blocking upgrad
 
 | | |
 |---|---|
-| **Affected dep** | `crewai` (all releases through 1.10.1) |
+| **Affected dep** | `crewai` (all releases through 1.11.0rc1) |
 | **Blocker for** | Python 3.14 dev environment |
 | **Since** | 2026-02-22 |
-| **Status** | Unresolved — `Requires-Python: >=3.10,<3.14` |
+| **Status** | Unresolved — `Requires-Python: >=3.10,<3.14` (still present in 1.11.0rc1) |
 
 **Problem:** crewai sets `requires-python = ">=3.10,<3.14"`. pip refuses to install on Python 3.14. This is the sole remaining Python 3.14 blocker — chromadb 1.1.1 is now unblocked.
 
@@ -22,6 +22,23 @@ This document tracks third-party dependencies that are currently blocking upgrad
 **What to watch:**
 - crewai releases: https://github.com/crewAIInc/crewAI/releases
 - crewai issues/PRs mentioning "Python 3.14" or "requires-python"
+
+---
+
+### crewai 1.11.0 — CodeInterpreterTool Docker requirement
+
+| | |
+|---|---|
+| **Affected dep** | `crewai-tools` (CodeInterpreterTool, 1.11.0rc1+) |
+| **Blocker for** | Code execution in non-Docker environments |
+| **Since** | 2026-03-16 (RC1) |
+| **Status** | Watching — sandbox fallback removed, Docker mandatory |
+
+**Problem:** CodeInterpreterTool now fails closed with `RuntimeError` when Docker is unavailable. Previous versions fell back to a restricted Python sandbox. Our Docker containers should already provide Docker, but needs verification after upgrade.
+
+**What to watch:**
+- Whether crewAI adds alternative backends (gVisor, Firecracker, WASM)
+- Our container image runtime configuration
 
 ---
 
