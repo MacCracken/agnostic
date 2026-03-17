@@ -1,10 +1,12 @@
 """Report generation, download, and scheduling endpoints."""
 
+from __future__ import annotations
+
 import json
 import logging
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -41,7 +43,7 @@ class ReportGenerateRequest(BaseModel):
 class ScheduleReportRequest(BaseModel):
     report_type: str
     format: str
-    schedule: dict
+    schedule: dict[str, Any]
 
 
 class ReportGenerateResponse(BaseModel):
@@ -73,8 +75,8 @@ class ReportDeleteResponse(BaseModel):
 async def list_reports(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     from config.environment import config
 
     redis_client = config.get_async_redis_client()
@@ -85,7 +87,7 @@ async def list_reports(
     async for key in redis_client.scan_iter(match=pattern, count=200):
         matched_keys.append(key)
     # Fetch all values in one round-trip with MGET
-    reports = []
+    reports: list[Any] = []
     if matched_keys:
         values = await redis_client.mget(matched_keys)
         for data in values:
@@ -103,8 +105,8 @@ async def list_reports(
 @router.post("/reports/generate", response_model=ReportGenerateResponse)
 async def generate_report(
     req: ReportGenerateRequest,
-    user: dict = Depends(require_permission(Permission.REPORTS_GENERATE)),
-):
+    user: dict[str, Any] = Depends(require_permission(Permission.REPORTS_GENERATE)),
+) -> dict[str, Any]:
     from webgui.exports import ReportFormat, ReportRequest, ReportType, report_generator
 
     try:
@@ -153,8 +155,8 @@ async def generate_report(
 @router.get("/reports/{report_id}/download")
 async def download_report(
     report_id: str,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> FileResponse:
     from config.environment import config
 
     redis_client = config.get_async_redis_client()
@@ -206,8 +208,8 @@ async def download_report(
 async def get_scheduled_reports(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     from webgui.scheduled_reports import scheduled_report_manager
 
     jobs = scheduled_report_manager.get_jobs()
@@ -223,8 +225,8 @@ async def get_scheduled_reports(
 @router.post("/reports/scheduled", response_model=ScheduleReportResponse)
 async def schedule_report(
     req: ScheduleReportRequest,
-    user: dict = Depends(require_permission(Permission.REPORTS_GENERATE)),
-):
+    user: dict[str, Any] = Depends(require_permission(Permission.REPORTS_GENERATE)),
+) -> dict[str, Any]:
     from webgui.scheduled_reports import scheduled_report_manager
 
     try:
@@ -261,8 +263,8 @@ async def schedule_report(
 @router.delete("/reports/scheduled/{job_id}", response_model=ReportDeleteResponse)
 async def delete_scheduled_report(
     job_id: str,
-    user: dict = Depends(require_permission(Permission.REPORTS_GENERATE)),
-):
+    user: dict[str, Any] = Depends(require_permission(Permission.REPORTS_GENERATE)),
+) -> dict[str, Any]:
     from webgui.scheduled_reports import scheduled_report_manager
 
     if scheduled_report_manager.remove_job(job_id):

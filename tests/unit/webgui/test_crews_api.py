@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 try:
     from fastapi.testclient import TestClient
@@ -118,7 +118,13 @@ class TestCrewRunRequest:
 
         req = CrewRunRequest(
             agent_definitions=[
-                {"agent_key": "inline-1", "name": "Inline", "role": "R", "goal": "G", "backstory": "B"},
+                {
+                    "agent_key": "inline-1",
+                    "name": "Inline",
+                    "role": "R",
+                    "goal": "G",
+                    "backstory": "B",
+                },
             ],
             title="Ad hoc",
             description="Ad hoc crew",
@@ -133,20 +139,26 @@ class TestCrewRunRequest:
 
 class TestCrewEndpoints:
     def test_no_source_returns_400(self, authed_client):
-        resp = authed_client.post("/api/v1/crews", json={
-            "title": "Empty",
-            "description": "No agents specified",
-        })
+        resp = authed_client.post(
+            "/api/v1/crews",
+            json={
+                "title": "Empty",
+                "description": "No agents specified",
+            },
+        )
         assert resp.status_code == 400
         assert "Provide one of" in resp.json()["detail"]
 
     def test_multiple_sources_returns_400(self, authed_client):
-        resp = authed_client.post("/api/v1/crews", json={
-            "preset": "quality-standard",
-            "agent_keys": ["agent-a"],
-            "title": "Both",
-            "description": "Both sources",
-        })
+        resp = authed_client.post(
+            "/api/v1/crews",
+            json={
+                "preset": "quality-standard",
+                "agent_keys": ["agent-a"],
+                "title": "Both",
+                "description": "Both sources",
+            },
+        )
         assert resp.status_code == 400
         assert "only one" in resp.json()["detail"]
 
@@ -157,14 +169,19 @@ class TestCrewEndpoints:
             tm.enabled = False
             tm.task_key = lambda tid, key: f"{tid}:{key}"
 
-            resp = authed_client.post("/api/v1/crews", json={
-                "preset": "nonexistent-preset-xyz",
-                "title": "Missing",
-                "description": "Preset does not exist",
-            })
+            resp = authed_client.post(
+                "/api/v1/crews",
+                json={
+                    "preset": "nonexistent-preset-xyz",
+                    "title": "Missing",
+                    "description": "Preset does not exist",
+                },
+            )
             assert resp.status_code == 404
 
-    def test_run_crew_with_preset(self, authed_client, mock_config, tmp_path, monkeypatch):
+    def test_run_crew_with_preset(
+        self, authed_client, mock_config, tmp_path, monkeypatch
+    ):
         """Successful crew submission with a preset returns 201."""
         import webgui.routes.crews as crews_mod
 
@@ -176,8 +193,20 @@ class TestCrewEndpoints:
             "description": "Test",
             "domain": "testing",
             "agents": [
-                {"agent_key": "a1", "name": "A1", "role": "R", "goal": "G", "backstory": "B"},
-                {"agent_key": "a2", "name": "A2", "role": "R", "goal": "G", "backstory": "B"},
+                {
+                    "agent_key": "a1",
+                    "name": "A1",
+                    "role": "R",
+                    "goal": "G",
+                    "backstory": "B",
+                },
+                {
+                    "agent_key": "a2",
+                    "name": "A2",
+                    "role": "R",
+                    "goal": "G",
+                    "backstory": "B",
+                },
             ],
         }
         (presets_dir / "test-preset.json").write_text(json.dumps(preset_data))
@@ -187,7 +216,9 @@ class TestCrewEndpoints:
 
         with (
             patch("shared.database.tenants.tenant_manager") as tm,
-            patch.object(crews_mod, "_run_crew_async", new_callable=AsyncMock) as mock_run,
+            patch.object(
+                crews_mod, "_run_crew_async", new_callable=AsyncMock
+            ) as mock_run,
         ):
             tm.default_tenant_id = "default"
             tm.enabled = False
@@ -202,27 +233,41 @@ class TestCrewEndpoints:
             def patched_open(path, *args, **kwargs):
                 path_str = str(path)
                 if "test-preset.json" in path_str:
-                    return original_open(presets_dir / "test-preset.json", *args, **kwargs)
+                    return original_open(
+                        presets_dir / "test-preset.json", *args, **kwargs
+                    )
                 return original_open(path, *args, **kwargs)
 
             with patch("builtins.open", side_effect=patched_open):
                 # Also need the path.exists() to work
-                resp = authed_client.post("/api/v1/crews", json={
-                    "preset": "test-preset",
-                    "title": "Run test crew",
-                    "description": "Testing crew execution",
-                })
+                resp = authed_client.post(
+                    "/api/v1/crews",
+                    json={
+                        "preset": "test-preset",
+                        "title": "Run test crew",
+                        "description": "Testing crew execution",
+                    },
+                )
 
             # If the preset path doesn't resolve, fall back to checking with inline
             if resp.status_code == 404:
                 # Try inline approach instead (preset path is relative to source)
-                resp = authed_client.post("/api/v1/crews", json={
-                    "agent_definitions": [
-                        {"agent_key": "a1", "name": "A1", "role": "R", "goal": "G", "backstory": "B"},
-                    ],
-                    "title": "Inline crew",
-                    "description": "Inline test",
-                })
+                resp = authed_client.post(
+                    "/api/v1/crews",
+                    json={
+                        "agent_definitions": [
+                            {
+                                "agent_key": "a1",
+                                "name": "A1",
+                                "role": "R",
+                                "goal": "G",
+                                "backstory": "B",
+                            },
+                        ],
+                        "title": "Inline crew",
+                        "description": "Inline test",
+                    },
+                )
 
         # At minimum, the inline request should succeed
         assert resp.status_code in (201, 404)  # 404 only if preset path issues
@@ -237,13 +282,22 @@ class TestCrewEndpoints:
             tm.enabled = False
             tm.task_key = lambda tid, key: f"{tid}:{key}"
 
-            resp = authed_client.post("/api/v1/crews", json={
-                "agent_definitions": [
-                    {"agent_key": "custom-1", "name": "Custom", "role": "R", "goal": "G", "backstory": "B"},
-                ],
-                "title": "Ad hoc crew",
-                "description": "Test inline definitions",
-            })
+            resp = authed_client.post(
+                "/api/v1/crews",
+                json={
+                    "agent_definitions": [
+                        {
+                            "agent_key": "custom-1",
+                            "name": "Custom",
+                            "role": "R",
+                            "goal": "G",
+                            "backstory": "B",
+                        },
+                    ],
+                    "title": "Ad hoc crew",
+                    "description": "Test inline definitions",
+                },
+            )
             assert resp.status_code == 201
             data = resp.json()
             assert data["agent_count"] == 1
@@ -299,7 +353,11 @@ class TestA2ACrewDelegation:
         with (
             patch("shared.database.tenants.tenant_manager") as tm,
             patch("webgui.routes.tasks.YEOMAN_A2A_ENABLED", True),
-            patch("webgui.routes.tasks._check_a2a_rate_limit", new_callable=AsyncMock, return_value=True),
+            patch(
+                "webgui.routes.tasks._check_a2a_rate_limit",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch("webgui.routes.crews._run_crew_async", new_callable=AsyncMock),
         ):
             tm.default_tenant_id = "default"
@@ -307,18 +365,21 @@ class TestA2ACrewDelegation:
             tm.task_key = lambda tid, key: f"{tid}:{key}"
 
             # The preset needs to exist on disk — use quality-standard which is in the repo
-            resp = authed_client.post("/api/v1/a2a/receive", json={
-                "id": "msg-1",
-                "type": "a2a:delegate",
-                "fromPeerId": "yeoman-1",
-                "toPeerId": "agnostic",
-                "timestamp": 1710000000000,
-                "payload": {
-                    "preset": "quality-standard",
-                    "title": "Delegated crew task",
-                    "description": "Run the QA preset via A2A",
+            resp = authed_client.post(
+                "/api/v1/a2a/receive",
+                json={
+                    "id": "msg-1",
+                    "type": "a2a:delegate",
+                    "fromPeerId": "yeoman-1",
+                    "toPeerId": "agnostic",
+                    "timestamp": 1710000000000,
+                    "payload": {
+                        "preset": "quality-standard",
+                        "title": "Delegated crew task",
+                        "description": "Run the QA preset via A2A",
+                    },
                 },
-            })
+            )
 
             # Should succeed (201 from crew, but A2A returns 200)
             assert resp.status_code == 200
@@ -349,23 +410,30 @@ class TestA2ACrewDelegation:
 
         with (
             patch("webgui.routes.tasks.YEOMAN_A2A_ENABLED", True),
-            patch("webgui.routes.tasks._check_a2a_rate_limit", new_callable=AsyncMock, return_value=True),
+            patch(
+                "webgui.routes.tasks._check_a2a_rate_limit",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
-            resp = authed_client.post("/api/v1/a2a/receive", json={
-                "id": "msg-2",
-                "type": "a2a:create_agent",
-                "fromPeerId": "yeoman-1",
-                "toPeerId": "agnostic",
-                "timestamp": 1710000000000,
-                "payload": {
-                    "agent_key": "sy-created-agent",
-                    "name": "SY Created Agent",
-                    "role": "Custom Role",
-                    "goal": "Do custom things",
-                    "backstory": "Created by SecureYeoman dynamically.",
-                    "domain": "custom",
+            resp = authed_client.post(
+                "/api/v1/a2a/receive",
+                json={
+                    "id": "msg-2",
+                    "type": "a2a:create_agent",
+                    "fromPeerId": "yeoman-1",
+                    "toPeerId": "agnostic",
+                    "timestamp": 1710000000000,
+                    "payload": {
+                        "agent_key": "sy-created-agent",
+                        "name": "SY Created Agent",
+                        "role": "Custom Role",
+                        "goal": "Do custom things",
+                        "backstory": "Created by SecureYeoman dynamically.",
+                        "domain": "custom",
+                    },
                 },
-            })
+            )
             assert resp.status_code == 200
             data = resp.json()
             assert data["accepted"] is True

@@ -130,7 +130,7 @@ class BaseAgent:
 
         self.llm_service = llm_service
         self.llm = LLM(
-            model=definition.llm_model,
+            model=definition.llm_model or "gpt-4o",
             temperature=definition.llm_temperature,
         )
 
@@ -179,7 +179,7 @@ class BaseAgent:
         for tool_name in definition.tools:
             tool_cls = tool_registry.get(tool_name)
             if tool_cls is not None:
-                resolved.append(tool_cls())
+                resolved.append(tool_cls())  # type: ignore[call-arg]
             else:
                 self.logger.warning("Tool '%s' not found in registry", tool_name)
         return resolved
@@ -219,7 +219,7 @@ class BaseAgent:
     ) -> Any:
         """Run a multi-task crew."""
         crew = Crew(
-            agents=agents or [self.agent],
+            agents=agents or [self.agent],  # type: ignore[arg-type]
             tasks=tasks,
             process=process,
             verbose=self.definition.verbose,

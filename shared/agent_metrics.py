@@ -5,6 +5,8 @@ Reads from Prometheus metric objects (in-process, no scraping needed) and
 returns per-agent statistics for task completion, success rates, and LLM usage.
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Any
 
@@ -106,13 +108,13 @@ def _get_gauge_value(gauge: Any, labels: dict[str, str]) -> float:
     try:
         for sample in _iter_samples(gauge):
             if all(sample.labels.get(k) == v for k, v in labels.items()):
-                return sample.value
+                return float(sample.value)
     except Exception:
         logger.debug("Failed to read gauge value for labels %s", labels)
     return 0.0
 
 
-def _iter_samples(metric: Any):
+def _iter_samples(metric: Any) -> Any:
     """Iterate over prometheus_client metric samples."""
     try:
         for m in metric.collect():

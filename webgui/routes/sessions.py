@@ -1,7 +1,9 @@
 """Session history endpoints."""
 
+from __future__ import annotations
+
 from dataclasses import asdict
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -42,8 +44,8 @@ async def get_sessions(
     sort_order: Literal["asc", "desc"] = Query("desc"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     if (
         user_id is not None
         and user_id != user["user_id"]
@@ -82,8 +84,8 @@ async def get_sessions(
 async def search_sessions(
     q: str = Query(..., min_length=1, max_length=500),
     limit: int = Query(20, ge=1, le=100),
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     from webgui.history import history_manager
 
     results = await history_manager.search_sessions(query=q, limit=limit)
@@ -92,7 +94,9 @@ async def search_sessions(
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
-async def get_session(session_id: str, user: dict = Depends(get_current_user)):
+async def get_session(
+    session_id: str, user: dict[str, Any] = Depends(get_current_user)
+) -> Any:
     from webgui.history import history_manager
 
     details = await history_manager.get_session_details(session_id)
@@ -104,8 +108,8 @@ async def get_session(session_id: str, user: dict = Depends(get_current_user)):
 @router.post("/sessions/compare", response_model=SessionCompareResponse)
 async def compare_sessions(
     req: SessionCompareRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Compare two sessions from Redis history (real-time data).
 
     For database-backed session diff, use GET /test-sessions/diff instead.

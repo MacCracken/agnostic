@@ -59,10 +59,10 @@ class YeomanEventPushClient:
         self.push_url = _PUSH_URL
         self.secret = _PUSH_SECRET
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=5000)
-        self._client: httpx.AsyncClient | None = None  # type: ignore[name-defined]
+        self._client: httpx.AsyncClient | None = None
         self._flush_task: asyncio.Task[None] | None = None
 
-    def _get_client(self) -> httpx.AsyncClient:  # type: ignore[name-defined]
+    def _get_client(self) -> httpx.AsyncClient:
         if not _HTTPX_AVAILABLE:
             raise RuntimeError("httpx is not installed")
         if self._client is None or self._client.is_closed:

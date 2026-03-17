@@ -13,6 +13,8 @@ Configure via:
 - AGNOS_AUDIT_FLUSH_INTERVAL: Seconds between flushes (default: 5)
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -46,11 +48,12 @@ class AgnosAuditForwarder:
         self.flush_interval = float(os.getenv("AGNOS_AUDIT_FLUSH_INTERVAL", "5"))
 
         self._buffer: list[dict[str, Any]] = []
-        self._flush_task: asyncio.Task | None = None
-        self._client: httpx.AsyncClient | None = None
+        self._flush_task: asyncio.Task[None] | None = None
+        self._client: Any = None
         self._client_lock = asyncio.Lock()
 
         # Circuit breaker
+        self._circuit: Any = None
         try:
             from shared.resilience import CircuitBreaker
 
@@ -58,9 +61,9 @@ class AgnosAuditForwarder:
                 name="agnos_audit", failure_threshold=5, recovery_timeout=60.0
             )
         except ImportError:
-            self._circuit = None
+            pass
 
-    async def _get_client(self) -> httpx.AsyncClient:
+    async def _get_client(self) -> Any:
         async with self._client_lock:
             if self._client is None or self._client.is_closed:
                 self._client = httpx.AsyncClient(

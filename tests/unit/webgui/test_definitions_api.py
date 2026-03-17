@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 try:
     from fastapi.testclient import TestClient
@@ -251,12 +251,15 @@ class TestPresetManagement:
         assert resp.json() == []
 
     def test_create_preset(self, admin_client, tmp_definitions):
-        resp = admin_client.post("/api/v1/presets", json={
-            "name": "my-crew",
-            "description": "Test crew",
-            "domain": "testing",
-            "agents": SAMPLE_PRESET_AGENTS,
-        })
+        resp = admin_client.post(
+            "/api/v1/presets",
+            json={
+                "name": "my-crew",
+                "description": "Test crew",
+                "domain": "testing",
+                "agents": SAMPLE_PRESET_AGENTS,
+            },
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["name"] == "my-crew"
@@ -274,12 +277,15 @@ class TestPresetManagement:
         assert resp.status_code == 409
 
     def test_get_preset(self, admin_client, tmp_definitions):
-        admin_client.post("/api/v1/presets", json={
-            "name": "my-crew",
-            "description": "Test crew",
-            "domain": "testing",
-            "agents": SAMPLE_PRESET_AGENTS,
-        })
+        admin_client.post(
+            "/api/v1/presets",
+            json={
+                "name": "my-crew",
+                "description": "Test crew",
+                "domain": "testing",
+                "agents": SAMPLE_PRESET_AGENTS,
+            },
+        )
         resp = admin_client.get("/api/v1/presets/my-crew")
         assert resp.status_code == 200
         data = resp.json()
@@ -291,51 +297,67 @@ class TestPresetManagement:
         assert resp.status_code == 404
 
     def test_delete_preset(self, admin_client, tmp_definitions):
-        admin_client.post("/api/v1/presets", json={
-            "name": "my-crew",
-            "description": "Test crew",
-            "domain": "testing",
-            "agents": SAMPLE_PRESET_AGENTS,
-        })
+        admin_client.post(
+            "/api/v1/presets",
+            json={
+                "name": "my-crew",
+                "description": "Test crew",
+                "domain": "testing",
+                "agents": SAMPLE_PRESET_AGENTS,
+            },
+        )
         resp = admin_client.delete("/api/v1/presets/my-crew")
         assert resp.status_code == 204
 
     def test_delete_builtin_preset_blocked(self, admin_client, tmp_definitions):
         # Create a quality-standard preset to make it exist
-        (tmp_definitions["presets"] / "quality-standard.json").write_text(json.dumps({
-            "name": "quality-standard",
-            "description": "QA",
-            "domain": "quality",
-            "agents": SAMPLE_PRESET_AGENTS,
-        }))
+        (tmp_definitions["presets"] / "quality-standard.json").write_text(
+            json.dumps(
+                {
+                    "name": "quality-standard",
+                    "description": "QA",
+                    "domain": "quality",
+                    "agents": SAMPLE_PRESET_AGENTS,
+                }
+            )
+        )
         resp = admin_client.delete("/api/v1/presets/quality-standard")
         assert resp.status_code == 403
 
     def test_list_presets_with_domain_filter(self, admin_client, tmp_definitions):
-        admin_client.post("/api/v1/presets", json={
-            "name": "crew-a",
-            "description": "A",
-            "domain": "quality",
-            "agents": SAMPLE_PRESET_AGENTS,
-        })
-        admin_client.post("/api/v1/presets", json={
-            "name": "crew-b",
-            "description": "B",
-            "domain": "devops",
-            "agents": SAMPLE_PRESET_AGENTS,
-        })
+        admin_client.post(
+            "/api/v1/presets",
+            json={
+                "name": "crew-a",
+                "description": "A",
+                "domain": "quality",
+                "agents": SAMPLE_PRESET_AGENTS,
+            },
+        )
+        admin_client.post(
+            "/api/v1/presets",
+            json={
+                "name": "crew-b",
+                "description": "B",
+                "domain": "devops",
+                "agents": SAMPLE_PRESET_AGENTS,
+            },
+        )
 
         resp = admin_client.get("/api/v1/presets?domain=quality")
         assert len(resp.json()) == 1
         assert resp.json()[0]["name"] == "crew-a"
 
     def test_non_admin_cannot_create_preset(self, user_client, tmp_definitions):
-        resp = user_client.post("/api/v1/presets", json={
-            "name": "my-crew",
-            "description": "Test",
-            "domain": "testing",
-            "agents": SAMPLE_PRESET_AGENTS,
-        })
+        resp = user_client.post(
+            "/api/v1/presets",
+            json={
+                "name": "my-crew",
+                "description": "Test",
+                "domain": "testing",
+                "agents": SAMPLE_PRESET_AGENTS,
+            },
+        )
         assert resp.status_code == 403
 
     def test_non_admin_can_list_presets(self, user_client, tmp_definitions):
@@ -343,10 +365,13 @@ class TestPresetManagement:
         assert resp.status_code == 200
 
     def test_preset_requires_at_least_one_agent(self, admin_client, tmp_definitions):
-        resp = admin_client.post("/api/v1/presets", json={
-            "name": "empty-crew",
-            "description": "Empty",
-            "domain": "testing",
-            "agents": [],
-        })
+        resp = admin_client.post(
+            "/api/v1/presets",
+            json={
+                "name": "empty-crew",
+                "description": "Empty",
+                "domain": "testing",
+                "agents": [],
+            },
+        )
         assert resp.status_code == 422

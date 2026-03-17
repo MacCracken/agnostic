@@ -44,10 +44,10 @@ class TestResultCreate(BaseModel):
     error_message: str | None = Field(default=None, max_length=5000)
     stack_trace: str | None = Field(default=None, max_length=50000)
     execution_time_ms: int | None = None
-    test_data: dict | None = None
-    expected_result: dict | None = None
-    actual_result: dict | None = None
-    metadata: dict | None = None
+    test_data: dict[str, Any] | None = None
+    expected_result: dict[str, Any] | None = None
+    actual_result: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class TestResultFilter(BaseModel):
@@ -121,9 +121,9 @@ async def get_test_sessions(
     status: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_db_repo_dependency),
-):
+) -> dict[str, Any]:
     """Get test sessions."""
     if repo is None:
         raise HTTPException(
@@ -150,9 +150,9 @@ async def get_test_sessions(
 @router.post("/test-sessions", status_code=201, response_model=TestSessionResponse)
 async def create_test_session(
     req: TestSessionCreate,
-    user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
+    user: dict[str, Any] = Depends(require_permission(Permission.SESSIONS_WRITE)),
     repo: _RepoType = Depends(_db_repo_dependency),
-):
+) -> dict[str, Any]:
     """Create a new test session."""
     if repo is None:
         raise HTTPException(
@@ -176,9 +176,9 @@ async def create_test_session(
 async def update_test_session_status(
     session_id: str,
     status: str,
-    user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
+    user: dict[str, Any] = Depends(require_permission(Permission.SESSIONS_WRITE)),
     repo: _RepoType = Depends(_db_repo_dependency),
-):
+) -> dict[str, Any]:
     """Update test session status."""
     if repo is None:
         raise HTTPException(
@@ -201,9 +201,9 @@ async def get_test_results(
     status: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_db_repo_dependency),
-):
+) -> dict[str, Any]:
     """Get test results."""
     if repo is None:
         raise HTTPException(
@@ -235,9 +235,9 @@ async def get_test_results(
 @router.post("/test-results", status_code=201, response_model=TestResultResponse)
 async def add_test_result(
     req: TestResultCreate,
-    user: dict = Depends(require_permission(Permission.SESSIONS_WRITE)),
+    user: dict[str, Any] = Depends(require_permission(Permission.SESSIONS_WRITE)),
     repo: _RepoType = Depends(_db_repo_dependency),
-):
+) -> dict[str, Any]:
     """Add a test result."""
     if repo is None:
         raise HTTPException(
@@ -252,9 +252,9 @@ async def add_test_result(
 )
 async def get_test_results_summary(
     session_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_db_repo_dependency),
-):
+) -> Any:
     """Get summary of test results for a session."""
     if repo is None:
         raise HTTPException(
@@ -272,9 +272,9 @@ async def get_test_results_summary(
 @router.get("/test-metrics/trends", response_model=QualityTrendsResponse)
 async def get_quality_trends(
     days: int = 30,
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_db_repo_dependency),
-):
+) -> Any:
     """Get quality trends over time."""
     if repo is None:
         raise HTTPException(
@@ -292,9 +292,9 @@ async def diff_test_sessions(
     compare: str = Query(
         ..., max_length=200, description="Compare session ID (the 'after')"
     ),
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_db_repo_dependency),
-):
+) -> Any:
     """Compare test results between two sessions to detect regressions.
 
     Returns regressions (was passing, now failing), fixes, new tests,

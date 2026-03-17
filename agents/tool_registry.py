@@ -99,8 +99,8 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
     from shared.crewai_compat import BaseTool as _BaseTool
 
     # Compile in a restricted namespace — no builtins except safe ones
-    _real_builtins = (
-        __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)
+    _real_builtins: dict[str, Any] = (
+        __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)  # type: ignore[unreachable]
     )
     _SAFE_BUILTINS = {
         "True": True,

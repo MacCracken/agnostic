@@ -49,9 +49,9 @@ class OAuthProviderFactory:
         elif provider == AuthProvider.SAML:
             logger.warning("SAML authentication is not yet implemented")
             return None
-        else:
-            logger.error(f"Unsupported auth provider: {provider}")
-            return None
+        # Fallback for any future providers not yet handled
+        logger.error(f"Unsupported auth provider: {provider}")  # type: ignore[unreachable]
+        return None
 
     async def _authenticate_local(self, email: str, password: str) -> User | None:
         """Local authentication with password."""
@@ -130,7 +130,7 @@ class OAuthProviderFactory:
                 email=email,
                 name=name,
                 provider=AuthProvider.GOOGLE,
-                provider_id=payload.get("sub"),
+                provider_id=str(payload.get("sub", "")),
             )
 
         except jwt.ExpiredSignatureError:
@@ -264,7 +264,7 @@ class OAuthProviderFactory:
                 email=email,
                 name=name,
                 provider=AuthProvider.AZURE_AD,
-                provider_id=payload.get("oid") or payload.get("sub"),
+                provider_id=str(payload.get("oid") or payload.get("sub", "")),
             )
 
         except jwt.ExpiredSignatureError:
@@ -336,7 +336,7 @@ class OAuthProviderFactory:
             logger.error(f"Error getting/creating OAuth user: {e}")
             return None
 
-    async def _save_user(self, user: User):
+    async def _save_user(self, user: User) -> None:
         """Save user to Redis."""
         from dataclasses import asdict
 
@@ -378,7 +378,7 @@ class OAuthProviderFactory:
             logger.error(f"Error saving user: {e}")
             raise
 
-    async def _update_last_login(self, user_id: str):
+    async def _update_last_login(self, user_id: str) -> None:
         """Update user's last login time."""
         try:
             user_key = f"user:{user_id}"

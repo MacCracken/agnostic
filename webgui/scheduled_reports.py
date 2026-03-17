@@ -29,6 +29,8 @@ Configured via environment variables:
 - REPORT_EMAIL_RECIPIENTS: Comma-separated list of recipient email addresses
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import hmac
@@ -55,7 +57,7 @@ logger = logging.getLogger(__name__)
 class ReportDeliveryService:
     """Delivers report notifications via webhook, Slack, and email."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.webhook_url = os.getenv("REPORT_WEBHOOK_URL")
         self.webhook_secret = os.getenv("REPORT_WEBHOOK_SECRET")
         self.slack_webhook_url = os.getenv("REPORT_SLACK_WEBHOOK_URL")
@@ -115,7 +117,7 @@ class ReportDeliveryService:
             "generated_at": datetime.now(UTC).isoformat(),
         }
         body = json.dumps(payload)
-        headers = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
 
         if self.webhook_secret:
             signature = hmac.new(
@@ -123,13 +125,12 @@ class ReportDeliveryService:
             ).hexdigest()
             headers["X-Signature"] = signature
 
-        last_error = None
+        last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
+                url: str = self.webhook_url  # type: ignore[assignment]
                 async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.post(
-                        self.webhook_url, content=body, headers=headers
-                    )
+                    resp = await client.post(url, content=body, headers=headers)
                     resp.raise_for_status()
                 logger.info(f"Report webhook delivered for {job_name}")
                 return "delivered"
@@ -156,12 +157,13 @@ class ReportDeliveryService:
             f"Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
         }
 
-        last_error = None
+        last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
+                url: str = self.slack_webhook_url  # type: ignore[assignment]
                 async with httpx.AsyncClient(timeout=10) as client:
                     resp = await client.post(
-                        self.slack_webhook_url,
+                        url,
                         content=json.dumps(payload),
                         headers={"Content-Type": "application/json"},
                     )
@@ -199,7 +201,7 @@ class ReportDeliveryService:
         )
         msg.attach(MIMEText(html_body, "html"))
 
-        last_error = None
+        last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
                 smtp = aiosmtplib.SMTP(
@@ -228,7 +230,7 @@ class ReportDeliveryService:
 class ScheduledReportManager:
     """Manages scheduled report generation jobs."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.scheduler: AsyncIOScheduler | None = None
         self.enabled = os.getenv("SCHEDULED_REPORTS_ENABLED", "false").lower() == "true"
         self.daily_time = os.getenv("SCHEDULED_REPORT_DAILY_TIME", "09:00")
@@ -236,7 +238,7 @@ class ScheduledReportManager:
         self.weekly_time = os.getenv("SCHEDULED_REPORT_WEEKLY_TIME", "09:00")
         self.delivery = ReportDeliveryService()
 
-    def _create_jobstore(self) -> dict:
+    def _create_jobstore(self) -> dict[str, Any]:
         """Create job store -- database-backed if configured, Redis otherwise."""
         store_type = os.getenv("SCHEDULER_JOBSTORE", "redis")
         db_enabled = os.getenv("DATABASE_ENABLED", "false").lower() == "true"
@@ -281,7 +283,7 @@ class ScheduledReportManager:
                 "default": AsyncIOExecutor(),
             }
 
-            job_defaults = {
+            job_defaults: dict[str, Any] = {
                 "coalesce": True,
                 "max_instances": 1,
                 "misfire_grace_time": 300,
@@ -351,6 +353,7 @@ class ScheduledReportManager:
     ) -> dict[str, Any]:
         """Generate a report and deliver via configured channels."""
         logger.info(f"Generating {report_type_name}")
+        result: dict[str, Any]
         try:
             from webgui.exports import (
                 ReportFormat,
@@ -445,7 +448,7 @@ class ScheduledReportManager:
         display_name = report_name or f"Custom {report_type} report"
         delivery = self.delivery
 
-        async def generate_custom_report():
+        async def generate_custom_report() -> dict[str, Any]:
             from webgui.exports import (
                 ReportRequest,
                 report_generator,
@@ -456,6 +459,7 @@ class ScheduledReportManager:
                 report_type=report_type_enum,
                 format=format_enum,
             )
+            result: dict[str, Any]
             try:
                 metadata = await report_generator.generate_report(
                     report_req, f"scheduler:{job_id}"
@@ -482,7 +486,7 @@ class ScheduledReportManager:
         logger.info(f"Scheduled custom report: {job_id}")
         return job_id
 
-    def _create_trigger(self, schedule: dict[str, Any]):
+    def _create_trigger(self, schedule: dict[str, Any]) -> CronTrigger | DateTrigger:
         """Create APScheduler trigger from schedule config."""
         schedule_type = schedule.get("type", "cron")
 
@@ -505,7 +509,7 @@ class ScheduledReportManager:
         if not self.scheduler:
             return []
 
-        jobs = []
+        jobs: list[dict[str, Any]] = []
         for job in self.scheduler.get_jobs():
             jobs.append(
                 {

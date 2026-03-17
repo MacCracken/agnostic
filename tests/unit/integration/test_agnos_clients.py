@@ -1,8 +1,8 @@
-"""Unit tests for deeper AGNOS integration modules.
+"""Tests for AGNOS platform service clients.
 
 Covers: RAG client, screen capture client, recording client,
 daimon MCP registration, token budget dashboard, LLM streaming,
-marketplace package, and persistent memory migration.
+marketplace package validation, and persistent memory client.
 """
 
 import os
@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +437,7 @@ class TestMarketplacePackage:
         import tomllib
         from pathlib import Path
 
-        toml_path = Path(__file__).parent.parent.parent / "agnostic.agpkg.toml"
+        toml_path = Path(__file__).parent.parent.parent.parent / "agnostic.agpkg.toml"
         assert toml_path.exists()
 
         with open(toml_path, "rb") as f:

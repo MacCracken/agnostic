@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -50,7 +52,7 @@ class SelfHealingTool(BaseTool):
         self, failed_selector: str, page_url: str, screenshot_path: str | None = None
     ) -> dict[str, Any]:
         """Perform self-healing of failed UI selectors"""
-        healing_result = {
+        healing_result: dict[str, Any] = {
             "original_selector": failed_selector,
             "healed_selector": None,
             "healing_method": None,
@@ -94,7 +96,11 @@ class SelfHealingTool(BaseTool):
 
             # Apply advanced template matching for common UI elements
             templates = await self._get_dynamic_ui_templates(failed_selector)
-            best_match = {"confidence": 0.0, "location": None, "template": None}
+            best_match: dict[str, Any] = {
+                "confidence": 0.0,
+                "location": None,
+                "template": None,
+            }
 
             for template_name, template_img in templates.items():
                 # Try multiple template matching methods
@@ -412,7 +418,7 @@ class SelfHealingTool(BaseTool):
                 """,
                     location[0],
                     location[1],
-                )
+                )  # type: ignore[call-arg]
 
                 await browser.close()
 
@@ -434,11 +440,11 @@ class SelfHealingTool(BaseTool):
                     for prefix in priority_order:
                         for selector in selectors:
                             if selector.startswith(prefix):
-                                return selector
+                                return str(selector)
 
                     # Fallback to first available selector
                     return (
-                        selectors[0]
+                        str(selectors[0])
                         if selectors
                         else f"element-at-{location[0]}-{location[1]}"
                     )
@@ -508,7 +514,7 @@ class ModelBasedTestingTool(BaseTool):
         }
 
     def _create_state_model(
-        self, system_spec: dict, user_flows: list[str]
+        self, system_spec: dict[str, Any], user_flows: list[str]
     ) -> dict[str, Any]:
         """Create finite state machine model"""
         states = [
@@ -565,7 +571,7 @@ class ModelBasedTestingTool(BaseTool):
         ]
 
     def _analyze_coverage(
-        self, system_spec: dict, user_flows: list[str]
+        self, system_spec: dict[str, Any], user_flows: list[str]
     ) -> dict[str, Any]:
         """Analyze test coverage of the model"""
         return {
@@ -587,7 +593,9 @@ class EdgeCaseAnalysisTool(BaseTool):
     )
 
     def _run(
-        self, feature_spec: dict[str, Any], historical_data: dict | None = None
+        self,
+        feature_spec: dict[str, Any],
+        historical_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Perform comprehensive edge case analysis"""
         return {
@@ -600,7 +608,9 @@ class EdgeCaseAnalysisTool(BaseTool):
             ),
         }
 
-    def _identify_boundary_conditions(self, spec: dict) -> list[dict[str, Any]]:
+    def _identify_boundary_conditions(
+        self, spec: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Identify boundary value conditions"""
         return [
             {"condition": "Minimum input length", "value": 0, "test_type": "boundary"},
@@ -617,7 +627,7 @@ class EdgeCaseAnalysisTool(BaseTool):
             },
         ]
 
-    def _identify_error_scenarios(self, spec: dict) -> list[dict[str, Any]]:
+    def _identify_error_scenarios(self, spec: dict[str, Any]) -> list[dict[str, Any]]:
         """Identify potential error scenarios"""
         return [
             {"scenario": "Network timeout", "probability": "medium", "impact": "high"},
@@ -634,7 +644,7 @@ class EdgeCaseAnalysisTool(BaseTool):
             {"scenario": "Memory exhaustion", "probability": "low", "impact": "high"},
         ]
 
-    def _identify_performance_cases(self, spec: dict) -> list[dict[str, Any]]:
+    def _identify_performance_cases(self, spec: dict[str, Any]) -> list[dict[str, Any]]:
         """Identify performance-related edge cases"""
         return [
             {"case": "Concurrent user limit", "threshold": 1000, "metric": "users"},
@@ -647,7 +657,7 @@ class EdgeCaseAnalysisTool(BaseTool):
             },
         ]
 
-    def _identify_security_cases(self, spec: dict) -> list[dict[str, Any]]:
+    def _identify_security_cases(self, spec: dict[str, Any]) -> list[dict[str, Any]]:
         """Identify security-related edge cases"""
         return [
             {
@@ -673,7 +683,7 @@ class EdgeCaseAnalysisTool(BaseTool):
         ]
 
     def _assess_edge_case_risk(
-        self, spec: dict, historical_data: dict | None
+        self, spec: dict[str, Any], historical_data: dict[str, Any] | None
     ) -> dict[str, Any]:
         """Assess risk level for identified edge cases"""
         return {
@@ -735,8 +745,8 @@ class AITestGenerationTool(BaseTool):
         return test_suite
 
     async def _generate_functional_tests(
-        self, requirements: str, code_context: dict
-    ) -> list[dict]:
+        self, requirements: str, code_context: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate functional test cases"""
         prompt = f"""Based on these requirements: {requirements}
 
@@ -751,7 +761,7 @@ Generate 5-8 functional test cases in JSON format with:
 Return as a JSON array of test cases."""
 
         try:
-            response = await self.llm.agenerate([prompt])
+            response = await self.llm.agenerate([prompt])  # type: ignore[attr-defined]
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_functional_tests()
@@ -759,8 +769,8 @@ Return as a JSON array of test cases."""
             return self._fallback_functional_tests()
 
     async def _generate_edge_case_tests(
-        self, requirements: str, code_context: dict
-    ) -> list[dict]:
+        self, requirements: str, code_context: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate edge case test scenarios"""
         prompt = f"""Based on these requirements: {requirements}
 
@@ -769,7 +779,7 @@ Generate 5-8 edge case test scenarios that test unusual inputs, race conditions,
 Return as JSON with: test_id, test_name, description, edge_condition, test_data, expected_result"""
 
         try:
-            response = await self.llm.agenerate([prompt])
+            response = await self.llm.agenerate([prompt])  # type: ignore[attr-defined]
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_edge_case_tests()
@@ -777,8 +787,8 @@ Return as JSON with: test_id, test_name, description, edge_condition, test_data,
             return self._fallback_edge_case_tests()
 
     async def _generate_negative_tests(
-        self, requirements: str, code_context: dict
-    ) -> list[dict]:
+        self, requirements: str, code_context: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate negative test cases"""
         prompt = f"""Based on these requirements: {requirements}
 
@@ -787,7 +797,7 @@ Generate 5 negative test cases that verify error handling, invalid inputs, missi
 Return as JSON with: test_id, test_name, description, invalid_input, expected_error"""
 
         try:
-            response = await self.llm.agenerate([prompt])
+            response = await self.llm.agenerate([prompt])  # type: ignore[attr-defined]
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_negative_tests()
@@ -795,8 +805,8 @@ Return as JSON with: test_id, test_name, description, invalid_input, expected_er
             return self._fallback_negative_tests()
 
     async def _generate_boundary_tests(
-        self, requirements: str, code_context: dict
-    ) -> list[dict]:
+        self, requirements: str, code_context: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate boundary value analysis tests"""
         prompt = f"""Based on these requirements: {requirements}
 
@@ -805,7 +815,7 @@ Generate 5 boundary value tests for numeric ranges, string lengths, date limits,
 Return as JSON with: test_id, test_name, boundary_type, boundary_value, test_data, expected_result"""
 
         try:
-            response = await self.llm.agenerate([prompt])
+            response = await self.llm.agenerate([prompt])  # type: ignore[attr-defined]
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_boundary_tests()
@@ -813,8 +823,8 @@ Return as JSON with: test_id, test_name, boundary_type, boundary_value, test_dat
             return self._fallback_boundary_tests()
 
     async def _generate_integration_tests(
-        self, requirements: str, code_context: dict
-    ) -> list[dict]:
+        self, requirements: str, code_context: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate integration test scenarios"""
         prompt = f"""Based on these requirements: {requirements}
 
@@ -823,7 +833,7 @@ Generate 5 integration test scenarios that test interactions between components,
 Return as JSON with: test_id, test_name, components_involved, test_sequence, expected_result"""
 
         try:
-            response = await self.llm.agenerate([prompt])
+            response = await self.llm.agenerate([prompt])  # type: ignore[attr-defined]
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_integration_tests()
@@ -831,8 +841,8 @@ Return as JSON with: test_id, test_name, components_involved, test_sequence, exp
             return self._fallback_integration_tests()
 
     async def _generate_ui_tests(
-        self, requirements: str, code_context: dict
-    ) -> list[dict]:
+        self, requirements: str, code_context: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate UI/UX test scenarios"""
         prompt = f"""Based on these requirements: {requirements}
 
@@ -841,28 +851,31 @@ Generate 5 UI test scenarios for layout, responsiveness, accessibility, and user
 Return as JSON with: test_id, test_name, ui_element, test_action, validation_criteria"""
 
         try:
-            response = await self.llm.agenerate([prompt])
+            response = await self.llm.agenerate([prompt])  # type: ignore[attr-defined]
             content = response.generations[0][0].text
             test_cases = self._parse_llm_response(content)
             return test_cases if test_cases else self._fallback_ui_tests()
         except Exception:
             return self._fallback_ui_tests()
 
-    def _parse_llm_response(self, content: str) -> list[dict]:
+    def _parse_llm_response(self, content: str) -> list[dict[str, Any]]:
         """Parse LLM response into test cases"""
         try:
             import re
 
             json_match = re.search(r"\[.*\]", content, re.DOTALL)
             if json_match:
-                return json.loads(json_match.group())
+                result: list[dict[str, Any]] = json.loads(json_match.group())
+                return result
         except (json.JSONDecodeError, AttributeError):
             pass
         return []
 
-    def _analyze_coverage(self, test_cases: list[dict], requirements: str) -> dict:
+    def _analyze_coverage(
+        self, test_cases: list[dict[str, Any]], requirements: str
+    ) -> dict[str, Any]:
         """Analyze test coverage of requirements"""
-        coverage = {
+        coverage: dict[str, float] = {
             "functional_coverage": 0,
             "edge_case_coverage": 0,
             "negative_coverage": 0,
@@ -897,7 +910,9 @@ Return as JSON with: test_id, test_name, ui_element, test_action, validation_cri
 
         return coverage
 
-    def _generate_test_recommendations(self, test_cases: list[dict]) -> list[str]:
+    def _generate_test_recommendations(
+        self, test_cases: list[dict[str, Any]]
+    ) -> list[str]:
         """Generate recommendations for test suite"""
         recs = []
 
@@ -919,7 +934,7 @@ Return as JSON with: test_id, test_name, ui_element, test_action, validation_cri
 
         return recs
 
-    def _fallback_functional_tests(self) -> list[dict]:
+    def _fallback_functional_tests(self) -> list[dict[str, Any]]:
         return [
             {
                 "test_id": "func_001",
@@ -941,7 +956,7 @@ Return as JSON with: test_id, test_name, ui_element, test_action, validation_cri
             },
         ]
 
-    def _fallback_edge_case_tests(self) -> list[dict]:
+    def _fallback_edge_case_tests(self) -> list[dict[str, Any]]:
         return [
             {
                 "test_id": "edge_001",
@@ -963,7 +978,7 @@ Return as JSON with: test_id, test_name, ui_element, test_action, validation_cri
             },
         ]
 
-    def _fallback_negative_tests(self) -> list[dict]:
+    def _fallback_negative_tests(self) -> list[dict[str, Any]]:
         return [
             {
                 "test_id": "neg_001",
@@ -979,7 +994,7 @@ Return as JSON with: test_id, test_name, ui_element, test_action, validation_cri
             },
         ]
 
-    def _fallback_boundary_tests(self) -> list[dict]:
+    def _fallback_boundary_tests(self) -> list[dict[str, Any]]:
         return [
             {
                 "test_id": "bnd_001",
@@ -995,7 +1010,7 @@ Return as JSON with: test_id, test_name, ui_element, test_action, validation_cri
             },
         ]
 
-    def _fallback_integration_tests(self) -> list[dict]:
+    def _fallback_integration_tests(self) -> list[dict[str, Any]]:
         return [
             {
                 "test_id": "int_001",
@@ -1011,7 +1026,7 @@ Return as JSON with: test_id, test_name, ui_element, test_action, validation_cri
             },
         ]
 
-    def _fallback_ui_tests(self) -> list[dict]:
+    def _fallback_ui_tests(self) -> list[dict[str, Any]]:
         return [
             {
                 "test_id": "ui_001",
@@ -1073,7 +1088,7 @@ class CodeAnalysisTestGeneratorTool(BaseTool):
                 pass
         return "\n".join(content)
 
-    def _extract_functions(self, code: str) -> list[dict]:
+    def _extract_functions(self, code: str) -> list[dict[str, Any]]:
         """Extract function definitions from code"""
         import re
 
@@ -1103,7 +1118,7 @@ class CodeAnalysisTestGeneratorTool(BaseTool):
 
         return functions
 
-    def _extract_classes(self, code: str) -> list[dict]:
+    def _extract_classes(self, code: str) -> list[dict[str, Any]]:
         """Extract class definitions from code"""
         import re
 
@@ -1133,7 +1148,9 @@ class CodeAnalysisTestGeneratorTool(BaseTool):
 
         return classes
 
-    def _generate_tests_for_function(self, func: dict) -> list[dict]:
+    def _generate_tests_for_function(
+        self, func: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate test cases for a function"""
         tests = []
 
@@ -1170,7 +1187,7 @@ class CodeAnalysisTestGeneratorTool(BaseTool):
 
         return tests
 
-    def _generate_tests_for_class(self, cls: dict) -> list[dict]:
+    def _generate_tests_for_class(self, cls: dict[str, Any]) -> list[dict[str, Any]]:
         """Generate test cases for a class"""
         tests = []
 
@@ -1198,8 +1215,11 @@ class CodeAnalysisTestGeneratorTool(BaseTool):
         return tests
 
     def _calculate_code_coverage(
-        self, test_cases: list[dict], functions: list, classes: list
-    ) -> dict:
+        self,
+        test_cases: list[dict[str, Any]],
+        functions: list[dict[str, Any]],
+        classes: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Calculate code coverage metrics"""
         total_targets = len(functions) + len(classes)
         tested_targets = len({tc.get("target", "") for tc in test_cases})
@@ -1212,7 +1232,9 @@ class CodeAnalysisTestGeneratorTool(BaseTool):
             ),
         }
 
-    def _generate_analysis_recommendations(self, test_cases: list[dict]) -> list[str]:
+    def _generate_analysis_recommendations(
+        self, test_cases: list[dict[str, Any]]
+    ) -> list[str]:
         """Generate recommendations from code analysis"""
         recs = []
 
@@ -1263,10 +1285,14 @@ class AutonomousTestDataGeneratorTool(BaseTool):
         }
 
     def _generate_record(
-        self, data_type: str, schema: dict, constraints: dict, index: int
-    ) -> dict:
+        self,
+        data_type: str,
+        schema: dict[str, Any],
+        constraints: dict[str, Any],
+        index: int,
+    ) -> dict[str, Any]:
         """Generate a single data record"""
-        record = {"id": index + 1}
+        record: dict[str, Any] = {"id": index + 1}
 
         if data_type == "user":
             record["username"] = f"user_{index + 1}"
@@ -1291,7 +1317,9 @@ class AutonomousTestDataGeneratorTool(BaseTool):
 
         return record
 
-    def _validate_constraints(self, data: list[dict], constraints: dict) -> dict:
+    def _validate_constraints(
+        self, data: list[dict[str, Any]], constraints: dict[str, Any]
+    ) -> dict[str, Any]:
         """Validate generated data against constraints"""
         validation = {
             "total_records": len(data),
@@ -1315,7 +1343,7 @@ class AutonomousTestDataGeneratorTool(BaseTool):
 
         return validation
 
-    def _assess_data_quality(self, data: list[dict]) -> dict:
+    def _assess_data_quality(self, data: list[dict[str, Any]]) -> dict[str, Any]:
         """Assess quality of generated data"""
         if not data:
             return {"quality_score": 0, "issues": ["No data generated"]}
@@ -1339,7 +1367,7 @@ class AutonomousTestDataGeneratorTool(BaseTool):
         }
 
     def _generate_data_recommendations(
-        self, data: list[dict], constraints: dict
+        self, data: list[dict[str, Any]], constraints: dict[str, Any]
     ) -> list[str]:
         """Generate recommendations for test data"""
         recs = []
@@ -1358,7 +1386,7 @@ class AutonomousTestDataGeneratorTool(BaseTool):
 
 
 class SeniorQAAgent:
-    def __init__(self):
+    def __init__(self) -> None:
         # Validate environment variables
         validation = config.validate_required_env_vars()
         if not all(validation.values()):
@@ -1601,7 +1629,7 @@ class SeniorQAAgent:
         }
 
     def _generate_senior_recommendations(
-        self, scenario: dict, complexity: dict
+        self, scenario: dict[str, Any], complexity: dict[str, Any]
     ) -> list[str]:
         """Generate senior-level recommendations"""
         recommendations = []
@@ -1627,8 +1655,8 @@ class SeniorQAAgent:
         return recommendations
 
     async def _notify_manager_completion(
-        self, session_id: str, scenario_id: str, result: dict
-    ):
+        self, session_id: str, scenario_id: str, result: dict[str, Any]
+    ) -> None:
         """Notify QA Manager of task completion"""
         notification = {
             "agent": "senior_qa",
@@ -1644,7 +1672,7 @@ class SeniorQAAgent:
         )
 
 
-async def main():
+async def main() -> None:
     """Main entry point for Senior QA agent with Celery worker"""
     # Apply AGNOS environment profile (dev/staging/prod defaults)
     try:
@@ -1660,8 +1688,8 @@ async def main():
     logger.info("Starting Senior QA Celery worker...")
 
     # Define Celery task for handling scenarios
-    @senior_agent.celery_app.task(bind=True, name="senior_qa.handle_complex_scenario")
-    def handle_complex_task(self, task_data_json: str):
+    @senior_agent.celery_app.task(bind=True, name="senior_qa.handle_complex_scenario")  # type: ignore[untyped-decorator]
+    def handle_complex_task(self: Any, task_data_json: str) -> dict[str, Any]:
         """Celery task wrapper for handling complex scenarios"""
         try:
             import asyncio
@@ -1674,9 +1702,9 @@ async def main():
             return {"status": "error", "error": str(e)}
 
     # Start Redis listener for real-time task processing
-    async def redis_task_listener():
+    async def redis_task_listener() -> None:
         """Listen for tasks from Redis pub/sub"""
-        pubsub = senior_agent.redis_client.pubsub()
+        pubsub = senior_agent.redis_client.pubsub()  # type: ignore[no-untyped-call]
         try:
             pubsub.subscribe("senior_qa:tasks")
 
@@ -1704,7 +1732,7 @@ async def main():
     # Run both Celery worker and Redis listener
     import threading
 
-    def start_celery_worker():
+    def start_celery_worker() -> None:
         """Start Celery worker in separate thread"""
         argv = [
             "worker",

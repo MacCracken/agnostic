@@ -50,7 +50,7 @@ class AuthManager:
     existing callers continue to work without changes.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.redis_client = config.get_async_redis_client()
 
         environment = os.getenv("ENVIRONMENT", "development")
@@ -225,11 +225,11 @@ class AuthManager:
             logger.error(f"Error getting user {user_id}: {e}")
             return None
 
-    async def _save_user(self, user: User):
+    async def _save_user(self, user: User) -> None:
         """Save user to Redis."""
         await self.oauth_provider._save_user(user)
 
-    async def _update_last_login(self, user_id: str):
+    async def _update_last_login(self, user_id: str) -> None:
         """Update user's last login time."""
         await self.oauth_provider._update_last_login(user_id)
 

@@ -16,6 +16,7 @@ import re
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -225,7 +226,7 @@ class _EventBuffer:
 
     def push(self, event: dict[str, Any]) -> str:
         """Add an event and notify subscribers. Returns event ID."""
-        event_id = event.get("event_id", uuid.uuid4().hex)
+        event_id: str = event.get("event_id", uuid.uuid4().hex)
         event["event_id"] = event_id
         self._events[event_id] = event
         while len(self._events) > self._max_size:
@@ -276,7 +277,7 @@ async def receive_yeoman_webhook(
     request: Request,
     x_webhook_signature: str | None = Header(default=None, alias="X-Webhook-Signature"),
     x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
-):
+) -> WebhookResponse:
     """Receive webhook events from SecureYeoman extension hooks.
 
     Accepts events like ``after-deploy``, ``on-pr-merge``, ``on-push``,
@@ -396,8 +397,8 @@ async def receive_yeoman_webhook(
 
 @router.get("/yeoman/events/stream")
 async def yeoman_event_stream(
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> StreamingResponse:
     """Server-Sent Events stream for real-time QA events.
 
     SecureYeoman connects here to receive live updates on:
@@ -416,7 +417,7 @@ async def yeoman_event_stream(
 
     sub_id, queue = _event_buffer.subscribe()
 
-    async def _generate():
+    async def _generate() -> AsyncIterator[str]:
         try:
             # Send initial connection event
             yield f"event: connected\ndata: {json.dumps({'subscriber_id': sub_id})}\n\n"
@@ -456,8 +457,8 @@ async def yeoman_event_stream(
 @router.get("/yeoman/events", response_model=YeomanEventsResponse)
 async def list_yeoman_events(
     limit: int = 50,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """List recent webhook events (REST fallback for non-SSE clients)."""
     if not YEOMAN_WEBHOOKS_ENABLED:
         raise HTTPException(

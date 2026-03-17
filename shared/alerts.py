@@ -152,7 +152,9 @@ class AlertManager:
             self._evict_stale_cooldowns()
             # Hard-cap: if still too large after eviction, drop oldest entries
             if len(self._last_fired) > _COOLDOWN_MAX_ENTRIES:
-                sorted_keys = sorted(self._last_fired, key=self._last_fired.get)
+                sorted_keys = sorted(
+                    self._last_fired, key=lambda k: self._last_fired[k]
+                )
                 for k in sorted_keys[: len(self._last_fired) - _COOLDOWN_MAX_ENTRIES]:
                     del self._last_fired[k]
 
@@ -331,7 +333,7 @@ class HealthMonitor:
         self.poll_interval = int(os.getenv("ALERT_POLL_INTERVAL_SECONDS", "30"))
         self._previous_status: str | None = None
         self._previous_agents: dict[str, str] = {}
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         if not ALERTS_ENABLED:

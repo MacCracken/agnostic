@@ -1,5 +1,7 @@
 """Dashboard, alerts, and metrics endpoints."""
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -100,15 +102,19 @@ class RecordingsResponse(BaseModel):
 
 
 @router.get("/dashboard", response_model=DashboardDataResponse)
-async def get_dashboard(user: dict = Depends(get_current_user)):
+async def get_dashboard(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     from webgui.dashboard import dashboard_manager
 
-    data = await dashboard_manager.export_dashboard_data()
+    data: dict[str, Any] = await dashboard_manager.export_dashboard_data()
     return data
 
 
 @router.get("/dashboard/sessions", response_model=ItemListResponse)
-async def get_dashboard_sessions(user: dict = Depends(get_current_user)):
+async def get_dashboard_sessions(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     from webgui.dashboard import dashboard_manager
 
     sessions = await dashboard_manager.get_active_sessions()
@@ -117,7 +123,9 @@ async def get_dashboard_sessions(user: dict = Depends(get_current_user)):
 
 
 @router.get("/dashboard/agents", response_model=ItemListResponse)
-async def get_dashboard_agents(user: dict = Depends(get_current_user)):
+async def get_dashboard_agents(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     from webgui.dashboard import dashboard_manager
 
     agents = await dashboard_manager.get_agent_status()
@@ -126,7 +134,9 @@ async def get_dashboard_agents(user: dict = Depends(get_current_user)):
 
 
 @router.get("/dashboard/metrics", response_model=MetricsDataResponse)
-async def get_dashboard_metrics(user: dict = Depends(get_current_user)):
+async def get_dashboard_metrics(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     from webgui.dashboard import dashboard_manager
 
     metrics = await dashboard_manager.get_resource_metrics()
@@ -134,7 +144,9 @@ async def get_dashboard_metrics(user: dict = Depends(get_current_user)):
 
 
 @router.get("/dashboard/agent-metrics", response_model=AgentMetricsDashboardResponse)
-async def get_agent_dashboard(user: dict = Depends(get_current_user)):
+async def get_agent_dashboard(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Per-agent metrics: task counts, success rates, LLM token usage."""
     from shared.agent_metrics import get_agent_metrics
 
@@ -142,7 +154,9 @@ async def get_agent_dashboard(user: dict = Depends(get_current_user)):
 
 
 @router.get("/dashboard/llm", response_model=LLMMetricsDashboardResponse)
-async def get_llm_dashboard(user: dict = Depends(get_current_user)):
+async def get_llm_dashboard(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Aggregated LLM usage metrics: call counts, error rates, by method."""
     from shared.agent_metrics import get_llm_metrics
 
@@ -150,15 +164,20 @@ async def get_llm_dashboard(user: dict = Depends(get_current_user)):
 
 
 @router.get("/dashboard/llm-gateway", response_model=GatewayHealthResponse)
-async def get_llm_gateway_health(user: dict = Depends(get_current_user)):
+async def get_llm_gateway_health(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """AGNOS LLM Gateway health check and status."""
     from config.model_manager import model_manager
 
-    return await model_manager.gateway_health()
+    result: dict[str, Any] = await model_manager.gateway_health()
+    return result
 
 
 @router.get("/dashboard/yeoman", response_model=YeomanStatusResponse)
-async def get_yeoman_status(user: dict = Depends(get_current_user)):
+async def get_yeoman_status(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Get cached YEOMAN task results and status for unified dashboard view."""
     try:
         from shared.yeoman_a2a_client import yeoman_a2a_client
@@ -175,7 +194,9 @@ async def get_yeoman_status(user: dict = Depends(get_current_user)):
 
 
 @router.get("/dashboard/unified", response_model=UnifiedDashboardResponse)
-async def get_unified_dashboard(user: dict = Depends(get_current_user)):
+async def get_unified_dashboard(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Get combined AGNOSTIC + YEOMAN status for unified AGNOS dashboard view."""
     from webgui.dashboard import dashboard_manager
 
@@ -183,7 +204,7 @@ async def get_unified_dashboard(user: dict = Depends(get_current_user)):
     agnostic_data = await dashboard_manager.export_dashboard_data()
 
     # YEOMAN data (if available)
-    yeoman_data: dict = {"enabled": False, "cached_results": {}}
+    yeoman_data: dict[str, Any] = {"enabled": False, "cached_results": {}}
     try:
         from shared.yeoman_a2a_client import yeoman_a2a_client
 
@@ -197,7 +218,7 @@ async def get_unified_dashboard(user: dict = Depends(get_current_user)):
         pass
 
     # AGNOS bridge status
-    bridge_status: dict = {"enabled": False}
+    bridge_status: dict[str, Any] = {"enabled": False}
     try:
         from shared.agnos_dashboard_bridge import agnos_dashboard_bridge
 
@@ -221,7 +242,9 @@ async def get_unified_dashboard(user: dict = Depends(get_current_user)):
 
 
 @router.get("/dashboard/widget", response_model=WidgetResponse)
-async def get_embeddable_widget(user: dict = Depends(get_current_user)):
+async def get_embeddable_widget(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Compact JSON optimized for SecureYeoman dashboard embedding.
 
     Returns a minimal summary: agent status, active sessions, pass/fail rates,
@@ -230,10 +253,11 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
     from webgui.dashboard import dashboard_manager
 
     # Core dashboard data
+    dashboard_data: dict[str, Any] = {}
     try:
         dashboard_data = await dashboard_manager.export_dashboard_data()
     except Exception:
-        dashboard_data = {}
+        pass
 
     # Agent status summary
     agents_summary = []
@@ -241,8 +265,8 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
         agents = await dashboard_manager.get_agent_status()
         agents_summary = [
             {
-                "name": a.name,
-                "status": a.status,
+                "name": a.agent_name,
+                "status": a.status.value,
                 "tasks_completed": getattr(a, "tasks_completed", 0),
             }
             for a in agents
@@ -254,7 +278,7 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
     try:
         sessions = await dashboard_manager.get_active_sessions()
         active_sessions = len(
-            [s for s in sessions if s.status in ("running", "pending")]
+            [s for s in sessions if s.status.value in ("running", "pending")]
         )
         total_sessions = len(sessions)
     except Exception:
@@ -262,11 +286,11 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
         total_sessions = 0
 
     # Per-agent metrics
-    agent_metrics = {}
+    agent_metrics: dict[str, Any] = {}
     try:
         from shared.agent_metrics import get_agent_metrics
 
-        agent_metrics = get_agent_metrics()
+        agent_metrics = get_agent_metrics()  # type: ignore[assignment]
     except Exception as e:
         logger.debug("Failed to get agent metrics for dashboard: %s", e)
 
@@ -312,7 +336,9 @@ async def get_embeddable_widget(user: dict = Depends(get_current_user)):
 
 
 @router.get("/dashboard/token-budget", response_model=TokenBudgetResponse)
-async def get_token_budget_pools(user: dict = Depends(get_current_user)):
+async def get_token_budget_pools(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Display AGNOS token budget pool metrics."""
     try:
         from config.agnos_token_budget import agnos_token_budget
@@ -330,9 +356,10 @@ async def get_token_budget_pools(user: dict = Depends(get_current_user)):
         # Also get per-agent remaining for our pool
         from config.agnos_agent_registration import AGNOSTIC_AGENTS
 
-        agent_budgets = {}
+        agent_budgets: dict[str, Any] = {}
         for agent_key, agent_config in AGNOSTIC_AGENTS.items():
-            remaining = await agnos_token_budget.get_remaining(agent_config["agent_id"])
+            agent_id: str = agent_config["agent_id"]  # type: ignore[assignment]
+            remaining = await agnos_token_budget.get_remaining(agent_id)
             if remaining is not None:
                 agent_budgets[agent_key] = remaining
 
@@ -353,7 +380,9 @@ async def get_token_budget_pools(user: dict = Depends(get_current_user)):
 
 
 @router.get("/dashboard/recordings", response_model=RecordingsResponse)
-async def get_active_recordings(user: dict = Depends(get_current_user)):
+async def get_active_recordings(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """List active screen recording sessions."""
     try:
         from shared.agnos_recording_client import agnos_recording
@@ -378,8 +407,8 @@ async def get_active_recordings(user: dict = Depends(get_current_user)):
 async def list_alerts(
     limit: int = Query(50, ge=1, le=200),
     severity: str | None = Query(None),
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Query recent alerts from Redis stream."""
     try:
         from config.environment import config
@@ -413,7 +442,7 @@ _METRICS_TOKEN = os.getenv("METRICS_AUTH_TOKEN", "")
 @router.get("/metrics")
 async def get_metrics(
     authorization: str | None = Header(default=None),
-):
+) -> JSONResponse:
     """Prometheus scrape endpoint. Set METRICS_AUTH_TOKEN to require a Bearer token."""
     if _METRICS_TOKEN and (
         not authorization

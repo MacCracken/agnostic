@@ -10,6 +10,8 @@ Configure via:
 - AGNOS_AGENT_API_KEY: API key for daimon (shared with agent registration)
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -63,6 +65,7 @@ class AgnosRagClient:
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
 
+        self._circuit: CircuitBreaker | None = None
         try:
             from shared.resilience import CircuitBreaker
 
@@ -70,9 +73,9 @@ class AgnosRagClient:
                 name="agnos_rag", failure_threshold=5, recovery_timeout=60.0
             )
         except ImportError:
-            self._circuit = None
+            pass
 
-    async def _get_client(self) -> "httpx.AsyncClient":
+    async def _get_client(self) -> httpx.AsyncClient:
         async with self._client_lock:
             if self._client is None or self._client.is_closed:
                 self._client = httpx.AsyncClient(
@@ -129,7 +132,7 @@ class AgnosRagClient:
             )
             response.raise_for_status()
             self._record_success()
-            result = response.json()
+            result: dict[str, Any] = response.json()
             logger.info(
                 "Ingested document (%d chars, %d chunks)",
                 len(text),
@@ -228,8 +231,9 @@ class AgnosRagClient:
             )
             response.raise_for_status()
             self._record_success()
-            data = response.json()
-            return data.get("formatted_context", "")
+            data: dict[str, Any] = response.json()
+            result: str = data.get("formatted_context", "")
+            return result
         except Exception as exc:
             self._record_failure()
             logger.debug("RAG formatted query failed: %s", exc)

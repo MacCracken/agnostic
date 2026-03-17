@@ -10,6 +10,8 @@ Configure via:
 - AGNOS_REASONING_API_KEY: API key for AGNOS reasoning API
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -77,6 +79,7 @@ class AgnosReasoningClient:
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
 
+        self._circuit: CircuitBreaker | None = None
         try:
             from shared.resilience import CircuitBreaker
 
@@ -84,7 +87,7 @@ class AgnosReasoningClient:
                 name="agnos_reasoning", failure_threshold=5, recovery_timeout=60.0
             )
         except ImportError:
-            self._circuit = None
+            pass
 
     async def _get_client(self) -> httpx.AsyncClient:
         async with self._client_lock:

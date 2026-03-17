@@ -2,14 +2,18 @@
 Repository for test result persistence operations.
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database.models import TestMetrics, TestReport, TestResult, TestSession
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +117,10 @@ class TestResultRepository:
             .where(TestResult.session_id == session_id)
             .group_by(TestResult.status)
         )
-        summary = {row.status: row.count for row in result.all()}
+        rows = result.all()
+        summary: dict[str, int] = {}
+        for row in rows:
+            summary[row.status] = int(row.count)  # type: ignore[call-overload]
 
         total = sum(summary.values())
         passed = summary.get("passed", 0)
@@ -301,14 +308,14 @@ class TestResultRepository:
         removed_tests = sorted(base_ids - compare_ids)
 
         # Aggregate stats
-        def _pass_rate(results: dict) -> float:
+        def _pass_rate(results: dict[str, TestResult]) -> float:
             total = len(results)
             if total == 0:
                 return 0.0
             passed = sum(1 for r in results.values() if r.status == "passed")
             return round(passed / total * 100, 2)
 
-        def _avg_time(results: dict) -> float | None:
+        def _avg_time(results: dict[str, TestResult]) -> float | None:
             times = [
                 r.execution_time_ms
                 for r in results.values()
@@ -358,7 +365,7 @@ class TestResultRepository:
             .order_by(func.date(TestResult.created_at))
         )
 
-        trends = {}
+        trends: dict[str, dict[str, Any]] = {}
         for row in result.all():
             date_str = str(row.date)
             if date_str not in trends:

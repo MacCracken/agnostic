@@ -91,14 +91,14 @@ class AgentMetrics:
     last_updated: datetime
 
 
-class _BoundedCache(OrderedDict):
+class _BoundedCache(OrderedDict[str, Any]):
     """OrderedDict with a max-size eviction policy (LRU)."""
 
     def __init__(self, max_size: int = _CACHE_MAX_ENTRIES) -> None:
         super().__init__()
         self._max_size = max_size
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: str, value: Any) -> None:
         if key in self:
             self.move_to_end(key)
         super().__setitem__(key, value)
@@ -109,7 +109,7 @@ class _BoundedCache(OrderedDict):
 class AgentMonitor:
     """Monitors agent activity and performance using async Redis."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._redis = config.get_async_redis_client()
         self._status_cache = _BoundedCache(_CACHE_MAX_ENTRIES)
         self.cache_timeout = 60  # 1 minute
@@ -419,7 +419,7 @@ class AgentMonitor:
 
     async def get_agent_communication_graph(self) -> dict[str, Any]:
         """Get agent communication flow visualization data"""
-        graph_data = {
+        graph_data: dict[str, Any] = {
             "nodes": [],
             "edges": [],
             "metadata": {
@@ -456,7 +456,7 @@ class AgentMonitor:
                 notif_keys = await self._scan_keys(notif_pattern)
 
                 for key in notif_keys:
-                    notifications = await self._redis.lrange(key, 0, -1)
+                    notifications = await self._redis.lrange(key, 0, -1)  # type: ignore[misc]
                     for notif in notifications:
                         try:
                             data = json.loads(notif)

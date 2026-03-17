@@ -154,7 +154,7 @@ class TokenManager:
             blacklist_key = (
                 f"blacklist_token:{hashlib.sha256(token.encode()).hexdigest()}"
             )
-            return await self.redis_client.exists(blacklist_key)
+            return bool(await self.redis_client.exists(blacklist_key))
         except Exception as e:
             logger.error(f"Error checking token blacklist: {e}")
             return True  # Fail closed — treat as blacklisted if Redis is unavailable

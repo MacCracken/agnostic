@@ -47,8 +47,7 @@ class AgentFactory:
         path = Path(path)
         resolved = path.resolve()
         # Block path traversal — resolved path must be under definitions dir
-        # or be an explicit absolute path that exists
-        if ".." in str(path):
+        if not resolved.is_relative_to(DEFINITIONS_DIR) and not path.is_absolute():
             raise ValueError(f"Path traversal not allowed: {path}")
         if not resolved.exists():
             raise FileNotFoundError(f"Definition file not found: {resolved}")
@@ -139,7 +138,7 @@ class AgentFactory:
         with open(path) as f:
             if path.suffix in (".yaml", ".yml"):
                 try:
-                    import yaml
+                    import yaml  # type: ignore[import-untyped]
 
                     data = yaml.safe_load(f)
                 except ImportError as exc:

@@ -4,6 +4,8 @@ Performance & Resilience Agent
 Combines performance monitoring and resilience testing capabilities
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -230,7 +232,7 @@ class AdvancedProfilingTool(BaseTool):
         }
 
     def _generate_flame_graph_data(
-        self, cpu_profile: dict, memory_profile: dict
+        self, cpu_profile: dict[str, Any], memory_profile: dict[str, Any]
     ) -> dict[str, Any]:
         """Generate flame graph compatible data"""
         hotspots = cpu_profile.get("function_hotspots", [])
@@ -253,7 +255,10 @@ class AdvancedProfilingTool(BaseTool):
         }
 
     def _identify_bottlenecks(
-        self, cpu_profile: dict, memory_profile: dict, gc_analysis: dict
+        self,
+        cpu_profile: dict[str, Any],
+        memory_profile: dict[str, Any],
+        gc_analysis: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """Identify performance bottlenecks"""
         bottlenecks = []
@@ -293,11 +298,11 @@ class AdvancedProfilingTool(BaseTool):
 
     def _generate_profiling_recommendations(
         self,
-        cpu_profile: dict,
-        memory_profile: dict,
-        gc_analysis: dict,
-        leak_detection: dict,
-        bottlenecks: list[dict],
+        cpu_profile: dict[str, Any],
+        memory_profile: dict[str, Any],
+        gc_analysis: dict[str, Any],
+        leak_detection: dict[str, Any],
+        bottlenecks: list[dict[str, Any]],
     ) -> list[str]:
         """Generate performance recommendations"""
         recs = []
@@ -329,10 +334,10 @@ class AdvancedProfilingTool(BaseTool):
 
     def _calculate_health_score(
         self,
-        cpu_profile: dict,
-        memory_profile: dict,
-        gc_analysis: dict,
-        leak_detection: dict,
+        cpu_profile: dict[str, Any],
+        memory_profile: dict[str, Any],
+        gc_analysis: dict[str, Any],
+        leak_detection: dict[str, Any],
     ) -> float:
         """Calculate overall system health score (0-100)"""
         score = 100.0
@@ -362,7 +367,7 @@ class AdvancedProfilingTool(BaseTool):
 
 
 class QAPerformanceAgent:
-    def __init__(self):
+    def __init__(self) -> None:
         self.redis_client = config.get_redis_client()
         self.celery_app = config.get_celery_app("performance_agent")
         connection_info = config.get_connection_info()
@@ -391,15 +396,19 @@ class QAPerformanceAgent:
 
     async def monitor_performance(self, system_specs: dict[str, Any]) -> dict[str, Any]:
         """Monitor system performance metrics"""
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, self.agent.tools[0]._run, system_specs
+        tools = self.agent.tools
+        assert tools is not None
+        result: dict[str, Any] = await asyncio.get_event_loop().run_in_executor(
+            None, tools[0]._run, system_specs
         )
         return result
 
     async def run_load_tests(self, load_config: dict[str, Any]) -> dict[str, Any]:
         """Execute load testing"""
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, self.agent.tools[1]._run, load_config
+        tools = self.agent.tools
+        assert tools is not None
+        result: dict[str, Any] = await asyncio.get_event_loop().run_in_executor(
+            None, tools[1]._run, load_config
         )
         return result
 
@@ -407,8 +416,10 @@ class QAPerformanceAgent:
         self, resilience_config: dict[str, Any]
     ) -> dict[str, Any]:
         """Validate system resilience"""
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, self.agent.tools[2]._run, resilience_config
+        tools = self.agent.tools
+        assert tools is not None
+        result: dict[str, Any] = await asyncio.get_event_loop().run_in_executor(
+            None, tools[2]._run, resilience_config
         )
         return result
 
@@ -487,7 +498,7 @@ class QAPerformanceAgent:
         )
 
 
-async def main():
+async def main() -> None:
     """Main entry point for Performance & Resilience agent with Celery worker"""
     # Apply AGNOS environment profile (dev/staging/prod defaults)
     try:
@@ -501,8 +512,8 @@ async def main():
 
     logger.info("Starting Performance & Resilience Celery worker...")
 
-    @agent.celery_app.task(bind=True, name="performance_agent.run_performance_suite")
-    def run_performance_suite_task(self, task_data_json: str):
+    @agent.celery_app.task(bind=True, name="performance_agent.run_performance_suite")  # type: ignore[untyped-decorator]
+    def run_performance_suite_task(self: Any, task_data_json: str) -> dict[str, Any]:
         """Celery task wrapper for performance suite"""
         try:
             task_data = json.loads(task_data_json)
@@ -512,9 +523,9 @@ async def main():
             logger.error(f"Celery performance task failed: {e}")
             return {"status": "error", "error": str(e)}
 
-    async def redis_task_listener():
+    async def redis_task_listener() -> None:
         """Listen for tasks from Redis pub/sub"""
-        pubsub = agent.redis_client.pubsub()
+        pubsub = agent.redis_client.pubsub()  # type: ignore[no-untyped-call]
         try:
             pubsub.subscribe("performance:tasks")
 
@@ -535,7 +546,7 @@ async def main():
 
     import threading
 
-    def start_celery_worker():
+    def start_celery_worker() -> None:
         """Start Celery worker in separate thread"""
         argv = [
             "worker",

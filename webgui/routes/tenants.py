@@ -88,9 +88,9 @@ class TenantUserDeleteResponse(BaseModel):
 async def list_tenants(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_tenant_repo_dependency),
-):
+) -> dict[str, Any]:
     """List tenants (admin only)."""
     _require_tenant_enabled()
 
@@ -126,9 +126,9 @@ async def list_tenants(
 @router.post("/tenants", response_model=TenantResponse)
 async def create_tenant(
     req: TenantCreate,
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_tenant_repo_dependency),
-):
+) -> dict[str, Any]:
     """Create a new tenant (admin only)."""
     _require_tenant_enabled()
 
@@ -157,9 +157,9 @@ async def create_tenant(
 @router.get("/tenants/{tenant_id}", response_model=TenantResponse)
 async def get_tenant(
     tenant_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_tenant_repo_dependency),
-):
+) -> dict[str, Any]:
     """Get tenant details."""
     _require_tenant_enabled()
     _check_tenant_access(user, tenant_id)
@@ -189,9 +189,9 @@ async def get_tenant(
 async def update_tenant(
     tenant_id: str,
     req: TenantUpdate,
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_tenant_repo_dependency),
-):
+) -> dict[str, Any]:
     """Update tenant (admin only)."""
     _require_tenant_enabled()
     _check_tenant_access(user, tenant_id)
@@ -218,9 +218,9 @@ async def update_tenant(
 @router.delete("/tenants/{tenant_id}", response_model=TenantDeleteResponse)
 async def delete_tenant(
     tenant_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_tenant_repo_dependency),
-):
+) -> dict[str, Any]:
     """Delete tenant (admin only — super_admin only for delete)."""
     _require_tenant_enabled()
 
@@ -247,9 +247,9 @@ async def list_tenant_users(
     tenant_id: str,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_tenant_repo_dependency),
-):
+) -> dict[str, Any]:
     """List users in a tenant."""
     _require_tenant_enabled()
     _check_tenant_access(user, tenant_id)
@@ -282,9 +282,9 @@ async def list_tenant_users(
 async def invite_tenant_user(
     tenant_id: str,
     req: TenantUserInvite,
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_tenant_repo_dependency),
-):
+) -> dict[str, Any]:
     """Invite user to tenant."""
     _require_tenant_enabled()
 
@@ -314,9 +314,9 @@ async def invite_tenant_user(
 async def remove_tenant_user(
     tenant_id: str,
     user_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     repo: _RepoType = Depends(_tenant_repo_dependency),
-):
+) -> dict[str, Any]:
     """Remove user from tenant."""
     _require_tenant_enabled()
 

@@ -1,11 +1,11 @@
-"""Unit tests for SecureYeoman Phase B integration modules.
+"""Tests for SecureYeoman integration modules.
 
-Tests:
+Covers:
 - MCP server auto-registration (shared/yeoman_mcp_server.py)
 - JWT validation (shared/yeoman_jwt.py)
-- Webhook receiver + HMAC (webgui/routes/yeoman_webhooks.py)
+- Webhook receiver + HMAC verification (webgui/routes/yeoman_webhooks.py)
 - Event streaming + push client (shared/yeoman_event_stream.py)
-- Embeddable metrics widget (webgui/routes/dashboard.py)
+- Event-to-task mapping
 """
 
 import asyncio
@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 
 # ============================================================================

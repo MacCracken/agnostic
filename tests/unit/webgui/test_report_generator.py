@@ -1,31 +1,36 @@
-"""Tests for webgui/exports.py — ReportGenerator, enums, dataclasses."""
+"""Tests for webgui/exports.py — ReportGenerator, enums, dataclasses, and
+path traversal sanitization in generated filenames."""
 
 import json
 import os
 import sys
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-_mock_redis = MagicMock()
+# Patch Path.mkdir before importing (singleton creates /app/reports at import time)
+with (
+    patch.object(Path, "mkdir", return_value=None),
+    patch("config.environment.config") as _mock_cfg,
+):
+    _mock_cfg.get_redis_client.return_value = Mock()
+    try:
+        from webgui.exports import (
+            ReportFormat,
+            ReportGenerator,
+            ReportMetadata,
+            ReportRequest,
+            ReportType,
+        )
+    except ImportError:
+        pytest.skip("webgui.exports module not available", allow_module_level=True)
 
-# Patch os.mkdir before webgui.exports is imported (module-level singleton).
-# Use a targeted patch so we don't break pytest's tmp_path fixture.
-_original_mkdir = os.mkdir
 
-
-def _safe_mkdir(path, mode=0o777):
-    """Allow all mkdirs except /app/reports."""
-    if str(path).startswith("/app/"):
-        return
-    return _original_mkdir(path, mode)
-
-
-_mkdir_patcher = patch("os.mkdir", side_effect=_safe_mkdir)
-_mkdir_patcher.start()
+_mock_redis = Mock()
 
 
 @pytest.fixture(autouse=True)
@@ -41,18 +46,40 @@ def _patch_redis(monkeypatch):
     _mock_redis.lrange.return_value = []
 
 
+def _make_generator():
+    with patch.object(Path, "mkdir", return_value=None):
+        gen = ReportGenerator()
+    gen.redis_client = _mock_redis
+    return gen
+
+
+@pytest.fixture()
+def report_gen(tmp_path):
+    """Create ReportGenerator with mocked Redis and temp reports dir."""
+    with (
+        patch("webgui.exports.config") as mock_config,
+        patch.object(Path, "mkdir", return_value=None),
+    ):
+        mock_config.get_redis_client.return_value = _mock_redis
+        gen = ReportGenerator()
+        gen.reports_dir = tmp_path / "reports"
+    gen.reports_dir.mkdir(exist_ok=True)
+    return gen
+
+
+# ---------------------------------------------------------------------------
+# Enums and models
+# ---------------------------------------------------------------------------
+
+
 class TestEnums:
     def test_report_format_values(self):
-        from webgui.exports import ReportFormat
-
         assert ReportFormat.PDF.value == "pdf"
         assert ReportFormat.JSON.value == "json"
         assert ReportFormat.CSV.value == "csv"
         assert ReportFormat.HTML.value == "html"
 
     def test_report_type_values(self):
-        from webgui.exports import ReportType
-
         assert ReportType.EXECUTIVE_SUMMARY.value == "executive_summary"
         assert ReportType.TECHNICAL_REPORT.value == "technical_report"
         assert ReportType.COMPLIANCE_REPORT.value == "compliance_report"
@@ -60,8 +87,6 @@ class TestEnums:
 
 class TestReportRequest:
     def test_creation(self):
-        from webgui.exports import ReportFormat, ReportRequest, ReportType
-
         req = ReportRequest(
             session_id="s1",
             report_type=ReportType.EXECUTIVE_SUMMARY,
@@ -71,11 +96,22 @@ class TestReportRequest:
         assert req.include_charts is True
         assert req.template is None
 
+    def test_creation_with_all_fields(self):
+        req = ReportRequest(
+            session_id="s1",
+            report_type=ReportType.COMPLIANCE_REPORT,
+            format=ReportFormat.PDF,
+            template="custom",
+            custom_filters={"severity": "high"},
+            include_charts=False,
+            branding={"logo": "logo.png"},
+        )
+        assert req.include_charts is False
+        assert req.branding == {"logo": "logo.png"}
+
 
 class TestReportMetadata:
     def test_creation(self):
-        from webgui.exports import ReportFormat, ReportMetadata, ReportType
-
         meta = ReportMetadata(
             report_id="r1",
             generated_at=datetime.now(),
@@ -90,13 +126,25 @@ class TestReportMetadata:
         assert meta.page_count == 5
 
 
-def _make_generator():
-    from webgui.exports import ReportGenerator
+# ---------------------------------------------------------------------------
+# ReportGenerator initialization
+# ---------------------------------------------------------------------------
 
-    with patch("pathlib.Path.mkdir"):
-        gen = ReportGenerator()
-    gen.redis_client = _mock_redis
-    return gen
+
+class TestReportGeneratorInit:
+    def test_init(self):
+        with (
+            patch("webgui.exports.config") as mock_config,
+            patch.object(Path, "mkdir", return_value=None),
+        ):
+            mock_config.get_redis_client.return_value = _mock_redis
+            gen = ReportGenerator()
+        assert gen.redis_client is _mock_redis
+
+
+# ---------------------------------------------------------------------------
+# Session data collection
+# ---------------------------------------------------------------------------
 
 
 class TestCollectSessionData:
@@ -199,6 +247,19 @@ class TestCollectSessionData:
         # Bad JSON entries are skipped (would be 12 total otherwise)
         assert len(data["timeline"]) == 6
 
+    @pytest.mark.asyncio
+    async def test_collect_with_redis_data(self, report_gen):
+        _mock_redis.get.side_effect = lambda key: (
+            json.dumps({"status": "completed"}) if "info" in key else None
+        )
+        data = await report_gen._collect_session_data("s1")
+        assert data["session_id"] == "s1"
+
+
+# ---------------------------------------------------------------------------
+# Session metrics calculation
+# ---------------------------------------------------------------------------
+
 
 class TestCalculateSessionMetrics:
     def test_empty_data(self):
@@ -261,3 +322,42 @@ class TestCalculateSessionMetrics:
         assert metrics["agent_scores"]["manager"] == 85
         assert metrics["agent_scores"]["senior"] == 90
         assert "junior" not in metrics["agent_scores"]
+
+
+# ---------------------------------------------------------------------------
+# Path traversal sanitization in generated filenames
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateFileSanitization:
+    @pytest.mark.asyncio
+    async def test_path_traversal_in_session_id_is_neutralized(self, report_gen):
+        """../../etc/passwd as session_id must not escape reports_dir."""
+        content = {"summary": "safe"}
+        req = ReportRequest(
+            session_id="../../etc/passwd",
+            report_type=ReportType.EXECUTIVE_SUMMARY,
+            format=ReportFormat.JSON,
+        )
+        file_path_str, _ = await report_gen._generate_file(
+            content, ReportFormat.JSON, req
+        )
+        generated = Path(file_path_str)
+        assert generated.resolve().is_relative_to(report_gen.reports_dir.resolve())
+        assert ".." not in generated.name
+        assert "/" not in generated.name
+
+    @pytest.mark.asyncio
+    async def test_normal_session_id_preserved(self, report_gen):
+        """Normal session IDs like session_20260101_abc should be untouched."""
+        content = {"summary": "ok"}
+        req = ReportRequest(
+            session_id="session_20260101_abc123",
+            report_type=ReportType.EXECUTIVE_SUMMARY,
+            format=ReportFormat.JSON,
+        )
+        file_path_str, _ = await report_gen._generate_file(
+            content, ReportFormat.JSON, req
+        )
+        generated = Path(file_path_str)
+        assert "session_20260101_abc123" in generated.name

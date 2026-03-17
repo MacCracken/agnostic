@@ -4,6 +4,8 @@ Assemble agent crews from definitions or presets and execute them as tasks.
 This is the generic workflow engine that replaces hardcoded QA-only orchestration.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -60,7 +62,7 @@ class TeamSpec(BaseModel):
     )
 
     @classmethod
-    def from_payload(cls, data: dict | None) -> "TeamSpec | None":
+    def from_payload(cls, data: dict[str, Any] | None) -> TeamSpec | None:
         """Build a TeamSpec from a raw dict payload, or return None."""
         if data and isinstance(data, dict):
             return cls(**data)
@@ -121,7 +123,7 @@ class CrewStatusResponse(BaseModel):
     agents: list[str]
     created_at: str
     updated_at: str
-    result: dict | None = None
+    result: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +145,9 @@ async def _run_crew_async(
     crew_redis_key = tenant_manager.task_key(tenant_id, f"crew:{crew_id}")
     task_redis_key = tenant_manager.task_key(tenant_id, task_id)
 
-    async def _update_status(status: str, result: dict | None = None) -> dict[str, Any]:
+    async def _update_status(
+        status: str, result: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         now = datetime.now(UTC).isoformat()
 
         # Update crew record
@@ -186,7 +190,7 @@ async def _run_crew_async(
         source = crew_config.get("source")
         agents = []
 
-        def _build_agents() -> list:
+        def _build_agents() -> list[Any]:
             from agents.factory import AgentFactory
 
             built = []
@@ -297,8 +301,8 @@ def _crew_done_callback(task: asyncio.Task) -> None:  # type: ignore[type-arg]
 @router.post("/crews", response_model=CrewRunResponse, status_code=201)
 async def run_crew(
     req: CrewRunRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> CrewRunResponse:
     """Assemble and run an agent crew.
 
     Provide one of:
@@ -453,8 +457,8 @@ async def run_crew(
 @router.get("/crews/{crew_id}", response_model=CrewStatusResponse)
 async def get_crew_status(
     crew_id: str,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> CrewStatusResponse:
     """Get the status of a running or completed crew."""
     from config.environment import config
     from shared.database.tenants import tenant_manager

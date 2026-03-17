@@ -10,6 +10,8 @@ Configure via:
 - AGNOS_AGENT_API_KEY: API key for daimon (shared with agent registration)
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -83,13 +85,13 @@ class AgnosRpcClient:
         try:
             from shared.resilience import CircuitBreaker
 
-            self._circuit = CircuitBreaker(
+            self._circuit: Any = CircuitBreaker(
                 name="agnos_rpc", failure_threshold=5, recovery_timeout=60.0
             )
         except ImportError:
             self._circuit = None
 
-    async def _get_client(self) -> "httpx.AsyncClient":
+    async def _get_client(self) -> httpx.AsyncClient:
         async with self._client_lock:
             if self._client is None or self._client.is_closed:
                 self._client = httpx.AsyncClient(
@@ -257,7 +259,7 @@ class AgnosRpcClient:
             )
             response.raise_for_status()
             self._record_success()
-            result = response.json()
+            result: dict[str, Any] = response.json()
             logger.debug("RPC call %s returned: %s", method, result.get("status"))
             return result
         except Exception as exc:
@@ -291,7 +293,8 @@ class AgnosRpcClient:
             response.raise_for_status()
             self._record_success()
             data = response.json()
-            return data.get("methods", [])
+            methods: list[str] = data.get("methods", [])
+            return methods
         except Exception as exc:
             self._record_failure()
             logger.debug("Failed to list RPC methods: %s", exc)

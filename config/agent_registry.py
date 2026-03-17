@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from typing import Any
 
 from agents.constants import PRESETS_DIR
 
@@ -32,7 +33,7 @@ class AgentDefinition:
     celery_queue: str  # "senior_qa"
     redis_prefix: str  # "senior"
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.agent_key)
 
 
@@ -96,18 +97,19 @@ _COMPLEXITY_ROUTING = {
 }
 
 
-def _load_preset(name: str) -> dict | None:
+def _load_preset(name: str) -> dict[str, Any] | None:
     """Load a preset JSON file by name."""
     path = os.path.join(_PRESETS_DIR, f"{name}.json")
     try:
         with open(path) as f:
-            return json.load(f)
+            result: dict[str, Any] = json.load(f)
+            return result
     except (FileNotFoundError, json.JSONDecodeError) as e:
         logger.warning(f"Could not load preset {name}: {e}")
         return None
 
 
-def _agent_def_from_info(key: str, info: dict) -> AgentDefinition:
+def _agent_def_from_info(key: str, info: dict[str, Any]) -> AgentDefinition:
     """Build an AgentDefinition from a preset agent entry."""
     defaults = _AGENT_DEFAULTS.get(key, {})
     # Internal role identifier (e.g. "senior_qa"), NOT the display role string.
@@ -141,12 +143,12 @@ class AgentRegistry:
     fast lookups for routing, display, and orchestration.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._agents: dict[str, AgentDefinition] = {}
-        self._presets: dict[str, dict] = {}
+        self._presets: dict[str, dict[str, Any]] = {}
         self._load_all_presets()
 
-    def _load_all_presets(self):
+    def _load_all_presets(self) -> None:
         """Load all preset files and index their agents."""
         if not os.path.isdir(_PRESETS_DIR):
             logger.warning(f"Presets directory not found: {_PRESETS_DIR}")
@@ -201,7 +203,7 @@ class AgentRegistry:
         agent_keys = [a.get("agent_key") for a in preset.get("agents", [])]
         return [self._agents[k] for k in agent_keys if k in self._agents]
 
-    def get_preset(self, name: str) -> dict | None:
+    def get_preset(self, name: str) -> dict[str, Any] | None:
         """Get a loaded preset by name."""
         return self._presets.get(name)
 
@@ -209,7 +211,7 @@ class AgentRegistry:
         self, domain: str | None = None, size: str | None = None
     ) -> list[str]:
         """Return loaded preset names, optionally filtered by domain and/or size."""
-        results = []
+        results: list[str] = []
         for name, data in self._presets.items():
             if domain and data.get("domain") != domain:
                 continue
@@ -222,7 +224,7 @@ class AgentRegistry:
         """Return unique domains across all loaded presets."""
         return sorted({d.get("domain", "general") for d in self._presets.values()})
 
-    def route_task(self, scenario: dict) -> AgentDefinition | None:
+    def route_task(self, scenario: dict[str, Any]) -> AgentDefinition | None:
         """Route a scenario to the appropriate agent.
 
         Looks at scenario["assigned_to"] and maps it to an agent key.

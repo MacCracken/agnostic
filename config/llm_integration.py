@@ -60,6 +60,12 @@ class LLMIntegrationService:
         self.max_tokens = 2000
         self._agent_name = agent_name
 
+        # Declare attributes with proper types before conditional assignment.
+        self.model_name: str = ""
+        self._api_key: str | None = None
+        self._base_url: str | None = None
+        self._extra_headers: dict[str, str] = {}
+
         # When AGNOS LLM Gateway is enabled, route all calls through it.
         # The gateway exposes an OpenAI-compatible API; litellm treats it
         # as an "openai/" model with a custom base_url.
@@ -84,7 +90,9 @@ class LLMIntegrationService:
                 agent_name,
             )
         else:
-            self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o")
+            self.model_name = (
+                model_name if model_name else os.getenv("OPENAI_MODEL", "gpt-4o")
+            )
             self._api_key = os.getenv("OPENAI_API_KEY")
             self._base_url = None
             self._provider_name = self._detect_provider(self.model_name)
@@ -260,7 +268,7 @@ class LLMIntegrationService:
 
     async def generate_test_scenarios(self, requirements: str) -> list[str]:
         """Generate test scenarios using LLM from requirements."""
-        return await self._llm_call(
+        result: list[str] = await self._llm_call(
             method_name="generate_test_scenarios",
             system_prompt="You are an expert QA engineer specializing in test scenario generation.",
             user_prompt=f"""
@@ -281,10 +289,11 @@ class LLMIntegrationService:
             fallback=self._fallback_scenarios(),
             expected_type=list,
         )
+        return result
 
     async def extract_acceptance_criteria(self, requirements: str) -> list[str]:
         """Extract acceptance criteria using LLM from requirements."""
-        return await self._llm_call(
+        result: list[str] = await self._llm_call(
             method_name="extract_acceptance_criteria",
             system_prompt="You are an expert QA engineer specializing in requirements analysis.",
             user_prompt=f"""
@@ -301,10 +310,11 @@ class LLMIntegrationService:
             fallback=self._fallback_criteria(),
             expected_type=list,
         )
+        return result
 
     async def identify_test_risks(self, requirements: str) -> list[str]:
         """Identify potential test risks using LLM from requirements."""
-        return await self._llm_call(
+        result: list[str] = await self._llm_call(
             method_name="identify_test_risks",
             system_prompt="You are an expert QA risk analyst with deep experience in testing risk identification.",
             user_prompt=f"""
@@ -324,12 +334,13 @@ class LLMIntegrationService:
             fallback=self._fallback_risks(),
             expected_type=list,
         )
+        return result
 
     async def perform_fuzzy_verification(
         self, test_results: dict[str, Any], business_goals: str
     ) -> dict[str, Any]:
         """Perform LLM-based fuzzy verification of test results."""
-        return await self._llm_call(
+        result: dict[str, Any] = await self._llm_call(
             method_name="perform_fuzzy_verification",
             system_prompt="You are an expert QA analyst specializing in test result verification and business alignment.",
             user_prompt=f"""
@@ -356,12 +367,13 @@ class LLMIntegrationService:
             fallback=self._fallback_verification(test_results, business_goals),
             expected_type=dict,
         )
+        return result
 
     async def analyze_security_findings(
         self, scan_results: dict[str, Any]
     ) -> dict[str, Any]:
         """Analyze security findings using LLM intelligence."""
-        return await self._llm_call(
+        result: dict[str, Any] = await self._llm_call(
             method_name="analyze_security_findings",
             system_prompt="You are a cybersecurity expert specializing in vulnerability analysis and risk assessment.",
             user_prompt=f"""
@@ -388,12 +400,13 @@ class LLMIntegrationService:
             fallback=self._fallback_security_analysis(scan_results),
             expected_type=dict,
         )
+        return result
 
     async def generate_performance_profile(
         self, performance_data: dict[str, Any]
     ) -> dict[str, Any]:
         """Generate intelligent performance profile analysis."""
-        return await self._llm_call(
+        result: dict[str, Any] = await self._llm_call(
             method_name="generate_performance_profile",
             system_prompt="You are a performance engineering expert specializing in system optimization and capacity planning.",
             user_prompt=f"""
@@ -420,6 +433,7 @@ class LLMIntegrationService:
             fallback=self._fallback_performance_analysis(performance_data),
             expected_type=dict,
         )
+        return result
 
     def _fallback_scenarios(self) -> list[str]:
         """Fallback scenarios when LLM is unavailable."""

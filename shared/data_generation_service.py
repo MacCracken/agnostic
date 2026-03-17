@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
@@ -188,7 +190,8 @@ class UnifiedDataGenerator:
         """Retrieve cached test data"""
         cached_data = self.redis_client.get(cache_key)
         if cached_data:
-            return json.loads(cached_data)  # type: ignore[arg-type]
+            result: dict[str, Any] = json.loads(cached_data)  # type: ignore[arg-type]
+            return result
         return None
 
     def generate_edge_case_data(
@@ -222,7 +225,7 @@ class UnifiedDataGenerator:
         self, preset: dict[str, Any], edge_case: str
     ) -> dict[str, Any]:
         """Generate a single edge case item"""
-        item = {}
+        item: dict[str, Any] = {}
 
         for field_name, field_config in preset.items():
             if field_name.startswith("_"):
@@ -530,7 +533,7 @@ class UnifiedDataGenerator:
 _celery_app = config.get_celery_app("data_generator")
 
 
-@_celery_app.task
+@_celery_app.task  # type: ignore[untyped-decorator]
 def generate_test_data_async(
     data_type: str, count: int, config: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -539,7 +542,7 @@ def generate_test_data_async(
     return generator.generate_test_data(data_type, count, config)
 
 
-@_celery_app.task
+@_celery_app.task  # type: ignore[untyped-decorator]
 def generate_edge_case_data_async(
     base_data_type: str, edge_cases: list[str] | None = None
 ) -> dict[str, Any]:

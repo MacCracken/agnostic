@@ -28,6 +28,7 @@ MANIFEST_FILENAME = "manifest.json"
 
 # Safety limits for ZIP import
 _MAX_UNCOMPRESSED_SIZE = 10 * 1024 * 1024  # 10 MB
+_MAX_ENTRY_SIZE = 5 * 1024 * 1024  # 5 MB per entry
 _MAX_ENTRY_COUNT = 100
 
 
@@ -43,7 +44,7 @@ class PackageManifest:
         domain: str = "general",
         author: str = "",
         license: str = "MIT",
-        min_aas_version: str = "2026.3.14",
+        min_aas_version: str = "2026.3.17",
         definitions: list[str] | None = None,
         presets: list[str] | None = None,
         tools: list[str] | None = None,
@@ -209,6 +210,13 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
                     if not SAFE_KEY_RE.match(key):
                         result["errors"].append(f"Invalid definition key: {key}")
                         continue
+                    # Per-entry size check
+                    entry_info = zf.getinfo(name)
+                    if entry_info.file_size > _MAX_ENTRY_SIZE:
+                        result["errors"].append(
+                            f"Entry {name} too large ({entry_info.file_size} bytes)"
+                        )
+                        continue
                     # Validate content is valid JSON
                     raw = zf.read(name)
                     try:
@@ -230,6 +238,13 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
                     preset_name = Path(name).stem
                     if not SAFE_KEY_RE.match(preset_name):
                         result["errors"].append(f"Invalid preset name: {preset_name}")
+                        continue
+                    # Per-entry size check
+                    entry_info = zf.getinfo(name)
+                    if entry_info.file_size > _MAX_ENTRY_SIZE:
+                        result["errors"].append(
+                            f"Entry {name} too large ({entry_info.file_size} bytes)"
+                        )
                         continue
                     raw = zf.read(name)
                     try:

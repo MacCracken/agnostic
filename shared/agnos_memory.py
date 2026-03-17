@@ -10,6 +10,8 @@ Configure via:
 - AGNOS_MEMORY_API_KEY: API key for AGNOS memory store
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -40,6 +42,7 @@ class AgnosMemoryClient:
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
 
+        self._circuit: CircuitBreaker | None = None
         try:
             from shared.resilience import CircuitBreaker
 
@@ -47,7 +50,7 @@ class AgnosMemoryClient:
                 name="agnos_memory", failure_threshold=5, recovery_timeout=60.0
             )
         except ImportError:
-            self._circuit = None
+            pass
 
     async def _get_client(self) -> httpx.AsyncClient:
         async with self._client_lock:
@@ -125,7 +128,9 @@ class AgnosMemoryClient:
             )
             response.raise_for_status()
             self._record_success()
-            return response.json().get("keys", [])
+            data: dict[str, Any] = response.json()
+            keys: list[str] = data.get("keys", [])
+            return keys
         except Exception as exc:
             self._record_failure()
             logger.debug("AGNOS memory list_keys failed: %s", exc)
@@ -162,7 +167,9 @@ class AgnosMemoryClient:
             )
             response.raise_for_status()
             self._record_success()
-            return response.json().get("values", [])
+            data: dict[str, Any] = response.json()
+            values: list[Any] = data.get("values", [])
+            return values
         except Exception:
             # Fallback to sequential retrieval if batch endpoint unavailable
             results = []
@@ -171,23 +178,23 @@ class AgnosMemoryClient:
                 results.append(val)
             return results
 
-    async def store_pattern(self, agent_id: str, pattern: dict) -> bool:
+    async def store_pattern(self, agent_id: str, pattern: dict[str, Any]) -> bool:
         """Store a test pattern (convenience for 'patterns' namespace)."""
         key = pattern.get("name", f"pattern_{id(pattern)}")
         return await self.store(agent_id, key, pattern, namespace="patterns")
 
-    async def get_patterns(self, agent_id: str) -> list[dict]:
+    async def get_patterns(self, agent_id: str) -> list[dict[str, Any]]:
         """Retrieve all stored test patterns."""
         keys = await self.list_keys(agent_id, namespace="patterns")
         values = await self.retrieve_batch(agent_id, keys, namespace="patterns")
         return [v for v in values if isinstance(v, dict)]
 
-    async def store_risk_model(self, agent_id: str, model: dict) -> bool:
+    async def store_risk_model(self, agent_id: str, model: dict[str, Any]) -> bool:
         """Store a risk model (convenience for 'risk_models' namespace)."""
         key = model.get("name", f"model_{id(model)}")
         return await self.store(agent_id, key, model, namespace="risk_models")
 
-    async def get_risk_models(self, agent_id: str) -> list[dict]:
+    async def get_risk_models(self, agent_id: str) -> list[dict[str, Any]]:
         """Retrieve all stored risk models."""
         keys = await self.list_keys(agent_id, namespace="risk_models")
         values = await self.retrieve_batch(agent_id, keys, namespace="risk_models")
@@ -198,14 +205,16 @@ class AgnosMemoryClient:
     # ------------------------------------------------------------------
 
     async def store_session(
-        self, agent_id: str, session_id: str, session_data: dict
+        self, agent_id: str, session_id: str, session_data: dict[str, Any]
     ) -> bool:
         """Persist a QA session to AGNOS memory for cross-restart survival."""
         return await self.store(
             agent_id, f"session:{session_id}", session_data, namespace="sessions"
         )
 
-    async def retrieve_session(self, agent_id: str, session_id: str) -> dict | None:
+    async def retrieve_session(
+        self, agent_id: str, session_id: str
+    ) -> dict[str, Any] | None:
         """Retrieve a persisted QA session from AGNOS memory."""
         return await self.retrieve(
             agent_id, f"session:{session_id}", namespace="sessions"
@@ -222,11 +231,11 @@ class AgnosMemoryClient:
             agent_id, f"session:{session_id}", namespace="sessions"
         )
 
-    async def store_agent_state(self, agent_id: str, state: dict) -> bool:
+    async def store_agent_state(self, agent_id: str, state: dict[str, Any]) -> bool:
         """Persist agent operational state (task counts, config, etc.)."""
         return await self.store(agent_id, "agent_state", state, namespace="state")
 
-    async def retrieve_agent_state(self, agent_id: str) -> dict | None:
+    async def retrieve_agent_state(self, agent_id: str) -> dict[str, Any] | None:
         """Retrieve persisted agent operational state."""
         return await self.retrieve(agent_id, "agent_state", namespace="state")
 

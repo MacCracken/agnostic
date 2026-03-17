@@ -11,6 +11,8 @@ Configure via:
 - AGNOS_AGENT_API_KEY: API key for daimon
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -41,6 +43,7 @@ class AgnosScreenClient:
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
 
+        self._circuit: CircuitBreaker | None = None
         try:
             from shared.resilience import CircuitBreaker
 
@@ -48,9 +51,9 @@ class AgnosScreenClient:
                 name="agnos_screen", failure_threshold=5, recovery_timeout=60.0
             )
         except ImportError:
-            self._circuit = None
+            pass
 
-    async def _get_client(self) -> "httpx.AsyncClient":
+    async def _get_client(self) -> httpx.AsyncClient:
         async with self._client_lock:
             if self._client is None or self._client.is_closed:
                 self._client = httpx.AsyncClient(
@@ -117,7 +120,8 @@ class AgnosScreenClient:
             )
             response.raise_for_status()
             self._record_success()
-            return response.json()
+            result: dict[str, Any] = response.json()
+            return result
         except Exception as exc:
             self._record_failure()
             logger.warning("Screen capture failed: %s", exc)
@@ -161,7 +165,7 @@ class AgnosScreenClient:
             )
             response.raise_for_status()
             self._record_success()
-            result = response.json()
+            result: dict[str, Any] = response.json()
             logger.info("Started recording: %s", result.get("recording_id"))
             return result
         except Exception as exc:
@@ -181,7 +185,8 @@ class AgnosScreenClient:
             )
             response.raise_for_status()
             self._record_success()
-            return response.json()
+            result: dict[str, Any] = response.json()
+            return result
         except Exception as exc:
             self._record_failure()
             logger.warning("Stop recording failed: %s", exc)
@@ -199,7 +204,8 @@ class AgnosScreenClient:
             )
             response.raise_for_status()
             self._record_success()
-            return response.json()
+            result: dict[str, Any] = response.json()
+            return result
         except Exception as exc:
             self._record_failure()
             logger.debug("Get latest frame failed: %s", exc)
@@ -220,7 +226,9 @@ class AgnosScreenClient:
             )
             response.raise_for_status()
             self._record_success()
-            return response.json().get("frames", [])
+            data: dict[str, Any] = response.json()
+            frames: list[dict[str, Any]] = data.get("frames", [])
+            return frames
         except Exception as exc:
             self._record_failure()
             logger.debug("Get frames failed: %s", exc)
@@ -238,7 +246,8 @@ class AgnosScreenClient:
             )
             response.raise_for_status()
             self._record_success()
-            return response.json()
+            result: dict[str, Any] = response.json()
+            return result
         except Exception as exc:
             self._record_failure()
             logger.debug("Get recording info failed: %s", exc)
@@ -256,7 +265,9 @@ class AgnosScreenClient:
             )
             response.raise_for_status()
             self._record_success()
-            return response.json().get("recordings", [])
+            data: dict[str, Any] = response.json()
+            recordings: list[dict[str, Any]] = data.get("recordings", [])
+            return recordings
         except Exception as exc:
             self._record_failure()
             logger.debug("List recordings failed: %s", exc)

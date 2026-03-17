@@ -43,7 +43,7 @@ class BaseModelProvider(ABC):
 
     def _resolve_api_key(self) -> str:
         """Return the configured API key."""
-        return self.api_key
+        return str(self.api_key)
 
     @abstractmethod
     async def chat_completion(
@@ -121,7 +121,7 @@ class OpenAIProvider(BaseModelProvider):
         try:
             test_messages = [{"role": "user", "content": "Hello, test connection"}]
             result = await self.chat_completion(test_messages, max_tokens=10)
-            return result.get("success", False)
+            return bool(result.get("success", False))
         except Exception as e:
             logger.error(f"OpenAI connection test failed: {e}")
             return False
@@ -140,7 +140,7 @@ class AnthropicProvider(BaseModelProvider):
         }
 
     async def chat_completion(
-        self, messages: list[dict[str, str]], **kwargs
+        self, messages: list[dict[str, str]], **kwargs: Any
     ) -> dict[str, Any]:
         """Anthropic chat completion"""
         url = f"{self.base_url}/messages"
@@ -203,7 +203,7 @@ class AnthropicProvider(BaseModelProvider):
         try:
             test_messages = [{"role": "user", "content": "Hello, test connection"}]
             result = await self.chat_completion(test_messages, max_tokens=10)
-            return result.get("success", False)
+            return bool(result.get("success", False))
         except Exception as e:
             logger.error(f"Anthropic connection test failed: {e}")
             return False
@@ -228,7 +228,7 @@ class LocalLLMProvider(BaseModelProvider):
             self.headers = config.get("headers", {"Content-Type": "application/json"})
 
     async def chat_completion(
-        self, messages: list[dict[str, str]], **kwargs
+        self, messages: list[dict[str, str]], **kwargs: Any
     ) -> dict[str, Any]:
         """Local LLM chat completion"""
         if self.provider_type == "ollama":
@@ -239,7 +239,7 @@ class LocalLLMProvider(BaseModelProvider):
             return await self._custom_completion(messages, **kwargs)
 
     async def _ollama_completion(
-        self, messages: list[dict[str, str]], **kwargs
+        self, messages: list[dict[str, str]], **kwargs: Any
     ) -> dict[str, Any]:
         """Ollama API completion"""
         url = f"{self.base_url}/api/chat"
@@ -277,7 +277,7 @@ class LocalLLMProvider(BaseModelProvider):
             return {"success": False, "error": "Connection error", "details": str(e)}
 
     async def _lm_studio_completion(
-        self, messages: list[dict[str, str]], **kwargs
+        self, messages: list[dict[str, str]], **kwargs: Any
     ) -> dict[str, Any]:
         """LM Studio API completion (OpenAI-compatible)"""
         url = f"{self.base_url}/v1/chat/completions"
@@ -314,7 +314,7 @@ class LocalLLMProvider(BaseModelProvider):
             return {"success": False, "error": "Connection error", "details": str(e)}
 
     async def _custom_completion(
-        self, messages: list[dict[str, str]], **kwargs
+        self, messages: list[dict[str, str]], **kwargs: Any
     ) -> dict[str, Any]:
         """Custom local LLM completion"""
         # Default to OpenAI-compatible format
@@ -424,7 +424,7 @@ class LocalLLMProvider(BaseModelProvider):
         try:
             test_messages = [{"role": "user", "content": "Hello, test connection"}]
             result = await self.chat_completion(test_messages, max_tokens=10)
-            return result.get("success", False)
+            return bool(result.get("success", False))
         except Exception as e:
             logger.error(f"Local LLM connection test failed: {e}")
             return False
@@ -445,7 +445,7 @@ class GoogleProvider(BaseModelProvider):
         }
 
     async def chat_completion(
-        self, messages: list[dict[str, str]], **kwargs
+        self, messages: list[dict[str, str]], **kwargs: Any
     ) -> dict[str, Any]:
         """Google Gemini chat completion"""
         url = f"{self.base_url}/models/{self.model}:generateContent"
@@ -503,7 +503,7 @@ class GoogleProvider(BaseModelProvider):
         try:
             test_messages = [{"role": "user", "content": "Hello, test connection"}]
             result = await self.chat_completion(test_messages, max_tokens=10)
-            return result.get("success", False)
+            return bool(result.get("success", False))
         except Exception as e:
             logger.error(f"Google connection test failed: {e}")
             return False
@@ -526,7 +526,7 @@ class ModelManager:
             config_path = os.path.join(os.getcwd(), self.config_file)
             if os.path.exists(config_path):
                 with open(config_path) as f:
-                    config = json.load(f)
+                    config: dict[str, Any] = json.load(f)
 
                 # Auto-enable AGNOS gateway when env var is set
                 gateway_enabled = os.getenv(
@@ -638,7 +638,7 @@ class ModelManager:
         return default_config
 
     async def chat_completion(
-        self, messages: list[dict[str, str]], provider: str | None = None, **kwargs
+        self, messages: list[dict[str, str]], provider: str | None = None, **kwargs: Any
     ) -> dict[str, Any]:
         """Perform chat completion with specified or primary provider"""
         target_provider = provider or self.primary_provider

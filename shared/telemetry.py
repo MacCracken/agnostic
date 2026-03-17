@@ -91,10 +91,10 @@ class _NoOpMeter:
 
 
 class _NoOpMetricInstrument:
-    def add(self, amount: float, attributes: dict | None = None) -> None:
+    def add(self, amount: float, attributes: dict[str, Any] | None = None) -> None:
         pass
 
-    def record(self, amount: float, attributes: dict | None = None) -> None:
+    def record(self, amount: float, attributes: dict[str, Any] | None = None) -> None:
         pass
 
 

@@ -1,4 +1,5 @@
-"""Tests for Phase 4: packaging, versioning, inter-crew delegation, custom tool upload."""
+"""Tests for agent packaging (.agpkg), definition versioning, inter-crew delegation,
+and custom tool upload."""
 
 import json
 import os
@@ -31,14 +32,27 @@ class TestPackaging:
         monkeypatch.setattr(pkg, "PRESETS_DIR", presets_dir)
 
         # Create a definition and a preset
-        (defs_dir / "my-agent.json").write_text(json.dumps({
-            "agent_key": "my-agent", "name": "My Agent",
-            "role": "R", "goal": "G", "backstory": "B",
-        }))
-        (presets_dir / "my-preset.json").write_text(json.dumps({
-            "name": "my-preset", "description": "Test",
-            "domain": "testing", "agents": [],
-        }))
+        (defs_dir / "my-agent.json").write_text(
+            json.dumps(
+                {
+                    "agent_key": "my-agent",
+                    "name": "My Agent",
+                    "role": "R",
+                    "goal": "G",
+                    "backstory": "B",
+                }
+            )
+        )
+        (presets_dir / "my-preset.json").write_text(
+            json.dumps(
+                {
+                    "name": "my-preset",
+                    "description": "Test",
+                    "domain": "testing",
+                    "agents": [],
+                }
+            )
+        )
 
         # Export
         data = pkg.export_package(
@@ -87,7 +101,9 @@ class TestPackaging:
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("manifest.json", json.dumps({"name": "pkg"}))
-            zf.writestr("definitions/existing.json", '{"agent_key": "existing", "new": true}')
+            zf.writestr(
+                "definitions/existing.json", '{"agent_key": "existing", "new": true}'
+            )
         data = buf.getvalue()
 
         result = pkg.import_package(data, overwrite=False)
@@ -108,7 +124,9 @@ class TestPackaging:
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("manifest.json", json.dumps({"name": "pkg"}))
-            zf.writestr("definitions/existing.json", '{"agent_key": "existing", "new": true}')
+            zf.writestr(
+                "definitions/existing.json", '{"agent_key": "existing", "new": true}'
+            )
 
         result = pkg.import_package(buf.getvalue(), overwrite=True)
         assert "existing" in result["definitions_installed"]
@@ -259,15 +277,23 @@ class TestInterCrewDelegation:
 
         # Create source agent
         source_defn = AgentDefinition(
-            agent_key="source", name="Source", role="R", goal="G", backstory="B",
+            agent_key="source",
+            name="Source",
+            role="R",
+            goal="G",
+            backstory="B",
             domain="domain-a",
         )
         source = BaseAgent(source_defn)
 
         # Create target definition file
         target_data = {
-            "agent_key": "target", "name": "Target", "role": "R",
-            "goal": "G", "backstory": "B", "domain": "domain-b",
+            "agent_key": "target",
+            "name": "Target",
+            "role": "R",
+            "goal": "G",
+            "backstory": "B",
+            "domain": "domain-b",
         }
 
         # Mock AgentFactory.from_file to return a mock agent
@@ -293,14 +319,14 @@ class TestCustomToolUpload:
     def test_load_valid_tool(self):
         from agents.tool_registry import _REGISTRY, load_tool_from_source
 
-        source = '''
+        source = """
 class MyCustomTool(BaseTool):
     name: str = "my_custom"
     description: str = "A custom tool"
 
     def _run(self, input_data: str) -> str:
         return "result"
-'''
+"""
         cls = load_tool_from_source("MyCustomTool", source)
         assert cls is not None
         assert "MyCustomTool" in _REGISTRY
@@ -365,7 +391,12 @@ class TestPhase4Endpoints:
         app.include_router(api_router)
 
         async def admin_override():
-            return {"user_id": "admin", "email": "a@b.com", "role": "super_admin", "permissions": []}
+            return {
+                "user_id": "admin",
+                "email": "a@b.com",
+                "role": "super_admin",
+                "permissions": [],
+            }
 
         app.dependency_overrides[get_current_user] = admin_override
         client = TestClient(app)
@@ -377,16 +408,20 @@ class TestPhase4Endpoints:
         defn = {
             "agent_key": "ver-test",
             "name": "Version Test",
-            "role": "R", "goal": "G", "backstory": "B",
+            "role": "R",
+            "goal": "G",
+            "backstory": "B",
         }
         admin_client.post("/api/v1/definitions", json=defn)
 
         # Patch versioning paths
         import agents.versioning as ver
-        ver_dir = self.defs_dir / "versions"
-        with patch.object(ver, "DEFINITIONS_DIR", self.defs_dir), \
-             patch.object(ver, "VERSIONS_DIR", ver_dir):
 
+        ver_dir = self.defs_dir / "versions"
+        with (
+            patch.object(ver, "DEFINITIONS_DIR", self.defs_dir),
+            patch.object(ver, "VERSIONS_DIR", ver_dir),
+        ):
             # Save version
             resp = admin_client.post("/api/v1/definitions/ver-test/versions")
             assert resp.status_code == 201
@@ -398,17 +433,20 @@ class TestPhase4Endpoints:
             assert len(resp.json()["versions"]) == 1
 
     def test_tool_upload(self, admin_client):
-        source = '''
+        source = """
 class UploadedTool(BaseTool):
     name: str = "uploaded"
     description: str = "An uploaded tool"
     def _run(self, x: str) -> str:
         return x
-'''
-        resp = admin_client.post("/api/v1/tools/upload", json={
-            "name": "UploadedTool",
-            "source_code": source,
-        })
+"""
+        resp = admin_client.post(
+            "/api/v1/tools/upload",
+            json={
+                "name": "UploadedTool",
+                "source_code": source,
+            },
+        )
         assert resp.status_code == 201
         assert resp.json()["status"] == "registered"
 
@@ -420,11 +458,15 @@ class UploadedTool(BaseTool):
 
         # Cleanup
         from agents.tool_registry import _REGISTRY
+
         _REGISTRY.pop("UploadedTool", None)
 
     def test_tool_upload_invalid_source(self, admin_client):
-        resp = admin_client.post("/api/v1/tools/upload", json={
-            "name": "BadTool",
-            "source_code": "this is not python {{{",
-        })
+        resp = admin_client.post(
+            "/api/v1/tools/upload",
+            json={
+                "name": "BadTool",
+                "source_code": "this is not python {{{",
+            },
+        )
         assert resp.status_code == 400

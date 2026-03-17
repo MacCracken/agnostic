@@ -45,8 +45,8 @@ class AgentMetricsResponse(BaseModel):
     "/agents/registration-status", response_model=AgentRegistrationStatusResponse
 )
 async def get_agent_registration_status(
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Get agent registration status with agnosticos."""
     try:
         from config.agnos_agent_registration import agent_registry_client
@@ -60,8 +60,8 @@ async def get_agent_registration_status(
     "/agents/register-agnostic", response_model=AgentRegistrationResultResponse
 )
 async def register_agnostic_agents(
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Register all Agnostic agents with agnosticos."""
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -79,8 +79,8 @@ async def register_agnostic_agents(
     "/agents/deregister-agnostic", response_model=AgentRegistrationResultResponse
 )
 async def deregister_agnostic_agents(
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Deregister all Agnostic agents from agnosticos."""
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -95,7 +95,9 @@ async def deregister_agnostic_agents(
 
 
 @router.get("/agents/queues", response_model=dict[str, int])
-async def get_agent_queues(user: dict = Depends(get_current_user)):
+async def get_agent_queues(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, int]:
     from webgui.agent_monitor import agent_monitor
 
     return await agent_monitor.get_queue_depths()
@@ -104,8 +106,8 @@ async def get_agent_queues(user: dict = Depends(get_current_user)):
 @router.get("/agents/{agent_name}", response_model=AgentMetricsResponse)
 async def get_agent_detail(
     agent_name: str,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     from webgui.agent_monitor import agent_monitor
 
     metrics = await agent_monitor.get_agent_metrics(agent_name)
@@ -118,8 +120,8 @@ async def get_agent_detail(
 async def get_agents(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     from webgui.agent_monitor import agent_monitor
 
     statuses = await agent_monitor.get_all_agent_status()

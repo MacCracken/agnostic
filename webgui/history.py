@@ -3,6 +3,8 @@ Session History Module
 Provides historical session browsing, comparison, and trend analysis.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -85,11 +87,11 @@ class TrendData:
 class HistoryManager:
     """Manages historical session data and comparisons"""
 
-    def __init__(self):
-        self.session_cache = {}
+    def __init__(self) -> None:
+        self.session_cache: dict[str, Any] = {}
         self.cache_timeout = 300  # 5 minutes
 
-    def _get_async_client(self):
+    def _get_async_client(self) -> Any:
         return config.get_async_redis_client()
 
     async def get_session_history(
@@ -103,7 +105,7 @@ class HistoryManager:
         filters: dict[str, Any] | None = None,
     ) -> list[SessionSummary]:
         """Get historical sessions with filtering and sorting"""
-        sessions = []
+        sessions: list[SessionSummary] = []
 
         try:
             redis_client = self._get_async_client()
@@ -209,7 +211,8 @@ class HistoryManager:
             cache_key = f"session_details:{session_id}"
             cached = await redis_client.get(cache_key)
             if cached:
-                return json.loads(cached)
+                result: dict[str, Any] = json.loads(cached)
+                return result
 
             # Collect session data
             from .exports import ReportGenerator
@@ -244,7 +247,7 @@ class HistoryManager:
             metrics1 = session1_data.get("metrics", {})
             metrics2 = session2_data.get("metrics", {})
 
-            comparison_metrics = {
+            comparison_metrics: dict[str, Any] = {
                 "overall_scores": {
                     "session1": metrics1.get("overall_score"),
                     "session2": metrics2.get("overall_score"),
@@ -280,7 +283,7 @@ class HistoryManager:
             }
 
             # Find differences
-            differences = []
+            differences: list[dict[str, Any]] = []
             if abs(comparison_metrics["overall_scores"]["difference"] or 0) > 5:
                 differences.append(
                     {
@@ -304,7 +307,7 @@ class HistoryManager:
                 )
 
             # Find similarities
-            similarities = []
+            similarities: list[dict[str, Any]] = []
             if abs(comparison_metrics["agent_count"]["difference"]) == 0:
                 similarities.append(
                     {
@@ -314,7 +317,7 @@ class HistoryManager:
                 )
 
             # Trend analysis (would need more historical data)
-            trend_analysis = {
+            trend_analysis: dict[str, Any] = {
                 "score_trend": "stable",
                 "coverage_trend": "stable",
                 "efficiency_trend": "stable",
@@ -356,9 +359,9 @@ class HistoryManager:
                 return None
 
             # Extract data points
-            data_points = []
+            data_points: list[tuple[datetime, float]] = []
             for session in sessions:
-                value = None
+                value: float | int | None = None
 
                 if metric == "overall_score":
                     value = session.overall_score
@@ -407,7 +410,7 @@ class HistoryManager:
         limit: int = 20,
     ) -> list[SessionSummary]:
         """Search sessions by title, description, or content"""
-        matching_sessions = []
+        matching_sessions: list[SessionSummary] = []
 
         try:
             # Get all sessions in range
@@ -462,9 +465,7 @@ class HistoryManager:
             return date >= now - timedelta(days=30)
         elif time_range == TimeRange.LAST_90_DAYS:
             return date >= now - timedelta(days=90)
-        elif time_range == TimeRange.ALL_TIME:
-            return True
-
+        # TimeRange.ALL_TIME or any other value
         return True
 
     def _passes_filters(
@@ -497,7 +498,7 @@ class HistoryManager:
 
     async def _get_session_metrics(self, session_id: str) -> dict[str, Any]:
         """Get session metrics from Redis"""
-        metrics = {
+        metrics: dict[str, Any] = {
             "overall_score": None,
             "test_coverage": 0,
             "agent_count": 0,
@@ -527,10 +528,11 @@ class HistoryManager:
                 metrics["scenarios_completed"] = len(
                     [s for s in scenarios if s.get("completed", False)]
                 )
-                if metrics["scenarios_total"] > 0:
+                scenarios_total: int = metrics["scenarios_total"]
+                if scenarios_total > 0:
+                    scenarios_completed: int = metrics["scenarios_completed"]
                     metrics["test_coverage"] = int(
-                        (metrics["scenarios_completed"] / metrics["scenarios_total"])
-                        * 100
+                        (scenarios_completed / scenarios_total) * 100
                     )
 
             # Count agents with results
@@ -542,6 +544,9 @@ class HistoryManager:
                 "security_compliance",
                 "performance",
             ]
+            agent_count: int = metrics["agent_count"]
+            error_count: int = metrics["error_count"]
+            warning_count: int = metrics["warning_count"]
             for agent in agents:
                 agent_key = f"{agent}:{session_id}:report"
                 if agent == "manager":
@@ -550,16 +555,20 @@ class HistoryManager:
                     agent_key = f"{agent}:{session_id}:comprehensive_report"
 
                 if await redis_client.exists(agent_key):
-                    metrics["agent_count"] += 1
+                    agent_count += 1
 
                     # Count errors and warnings from agent results
                     result_data = await redis_client.get(agent_key)
                     if result_data:
                         result = json.loads(result_data)
                         if "errors" in result:
-                            metrics["error_count"] += len(result["errors"])
+                            error_count += len(result["errors"])
                         if "warnings" in result:
-                            metrics["warning_count"] += len(result["warnings"])
+                            warning_count += len(result["warnings"])
+
+            metrics["agent_count"] = agent_count
+            metrics["error_count"] = error_count
+            metrics["warning_count"] = warning_count
 
         except Exception as e:
             logger.error(f"Error getting session metrics {session_id}: {e}")

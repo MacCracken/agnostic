@@ -132,7 +132,8 @@ class AgnosTokenBudgetClient:
             data = resp.json()
             if _budget_circuit:
                 _budget_circuit.record_success()
-            return data.get("reservation_id")
+            reservation_id: str | None = data.get("reservation_id")
+            return reservation_id
         except Exception as exc:
             if _budget_circuit:
                 _budget_circuit.record_failure()

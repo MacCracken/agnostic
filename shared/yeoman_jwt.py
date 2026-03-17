@@ -126,7 +126,7 @@ def _fetch_oidc_config() -> dict[str, Any] | None:
                 jwks_uri,
                 len(jwks.get("keys", [])),
             )
-            return jwks
+            return dict(jwks)
 
         except Exception as exc:
             logger.warning(

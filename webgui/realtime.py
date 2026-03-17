@@ -9,6 +9,7 @@ Supports:
 """
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -69,7 +70,7 @@ class MessageBuffer:
     receives all buffered messages since that ID via XRANGE.
     """
 
-    def __init__(self, redis_client):
+    def __init__(self, redis_client: Any) -> None:
         self.redis = redis_client
         self.max_len = STREAM_MAX_LEN
         self.replay_limit = STREAM_REPLAY_LIMIT
@@ -127,7 +128,7 @@ class MessageBuffer:
 class RealtimeManager:
     """Manages WebSocket connections and real-time communication"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.redis_client = config.get_redis_client()
         self.active_connections: dict[
             str, set[str]
@@ -137,14 +138,14 @@ class RealtimeManager:
         ] = {}  # connection_id -> set of channels
         self.websockets: dict[str, Any] = {}  # connection_id -> websocket
         self._last_activity: dict[str, float] = {}  # connection_id -> monotonic time
-        self.pubsub = None
-        self.background_tasks = set()
+        self.pubsub: Any = None
+        self.background_tasks: set[asyncio.Task[Any]] = set()
         self.message_buffer = MessageBuffer(self.redis_client)
 
-    async def initialize(self):
+    async def initialize(self) -> None:
         """Initialize Redis pub/sub subscription"""
         try:
-            self.pubsub = self.redis_client.pubsub()
+            self.pubsub = self.redis_client.pubsub()  # type: ignore[no-untyped-call]
 
             # Subscribe to all webgui channels
             channels = [
@@ -182,7 +183,9 @@ class RealtimeManager:
         except Exception as e:
             logger.error(f"Failed to initialize pub/sub: {e}")
 
-    async def add_connection(self, user_id: str, connection_id: str, websocket):
+    async def add_connection(
+        self, user_id: str, connection_id: str, websocket: Any
+    ) -> None:
         """Add a new WebSocket connection"""
         if user_id not in self.active_connections:
             self.active_connections[user_id] = set()
@@ -207,7 +210,7 @@ class RealtimeManager:
             ),
         )
 
-    async def remove_connection(self, connection_id: str):
+    async def remove_connection(self, connection_id: str) -> None:
         """Remove a WebSocket connection"""
         # Find user_id for this connection
         user_id = None
@@ -230,7 +233,7 @@ class RealtimeManager:
 
         logger.info(f"Removed connection {connection_id} for user {user_id}")
 
-    async def subscribe_to_session(self, connection_id: str, session_id: str):
+    async def subscribe_to_session(self, connection_id: str, session_id: str) -> None:
         """Subscribe connection to specific session updates"""
         if connection_id not in self.connection_subscriptions:
             self.connection_subscriptions[connection_id] = set()
@@ -242,7 +245,7 @@ class RealtimeManager:
         if self.pubsub:
             self.pubsub.subscribe(channel)
 
-    async def subscribe_to_task(self, connection_id: str, task_id: str):
+    async def subscribe_to_task(self, connection_id: str, task_id: str) -> None:
         """Subscribe connection to specific task updates (for MCP bridge polling replacement)"""
         if connection_id not in self.connection_subscriptions:
             self.connection_subscriptions[connection_id] = set()
@@ -256,7 +259,9 @@ class RealtimeManager:
 
         logger.info(f"Connection {connection_id} subscribed to task {task_id}")
 
-    async def unsubscribe_from_session(self, connection_id: str, session_id: str):
+    async def unsubscribe_from_session(
+        self, connection_id: str, session_id: str
+    ) -> None:
         """Unsubscribe connection from specific session updates"""
         if connection_id in self.connection_subscriptions:
             channel = f"webgui:session:{session_id}"
@@ -266,13 +271,15 @@ class RealtimeManager:
             f"Connection {connection_id} unsubscribed from session {session_id}"
         )
 
-    async def broadcast_to_user(self, user_id: str, message: WebSocketMessage):
+    async def broadcast_to_user(self, user_id: str, message: WebSocketMessage) -> None:
         """Send message to all connections for a user"""
         if user_id in self.active_connections:
             for connection_id in self.active_connections[user_id]:
                 await self.send_to_connection(connection_id, message)
 
-    async def send_to_connection(self, connection_id: str, message: WebSocketMessage):
+    async def send_to_connection(
+        self, connection_id: str, message: WebSocketMessage
+    ) -> None:
         """Send message to specific connection"""
         try:
             if connection_id in self.websockets:
@@ -293,7 +300,7 @@ class RealtimeManager:
             # Connection might be dead, clean it up
             await self.remove_connection(connection_id)
 
-    async def publish_event(self, channel: str, message: WebSocketMessage):
+    async def publish_event(self, channel: str, message: WebSocketMessage) -> None:
         """Publish event to Redis pub/sub and buffer in stream"""
         try:
             event_data = {
@@ -358,7 +365,7 @@ class RealtimeManager:
             )
         return count
 
-    async def _redis_listener(self):
+    async def _redis_listener(self) -> None:
         """Background task to listen to Redis pub/sub messages.
 
         Uses run_in_executor to avoid blocking the event loop with
@@ -371,9 +378,8 @@ class RealtimeManager:
         while True:
             try:
                 if self.pubsub:
-                    message = await loop.run_in_executor(
-                        None, lambda: self.pubsub.get_message(timeout=0.5)
-                    )
+                    _fn = functools.partial(self.pubsub.get_message, timeout=0.5)
+                    message = await loop.run_in_executor(None, _fn)
                     if message and message["type"] == "message":
                         await self._handle_redis_message(message)
                 else:
@@ -384,7 +390,7 @@ class RealtimeManager:
                 logger.error(f"Redis listener error: {e}")
                 await asyncio.sleep(5)
 
-    async def _prune_stale_connections(self):
+    async def _prune_stale_connections(self) -> None:
         """Periodically remove WebSocket connections that have been idle."""
         while True:
             try:
@@ -411,7 +417,7 @@ class RealtimeManager:
             except Exception as e:
                 logger.error(f"Connection pruning error: {e}")
 
-    async def _handle_redis_message(self, redis_message):
+    async def _handle_redis_message(self, redis_message: dict[str, Any]) -> None:
         """Handle incoming Redis pub/sub message and buffer to stream"""
         try:
             channel = redis_message["channel"].decode()
@@ -497,7 +503,7 @@ class RealtimeManager:
         except Exception as e:
             logger.error(f"Error handling Redis message: {e}")
 
-    async def cleanup(self):
+    async def cleanup(self) -> None:
         """Clean up resources"""
         logger.info("Cleaning up real-time manager")
 
@@ -525,7 +531,7 @@ class WebSocketHandler:
     def __init__(self, realtime_manager: RealtimeManager):
         self.realtime_manager = realtime_manager
 
-    async def handle_websocket(self, websocket, user_id: str):
+    async def handle_websocket(self, websocket: Any, user_id: str) -> None:
         """Handle WebSocket connection lifecycle"""
         connection_id = f"{user_id}_{uuid.uuid4().hex}"
 
@@ -561,7 +567,9 @@ class WebSocketHandler:
             # Clean up
             await self.realtime_manager.remove_connection(connection_id)
 
-    async def _handle_client_message(self, connection_id: str, data: dict[str, Any]):
+    async def _handle_client_message(
+        self, connection_id: str, data: dict[str, Any]
+    ) -> None:
         """Handle incoming message from client"""
         message_type = data.get("type")
 

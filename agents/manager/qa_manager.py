@@ -5,6 +5,8 @@ The legacy QAManagerAgent class has been removed — all orchestration
 now flows through the generic crew builder (webgui/routes/crews.py).
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import Any
@@ -38,18 +40,21 @@ class TestPlanDecompositionTool(BaseTool):
         try:
             if llm_service is None:
                 raise RuntimeError("llm_service not available")
-            scenarios = llm_service.generate_test_scenarios(requirements)
-            if asyncio.iscoroutine(scenarios):
+            scenarios_result: Any = llm_service.generate_test_scenarios(requirements)
+            if asyncio.iscoroutine(scenarios_result):
                 try:
                     asyncio.get_running_loop()
                     import concurrent.futures
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                        scenarios = pool.submit(asyncio.run, scenarios).result()
+                        scenarios_result = pool.submit(
+                            asyncio.run, scenarios_result
+                        ).result()
                 except RuntimeError:
-                    scenarios = asyncio.run(scenarios)
-            logger.info(f"Generated {len(scenarios)} test scenarios using LLM")
-            return scenarios
+                    scenarios_result = asyncio.run(scenarios_result)
+            scenarios_list: list[str] = scenarios_result
+            logger.info(f"Generated {len(scenarios_list)} test scenarios using LLM")
+            return scenarios_list
         except Exception as e:
             logger.error(f"Failed to generate scenarios with LLM: {e}")
             return [
@@ -65,18 +70,21 @@ class TestPlanDecompositionTool(BaseTool):
         try:
             if llm_service is None:
                 raise RuntimeError("llm_service not available")
-            criteria = llm_service.extract_acceptance_criteria(requirements)
-            if asyncio.iscoroutine(criteria):
+            criteria_result: Any = llm_service.extract_acceptance_criteria(requirements)
+            if asyncio.iscoroutine(criteria_result):
                 try:
                     asyncio.get_running_loop()
                     import concurrent.futures
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                        criteria = pool.submit(asyncio.run, criteria).result()
+                        criteria_result = pool.submit(
+                            asyncio.run, criteria_result
+                        ).result()
                 except RuntimeError:
-                    criteria = asyncio.run(criteria)
-            logger.info(f"Generated {len(criteria)} acceptance criteria using LLM")
-            return criteria
+                    criteria_result = asyncio.run(criteria_result)
+            criteria_list: list[str] = criteria_result
+            logger.info(f"Generated {len(criteria_list)} acceptance criteria using LLM")
+            return criteria_list
         except Exception as e:
             logger.error(f"Failed to extract criteria with LLM: {e}")
             return [
@@ -91,18 +99,19 @@ class TestPlanDecompositionTool(BaseTool):
         try:
             if llm_service is None:
                 raise RuntimeError("llm_service not available")
-            risks = llm_service.identify_test_risks(requirements)
-            if asyncio.iscoroutine(risks):
+            risks_result: Any = llm_service.identify_test_risks(requirements)
+            if asyncio.iscoroutine(risks_result):
                 try:
                     asyncio.get_running_loop()
                     import concurrent.futures
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                        risks = pool.submit(asyncio.run, risks).result()
+                        risks_result = pool.submit(asyncio.run, risks_result).result()
                 except RuntimeError:
-                    risks = asyncio.run(risks)
-            logger.info(f"Identified {len(risks)} test risks using LLM")
-            return risks
+                    risks_result = asyncio.run(risks_result)
+            risks_list: list[str] = risks_result
+            logger.info(f"Identified {len(risks_list)} test risks using LLM")
+            return risks_list
         except Exception as e:
             logger.error(f"Failed to identify risks with LLM: {e}")
             return [
@@ -154,19 +163,23 @@ class FuzzyVerificationTool(BaseTool):
                 ),
             }
 
-    def _calculate_verification_score(self, results: dict, goals: str) -> float:
+    def _calculate_verification_score(
+        self, results: dict[str, Any], goals: str
+    ) -> float:
         base_score = 0.85
         if results.get("failed_tests", 0) > 0:
             base_score -= 0.1 * results["failed_tests"]
         return max(0.0, min(1.0, base_score))
 
-    def _assess_confidence(self, results: dict) -> str:
+    def _assess_confidence(self, results: dict[str, Any]) -> str:
         return "high" if results.get("test_coverage", 0) > 80 else "medium"
 
-    def _check_business_alignment(self, results: dict, goals: str) -> str:
+    def _check_business_alignment(self, results: dict[str, Any], goals: str) -> str:
         return "aligned" if results.get("pass_rate", 0) > 90 else "partial"
 
-    def _generate_recommendations(self, results: dict, score: float) -> list[str]:
+    def _generate_recommendations(
+        self, results: dict[str, Any], score: float
+    ) -> list[str]:
         recommendations = []
         if score < 0.8:
             recommendations.append("Increase test coverage in critical areas")

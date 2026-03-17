@@ -1,5 +1,6 @@
-"""Tests for code review changes: webhook sig, health check, task cancel/retry,
-report validation, MCP dispatch, session filtering, LLM streaming timeout."""
+"""Tests for API validation: webhook signature verification, health check endpoints,
+task cancel/retry models, report validation, MCP dispatch, session filtering,
+configurable constants, and LLM streaming timeout."""
 
 import os
 import sys
@@ -57,7 +58,13 @@ class TestReportValidation:
     def test_valid_report_types(self):
         from webgui.routes.reports import ReportGenerateRequest
 
-        for rt in ("executive_summary", "detailed", "compliance", "security", "performance"):
+        for rt in (
+            "executive_summary",
+            "detailed",
+            "compliance",
+            "security",
+            "performance",
+        ):
             req = ReportGenerateRequest(session_id="s1", report_type=rt)
             assert req.report_type == rt
 
@@ -139,7 +146,9 @@ class TestHealthCheckStatus:
         mock_redis.ping.return_value = True
         mock_redis.get.return_value = None
 
-        with patch("config.environment.config.get_redis_client", return_value=mock_redis):
+        with patch(
+            "config.environment.config.get_redis_client", return_value=mock_redis
+        ):
             from webgui.app import app
 
             return TestClient(app, raise_server_exceptions=False)
@@ -149,7 +158,9 @@ class TestHealthCheckStatus:
         mock_redis.ping.side_effect = Exception("Connection refused")
         mock_redis.get.return_value = None
         with (
-            patch("config.environment.config.get_redis_client", return_value=mock_redis),
+            patch(
+                "config.environment.config.get_redis_client", return_value=mock_redis
+            ),
             patch("socket.create_connection") as mock_sock,
         ):
             mock_sock.return_value = MagicMock()
@@ -163,7 +174,9 @@ class TestHealthCheckStatus:
     def test_readiness_endpoint_exists(self, client):
         mock_redis = MagicMock()
         mock_redis.ping.return_value = True
-        with patch("config.environment.config.get_redis_client", return_value=mock_redis):
+        with patch(
+            "config.environment.config.get_redis_client", return_value=mock_redis
+        ):
             response = client.get("/ready")
         assert response.status_code == 200
         data = response.json()
@@ -173,7 +186,9 @@ class TestHealthCheckStatus:
     def test_readiness_returns_503_when_redis_down(self, client):
         mock_redis = MagicMock()
         mock_redis.ping.side_effect = Exception("Connection refused")
-        with patch("config.environment.config.get_redis_client", return_value=mock_redis):
+        with patch(
+            "config.environment.config.get_redis_client", return_value=mock_redis
+        ):
             response = client.get("/ready")
         assert response.status_code == 503
         data = response.json()
@@ -226,7 +241,9 @@ class TestLLMStreamingTimeout:
 
             return _gen()
 
-        with patch("config.llm_integration.litellm.acompletion", side_effect=_slow_completion):
+        with patch(
+            "config.llm_integration.litellm.acompletion", side_effect=_slow_completion
+        ):
             with pytest.raises((TimeoutError, asyncio.TimeoutError)):
                 await service._streaming_call({"stream": True}, MagicMock())
 
@@ -253,7 +270,10 @@ class TestMCPDispatch:
             ):
                 result = await _dispatch_tool(
                     "agnostic_subscribe_webhook",
-                    {"callback_url": "https://example.com/hook", "events": ["task.completed"]},
+                    {
+                        "callback_url": "https://example.com/hook",
+                        "events": ["task.completed"],
+                    },
                     {"user_id": "test"},
                 )
             assert "subscription_id" in result

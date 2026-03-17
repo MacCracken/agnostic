@@ -1,10 +1,14 @@
-"""Unit tests for observability, production hardening, and SY integration gaps.
+"""Tests for observability and production hardening.
 
 Covers:
-- Phase 1: Telemetry/audit init, circuit breaker metrics, correlation ID propagation
-- Phase 2: A2A audit logging, session lifecycle audit, reasoning trace submission
-- Phase 3: A2A rate limiting, payload validation, webhook exception handling
-- Phase 4: Request body size limit middleware
+- Telemetry and audit initialization
+- Circuit breaker metrics
+- Correlation ID propagation
+- A2A audit logging, rate limiting, and payload validation
+- Session lifecycle audit actions
+- Reasoning trace models
+- Request body size limit middleware
+- Webhook exception handling
 """
 
 import hashlib

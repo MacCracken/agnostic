@@ -73,6 +73,7 @@ class AgenticQAGUI:
 
             crew_req = CrewRunRequest(
                 preset="quality-standard",
+                team=None,
                 title=requirements.get("title", "WebGUI QA Task"),
                 description=requirements.get("description", ""),
                 target_url=requirements.get("target_url"),
@@ -143,7 +144,7 @@ class AgenticQAGUI:
             trace = []
 
             # Get manager notifications
-            manager_notifications = self.redis_client.lrange(
+            manager_notifications: list[Any] = self.redis_client.lrange(  # type: ignore[assignment]
                 f"manager:{session_id}:notifications", 0, -1
             )
             for notification in manager_notifications:
@@ -177,7 +178,7 @@ _agent_registry = AgentRegistry()
 
 
 @cl.on_chat_start
-async def on_chat_start() -> dict[str, Any]:
+async def on_chat_start() -> None:
     """Initialize chat session"""
     agents = _agent_registry.get_agents_for_team()
     agent_lines = "\n".join(f"• **{a.name}**: {a.focus}" for a in agents)
@@ -189,22 +190,22 @@ async def on_chat_start() -> dict[str, Any]:
         "1. Upload a PR/feature document, or\n"
         "2. Describe your testing requirements\n\n"
         "What would you like to test today?"
-    ).send()
+    ).send()  # type: ignore[no-untyped-call]
 
     # Store session in user session
     session_id = await gui.start_new_session()
-    cl.user_session.set("session_id", session_id)
-    cl.user_session.set("gui", gui)
+    cl.user_session.set("session_id", session_id)  # type: ignore[no-untyped-call]
+    cl.user_session.set("gui", gui)  # type: ignore[no-untyped-call]
 
 
 @cl.on_message
-async def on_message(message: cl.Message) -> dict[str, Any]:
+async def on_message(message: cl.Message):  # type: ignore[no-untyped-def]
     """Handle incoming messages"""
-    session_id = cl.user_session.get("session_id")
-    gui_instance = cl.user_session.get("gui")
+    session_id = cl.user_session.get("session_id")  # type: ignore[no-untyped-call]
+    gui_instance = cl.user_session.get("gui")  # type: ignore[no-untyped-call]
 
     if not session_id or not gui_instance:
-        await cl.Message(content="❌ Session error. Please restart the chat.").send()
+        await cl.Message(content="❌ Session error. Please restart the chat.").send()  # type: ignore[no-untyped-call]
         return
 
     # Process the message
@@ -212,7 +213,7 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
 
     # Check if this is a requirements submission
     if user_input.lower().startswith(("test", "verify", "check", "validate")):
-        await cl.Message(content="🔄 Processing your requirements...").send()
+        await cl.Message(content="🔄 Processing your requirements...").send()  # type: ignore[no-untyped-call]
 
         # Parse requirements from user input
         requirements = {
@@ -229,7 +230,7 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
         result = await gui_instance.submit_requirements(session_id, requirements)
 
         if "error" in result:
-            await cl.Message(content=f"❌ Error: {result['error']}").send()
+            await cl.Message(content=f"❌ Error: {result['error']}").send()  # type: ignore[no-untyped-call]
         else:
             # Display test plan
             test_plan = result.get("test_plan", {})
@@ -261,10 +262,10 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
             for step in result.get("next_steps", []):
                 response += f"• {step}\n"
 
-            await cl.Message(content=response).send()
+            await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
 
             # Start monitoring progress
-            await cl.Message(content="⏳ Monitoring test execution progress...").send()
+            await cl.Message(content="⏳ Monitoring test execution progress...").send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in ("status", "progress", "how's it going?"):
         # Get session status
@@ -286,14 +287,14 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
             )
             response += f"**Business Alignment**: {verification.get('business_alignment', 'N/A')}\n"
 
-        await cl.Message(content=response).send()
+        await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in ("trace", "reasoning", "log"):
         # Get reasoning trace
         trace = await gui_instance.get_reasoning_trace(session_id)
 
         if not trace:
-            await cl.Message(content="📝 No reasoning trace available yet.").send()
+            await cl.Message(content="📝 No reasoning trace available yet.").send()  # type: ignore[no-untyped-call]
         else:
             response = "📝 **Reasoning Trace**\n\n"
 
@@ -304,7 +305,7 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                 response += f"{agent_emoji} **{event.get('agent', 'unknown')}** - {event.get('message', 'No message')}\n"
                 response += f"   _{event.get('timestamp', 'No timestamp')}_\n\n"
 
-            await cl.Message(content=response).send()
+            await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in ("report", "qa report"):
         # Get analyst comprehensive report
@@ -350,11 +351,11 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                     for w in readiness.get("warnings", []):
                         response += f"  🟡 {w}\n"
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
-                await cl.Message(content="❌ Could not parse report data.").send()
+                await cl.Message(content="❌ Could not parse report data.").send()  # type: ignore[no-untyped-call]
         else:
-            await cl.Message(content="📝 No analyst report available yet.").send()
+            await cl.Message(content="📝 No analyst report available yet.").send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in ("security", "security report"):
         security_data = gui_instance.redis_client.get(
@@ -397,11 +398,11 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                     for r in recs[:5]:
                         response += f"  • {r}\n"
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
-                await cl.Message(content="❌ Could not parse security data.").send()
+                await cl.Message(content="❌ Could not parse security data.").send()  # type: ignore[no-untyped-call]
         else:
-            await cl.Message(content="📝 No security assessment available yet.").send()
+            await cl.Message(content="📝 No security assessment available yet.").send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in ("performance", "perf", "performance report"):
         perf_data = gui_instance.redis_client.get(f"analyst:{session_id}:performance")
@@ -458,11 +459,11 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                             f"**Memory:** {metrics.get('memory_usage', 'N/A')}%\n"
                         )
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
-                await cl.Message(content="❌ Could not parse performance data.").send()
+                await cl.Message(content="❌ Could not parse performance data.").send()  # type: ignore[no-untyped-call]
         else:
-            await cl.Message(content="📝 No performance profile available yet.").send()
+            await cl.Message(content="📝 No performance profile available yet.").send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in ("resilience", "reliability", "resilience report"):
         rel_data = gui_instance.redis_client.get(f"performance:{session_id}:resilience")
@@ -483,13 +484,13 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                     for s in scenarios:
                         response += f"  • {s}\n"
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
-                await cl.Message(content="❌ Could not parse resilience data.").send()
+                await cl.Message(content="❌ Could not parse resilience data.").send()  # type: ignore[no-untyped-call]
         else:
             await cl.Message(
                 content="📝 No resilience validation available yet."
-            ).send()
+            ).send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in (
         "compliance",
@@ -527,11 +528,11 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                 if hipaa:
                     response += f"**HIPAA:** {hipaa.get('hipaa_score', 'N/A')}% ({hipaa.get('violations_count', 0)} violations)\n"
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
-                await cl.Message(content="❌ Could not parse compliance data.").send()
+                await cl.Message(content="❌ Could not parse compliance data.").send()  # type: ignore[no-untyped-call]
         else:
-            await cl.Message(content="📝 No compliance audit available yet.").send()
+            await cl.Message(content="📝 No compliance audit available yet.").send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in (
         "predict",
@@ -565,13 +566,13 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                     for comp, score in pred["component_risk_scores"].items():
                         response += f"  • {comp}: {score}\n"
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
-                await cl.Message(content="❌ Could not parse prediction data.").send()
+                await cl.Message(content="❌ Could not parse prediction data.").send()  # type: ignore[no-untyped-call]
         else:
             await cl.Message(
                 content="📝 No predictive analytics available yet. Run a full QA session first."
-            ).send()
+            ).send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in ("trend", "quality trend", "trends"):
         trend_data = gui_instance.redis_client.get(
@@ -595,11 +596,11 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                     )
                     response += f"  • Predicted Defects: {pred.get('predicted_defects_7d', 'N/A')}\n"
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
-                await cl.Message(content="❌ Could not parse trend data.").send()
+                await cl.Message(content="❌ Could not parse trend data.").send()  # type: ignore[no-untyped-call]
         else:
-            await cl.Message(content="📝 No quality trend data available yet.").send()
+            await cl.Message(content="📝 No quality trend data available yet.").send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in ("risk", "risk score"):
         risk_data = gui_instance.redis_client.get(f"analyst:{session_id}:risk_scoring")
@@ -620,11 +621,11 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                     for feature in risk["feature_risks"][:5]:
                         response += f"  • {feature.get('feature_name', 'N/A')} - {feature.get('risk_level', 'N/A')}\n"
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
-                await cl.Message(content="❌ Could not parse risk data.").send()
+                await cl.Message(content="❌ Could not parse risk data.").send()  # type: ignore[no-untyped-call]
         else:
-            await cl.Message(content="📝 No risk scoring data available yet.").send()
+            await cl.Message(content="📝 No risk scoring data available yet.").send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in ("release", "release readiness", "ready"):
         readiness_data = gui_instance.redis_client.get(
@@ -651,13 +652,13 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                     for b in blockers:
                         response += f"  • {b.get('description', 'N/A')}\n"
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
-                await cl.Message(content="❌ Could not parse readiness data.").send()
+                await cl.Message(content="❌ Could not parse readiness data.").send()  # type: ignore[no-untyped-call]
         else:
             await cl.Message(
                 content="📝 No release readiness data available yet."
-            ).send()
+            ).send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in (
         "mobile",
@@ -680,15 +681,15 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                     for platform, result in cross["platform_results"].items():
                         response += f"**{platform.capitalize()}:** {result.get('score', result.get('mobile_score', result.get('desktop_score', 'N/A')))}%\n"
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
                 await cl.Message(
                     content="❌ Could not parse cross-platform data."
-                ).send()
+                ).send()  # type: ignore[no-untyped-call]
         else:
             await cl.Message(
                 content="📝 No cross-platform testing data available yet."
-            ).send()
+            ).send()  # type: ignore[no-untyped-call]
 
     elif user_input.lower() in ("ai test", "ai generated", "test generation"):
         ai_data = gui_instance.redis_client.get(
@@ -718,13 +719,13 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
                         f"  • Boundary: {cov.get('boundary_coverage', 'N/A')}%\n"
                     )
 
-                await cl.Message(content=response).send()
+                await cl.Message(content=response).send()  # type: ignore[no-untyped-call]
             except json.JSONDecodeError:
-                await cl.Message(content="❌ Could not parse AI test data.").send()
+                await cl.Message(content="❌ Could not parse AI test data.").send()  # type: ignore[no-untyped-call]
         else:
             await cl.Message(
                 content="📝 No AI test generation data available yet."
-            ).send()
+            ).send()  # type: ignore[no-untyped-call]
 
     else:
         # General help message
@@ -746,13 +747,13 @@ async def on_message(message: cl.Message) -> dict[str, Any]:
             "• **'ai test'** - View AI-generated test cases\n"
             "• **'help'** - Show this help message\n\n"
             "You can also upload a PR or feature document to get started!"
-        ).send()
+        ).send()  # type: ignore[no-untyped-call]
 
 
 @cl.on_chat_end
-async def on_chat_end() -> dict[str, Any]:
+async def on_chat_end():  # type: ignore[no-untyped-def]
     """Clean up when chat ends"""
-    session_id = cl.user_session.get("session_id")
+    session_id = cl.user_session.get("session_id")  # type: ignore[no-untyped-call]
     if session_id:
         logger.info(f"Ending session: {session_id}")
 
@@ -799,10 +800,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await realtime_manager.initialize()
     logger.info("Realtime manager initialized")
 
-    scheduled_report_manager = None
+    scheduled_report_manager: Any = None
     try:
-        from webgui.scheduled_reports import scheduled_report_manager
+        from webgui.scheduled_reports import (
+            scheduled_report_manager as _srm,
+        )
 
+        scheduled_report_manager = _srm
         await scheduled_report_manager.initialize()
         logger.info("Scheduled reports initialized")
     except ImportError:
@@ -1099,7 +1103,7 @@ async def health_check() -> JSONResponse:
     try:
         redis_client = config.get_redis_client()
         for agent_name in agent_names:
-            heartbeat_raw = redis_client.get(f"agent:{agent_name}:status")
+            heartbeat_raw: Any = redis_client.get(f"agent:{agent_name}:status")
             if heartbeat_raw:
                 agent_info = json.loads(heartbeat_raw)
                 last_hb = agent_info.get("last_heartbeat")
@@ -1241,7 +1245,7 @@ async def readiness_check() -> JSONResponse:
     )
 
 
-async def _websocket_endpoint(websocket):
+async def _websocket_endpoint(websocket: Any) -> None:
     """WebSocket endpoint for real-time dashboard updates."""
     from webgui.auth import auth_manager
 
@@ -1276,7 +1280,9 @@ try:
     # that FastAPI ≥0.115 needs for OpenAPI schema generation, causing an
     # AttributeError on /openapi.json.  Patch it once at import time.
     try:
-        from chainlit.auth import OAuth2PasswordBearerWithCookie
+        from chainlit.auth import (  # type: ignore[attr-defined]
+            OAuth2PasswordBearerWithCookie,
+        )
         from fastapi.openapi.models import OAuth2 as OAuth2Model
         from fastapi.openapi.models import OAuthFlowPassword, OAuthFlows
 

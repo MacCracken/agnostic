@@ -3,6 +3,8 @@ Dashboard View Module
 Real-time dashboard showing all active testing sessions with status indicators and resource utilization.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -104,19 +106,19 @@ class CrossPlatformMetrics:
 class DashboardManager:
     """Manages real-time dashboard data and metrics"""
 
-    def __init__(self):
-        self.redis_client = config.get_async_redis_client()
-        self.sessions_cache = {}
-        self.agents_cache = {}
-        self.last_cache_update = None
+    def __init__(self) -> None:
+        self.redis_client: Any = config.get_async_redis_client()
+        self.sessions_cache: dict[str, Any] = {}
+        self.agents_cache: dict[str, Any] = {}
+        self.last_cache_update: datetime | None = None
 
     async def get_active_sessions(self) -> list[SessionInfo]:
         """Get all active testing sessions"""
-        sessions = []
+        sessions: list[SessionInfo] = []
 
         try:
             # Get session keys from Redis (scan_iter avoids blocking the server)
-            session_keys = [
+            session_keys: list[Any] = [
                 key
                 async for key in self.redis_client.scan_iter(
                     "session:*:info", count=200
@@ -179,11 +181,11 @@ class DashboardManager:
 
     async def get_agent_status(self) -> list[AgentInfo]:
         """Get status of all agents"""
-        agents = []
+        agents: list[AgentInfo] = []
 
         try:
             # Get agent status from Redis (scan_iter avoids blocking the server)
-            agent_keys = [
+            agent_keys: list[Any] = [
                 key
                 async for key in self.redis_client.scan_iter(
                     "agent:*:status", count=200
@@ -310,7 +312,7 @@ class DashboardManager:
             verification = json.loads(verify_data) if verify_data else {}
 
             # Get agent tasks
-            tasks = {}
+            tasks: dict[str, Any] = {}
             for agent_name in [
                 "manager",
                 "senior",
@@ -320,7 +322,7 @@ class DashboardManager:
                 "performance",
             ]:
                 task_key = f"{agent_name}:{session_id}:tasks"
-                task_data = await self.redis_client.lrange(task_key, 0, -1)
+                task_data: list[Any] = await self.redis_client.lrange(task_key, 0, -1)
                 if task_data:
                     tasks[agent_name] = [json.loads(task) for task in task_data if task]
 
@@ -338,7 +340,7 @@ class DashboardManager:
 
     async def _get_session_timeline(self, session_id: str) -> list[dict[str, Any]]:
         """Get timeline events for a session"""
-        timeline = []
+        timeline: list[dict[str, Any]] = []
 
         try:
             # Get notifications from all agents (static QA + dynamic via SCAN)
@@ -352,8 +354,8 @@ class DashboardManager:
             ]
             # Also discover dynamic agent prefixes from Redis
             try:
-                cursor = b"0"
-                while cursor:
+                cursor: int = 0
+                while True:
                     cursor, keys = await self.redis_client.scan(
                         cursor=cursor,
                         match=f"*:{session_id}:notifications",
@@ -364,14 +366,16 @@ class DashboardManager:
                         prefix = key_str.split(f":{session_id}:")[0]
                         if prefix not in agent_names:
                             agent_names.append(prefix)
-                    if cursor == b"0":
+                    if cursor == 0:
                         break
             except Exception:
                 pass  # Fall back to static list
 
             for agent_name in agent_names:
                 notif_key = f"{agent_name}:{session_id}:notifications"
-                notifications = await self.redis_client.lrange(notif_key, 0, -1)
+                notifications: list[Any] = await self.redis_client.lrange(
+                    notif_key, 0, -1
+                )
 
                 for notif in notifications:
                     try:

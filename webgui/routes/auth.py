@@ -2,6 +2,7 @@
 
 import logging
 import os
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -84,7 +85,7 @@ class ApiKeyDeleteResponse(BaseModel):
 
 
 @router.post("/auth/login", response_model=TokenResponse)
-async def login(req: LoginRequest):
+async def login(req: LoginRequest) -> dict[str, Any]:
     # Rate limit login attempts per email
     try:
         from config.environment import config
@@ -122,7 +123,7 @@ async def login(req: LoginRequest):
 
 
 @router.post("/auth/refresh", response_model=TokenResponse)
-async def refresh(req: RefreshRequest):
+async def refresh(req: RefreshRequest) -> dict[str, Any]:
     tokens = await auth_manager.refresh_tokens(req.refresh_token)
     if tokens is None:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
@@ -135,7 +136,9 @@ async def refresh(req: RefreshRequest):
 
 
 @router.post("/auth/logout", response_model=StatusResponse)
-async def logout(request: Request, user: dict = Depends(get_current_user)):
+async def logout(
+    request: Request, user: dict[str, Any] = Depends(get_current_user)
+) -> dict[str, Any]:
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         access_token = auth_header[len("Bearer ") :]
@@ -150,7 +153,7 @@ async def logout(request: Request, user: dict = Depends(get_current_user)):
 
 
 @router.get("/auth/me", response_model=UserMeResponse)
-async def auth_me(user: dict = Depends(get_current_user)):
+async def auth_me(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     return {
         "user_id": user.get("user_id"),
         "email": user.get("email"),
@@ -167,8 +170,8 @@ async def auth_me(user: dict = Depends(get_current_user)):
 @router.post("/auth/api-keys", status_code=201, response_model=ApiKeyCreateResponse)
 async def create_api_key(
     req: ApiKeyCreateRequest,
-    user: dict = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
-):
+    user: dict[str, Any] = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
+) -> dict[str, Any]:
     """Create a new API key. Returns the raw key once — store it safely."""
     from config.environment import config
     from webgui.auth import create_api_key as _create_api_key
@@ -194,8 +197,8 @@ async def create_api_key(
 async def list_api_keys(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: dict = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
-):
+    user: dict[str, Any] = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
+) -> dict[str, Any]:
     """List API key IDs and metadata (never raw keys)."""
     from config.environment import config
     from webgui.auth import list_api_keys as _list_api_keys
@@ -214,8 +217,8 @@ async def list_api_keys(
 @router.delete("/auth/api-keys/{key_id}", response_model=ApiKeyDeleteResponse)
 async def delete_api_key(
     key_id: str,
-    user: dict = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
-):
+    user: dict[str, Any] = Depends(require_permission(Permission.SYSTEM_CONFIGURE)),
+) -> dict[str, Any]:
     """Revoke an API key by its ID (first 8 chars of sha256 hash)."""
     from config.environment import config
     from webgui.auth import revoke_api_key as _revoke_api_key

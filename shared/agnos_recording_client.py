@@ -49,7 +49,7 @@ class AgnosRecordingClient:
         try:
             from shared.resilience import CircuitBreaker
 
-            self._circuit = CircuitBreaker(
+            self._circuit: Any = CircuitBreaker(
                 name="agnos_recording", failure_threshold=5, recovery_timeout=60.0
             )
         except ImportError:
@@ -123,7 +123,7 @@ class AgnosRecordingClient:
             )
             response.raise_for_status()
             self._record_success()
-            result = response.json()
+            result: dict[str, Any] = response.json()
             recording_id = result.get("recording_id", "")
             self._active_recordings[session_id] = recording_id
             logger.info(
@@ -154,7 +154,8 @@ class AgnosRecordingClient:
             response.raise_for_status()
             self._record_success()
             logger.info("Stopped recording for session %s", session_id)
-            return response.json()
+            stop_result: dict[str, Any] = response.json()
+            return stop_result
         except Exception as exc:
             self._record_failure()
             logger.warning("Stop session recording failed: %s", exc)

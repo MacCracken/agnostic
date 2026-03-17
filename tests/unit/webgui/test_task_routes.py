@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 from pydantic import ValidationError
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 try:
     from fastapi.testclient import TestClient

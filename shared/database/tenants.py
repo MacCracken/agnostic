@@ -7,6 +7,8 @@ Provides tenant isolation using:
 - Tenant-aware session management
 """
 
+from __future__ import annotations
+
 import os
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -113,21 +115,21 @@ class TenantAPIKey(Base):
 class TenantManager:
     """Manager for multi-tenant operations."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.enabled = os.getenv("MULTI_TENANT_ENABLED", "false").lower() == "true"
         self.default_tenant_id = os.getenv("DEFAULT_TENANT_ID", "default")
         self.default_rate_limit = int(os.getenv("TENANT_DEFAULT_RATE_LIMIT", "100"))
 
-    def get_tenant_id(self, request) -> str:
+    def get_tenant_id(self, request: Any) -> str:
         """Extract tenant ID from request."""
         if not self.enabled:
             return self.default_tenant_id
 
-        header_tenant = request.headers.get("X-Tenant-ID")
+        header_tenant: str | None = request.headers.get("X-Tenant-ID")
         if header_tenant:
             return header_tenant
 
-        cookie_tenant = request.cookies.get("tenant_id")
+        cookie_tenant: str | None = request.cookies.get("tenant_id")
         if cookie_tenant:
             return cookie_tenant
 
@@ -155,12 +157,12 @@ class TenantManager:
 
     def check_quota(self, tenant: Tenant, resource: str, current: int) -> bool:
         """Check if tenant has quota for a resource."""
-        quotas = {
+        quotas: dict[str, int] = {
             "sessions": tenant.max_sessions,
             "agents": tenant.max_agents,
             "storage_mb": tenant.max_storage_mb,
         }
-        limit = quotas.get(resource, float("inf"))
+        limit: int | float = quotas.get(resource, float("inf"))
         return current < limit
 
     def is_within_trial(self, tenant: Tenant) -> bool:
@@ -170,7 +172,7 @@ class TenantManager:
         return False
 
     async def check_rate_limit(
-        self, redis_client, tenant_id: str, rate_limit: int | None = None
+        self, redis_client: Any, tenant_id: str, rate_limit: int | None = None
     ) -> bool:
         """Check and increment rate limit counter for a tenant.
 
@@ -181,14 +183,14 @@ class TenantManager:
         now = datetime.now(UTC)
         window_key = f"tenant:{tenant_id}:rate:{now.strftime('%Y%m%d%H%M')}"
 
-        current = await redis_client.incr(window_key)
+        current: int = await redis_client.incr(window_key)
         if current == 1:
             await redis_client.expire(window_key, 60)
 
-        return current <= limit
+        return bool(current <= limit)
 
     async def validate_tenant_api_key(
-        self, redis_client, api_key: str
+        self, redis_client: Any, api_key: str
     ) -> dict[str, Any] | None:
         """Validate a tenant-scoped API key.
 

@@ -1,5 +1,7 @@
 """Shared dependencies, helpers, and request models used across route modules."""
 
+from __future__ import annotations
+
 import hashlib
 import hmac
 import ipaddress
@@ -164,7 +166,8 @@ async def get_current_user(
                     resource_type="auth",
                     detail={"method": "redis"},
                 )
-                return parsed
+                result: dict[str, Any] = parsed
+                return result
 
             # Tenant-scoped API keys
             from shared.database.tenants import tenant_manager
@@ -214,10 +217,12 @@ async def get_current_user(
     return payload
 
 
-def require_permission(permission: Permission):
+def require_permission(permission: Permission) -> Any:
     """Factory for permission-checking dependencies."""
 
-    async def _check(user: dict = Depends(get_current_user)):
+    async def _check(
+        user: dict[str, Any] = Depends(get_current_user),
+    ) -> dict[str, Any]:
         user_permissions = user.get("permissions", [])
         if permission.value not in user_permissions:
             raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -240,7 +245,7 @@ YEOMAN_A2A_ENABLED = os.getenv("YEOMAN_A2A_ENABLED", "false").lower() == "true"
 # ---------------------------------------------------------------------------
 
 
-def _get_db_repo():
+def _get_db_repo() -> Any:
     """Get database repository if enabled."""
     if not DATABASE_ENABLED:
         return None
@@ -252,7 +257,7 @@ def _get_db_repo():
         return None
 
 
-async def _db_repo_dependency():
+async def _db_repo_dependency() -> Any:
     """FastAPI dependency generator — yields repo, closes session on exit."""
     repo_class = _get_db_repo()
     if repo_class is None:
@@ -267,7 +272,7 @@ async def _db_repo_dependency():
         await session.close()
 
 
-async def get_db_repo():
+async def get_db_repo() -> Any:
     """Get database repository instance.
 
     Returns the repo directly (no session cleanup). Prefer using
@@ -283,7 +288,7 @@ async def get_db_repo():
     return repo_class(session)
 
 
-async def _tenant_repo_dependency():
+async def _tenant_repo_dependency() -> Any:
     """FastAPI dependency generator — yields repo, closes session on exit."""
     if not MULTI_TENANT_ENABLED or not DATABASE_ENABLED:
         yield None
@@ -301,7 +306,7 @@ async def _tenant_repo_dependency():
         yield None
 
 
-async def get_tenant_repo():
+async def get_tenant_repo() -> Any:
     """Get tenant repository instance.
 
     Returns the repo directly (no session cleanup). Prefer using
@@ -320,7 +325,7 @@ async def get_tenant_repo():
         return None
 
 
-def _require_tenant_enabled():
+def _require_tenant_enabled() -> None:
     """Raise 503 if multi-tenancy is not enabled."""
     if not MULTI_TENANT_ENABLED:
         raise HTTPException(

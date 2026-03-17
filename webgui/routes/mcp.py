@@ -6,6 +6,8 @@ served at ``/api/v1/mcp/tools`` and individual tool invocations are
 handled at ``/api/v1/mcp/invoke``.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import uuid
@@ -592,8 +594,8 @@ def _require_mcp_enabled() -> None:
 @router.get("/mcp/tools", response_model=MCPToolsResponse)
 async def list_mcp_tools(
     category: str | None = None,
-    _user: dict = Depends(get_current_user),
-):
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """List all MCP tools AGNOSTIC exposes.
 
     SecureYeoman auto-discovers these via Connections > MCP tab.
@@ -614,7 +616,9 @@ async def list_mcp_tools(
 
 
 @router.get("/mcp/server-info", response_model=MCPServerInfoResponse)
-async def mcp_server_info(_user: dict = Depends(get_current_user)):
+async def mcp_server_info(
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """MCP server metadata for auto-registration handshake."""
     _require_mcp_enabled()
     return {
@@ -634,8 +638,8 @@ async def mcp_server_info(_user: dict = Depends(get_current_user)):
 @router.post("/mcp/invoke", response_model=MCPInvokeResponse)
 async def invoke_mcp_tool(
     req: MCPInvokeRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> MCPInvokeResponse:
     """Invoke an MCP tool by name.
 
     This is the server-side execution entry-point that SecureYeoman calls
@@ -676,7 +680,9 @@ async def invoke_mcp_tool(
         )
 
 
-async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) -> Any:
+async def _dispatch_tool(
+    tool_name: str, arguments: dict[str, Any], user: dict[str, Any]
+) -> Any:
     """Route MCP tool invocations to internal API handlers."""
     # Task submission tools — all route through crew builder
     if tool_name in (
@@ -714,6 +720,7 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
 
         crew_req = CrewRunRequest(
             preset=f"quality-{size}",
+            team=None,
             title=arguments.get("title", f"MCP: {tool_name}"),
             description=desc,
             target_url=arguments.get("target_url"),
@@ -782,11 +789,13 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
 
     # Session diff
     if tool_name == "agnostic_session_diff":
-        from webgui.routes.sessions import compare_sessions
+        from webgui.routes.sessions import SessionCompareRequest, compare_sessions
 
-        return await compare_sessions(
-            arguments["session_a"], arguments["session_b"], user
+        compare_req = SessionCompareRequest(
+            session1_id=arguments["session_a"],
+            session2_id=arguments["session_b"],
         )
+        return await compare_sessions(compare_req, user)
 
     # Quality trends
     if tool_name == "agnostic_quality_trends":
@@ -796,16 +805,18 @@ async def _dispatch_tool(tool_name: str, arguments: dict[str, Any], user: dict) 
 
     # Reports
     if tool_name == "agnostic_generate_report":
-        from webgui.routes.reports import generate_report
+        from webgui.routes.reports import ReportGenerateRequest, generate_report
 
-        return await generate_report(
-            arguments["session_id"], arguments.get("format", "json"), user
+        report_req = ReportGenerateRequest(
+            session_id=arguments["session_id"],
+            format=arguments.get("format", "json"),
         )
+        return await generate_report(report_req, user)
 
     if tool_name == "agnostic_list_reports":
         from webgui.routes.reports import list_reports
 
-        return await list_reports(user)
+        return await list_reports(50, 0, user)
 
     # A2A delegation
     if tool_name == "agnostic_a2a_delegate":

@@ -300,7 +300,8 @@ class AgnosDashboardBridge:
             logger.debug("Dashboard bridge disabled — periodic push not started")
             return
 
-        if httpx is None:
+        _httpx_mod: Any = httpx
+        if _httpx_mod is None:
             logger.warning(
                 "httpx not installed — dashboard bridge periodic push disabled"
             )

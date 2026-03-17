@@ -83,13 +83,13 @@ class YeomanA2AClient:
         self._cache_max_size: int = _RESULT_CACHE_MAX_SIZE
 
         # Lazily-created httpx client.
-        self._client: httpx.AsyncClient | None = None  # type: ignore[name-defined]
+        self._client: httpx.AsyncClient | None = None
 
     # ------------------------------------------------------------------
     # httpx client lifecycle
     # ------------------------------------------------------------------
 
-    def _get_client(self) -> httpx.AsyncClient:  # type: ignore[name-defined]
+    def _get_client(self) -> httpx.AsyncClient:
         """Return (and lazily create) the shared httpx client."""
         if not _HTTPX_AVAILABLE:
             raise RuntimeError(
@@ -190,7 +190,8 @@ class YeomanA2AClient:
         result = await self.send_message("a2a:delegate", payload)
         if result is None:
             return None
-        return result.get("task_id")  # type: ignore[return-value]
+        task_id: str | None = result.get("task_id")
+        return task_id
 
     async def query_task_status(self, task_id: str) -> dict[str, Any] | None:
         """Query YEOMAN for the current status of *task_id*."""
@@ -246,7 +247,8 @@ class YeomanA2AClient:
         result = await self.send_message("a2a:delegate_batch", {"tasks": tasks})
         if result is None:
             return [None] * len(tasks)
-        return result.get("task_ids", [None] * len(tasks))  # type: ignore[return-value]
+        task_ids: list[str | None] = result.get("task_ids", [None] * len(tasks))
+        return task_ids
 
     async def query_batch_status(
         self, task_ids: list[str]
@@ -261,7 +263,8 @@ class YeomanA2AClient:
         )
         if result is None:
             return dict.fromkeys(task_ids)
-        return result.get("statuses", {})  # type: ignore[return-value]
+        statuses: dict[str, dict[str, Any] | None] = result.get("statuses", {})
+        return statuses
 
     async def send_result(self, task_id: str, result: dict[str, Any]) -> bool:
         """Send an ``a2a:result`` back to YEOMAN with completed QA results."""

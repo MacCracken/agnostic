@@ -5,7 +5,7 @@ import pytest
 
 # Add the agents directory to Python path for importing
 sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "..", "agents", "junior")
+    0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "agents", "junior")
 )
 
 try:

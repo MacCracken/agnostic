@@ -7,6 +7,8 @@ for the general-purpose agent platform.  The original Test* names and table
 names are retained for backwards compatibility — no migration required.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -23,7 +25,11 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -68,7 +74,7 @@ class TestSession(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    test_results: Mapped[list["TestResult"]] = []
+    test_results: list[TestResult] = []
 
     __table_args__ = (
         Index("idx_test_sessions_status", "status"),
@@ -157,8 +163,8 @@ class TestReport(Base):
 
 logger = logging.getLogger(__name__)
 
-_engine = None
-_session_factory = None
+_engine: Any = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 _init_lock = asyncio.Lock()
 
 
@@ -176,7 +182,7 @@ def get_database_url() -> str:
     return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
 
 
-async def init_db():
+async def init_db() -> None:
     """Initialize database connection and create tables."""
     global _engine, _session_factory
 
@@ -206,9 +212,7 @@ async def init_db():
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-        from sqlalchemy.orm import sessionmaker
-
-        _session_factory = sessionmaker(
+        _session_factory = async_sessionmaker(
             _engine, class_=AsyncSession, expire_on_commit=False
         )
 
@@ -217,10 +221,12 @@ async def get_session() -> AsyncSession:
     """Get a database session."""
     if _session_factory is None:
         await init_db()
-    return _session_factory()
+    assert _session_factory is not None  # guaranteed by init_db above
+    session: AsyncSession = _session_factory()
+    return session
 
 
-async def close_db():
+async def close_db() -> None:
     """Close database connection."""
     global _engine
     if _engine:

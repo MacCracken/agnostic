@@ -53,7 +53,7 @@ class Config:
             f"amqp://{self.rabbitmq_user}:{self.rabbitmq_password}@{self.rabbitmq_host}:{self.rabbitmq_port}{self.rabbitmq_vhost}",
         )
 
-    def get_redis_client(self, **kwargs) -> redis.Redis:
+    def get_redis_client(self, **kwargs: Any) -> redis.Redis:
         """Return a cached Redis client with connection pooling.
 
         The first call creates the client; subsequent calls return the same
@@ -68,7 +68,7 @@ class Config:
             self._redis_client = self._create_redis_client()
         return self._redis_client
 
-    def _create_redis_client(self, **kwargs) -> redis.Redis:
+    def _create_redis_client(self, **kwargs: Any) -> redis.Redis:
         """Create a new Redis client with environment configuration."""
         if "url" in kwargs or self.redis_url:
             redis_url = kwargs.get("url", self.redis_url)
@@ -150,7 +150,7 @@ class Config:
         )
         return aioredis.Redis(connection_pool=pool)
 
-    def get_celery_app(self, app_name: str, **kwargs) -> Celery:
+    def get_celery_app(self, app_name: str, **kwargs: Any) -> Celery:
         """Create a Celery app with environment configuration."""
         broker_url = kwargs.get("broker", self.rabbitmq_url)
 

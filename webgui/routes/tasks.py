@@ -1,5 +1,7 @@
 """Task submission endpoints + webhook delivery + A2A protocol."""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import hmac
@@ -51,7 +53,7 @@ class TaskStatusResponse(BaseModel):
     status: str  # pending | running | completed | failed
     created_at: str
     updated_at: str
-    result: dict | None = None
+    result: dict[str, Any] | None = None
 
 
 class A2AMessage(BaseModel):
@@ -159,7 +161,7 @@ async def _fire_webhook(
 # ---------------------------------------------------------------------------
 
 
-def _crew_to_task_response(crew_result) -> TaskStatusResponse:
+def _crew_to_task_response(crew_result: Any) -> TaskStatusResponse:
     """Convert a CrewRunResponse to a TaskStatusResponse for backward compat."""
     return TaskStatusResponse(
         task_id=crew_result.task_id,
@@ -174,8 +176,8 @@ def _crew_to_task_response(crew_result) -> TaskStatusResponse:
 @router.post("/tasks", response_model=TaskStatusResponse, status_code=201)
 async def submit_task(
     req: TaskSubmitRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> TaskStatusResponse:
     """Submit a quality task. Routes through the generic crew builder."""
     from config.environment import config
     from shared.database.tenants import tenant_manager
@@ -211,6 +213,7 @@ async def submit_task(
 
     crew_req = CrewRunRequest(
         preset="quality-standard",
+        team=None,
         title=req.title,
         description="\n".join(desc_parts),
         target_url=req.target_url,
@@ -231,7 +234,9 @@ async def submit_task(
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
-async def get_task(task_id: str, user: dict = Depends(get_current_user)):
+async def get_task(
+    task_id: str, user: dict[str, Any] = Depends(get_current_user)
+) -> TaskStatusResponse:
     """Poll task status by task_id."""
     if not _TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task ID format")
@@ -269,7 +274,9 @@ class TaskRetryResponse(BaseModel):
 
 
 @router.delete("/tasks/{task_id}", response_model=TaskCancelResponse)
-async def cancel_task(task_id: str, user: dict = Depends(get_current_user)):
+async def cancel_task(
+    task_id: str, user: dict[str, Any] = Depends(get_current_user)
+) -> TaskCancelResponse:
     """Cancel a pending or running task."""
     if not _TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task ID format")
@@ -314,7 +321,9 @@ async def cancel_task(task_id: str, user: dict = Depends(get_current_user)):
 @router.post(
     "/tasks/{task_id}/retry", response_model=TaskRetryResponse, status_code=201
 )
-async def retry_task(task_id: str, user: dict = Depends(get_current_user)):
+async def retry_task(
+    task_id: str, user: dict[str, Any] = Depends(get_current_user)
+) -> TaskRetryResponse:
     """Retry a failed or cancelled task by creating a new task with the same parameters."""
     if not _TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Invalid task ID format")
@@ -351,7 +360,6 @@ async def retry_task(task_id: str, user: dict = Depends(get_current_user)):
             description=requirements.get("description", f"Retry of task {task_id}"),
             target_url=requirements.get("target_url"),
             priority=requirements.get("priority", "high"),
-            agents=requirements.get("agents", []),
             standards=requirements.get("standards", []),
             business_goals=requirements.get(
                 "business_goals", "Ensure quality and functionality"
@@ -390,14 +398,15 @@ async def retry_task(task_id: str, user: dict = Depends(get_current_user)):
 @router.post("/tasks/security", response_model=TaskStatusResponse)
 async def submit_security_task(
     req: TaskSubmitRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> TaskStatusResponse:
     """Submit a security-focused task with a targeted security crew."""
     from webgui.routes.crews import CrewRunRequest, run_crew
 
     standards = req.standards or ["OWASP", "GDPR", "PCI DSS"]
     crew_req = CrewRunRequest(
         preset="quality-security",
+        team=None,
         title=req.title,
         description=f"{req.description}\nStandards: {', '.join(standards)}",
         target_url=req.target_url,
@@ -410,13 +419,14 @@ async def submit_security_task(
 @router.post("/tasks/performance", response_model=TaskStatusResponse)
 async def submit_performance_task(
     req: TaskSubmitRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> TaskStatusResponse:
     """Submit a performance-focused task with a targeted performance crew."""
     from webgui.routes.crews import CrewRunRequest, run_crew
 
     crew_req = CrewRunRequest(
         preset="quality-performance",
+        team=None,
         title=req.title,
         description=f"{req.description}\nFocus: performance testing, load testing, latency profiling",
         target_url=req.target_url,
@@ -429,13 +439,14 @@ async def submit_performance_task(
 @router.post("/tasks/regression", response_model=TaskStatusResponse)
 async def submit_regression_task(
     req: TaskSubmitRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> TaskStatusResponse:
     """Submit a regression-focused task with a lean regression crew."""
     from webgui.routes.crews import CrewRunRequest, run_crew
 
     crew_req = CrewRunRequest(
         preset="quality-lean",
+        team=None,
         title=req.title,
         description=f"{req.description}\nFocus: regression testing and test analysis",
         target_url=req.target_url,
@@ -448,13 +459,14 @@ async def submit_regression_task(
 @router.post("/tasks/full", response_model=TaskStatusResponse)
 async def submit_full_task(
     req: TaskSubmitRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> TaskStatusResponse:
     """Submit a comprehensive quality task with the large team."""
     from webgui.routes.crews import CrewRunRequest, run_crew
 
     crew_req = CrewRunRequest(
         preset="quality-large",
+        team=None,
         title=req.title,
         description=req.description,
         target_url=req.target_url,
@@ -482,7 +494,7 @@ async def _check_a2a_rate_limit(peer_id: str) -> bool:
         current = await redis_client.incr(key)
         if current == 1:
             await redis_client.expire(key, _A2A_RATE_WINDOW)
-        return current <= _A2A_RATE_LIMIT
+        return bool(current <= _A2A_RATE_LIMIT)
     except Exception:
         return True  # fail open
 
@@ -490,8 +502,8 @@ async def _check_a2a_rate_limit(peer_id: str) -> bool:
 @router.post("/a2a/receive", response_model=A2AReceiveResponse)
 async def receive_a2a_message(
     msg: A2AMessage,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Receive an A2A protocol message from a YEOMAN peer."""
     if not YEOMAN_A2A_ENABLED:
         raise HTTPException(
@@ -628,7 +640,11 @@ async def receive_a2a_message(
             resource_type="a2a",
             detail={"message_id": msg.id},
         )
-        status_data: dict = {"provider": "agnostic-qa", "agents": [], "sessions": []}
+        status_data: dict[str, Any] = {
+            "provider": "agnostic-qa",
+            "agents": [],
+            "sessions": [],
+        }
         try:
             from webgui.dashboard import dashboard_manager
 
@@ -651,7 +667,7 @@ async def receive_a2a_message(
 
 
 @router.get("/a2a/capabilities", response_model=A2ACapabilitiesResponse)
-async def a2a_capabilities():
+async def a2a_capabilities() -> dict[str, Any]:
     """Advertise what this Agnostic instance can do as an A2A peer.
 
     Includes MCP server info for auto-discovery by SecureYeoman.

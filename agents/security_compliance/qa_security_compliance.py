@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -14,7 +16,7 @@ from shared.crewai_compat import BaseTool
 
 # Add config path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
-import requests
+import requests  # type: ignore[import-untyped]
 
 from config.environment import config
 
@@ -27,7 +29,7 @@ class ComprehensiveSecurityAssessmentTool(BaseTool):
     name: str = "Comprehensive Security Assessment"
     description: str = "Complete security analysis including headers, TLS, OWASP indicators, CORS, and information disclosure"
 
-    EXPECTED_HEADERS: ClassVar[list] = [
+    EXPECTED_HEADERS: ClassVar[list[str]] = [
         "Content-Security-Policy",
         "Strict-Transport-Security",
         "X-Frame-Options",
@@ -191,7 +193,7 @@ class ComprehensiveSecurityAssessmentTool(BaseTool):
 
     def _assess_tls(self, url: str) -> dict[str, Any]:
         """Assess TLS/SSL configuration"""
-        result = {"grade": "unknown", "issues": []}
+        result: dict[str, Any] = {"grade": "unknown", "issues": []}
         try:
             from urllib.parse import urlparse
 
@@ -245,7 +247,7 @@ class ComprehensiveSecurityAssessmentTool(BaseTool):
 
     def _check_info_disclosure(self, url: str) -> list[str]:
         """Check for information disclosure in response headers"""
-        disclosures = []
+        disclosures: list[str] = []
         if not url:
             return disclosures
         try:
@@ -307,7 +309,9 @@ class ComprehensiveSecurityAssessmentTool(BaseTool):
 
         return indicators
 
-    def _build_security_recommendations(self, vulnerabilities: list[dict]) -> list[str]:
+    def _build_security_recommendations(
+        self, vulnerabilities: list[dict[str, Any]]
+    ) -> list[str]:
         """Deduplicate and prioritize security recommendations"""
         seen = set()
         recs = []
@@ -384,7 +388,7 @@ class GDPRComplianceTool(BaseTool):
             },
         }
 
-    def _check_consent_management(self, config: dict) -> dict[str, Any]:
+    def _check_consent_management(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check GDPR consent management"""
         checks = 5
         violations = []
@@ -426,7 +430,7 @@ class GDPRComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_data_handling(self, config: dict) -> dict[str, Any]:
+    def _check_data_handling(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check data handling practices"""
         checks = 4
         violations = []
@@ -463,7 +467,7 @@ class GDPRComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_right_to_erasure(self, config: dict) -> dict[str, Any]:
+    def _check_right_to_erasure(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check right to erasure implementation"""
         checks = 3
         violations = []
@@ -495,7 +499,7 @@ class GDPRComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_data_portability(self, config: dict) -> dict[str, Any]:
+    def _check_data_portability(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check data portability support"""
         checks = 3
         violations = []
@@ -527,7 +531,9 @@ class GDPRComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _build_gdpr_recommendations(self, violations: list[dict]) -> list[str]:
+    def _build_gdpr_recommendations(
+        self, violations: list[dict[str, Any]]
+    ) -> list[str]:
         """Build GDPR-specific recommendations"""
         recs = []
         articles = {v.get("article", "") for v in violations}
@@ -601,7 +607,7 @@ class PCIDSSComplianceTool(BaseTool):
             },
         }
 
-    def _check_payment_flow(self, config: dict) -> dict[str, Any]:
+    def _check_payment_flow(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check payment flow security"""
         checks = 4
         violations = []
@@ -634,7 +640,7 @@ class PCIDSSComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_cardholder_data(self, config: dict) -> dict[str, Any]:
+    def _check_cardholder_data(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check cardholder data protection"""
         checks = 4
         violations = []
@@ -671,7 +677,7 @@ class PCIDSSComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_encryption(self, config: dict) -> dict[str, Any]:
+    def _check_encryption(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check encryption practices"""
         checks = 3
         violations = []
@@ -703,7 +709,7 @@ class PCIDSSComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _build_pci_recommendations(self, violations: list[dict]) -> list[str]:
+    def _build_pci_recommendations(self, violations: list[dict[str, Any]]) -> list[str]:
         """Build PCI DSS-specific recommendations"""
         recs = []
         if any(v.get("severity") == "critical" for v in violations):
@@ -796,7 +802,7 @@ class SOC2ComplianceTool(BaseTool):
             },
         }
 
-    def _check_common_criteria(self, config: dict) -> dict[str, Any]:
+    def _check_common_criteria(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check Common Criteria (CC) controls"""
         checks = 6
         violations = []
@@ -835,7 +841,7 @@ class SOC2ComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_availability(self, config: dict) -> dict[str, Any]:
+    def _check_availability(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check Availability controls"""
         checks = 4
         violations = []
@@ -868,7 +874,7 @@ class SOC2ComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_processing_integrity(self, config: dict) -> dict[str, Any]:
+    def _check_processing_integrity(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check Processing Integrity controls"""
         checks = 3
         violations = []
@@ -896,7 +902,7 @@ class SOC2ComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_confidentiality(self, config: dict) -> dict[str, Any]:
+    def _check_confidentiality(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check Confidentiality controls"""
         checks = 4
         violations = []
@@ -929,7 +935,7 @@ class SOC2ComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_privacy_controls(self, config: dict) -> dict[str, Any]:
+    def _check_privacy_controls(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check Privacy controls"""
         checks = 4
         violations = []
@@ -962,7 +968,9 @@ class SOC2ComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _build_soc2_recommendations(self, violations: list[dict]) -> list[str]:
+    def _build_soc2_recommendations(
+        self, violations: list[dict[str, Any]]
+    ) -> list[str]:
         """Build SOC 2-specific recommendations"""
         recs = []
         ccs = {v.get("cc", "") for v in violations}
@@ -1053,7 +1061,7 @@ class ISO27001ComplianceTool(BaseTool):
             },
         }
 
-    def _check_organizational_controls(self, config: dict) -> dict[str, Any]:
+    def _check_organizational_controls(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check Annex A.5 Organizational controls"""
         checks = 5
         violations = []
@@ -1095,7 +1103,7 @@ class ISO27001ComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_people_controls(self, config: dict) -> dict[str, Any]:
+    def _check_people_controls(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check Annex A.6 People controls"""
         checks = 4
         violations = []
@@ -1132,7 +1140,7 @@ class ISO27001ComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_physical_controls(self, config: dict) -> dict[str, Any]:
+    def _check_physical_controls(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check Annex A.7 Physical controls"""
         checks = 4
         violations = []
@@ -1169,7 +1177,7 @@ class ISO27001ComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_technological_controls(self, config: dict) -> dict[str, Any]:
+    def _check_technological_controls(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check Annex A.8 Technological controls"""
         checks = 6
         violations = []
@@ -1216,7 +1224,9 @@ class ISO27001ComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _build_iso27001_recommendations(self, violations: list[dict]) -> list[str]:
+    def _build_iso27001_recommendations(
+        self, violations: list[dict[str, Any]]
+    ) -> list[str]:
         """Build ISO 27001-specific recommendations"""
         recs = []
         controls = {v.get("control", "") for v in violations}
@@ -1313,7 +1323,7 @@ class HIPAAComplianceTool(BaseTool):
             },
         }
 
-    def _check_privacy_rule(self, config: dict) -> dict[str, Any]:
+    def _check_privacy_rule(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check HIPAA Privacy Rule requirements"""
         checks = 5
         violations = []
@@ -1351,7 +1361,7 @@ class HIPAAComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_admin_safeguards(self, config: dict) -> dict[str, Any]:
+    def _check_admin_safeguards(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check HIPAA Security Rule - Administrative Safeguards"""
         checks = 5
         violations = []
@@ -1389,7 +1399,7 @@ class HIPAAComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_physical_safeguards(self, config: dict) -> dict[str, Any]:
+    def _check_physical_safeguards(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check HIPAA Security Rule - Physical Safeguards"""
         checks = 4
         violations = []
@@ -1422,7 +1432,7 @@ class HIPAAComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_technical_safeguards(self, config: dict) -> dict[str, Any]:
+    def _check_technical_safeguards(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check HIPAA Security Rule - Technical Safeguards"""
         checks = 5
         violations = []
@@ -1460,7 +1470,7 @@ class HIPAAComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _check_breach_notification(self, config: dict) -> dict[str, Any]:
+    def _check_breach_notification(self, config: dict[str, Any]) -> dict[str, Any]:
         """Check HIPAA Breach Notification requirements"""
         checks = 3
         violations = []
@@ -1488,7 +1498,9 @@ class HIPAAComplianceTool(BaseTool):
                 )
         return {"checks": checks, "violations": violations, "details": details}
 
-    def _build_hipaa_recommendations(self, violations: list[dict]) -> list[str]:
+    def _build_hipaa_recommendations(
+        self, violations: list[dict[str, Any]]
+    ) -> list[str]:
         """Build HIPAA-specific recommendations"""
         recs = []
         rules = {v.get("rule", "") for v in violations}
@@ -1520,7 +1532,7 @@ class HIPAAComplianceTool(BaseTool):
 
 
 class SecurityComplianceAgent:
-    def __init__(self):
+    def __init__(self) -> None:
         self.redis_client = config.get_redis_client()
         self.celery_app = config.get_celery_app("security_compliance_agent")
         self.llm = LLM(model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0.1)
@@ -1639,7 +1651,7 @@ class SecurityComplianceAgent:
         )
 
         await self._notify_manager(
-            session_id, scenario.get("id", "security_compliance"), result
+            str(session_id), scenario.get("id", "security_compliance"), result
         )
 
         return {
@@ -1651,7 +1663,7 @@ class SecurityComplianceAgent:
         }
 
     def _analyze_cross_compliance(
-        self, security: dict, gdpr: dict, pci: dict
+        self, security: dict[str, Any], gdpr: dict[str, Any], pci: dict[str, Any]
     ) -> dict[str, Any]:
         """Analyze cross-compliance impacts and correlations"""
         correlations = []
@@ -1696,15 +1708,19 @@ class SecurityComplianceAgent:
             ],
         }
 
-    def _calculate_overall_score(self, security: dict, gdpr: dict, pci: dict) -> float:
+    def _calculate_overall_score(
+        self, security: dict[str, Any], gdpr: dict[str, Any], pci: dict[str, Any]
+    ) -> float:
         """Calculate overall compliance score"""
-        security_score = security.get("security_score", 0) * 100
-        gdpr_score = gdpr.get("gdpr_score", 0)
-        pci_score = pci.get("pci_score", 0) if pci.get("total_checks", 0) > 0 else 100
+        security_score: float = security.get("security_score", 0) * 100
+        gdpr_score: float = gdpr.get("gdpr_score", 0)
+        pci_score: float = (
+            pci.get("pci_score", 0) if pci.get("total_checks", 0) > 0 else 100
+        )
 
         # Weighted average (security: 40%, GDPR: 30%, PCI: 30%)
         overall = (security_score * 0.4) + (gdpr_score * 0.3) + (pci_score * 0.3)
-        return round(overall, 1)
+        return float(round(overall, 1))
 
     def _determine_risk_level(self, score: float) -> str:
         """Determine overall risk level"""
@@ -1717,7 +1733,9 @@ class SecurityComplianceAgent:
         else:
             return "critical"
 
-    def _generate_executive_summary(self, security: dict, gdpr: dict, pci: dict) -> str:
+    def _generate_executive_summary(
+        self, security: dict[str, Any], gdpr: dict[str, Any], pci: dict[str, Any]
+    ) -> str:
         """Generate executive summary"""
         security_vulns = len(security.get("vulnerabilities", []))
         gdpr_violations = gdpr.get("violations_count", 0)
@@ -1738,7 +1756,9 @@ class SecurityComplianceAgent:
             f"OWASP Top 10 vulnerability remediation."
         )
 
-    async def _notify_manager(self, session_id: str, scenario_id: str, result: dict):
+    async def _notify_manager(
+        self, session_id: str, scenario_id: str, result: dict[str, Any]
+    ) -> None:
         """Notify QA Manager of task completion"""
         notification = {
             "agent": "security_compliance",
@@ -1753,7 +1773,7 @@ class SecurityComplianceAgent:
         )
 
 
-async def main():
+async def main() -> None:
     """Main entry point for Security & Compliance agent with Celery worker"""
     # Apply AGNOS environment profile (dev/staging/prod defaults)
     try:
@@ -1769,8 +1789,8 @@ async def main():
 
     @agent.celery_app.task(
         bind=True, name="security_compliance_agent.run_security_compliance_audit"
-    )
-    def run_security_compliance_task(self, task_data_json: str):
+    )  # type: ignore[untyped-decorator]
+    def run_security_compliance_task(self: Any, task_data_json: str) -> dict[str, Any]:
         """Celery task wrapper for security & compliance audit"""
         try:
             task_data = json.loads(task_data_json)
@@ -1780,9 +1800,9 @@ async def main():
             logger.error(f"Celery security/compliance task failed: {e}")
             return {"status": "error", "error": str(e)}
 
-    async def redis_task_listener():
+    async def redis_task_listener() -> None:
         """Listen for tasks from Redis pub/sub"""
-        pubsub = agent.redis_client.pubsub()
+        pubsub = agent.redis_client.pubsub()  # type: ignore[no-untyped-call]
         try:
             pubsub.subscribe("security_compliance:tasks")
 
@@ -1803,7 +1823,7 @@ async def main():
 
     import threading
 
-    def start_celery_worker():
+    def start_celery_worker() -> None:
         """Start Celery worker in separate thread"""
         argv = [
             "worker",

@@ -57,7 +57,11 @@ ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
 class PermissionValidator:
     """Validates user permissions and resource-level access."""
 
-    def __init__(self, redis_client: Any, role_permissions: dict | None = None):
+    def __init__(
+        self,
+        redis_client: Any,
+        role_permissions: dict[UserRole, set[Permission]] | None = None,
+    ):
         self.redis_client = redis_client
         self.role_permissions = role_permissions or ROLE_PERMISSIONS
 

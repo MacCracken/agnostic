@@ -99,9 +99,9 @@ class YeomanMcpRegistration:
             "AGNOSTIC_EXTERNAL_URL", _DEFAULT_AGNOSTIC_URL
         ).rstrip("/")
         self._server_id: str | None = None
-        self._client: httpx.AsyncClient | None = None  # type: ignore[name-defined]
+        self._client: httpx.AsyncClient | None = None
 
-    def _get_client(self) -> httpx.AsyncClient:  # type: ignore[name-defined]
+    def _get_client(self) -> httpx.AsyncClient:
         if not _HTTPX_AVAILABLE:
             raise RuntimeError("httpx is not installed")
         if self._client is None or self._client.is_closed:
@@ -209,9 +209,9 @@ class DaimonMcpRegistration:
             "AGNOSTIC_EXTERNAL_URL", _DEFAULT_AGNOSTIC_URL
         ).rstrip("/")
         self._server_id: str | None = None
-        self._client: httpx.AsyncClient | None = None  # type: ignore[name-defined]
+        self._client: httpx.AsyncClient | None = None
 
-    def _get_client(self) -> httpx.AsyncClient:  # type: ignore[name-defined]
+    def _get_client(self) -> httpx.AsyncClient:
         if not _HTTPX_AVAILABLE:
             raise RuntimeError("httpx is not installed")
         if self._client is None or self._client.is_closed:

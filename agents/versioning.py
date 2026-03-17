@@ -112,7 +112,8 @@ def get_version(agent_key: str, version: int) -> dict[str, Any] | None:
     if not path.exists():
         return None
     with open(path) as f:
-        return json.load(f)
+        result: dict[str, Any] = json.load(f)
+        return result
 
 
 def rollback(agent_key: str, version: int) -> dict[str, Any]:

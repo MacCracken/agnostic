@@ -3,6 +3,8 @@ Report Export Module
 Generates PDF, JSON, and CSV reports with charts and comprehensive data analysis.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -62,8 +64,8 @@ class ReportMetadata:
 class ReportGenerator:
     """Generates reports in various formats"""
 
-    def __init__(self):
-        self.redis_client = config.get_redis_client()
+    def __init__(self) -> None:
+        self.redis_client: Any = config.get_redis_client()
         self.reports_dir = Path("/app/reports")
         self.reports_dir.mkdir(exist_ok=True)
 
@@ -121,7 +123,7 @@ class ReportGenerator:
 
     async def _collect_session_data(self, session_id: str) -> dict[str, Any]:
         """Collect all data for a session"""
-        session_data = {
+        session_data: dict[str, Any] = {
             "session_id": session_id,
             "info": {},
             "test_plan": {},
@@ -159,6 +161,7 @@ class ReportGenerator:
                 "security_compliance",
                 "performance",
             ]
+            agent_results: dict[str, Any] = session_data["agent_results"]
             for agent in agents:
                 agent_key = f"{agent}:{session_id}:comprehensive_report"
                 if agent == "manager":
@@ -166,7 +169,7 @@ class ReportGenerator:
 
                 agent_data = self.redis_client.get(agent_key)
                 if agent_data:
-                    session_data["agent_results"][agent] = json.loads(agent_data)
+                    agent_results[agent] = json.loads(agent_data)
 
                 # Also get specific data types
                 if agent == "analyst":
@@ -178,16 +181,16 @@ class ReportGenerator:
                         data_key = f"analyst:{session_id}:{data_type}"
                         type_data = self.redis_client.get(data_key)
                         if type_data:
-                            session_data["agent_results"][f"analyst_{data_type}"] = (
-                                json.loads(type_data)
+                            agent_results[f"analyst_{data_type}"] = json.loads(
+                                type_data
                             )
 
                 elif agent == "security_compliance":
                     data_key = f"security_compliance:{session_id}:audit"
                     type_data = self.redis_client.get(data_key)
                     if type_data:
-                        session_data["agent_results"]["security_compliance_audit"] = (
-                            json.loads(type_data)
+                        agent_results["security_compliance_audit"] = json.loads(
+                            type_data
                         )
 
                 elif agent == "performance":
@@ -195,24 +198,25 @@ class ReportGenerator:
                         data_key = f"performance:{session_id}:{data_type}"
                         type_data = self.redis_client.get(data_key)
                         if type_data:
-                            session_data["agent_results"][
-                                f"performance_{data_type}"
-                            ] = json.loads(type_data)
+                            agent_results[f"performance_{data_type}"] = json.loads(
+                                type_data
+                            )
 
             # Timeline
+            timeline: list[Any] = session_data["timeline"]
             for agent in agents:
                 notif_key = f"{agent}:{session_id}:notifications"
-                notifications = self.redis_client.lrange(notif_key, 0, -1)
+                notifications: list[Any] = self.redis_client.lrange(notif_key, 0, -1)
                 for notif in notifications:
                     try:
                         data = json.loads(notif)
                         data["agent"] = agent
-                        session_data["timeline"].append(data)
+                        timeline.append(data)
                     except json.JSONDecodeError:
                         continue
 
             # Sort timeline
-            session_data["timeline"].sort(key=lambda x: x.get("timestamp", ""))
+            timeline.sort(key=lambda x: x.get("timestamp", ""))
 
             # Calculate metrics
             session_data["metrics"] = self._calculate_session_metrics(session_data)
@@ -226,7 +230,7 @@ class ReportGenerator:
         self, session_data: dict[str, Any]
     ) -> dict[str, Any]:
         """Calculate comprehensive metrics for the session"""
-        metrics = {
+        metrics: dict[str, Any] = {
             "total_agents": len(session_data["agent_results"]),
             "timeline_events": len(session_data["timeline"]),
             "duration_minutes": 0,
@@ -255,18 +259,19 @@ class ReportGenerator:
             metrics["overall_score"] = verification.get("overall_score")
 
             # Agent scores
+            agent_scores: dict[str, Any] = metrics["agent_scores"]
             for agent, results in session_data["agent_results"].items():
                 if "score" in results:
-                    metrics["agent_scores"][agent] = results["score"]
+                    agent_scores[agent] = results["score"]
                 elif "overall_score" in results:
-                    metrics["agent_scores"][agent] = results["overall_score"]
+                    agent_scores[agent] = results["overall_score"]
                 elif "security_score" in results:
-                    metrics["agent_scores"][agent] = results["security_score"]
+                    agent_scores[agent] = results["security_score"]
                 elif "performance_grade" in results:
                     # Convert grade to numeric score
                     grade = results["performance_grade"]
                     grade_scores = {"A": 95, "B": 85, "C": 75, "D": 65, "F": 50}
-                    metrics["agent_scores"][agent] = grade_scores.get(grade.upper(), 70)
+                    agent_scores[agent] = grade_scores.get(grade.upper(), 70)
 
             # Test coverage from test plan
             test_plan = session_data.get("test_plan", {})
@@ -281,29 +286,33 @@ class ReportGenerator:
                     )
 
             # Error and warning counts
+            error_count: int = metrics["error_count"]
+            warning_count: int = metrics["warning_count"]
             for agent, results in session_data["agent_results"].items():
                 if isinstance(results, dict):
                     if "errors" in results:
-                        metrics["error_count"] += len(results["errors"])
+                        error_count += len(results["errors"])
                     if "warnings" in results:
-                        metrics["warning_count"] += len(results["warnings"])
+                        warning_count += len(results["warnings"])
                     if "violations" in results:
-                        metrics["warning_count"] += len(results["violations"])
+                        warning_count += len(results["violations"])
                     if "vulnerabilities" in results:
-                        metrics["error_count"] += len(
+                        error_count += len(
                             [
                                 v
                                 for v in results["vulnerabilities"]
                                 if v.get("severity") in ["critical", "high"]
                             ]
                         )
-                        metrics["warning_count"] += len(
+                        warning_count += len(
                             [
                                 v
                                 for v in results["vulnerabilities"]
                                 if v.get("severity") in ["medium", "low"]
                             ]
                         )
+            metrics["error_count"] = error_count
+            metrics["warning_count"] = warning_count
 
         except Exception as e:
             logger.error(f"Error calculating metrics: {e}")
@@ -314,7 +323,7 @@ class ReportGenerator:
         self, session_data: dict[str, Any], request: ReportRequest
     ) -> dict[str, Any]:
         """Generate executive summary content"""
-        content = {
+        content: dict[str, Any] = {
             "title": "Executive Summary",
             "session_id": session_data["session_id"],
             "generated_at": datetime.now().isoformat(),
@@ -341,7 +350,7 @@ class ReportGenerator:
             }
 
             # Key findings
-            findings = []
+            findings: list[str] = []
 
             if metrics["overall_score"] and metrics["overall_score"] >= 90:
                 findings.append("Excellent test results with high quality assurance")
@@ -379,7 +388,7 @@ class ReportGenerator:
             content["key_findings"] = findings[:5]  # Limit to top 5
 
             # Recommendations
-            recommendations = []
+            recommendations: list[str] = []
 
             if metrics["error_count"] > 0:
                 recommendations.append(
@@ -426,7 +435,7 @@ class ReportGenerator:
         self, session_data: dict[str, Any], request: ReportRequest
     ) -> dict[str, Any]:
         """Generate detailed technical report"""
-        content = {
+        content: dict[str, Any] = {
             "title": "Technical Report",
             "session_id": session_data["session_id"],
             "generated_at": datetime.now().isoformat(),
@@ -444,7 +453,7 @@ class ReportGenerator:
         self, session_data: dict[str, Any], request: ReportRequest
     ) -> dict[str, Any]:
         """Generate compliance-focused report"""
-        content = {
+        content: dict[str, Any] = {
             "title": "Compliance Report",
             "session_id": session_data["session_id"],
             "generated_at": datetime.now().isoformat(),
@@ -518,7 +527,7 @@ class ReportGenerator:
         self, session_data: dict[str, Any], request: ReportRequest
     ) -> dict[str, Any]:
         """Generate session comparison report against historical sessions."""
-        content = {
+        content: dict[str, Any] = {
             "title": "Session Comparison Report",
             "session_id": session_data["session_id"],
             "generated_at": datetime.now().isoformat(),
@@ -593,7 +602,7 @@ class ReportGenerator:
             ]
 
             # Trends: compare current vs historical averages
-            def _avg(vals: list) -> float | None:
+            def _avg(vals: list[Any]) -> float | None:
                 return round(sum(vals) / len(vals), 2) if vals else None
 
             avg_score = _avg(hist_scores)
@@ -646,7 +655,7 @@ class ReportGenerator:
                 for agent, score in hm.get("agent_scores", {}).items():
                     all_agent_scores.setdefault(agent, []).append(score)
 
-            agent_benchmarks = {}
+            agent_benchmarks: dict[str, Any] = {}
             for agent, scores in all_agent_scores.items():
                 current_agent_score = current_metrics.get("agent_scores", {}).get(agent)
                 agent_avg = _avg(scores)
@@ -673,7 +682,7 @@ class ReportGenerator:
         self, session_data: dict[str, Any], request: ReportRequest
     ) -> dict[str, Any]:
         """Generate agent performance analysis"""
-        content = {
+        content: dict[str, Any] = {
             "title": "Agent Performance Report",
             "session_id": session_data["session_id"],
             "generated_at": datetime.now().isoformat(),
@@ -685,7 +694,7 @@ class ReportGenerator:
         try:
             # Analyze each agent's performance
             for agent, results in session_data["agent_results"].items():
-                agent_perf = {
+                agent_perf: dict[str, Any] = {
                     "tasks_completed": 0,
                     "success_rate": 0,
                     "average_duration": 0,
@@ -913,7 +922,7 @@ class ReportGenerator:
 
     def _flatten_for_csv(self, content: dict[str, Any]) -> list[dict[str, Any]]:
         """Flatten nested data for CSV export"""
-        rows = []
+        rows: list[dict[str, Any]] = []
 
         # Basic session info
         if "session_id" in content:
@@ -1024,7 +1033,9 @@ class ReportGenerator:
         # Placeholder - would need PDF library to count actual pages
         return 1
 
-    async def _save_report_metadata(self, metadata: ReportMetadata, file_path: str):
+    async def _save_report_metadata(
+        self, metadata: ReportMetadata, file_path: str
+    ) -> None:
         """Save report metadata to Redis"""
         try:
             metadata_key = f"report:{metadata.report_id}:metadata"

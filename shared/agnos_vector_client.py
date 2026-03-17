@@ -71,8 +71,9 @@ class AgnosVectorClient:
         )
         self.api_key = os.getenv("AGNOS_VECTOR_API_KEY", "")
         self.default_collection = os.getenv("AGNOS_VECTOR_COLLECTION", "agnostic-qa")
-        self._client: httpx.AsyncClient | None = None  # type: ignore[name-defined]
+        self._client: httpx.AsyncClient | None = None
 
+        self._circuit: CircuitBreaker | None = None
         try:
             from shared.resilience import CircuitBreaker
 
@@ -80,9 +81,9 @@ class AgnosVectorClient:
                 name="agnos_vector", failure_threshold=5, recovery_timeout=60.0
             )
         except ImportError:
-            self._circuit = None
+            pass
 
-    def _get_client(self) -> httpx.AsyncClient:  # type: ignore[name-defined]
+    def _get_client(self) -> httpx.AsyncClient:
         if not _HTTPX_AVAILABLE:
             raise RuntimeError("httpx is not installed")
         if self._client is None or self._client.is_closed:
@@ -236,7 +237,9 @@ class AgnosVectorClient:
             resp = await client.get(f"{AGNOS_PATH_PREFIX}/vectors/collections")
             resp.raise_for_status()
             self._record_success()
-            return resp.json().get("collections", [])
+            data: dict[str, Any] = resp.json()
+            collections: list[str] = data.get("collections", [])
+            return collections
         except Exception as exc:
             self._record_failure()
             logger.debug("AGNOS vector list_collections failed: %s", exc)

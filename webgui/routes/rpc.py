@@ -66,7 +66,7 @@ _METHOD_TO_CAPABILITY: dict[str, str] = {
 @router.post("/handle", response_model=RpcCallResponse)
 async def handle_rpc_call(
     request: RpcCallRequest,
-    _user: dict = Depends(get_current_user),
+    _user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Handle an inbound RPC call routed by daimon.
 
@@ -122,7 +122,9 @@ async def handle_rpc_call(
 
 
 @router.get("/methods", response_model=RpcMethodsResponse)
-async def list_local_methods(_user: dict = Depends(get_current_user)) -> dict[str, Any]:
+async def list_local_methods(
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """List RPC methods this Agnostic instance can handle."""
     return {
         "methods": list(_METHOD_TO_CAPABILITY.keys()),

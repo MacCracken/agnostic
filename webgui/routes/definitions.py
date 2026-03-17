@@ -5,11 +5,14 @@ Definitions are stored as JSON files in agents/definitions/ and
 presets in agents/definitions/presets/.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from agents.constants import DEFINITIONS_DIR, PRESETS_DIR, validate_agent_key
@@ -131,8 +134,8 @@ async def list_definitions(
     domain: str | None = Query(None, description="Filter by domain"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """List all available agent definitions."""
     items = []
     if DEFINITIONS_DIR.exists():
@@ -167,8 +170,8 @@ async def list_definitions(
 @router.get("/definitions/{agent_key}", response_model=AgentDefinitionResponse)
 async def get_definition(
     agent_key: str,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> AgentDefinitionResponse:
     """Get a single agent definition by key."""
     _validate_path_key(agent_key, "agent_key")
     path = DEFINITIONS_DIR / f"{agent_key}.json"
@@ -185,8 +188,8 @@ async def get_definition(
 @router.post("/definitions", response_model=AgentDefinitionResponse, status_code=201)
 async def create_definition(
     req: AgentDefinitionRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> AgentDefinitionResponse:
     """Create a new agent definition."""
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -218,8 +221,8 @@ async def create_definition(
 async def update_definition(
     agent_key: str,
     req: AgentDefinitionRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> AgentDefinitionResponse:
     """Update an existing agent definition."""
     _validate_path_key(agent_key, "agent_key")
     if user.get("role") not in ("super_admin", "org_admin"):
@@ -254,8 +257,8 @@ async def update_definition(
 @router.delete("/definitions/{agent_key}", status_code=204)
 async def delete_definition(
     agent_key: str,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> None:
     """Delete an agent definition."""
     _validate_path_key(agent_key, "agent_key")
     if user.get("role") not in ("super_admin", "org_admin"):
@@ -292,14 +295,14 @@ async def list_presets(
     size: str | None = Query(
         None, description="Filter by team size: lean, standard, large"
     ),
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> list[PresetListItem]:
     """List available crew presets (registry cache + user-created on disk)."""
     from config.agent_registry import agent_registry
 
     # Collect preset data: registry first, then any disk-only presets
     seen: set[str] = set()
-    all_presets: list[tuple[str, dict]] = []
+    all_presets: list[tuple[str, dict[str, Any]]] = []
 
     for name in agent_registry.list_presets(domain=domain, size=size):
         data = agent_registry.get_preset(name)
@@ -350,8 +353,8 @@ async def list_presets(
 @router.get("/presets/{preset_name}", response_model=PresetResponse)
 async def get_preset(
     preset_name: str,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> PresetResponse:
     """Get full details of a crew preset."""
     _validate_path_key(preset_name, "preset_name")
 
@@ -382,8 +385,8 @@ async def get_preset(
 @router.post("/presets", response_model=PresetResponse, status_code=201)
 async def create_preset(
     req: PresetCreateRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> PresetResponse:
     """Create a new crew preset."""
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -400,6 +403,7 @@ async def create_preset(
         "name": req.name,
         "description": req.description,
         "domain": req.domain,
+        "size": req.size,
         "version": req.version,
         "agents": [a.model_dump(mode="json") for a in req.agents],
     }
@@ -418,17 +422,18 @@ async def create_preset(
         name=req.name,
         description=req.description,
         domain=req.domain,
+        size=req.size,
         version=req.version,
         agent_count=len(req.agents),
-        agents=data["agents"],
+        agents=data["agents"],  # type: ignore[arg-type]
     )
 
 
 @router.delete("/presets/{preset_name}", status_code=204)
 async def delete_preset(
     preset_name: str,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> None:
     """Delete a crew preset."""
     _validate_path_key(preset_name, "preset_name")
     if user.get("role") not in ("super_admin", "org_admin"):
@@ -477,21 +482,22 @@ class RollbackRequest(BaseModel):
 @router.get("/definitions/{agent_key}/versions", response_model=VersionListResponse)
 async def list_definition_versions(
     agent_key: str,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> VersionListResponse:
     """List all saved versions of an agent definition."""
     _validate_path_key(agent_key, "agent_key")
     from agents.versioning import list_versions
 
-    versions = list_versions(agent_key)
+    raw_versions = list_versions(agent_key)
+    versions = [VersionInfo(**v) for v in raw_versions]
     return VersionListResponse(agent_key=agent_key, versions=versions)
 
 
 @router.post("/definitions/{agent_key}/versions", status_code=201)
 async def save_definition_version(
     agent_key: str,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Save the current definition as a versioned snapshot."""
     _validate_path_key(agent_key, "agent_key")
     if user.get("role") not in ("super_admin", "org_admin"):
@@ -509,8 +515,8 @@ async def save_definition_version(
 async def rollback_definition(
     agent_key: str,
     req: RollbackRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Rollback an agent definition to a previous version."""
     _validate_path_key(agent_key, "agent_key")
     if user.get("role") not in ("super_admin", "org_admin"):
@@ -542,10 +548,9 @@ class ExportPackageRequest(BaseModel):
 @router.post("/packages/export")
 async def export_package_endpoint(
     req: ExportPackageRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> Response:
     """Export agent definitions and presets as a downloadable .agpkg bundle."""
-    from fastapi.responses import Response
 
     from agents.packaging import export_package
 
@@ -588,8 +593,8 @@ class ToolUploadResponse(BaseModel):
 @router.post("/tools/upload", response_model=ToolUploadResponse, status_code=201)
 async def upload_custom_tool(
     req: ToolUploadRequest,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> ToolUploadResponse:
     """Upload a custom BaseTool implementation.
 
     The source code must define exactly one class that inherits from BaseTool.
@@ -620,7 +625,9 @@ async def upload_custom_tool(
 
 
 @router.get("/tools")
-async def list_tools(user: dict = Depends(get_current_user)):
+async def list_tools(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """List all registered tools."""
     from agents.tool_registry import list_registered_tools
 

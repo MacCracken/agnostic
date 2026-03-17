@@ -95,7 +95,7 @@ AGNOSTIC_AGENTS = {
 # QA services without knowing AGNOSTIC internals.
 # ---------------------------------------------------------------------------
 
-CAPABILITY_DEFINITIONS: dict[str, dict] = {
+CAPABILITY_DEFINITIONS: dict[str, dict[str, Any]] = {
     "security_audit": {
         "name": "security_audit",
         "description": "OWASP Top 10, dependency CVE scanning, auth flow analysis",
@@ -276,7 +276,7 @@ CAPABILITY_DEFINITIONS: dict[str, dict] = {
 }
 
 
-def get_all_agents() -> dict[str, dict]:
+def get_all_agents() -> dict[str, dict[str, Any]]:
     """Return all agents: static QA agents merged with any dynamically loaded presets.
 
     Dynamic agents are loaded lazily from presets so this doesn't break
@@ -322,7 +322,7 @@ def get_all_agents() -> dict[str, dict]:
     return agents
 
 
-def get_all_capabilities() -> dict[str, dict]:
+def get_all_capabilities() -> dict[str, dict[str, Any]]:
     """Return all capabilities: static definitions merged with dynamic presets."""
     caps = dict(CAPABILITY_DEFINITIONS)
     try:
@@ -364,7 +364,7 @@ def get_all_capabilities() -> dict[str, dict]:
 class AgentRegistryClient:
     """Client for agnosticos Agent Registry REST API."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.enabled = (
             os.getenv("AGNOS_AGENT_REGISTRATION_ENABLED", "false").lower() == "true"
         )
@@ -376,7 +376,7 @@ class AgentRegistryClient:
         self.version = os.getenv("AGNOSTIC_VERSION", VERSION)
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
-        self._registered_agents: dict[str, bool] = {}
+        self._registered_agents: dict[str, Any] = {}
         self._capabilities_advertised: bool = False
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -456,7 +456,10 @@ class AgentRegistryClient:
             return {"status": "error", "message": str(e)}
 
     async def send_heartbeat(
-        self, agent_key: str, status: str = "idle", metadata: dict | None = None
+        self,
+        agent_key: str,
+        status: str = "idle",
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Send heartbeat for an agent."""
         if not self.enabled or not self._registered_agents.get(agent_key):
@@ -545,7 +548,7 @@ class AgentRegistryClient:
             return {"status": "error", "message": str(e)}
 
     async def handle_capability_request(
-        self, capability_name: str, params: dict
+        self, capability_name: str, params: dict[str, Any]
     ) -> dict[str, Any]:
         """Handle an inbound capability request routed by AGNOS.
 

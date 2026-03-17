@@ -12,7 +12,10 @@ The assembler:
 3. Returns a list of agent definition dicts ready for the crew builder
 """
 
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 from agents.constants import make_agent_key
 
@@ -28,7 +31,9 @@ _MIN_FUZZY_SCORE = 2
 # ---------------------------------------------------------------------------
 
 
-def assemble_team(members: list[dict], project_context: str = "") -> list[dict]:
+def assemble_team(
+    members: list[dict[str, Any]], project_context: str = ""
+) -> list[dict[str, Any]]:
     """Build agent definitions from a list of team member specs.
 
     Each member dict should have:
@@ -114,7 +119,7 @@ def assemble_team(members: list[dict], project_context: str = "") -> list[dict]:
     return definitions
 
 
-def recommend_preset(description: str) -> dict:
+def recommend_preset(description: str) -> dict[str, Any]:
     """Recommend the best preset and size based on a task description.
 
     Returns a dict with:
@@ -278,7 +283,7 @@ def recommend_preset(description: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _get_known_agents() -> list[dict]:
+def _get_known_agents() -> list[dict[str, Any]]:
     """Get all agent definitions from the agent registry singleton."""
     try:
         from config.agent_registry import agent_registry
@@ -301,7 +306,9 @@ def _normalize(text: str) -> str:
     return text.lower().replace("-", " ").replace("_", " ").strip()
 
 
-def _find_best_match(role: str, known_agents: list[dict]) -> dict | None:
+def _find_best_match(
+    role: str, known_agents: list[dict[str, Any]]
+) -> dict[str, Any] | None:
     """Find the best matching known agent for a role description."""
     role_norm = _normalize(role)
     role_words = set(role_norm.split())
@@ -354,9 +361,9 @@ def _build_agent_dict(
     redis_prefix: str | None = None,
     context: str = "",
     is_lead: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Build a canonical agent definition dict."""
-    defn = {
+    defn: dict[str, Any] = {
         "agent_key": agent_key,
         "name": name,
         "role": role_str,

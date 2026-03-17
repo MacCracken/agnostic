@@ -1,8 +1,11 @@
 """Structured results endpoint for YEOMAN integration."""
 
+from __future__ import annotations
+
 import json
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -28,8 +31,8 @@ class StructuredResultsResponse(BaseModel):
 async def get_structured_results(
     session_id: str,
     result_type: str | None = None,
-    user: dict = Depends(get_current_user),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     """Get structured results for YEOMAN integration.
 
     Returns typed results that YEOMAN can parse to take programmatic actions:
@@ -48,7 +51,7 @@ async def get_structured_results(
 
         redis_client = config.get_async_redis_client()
 
-        results = {}
+        results: dict[str, Any] = {}
 
         if result_type in (None, "security"):
             security_data = await redis_client.get(
@@ -56,7 +59,7 @@ async def get_structured_results(
             )
             if security_data:
                 sec = json.loads(security_data)
-                findings = []
+                findings: list[Any] = []
                 for v in sec.get("vulnerabilities", []):
                     from shared.yeoman_schemas import (
                         Finding,
@@ -107,14 +110,19 @@ async def get_structured_results(
             test_data = await redis_client.get(f"junior:{session_id}:test_results")
             if test_data:
                 test = json.loads(test_data)
+                from shared.yeoman_schemas import TestStatus
+
+                test_status = (
+                    TestStatus.PASSED
+                    if test.get("passed", 0) > test.get("failed", 0)
+                    else TestStatus.FAILED
+                )
                 results["test_execution"] = TestExecutionResult(
                     execution_id=f"exec-{session_id}",
                     session_id=session_id,
                     test_type="automated",
                     timestamp=datetime.now(UTC).isoformat(),
-                    status="passed"
-                    if test.get("passed", 0) > test.get("failed", 0)
-                    else "failed",
+                    status=test_status,
                     total_tests=test.get("total", 0),
                     passed=test.get("passed", 0),
                     failed=test.get("failed", 0),
@@ -136,7 +144,8 @@ async def get_structured_results(
             test_execution=results.get("test_execution"),
         )
 
-        return report.to_yeoman_action()
+        result: dict[str, Any] = report.to_yeoman_action()
+        return result
 
     except Exception as e:
         logger.error(f"Error generating structured results: {e}")

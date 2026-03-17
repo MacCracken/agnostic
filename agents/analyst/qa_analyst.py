@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -11,8 +13,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
-import redis
-import requests
+import redis  # noqa: TC002
+import requests  # type: ignore[import-untyped]
 from crewai import LLM, Agent, Crew, Process, Task
 
 from shared.crewai_compat import BaseTool
@@ -79,32 +81,34 @@ class DataOrganizationReportingTool(BaseTool):
         return report
 
     def _collect_agent_results(
-        self, redis_client: redis.Redis, prefix: str
-    ) -> list[dict]:
+        self,
+        redis_client: redis.Redis,
+        prefix: str,
+    ) -> list[dict[str, Any]]:
         """Collect agent results from Redis"""
-        results = []
+        results: list[dict[str, Any]] = []
 
         try:
-            list_results = redis_client.lrange(f"{prefix}:results", 0, -1)
+            list_results: list[Any] = redis_client.lrange(f"{prefix}:results", 0, -1)  # type: ignore[assignment]
             for item in list_results or []:
                 try:
                     results.append(json.loads(item))
                 except (TypeError, json.JSONDecodeError):
                     continue
         except Exception:
-            list_results = []
+            pass
 
         if results:
             return results
 
         try:
-            cursor = 0
+            cursor: int = 0
             while True:
-                cursor, keys = redis_client.scan(
+                cursor, keys = redis_client.scan(  # type: ignore[misc]
                     cursor, match=f"{prefix}:*:result", count=100
                 )
                 for key in keys:
-                    data = redis_client.get(key)
+                    data: Any = redis_client.get(key)
                     if data:
                         try:
                             results.append(json.loads(data))
@@ -116,9 +120,16 @@ class DataOrganizationReportingTool(BaseTool):
             return results
         return results
 
-    def _categorize_findings(self, results: list[dict]) -> dict[str, list]:
+    def _categorize_findings(
+        self, results: list[dict[str, Any]]
+    ) -> dict[str, list[Any]]:
         """Bucket findings into severity categories"""
-        findings = {"critical": [], "high": [], "medium": [], "low": []}
+        findings: dict[str, list[Any]] = {
+            "critical": [],
+            "high": [],
+            "medium": [],
+            "low": [],
+        }
 
         for result in results:
             severity = result.get("severity")
@@ -172,7 +183,7 @@ class DataOrganizationReportingTool(BaseTool):
 
         return findings
 
-    def _calculate_metrics(self, results: list[dict]) -> dict[str, float]:
+    def _calculate_metrics(self, results: list[dict[str, Any]]) -> dict[str, float]:
         """Compute summary metrics across all results"""
         total_tests = 0
         passed = 0
@@ -216,10 +227,13 @@ class DataOrganizationReportingTool(BaseTool):
         }
 
     def _generate_trend_analysis(
-        self, redis_client: redis.Redis, session_id: str, current_metrics: dict
+        self,
+        redis_client: redis.Redis,
+        session_id: str,
+        current_metrics: dict[str, Any],
     ) -> dict[str, str]:
         """Compare current session metrics against historical data"""
-        previous_data = redis_client.hgetall("analyst:metrics_history")
+        previous_data: dict[str, Any] = redis_client.hgetall("analyst:metrics_history")  # type: ignore[assignment]
 
         prev = None
         if previous_data:
@@ -266,7 +280,9 @@ class DataOrganizationReportingTool(BaseTool):
             "regression_trend": trend,
         }
 
-    def _build_action_items(self, findings: dict[str, list]) -> list[dict[str, str]]:
+    def _build_action_items(
+        self, findings: dict[str, list[Any]]
+    ) -> list[dict[str, str]]:
         """Create prioritized action items from findings"""
         items = []
         for finding in findings.get("critical", []):
@@ -295,7 +311,9 @@ class DataOrganizationReportingTool(BaseTool):
             )
         return items
 
-    def _generate_executive_summary(self, metrics: dict, findings: dict) -> str:
+    def _generate_executive_summary(
+        self, metrics: dict[str, Any], findings: dict[str, Any]
+    ) -> str:
         """Produce a human-readable executive summary"""
         critical_count = len(findings.get("critical", []))
         high_count = len(findings.get("high", []))
@@ -489,7 +507,7 @@ class SecurityAssessmentTool(BaseTool):
 
     def _assess_tls(self, url: str) -> dict[str, Any]:
         """Assess TLS/SSL configuration"""
-        result = {"grade": "unknown", "issues": []}
+        result: dict[str, Any] = {"grade": "unknown", "issues": []}
         try:
             from urllib.parse import urlparse
 
@@ -543,7 +561,7 @@ class SecurityAssessmentTool(BaseTool):
 
     def _check_info_disclosure(self, url: str) -> list[str]:
         """Check for information disclosure in response headers"""
-        disclosures = []
+        disclosures: list[str] = []
         if not url:
             return disclosures
         try:
@@ -605,7 +623,9 @@ class SecurityAssessmentTool(BaseTool):
 
         return indicators
 
-    def _build_recommendations(self, vulnerabilities: list[dict]) -> list[str]:
+    def _build_recommendations(
+        self, vulnerabilities: list[dict[str, Any]]
+    ) -> list[str]:
         """Deduplicate and prioritize recommendations"""
         seen = set()
         recs = []
@@ -789,10 +809,10 @@ class PerformanceProfilingTool(BaseTool):
         }
 
     def _detect_bottlenecks(
-        self, endpoint_results: dict, overall_p95: float
+        self, endpoint_results: dict[str, Any], overall_p95: float
     ) -> list[dict[str, str]]:
         """Identify endpoints that are significantly slower than others"""
-        bottlenecks = []
+        bottlenecks: list[dict[str, str]] = []
         if not endpoint_results:
             return bottlenecks
 
@@ -830,7 +850,9 @@ class PerformanceProfilingTool(BaseTool):
             return "D"
         return "F"
 
-    def _compare_baseline(self, config: dict, current: dict) -> dict[str, Any]:
+    def _compare_baseline(
+        self, config: dict[str, Any], current: dict[str, Any]
+    ) -> dict[str, Any]:
         """Compare against stored baseline if available"""
         baseline = config.get("baseline")
         if not baseline:
@@ -937,7 +959,7 @@ class TestTraceabilityTool(BaseTool):
         }
 
     def _build_traceability_matrix(
-        self, requirements: list[dict], test_cases: list[dict]
+        self, requirements: list[dict[str, Any]], test_cases: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Build requirement-to-test mapping matrix"""
         matrix = []
@@ -977,7 +999,7 @@ class TestTraceabilityTool(BaseTool):
         return matrix
 
     def _is_test_linked_to_requirement(
-        self, test_case: dict, requirement: dict
+        self, test_case: dict[str, Any], requirement: dict[str, Any]
     ) -> bool:
         """Determine if a test case maps to a requirement"""
         req_id = requirement.get("id", requirement.get("requirement_id", "")).lower()
@@ -997,9 +1019,9 @@ class TestTraceabilityTool(BaseTool):
 
     def _analyze_coverage(
         self,
-        matrix: list[dict],
-        requirements: list[dict],
-        test_cases: list[dict],
+        matrix: list[dict[str, Any]],
+        requirements: list[dict[str, Any]],
+        test_cases: list[dict[str, Any]],
         threshold: float,
     ) -> dict[str, Any]:
         """Analyze test coverage across requirements"""
@@ -1041,7 +1063,7 @@ class TestTraceabilityTool(BaseTool):
         }
 
     def _link_defects_to_tests(
-        self, defects: list[dict], test_cases: list[dict]
+        self, defects: list[dict[str, Any]], test_cases: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Link defects to their covering tests"""
         linked = []
@@ -1081,7 +1103,10 @@ class TestTraceabilityTool(BaseTool):
         return linked
 
     def _identify_coverage_gaps(
-        self, requirements: list[dict], test_cases: list[dict], matrix: list[dict]
+        self,
+        requirements: list[dict[str, Any]],
+        test_cases: list[dict[str, Any]],
+        matrix: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Identify gaps in test coverage"""
         gaps = []
@@ -1138,7 +1163,10 @@ class TestTraceabilityTool(BaseTool):
         }
 
     def _generate_recommendations(
-        self, coverage_analysis: dict, gap_analysis: dict, defect_links: list[dict]
+        self,
+        coverage_analysis: dict[str, Any],
+        gap_analysis: dict[str, Any],
+        defect_links: list[dict[str, Any]],
     ) -> list[str]:
         """Generate actionable recommendations"""
         recommendations = []
@@ -1263,7 +1291,10 @@ class DefectPredictionTool(BaseTool):
         }
 
     def _calculate_component_risk(
-        self, component: str, code_changes: list[dict], historical_data: dict
+        self,
+        component: str,
+        code_changes: list[dict[str, Any]],
+        historical_data: dict[str, Any],
     ) -> float:
         """Calculate risk score for a component"""
         churn_score = self._score_code_churn(component, code_changes)
@@ -1284,7 +1315,7 @@ class DefectPredictionTool(BaseTool):
 
         return min(1.0, max(0.0, risk))
 
-    def _score_code_churn(self, component: str, changes: list[dict]) -> float:
+    def _score_code_churn(self, component: str, changes: list[dict[str, Any]]) -> float:
         """Score based on recent code changes"""
         component_changes = [c for c in changes if c.get("component") == component]
         if not component_changes:
@@ -1299,7 +1330,7 @@ class DefectPredictionTool(BaseTool):
             return 0.5
         return 0.3
 
-    def _score_file_age(self, component: str, historical: dict) -> float:
+    def _score_file_age(self, component: str, historical: dict[str, Any]) -> float:
         """Score based on component age (older = potentially outdated)"""
         component_data = historical.get(component, {})
         last_modified = component_data.get("last_modified_days_ago", 30)
@@ -1312,18 +1343,20 @@ class DefectPredictionTool(BaseTool):
             return 0.4
         return 0.2
 
-    def _score_complexity(self, component: str, historical: dict) -> float:
+    def _score_complexity(self, component: str, historical: dict[str, Any]) -> float:
         """Score based on code complexity"""
         component_data = historical.get(component, {})
         complexity = component_data.get("cyclomatic_complexity", 5)
         lines = component_data.get("lines_of_code", 100)
 
-        complexity_score = min(1.0, complexity / 20)
-        size_score = min(1.0, lines / 1000)
+        complexity_score: float = min(1.0, complexity / 20)
+        size_score: float = min(1.0, lines / 1000)
 
-        return (complexity_score + size_score) / 2
+        return float((complexity_score + size_score) / 2)
 
-    def _score_author_experience(self, component: str, changes: list[dict]) -> float:
+    def _score_author_experience(
+        self, component: str, changes: list[dict[str, Any]]
+    ) -> float:
         """Score based on author experience with component"""
         component_changes = [c for c in changes if c.get("component") == component]
         if not component_changes:
@@ -1340,15 +1373,19 @@ class DefectPredictionTool(BaseTool):
         exp_ratio = experienced_authors / total_authors
         return 1.0 - exp_ratio
 
-    def _score_test_coverage(self, component: str, historical: dict) -> float:
+    def _score_test_coverage(self, component: str, historical: dict[str, Any]) -> float:
         """Score based on test coverage (lower coverage = higher risk)"""
-        coverage = historical.get(component, {}).get("test_coverage_percentage", 80)
+        coverage: float = historical.get(component, {}).get(
+            "test_coverage_percentage", 80
+        )
         return 1.0 - (coverage / 100)
 
-    def _score_historical_bugs(self, component: str, historical: dict) -> float:
+    def _score_historical_bugs(
+        self, component: str, historical: dict[str, Any]
+    ) -> float:
         """Score based on historical bug density"""
-        bugs = historical.get(component, {}).get("bug_count", 0)
-        lines = historical.get(component, {}).get("lines_of_code", 100)
+        bugs: int = historical.get(component, {}).get("bug_count", 0)
+        lines: int = historical.get(component, {}).get("lines_of_code", 100)
 
         bug_density = bugs / max(1, lines / 100)
 
@@ -1361,7 +1398,10 @@ class DefectPredictionTool(BaseTool):
         return 0.3
 
     def _get_risk_reasons(
-        self, component: str, code_changes: list[dict], historical: dict
+        self,
+        component: str,
+        code_changes: list[dict[str, Any]],
+        historical: dict[str, Any],
     ) -> list[str]:
         """Explain why component is high risk"""
         reasons = []
@@ -1389,7 +1429,7 @@ class DefectPredictionTool(BaseTool):
         return reasons
 
     def _generate_defect_recommendations(
-        self, high_risk_areas: list[dict], all_scores: dict
+        self, high_risk_areas: list[dict[str, Any]], all_scores: dict[str, Any]
     ) -> list[str]:
         """Generate recommendations based on defect prediction"""
         recs = []
@@ -1469,7 +1509,7 @@ class QualityTrendAnalysisTool(BaseTool):
             },
         }
 
-    def _generate_sample_metrics(self) -> list[dict]:
+    def _generate_sample_metrics(self) -> list[dict[str, Any]]:
         """Generate sample metrics for demonstration"""
         base_date = datetime.now()
         metrics = []
@@ -1501,13 +1541,13 @@ class QualityTrendAnalysisTool(BaseTool):
         if len(x) < 2:
             return 0.0
 
-        slope = np.polyfit(x, pass_rates, 1)[0]
+        slope: float = float(np.polyfit(x, pass_rates, 1)[0])
 
         return slope
 
     def _calculate_volatility(self, df: pd.DataFrame) -> float:
         """Calculate volatility (standard deviation) of quality metrics"""
-        return df["test_pass_rate"].std()
+        return float(df["test_pass_rate"].std())
 
     def _detect_seasonality(self, df: pd.DataFrame) -> bool:
         """Detect if there's weekly seasonality in the data"""
@@ -1561,7 +1601,7 @@ class QualityTrendAnalysisTool(BaseTool):
         }
 
     def _generate_trend_summary(
-        self, trend: float, volatility: float, predictions: dict
+        self, trend: float, volatility: float, predictions: dict[str, Any]
     ) -> str:
         """Generate human-readable trend summary"""
         if trend > 0.1:
@@ -1581,7 +1621,7 @@ class QualityTrendAnalysisTool(BaseTool):
         return f"Quality is {direction} and {stability}. Predicted pass rate: {predictions.get('predicted_pass_rate_7d', 'N/A')}%"
 
     def _generate_trend_recommendations(
-        self, trend: float, metrics_trends: dict, predictions: dict
+        self, trend: float, metrics_trends: dict[str, Any], predictions: dict[str, Any]
     ) -> list[str]:
         """Generate recommendations based on trend analysis"""
         recs = []
@@ -1670,7 +1710,7 @@ class RiskScoringTool(BaseTool):
             },
         }
 
-    def _generate_sample_features(self) -> list[dict]:
+    def _generate_sample_features(self) -> list[dict[str, Any]]:
         """Generate sample features for demonstration"""
         return [
             {
@@ -1707,7 +1747,7 @@ class RiskScoringTool(BaseTool):
             },
         ]
 
-    def _calculate_feature_risk(self, feature: dict) -> float:
+    def _calculate_feature_risk(self, feature: dict[str, Any]) -> float:
         """Calculate overall risk score for a feature"""
         dim_scores = self._calculate_dimension_scores(feature)
 
@@ -1717,7 +1757,7 @@ class RiskScoringTool(BaseTool):
 
         return min(1.0, max(0.0, risk_score))
 
-    def _calculate_dimension_scores(self, feature: dict) -> dict[str, float]:
+    def _calculate_dimension_scores(self, feature: dict[str, Any]) -> dict[str, float]:
         """Calculate risk scores for each dimension"""
         complexity_map = {"low": 0.2, "medium": 0.5, "high": 0.8, "critical": 1.0}
         criticality_map = {"low": 0.2, "medium": 0.4, "high": 0.7, "critical": 1.0}
@@ -1759,7 +1799,7 @@ class RiskScoringTool(BaseTool):
         else:
             return "low"
 
-    def _identify_risk_factors(self, feature: dict) -> list[dict]:
+    def _identify_risk_factors(self, feature: dict[str, Any]) -> list[dict[str, Any]]:
         """Identify specific risk factors for a feature"""
         factors = []
 
@@ -1801,7 +1841,9 @@ class RiskScoringTool(BaseTool):
 
         return factors
 
-    def _suggest_mitigations(self, feature: dict, risk_score: float) -> list[str]:
+    def _suggest_mitigations(
+        self, feature: dict[str, Any], risk_score: float
+    ) -> list[str]:
         """Suggest risk mitigations"""
         mitigations = []
 
@@ -1825,7 +1867,9 @@ class RiskScoringTool(BaseTool):
 
         return mitigations
 
-    def _calculate_risk_distribution(self, feature_risks: list[dict]) -> dict[str, int]:
+    def _calculate_risk_distribution(
+        self, feature_risks: list[dict[str, Any]]
+    ) -> dict[str, int]:
         """Calculate distribution of risk levels"""
         distribution = {"critical": 0, "high": 0, "medium": 0, "low": 0}
 
@@ -1836,7 +1880,9 @@ class RiskScoringTool(BaseTool):
 
         return distribution
 
-    def _generate_risk_recommendations(self, feature_risks: list[dict]) -> list[str]:
+    def _generate_risk_recommendations(
+        self, feature_risks: list[dict[str, Any]]
+    ) -> list[str]:
         """Generate overall risk recommendations"""
         recs = []
 
@@ -1942,10 +1988,10 @@ class ReleaseReadinessTool(BaseTool):
         redis_client = config.get_redis_client()
 
         key = f"analyst:{session_id}:metrics"
-        cached = redis_client.get(key)
+        cached: Any = redis_client.get(key)
 
         if cached:
-            data = json.loads(cached)
+            data: dict[str, Any] = json.loads(cached)
             return {"score": data.get("quality_score", 75), "details": "from cache"}
 
         return {
@@ -1993,7 +2039,7 @@ class ReleaseReadinessTool(BaseTool):
             },
         }
 
-    def _assess_business_dimension(self, criteria: dict) -> dict[str, Any]:
+    def _assess_business_dimension(self, criteria: dict[str, Any]) -> dict[str, Any]:
         """Assess business dimension"""
         return {
             "score": 80.0,
@@ -2017,7 +2063,9 @@ class ReleaseReadinessTool(BaseTool):
         else:
             return "blocked"
 
-    def _identify_blockers(self, dimension_scores: dict[str, float]) -> list[dict]:
+    def _identify_blockers(
+        self, dimension_scores: dict[str, float]
+    ) -> list[dict[str, Any]]:
         """Identify blocking issues"""
         blockers = []
 
@@ -2046,7 +2094,10 @@ class ReleaseReadinessTool(BaseTool):
         }
 
     def _generate_readiness_recommendations(
-        self, dimension_scores: dict, blockers: list, level: str
+        self,
+        dimension_scores: dict[str, Any],
+        blockers: list[dict[str, Any]],
+        level: str,
     ) -> list[str]:
         """Generate recommendations for improving readiness"""
         recs = []
@@ -2074,7 +2125,7 @@ class ReleaseReadinessTool(BaseTool):
 
 
 class QAAnalystAgent:
-    def __init__(self):
+    def __init__(self) -> None:
         # Validate environment variables
         validation = config.validate_required_env_vars()
         if not all(validation.values()):
@@ -2376,10 +2427,10 @@ class QAAnalystAgent:
 
     def _assess_release_readiness(
         self,
-        report: dict | None,
-        resilience: dict | None,
-        security: dict | None,
-        performance: dict | None,
+        report: dict[str, Any] | None,
+        resilience: dict[str, Any] | None,
+        security: dict[str, Any] | None,
+        performance: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Determine overall release readiness"""
         blockers = []
@@ -2419,17 +2470,20 @@ class QAAnalystAgent:
             "warnings": warnings,
         }
 
-    def _get_redis_json(self, key: str) -> dict | None:
+    def _get_redis_json(self, key: str) -> dict[str, Any] | None:
         """Safely retrieve and parse JSON from Redis"""
-        data = self.redis_client.get(key)
+        data: Any = self.redis_client.get(key)
         if data:
             try:
-                return json.loads(data)
+                result: dict[str, Any] = json.loads(data)
+                return result
             except json.JSONDecodeError:
                 return None
         return None
 
-    async def _notify_manager(self, session_id: str, scenario_id: str, result: dict):
+    async def _notify_manager(
+        self, session_id: str, scenario_id: str, result: dict[str, Any]
+    ) -> None:
         """Notify QA Manager of task completion"""
         notification = {
             "agent": "qa_analyst",
@@ -2444,7 +2498,7 @@ class QAAnalystAgent:
         )
 
 
-async def main():
+async def main() -> None:
     """Main entry point for QA Analyst agent with Celery worker"""
     # Apply AGNOS environment profile (dev/staging/prod defaults)
     try:
@@ -2458,8 +2512,8 @@ async def main():
 
     logger.info("Starting QA Analyst Celery worker...")
 
-    @analyst.celery_app.task(bind=True, name="qa_analyst.analyze_and_report")
-    def analyze_and_report_task(self, task_data_json: str):
+    @analyst.celery_app.task(bind=True, name="qa_analyst.analyze_and_report")  # type: ignore[untyped-decorator]
+    def analyze_and_report_task(self: Any, task_data_json: str) -> dict[str, Any]:
         """Celery task wrapper for report generation"""
         try:
             task_data = json.loads(task_data_json)
@@ -2469,8 +2523,8 @@ async def main():
             logger.error(f"Celery report task failed: {e}")
             return {"status": "error", "error": str(e)}
 
-    @analyst.celery_app.task(bind=True, name="qa_analyst.run_security_assessment")
-    def run_security_assessment_task(self, task_data_json: str):
+    @analyst.celery_app.task(bind=True, name="qa_analyst.run_security_assessment")  # type: ignore[untyped-decorator]
+    def run_security_assessment_task(self: Any, task_data_json: str) -> dict[str, Any]:
         """Celery task wrapper for security assessment"""
         try:
             task_data = json.loads(task_data_json)
@@ -2480,8 +2534,8 @@ async def main():
             logger.error(f"Celery security task failed: {e}")
             return {"status": "error", "error": str(e)}
 
-    @analyst.celery_app.task(bind=True, name="qa_analyst.profile_performance")
-    def profile_performance_task(self, task_data_json: str):
+    @analyst.celery_app.task(bind=True, name="qa_analyst.profile_performance")  # type: ignore[untyped-decorator]
+    def profile_performance_task(self: Any, task_data_json: str) -> dict[str, Any]:
         """Celery task wrapper for performance profiling"""
         try:
             task_data = json.loads(task_data_json)
@@ -2491,8 +2545,10 @@ async def main():
             logger.error(f"Celery performance task failed: {e}")
             return {"status": "error", "error": str(e)}
 
-    @analyst.celery_app.task(bind=True, name="qa_analyst.generate_comprehensive_report")
-    def generate_comprehensive_report_task(self, session_id: str):
+    @analyst.celery_app.task(bind=True, name="qa_analyst.generate_comprehensive_report")  # type: ignore[untyped-decorator]
+    def generate_comprehensive_report_task(
+        self: Any, session_id: str
+    ) -> dict[str, Any]:
         """Celery task wrapper for comprehensive report"""
         try:
             result = asyncio.run(analyst.generate_comprehensive_report(session_id))
@@ -2501,9 +2557,9 @@ async def main():
             logger.error(f"Celery comprehensive report task failed: {e}")
             return {"status": "error", "error": str(e)}
 
-    async def redis_task_listener():
+    async def redis_task_listener() -> None:
         """Listen for tasks from Redis pub/sub"""
-        pubsub = analyst.redis_client.pubsub()
+        pubsub = analyst.redis_client.pubsub()  # type: ignore[no-untyped-call]
         try:
             pubsub.subscribe("qa_analyst:tasks")
 
@@ -2537,7 +2593,7 @@ async def main():
 
     import threading
 
-    def start_celery_worker():
+    def start_celery_worker() -> None:
         """Start Celery worker in separate thread"""
         argv = [
             "worker",

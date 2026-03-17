@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -202,7 +204,7 @@ class RegressionTestingTool(BaseTool):
 
         return results
 
-    async def _execute_ui_step(self, page, step: dict[str, Any]):
+    async def _execute_ui_step(self, page: Any, step: dict[str, Any]) -> None:
         """Execute a single UI step using Playwright"""
         action = step.get("action")
         selector = step.get("selector")
@@ -219,13 +221,13 @@ class RegressionTestingTool(BaseTool):
         elif action == "press":
             await page.keyboard.press(value)
         elif action == "wait":
-            await page.wait_for_timeout(int(value))
+            await page.wait_for_timeout(int(value or 0))
         elif action == "screenshot":
             await page.screenshot(path=step.get("path", "screenshot.png"))
         else:
             raise ValueError(f"Unknown UI action: {action}")
 
-    async def _verify_expectation(self, page, expectation: dict[str, Any]):
+    async def _verify_expectation(self, page: Any, expectation: dict[str, Any]) -> None:
         """Verify test expectations using Playwright"""
         check_type = expectation.get("type")
         selector = expectation.get("selector")
@@ -338,11 +340,14 @@ class RegressionTestingTool(BaseTool):
         return results
 
     def _verify_api_expectation(
-        self, response_data: dict, status_code: int, expectation: dict[str, Any]
-    ):
+        self,
+        response_data: dict[str, Any],
+        status_code: int,
+        expectation: dict[str, Any],
+    ) -> None:
         """Verify API test expectations"""
         check_type = expectation.get("type")
-        expected = expectation.get("expected")
+        expected: Any = expectation.get("expected")
 
         if check_type == "status_code":
             if status_code != expected:
@@ -456,14 +461,14 @@ class RegressionTestingTool(BaseTool):
             return {"status": "passed"}
 
     def _analyze_root_causes(
-        self, failed_tests: list[dict], test_suite: dict
+        self, failed_tests: list[dict[str, Any]], test_suite: dict[str, Any]
     ) -> dict[str, Any]:
         """Perform automated root cause analysis for failed tests"""
         # Cluster failures by similarity
         [test["error_message"] for test in failed_tests]
 
         # Simple clustering based on error patterns
-        root_causes = {
+        root_causes: dict[str, Any] = {
             "categories": [],
             "most_common_cause": None,
             "confidence_score": 0.0,
@@ -471,14 +476,14 @@ class RegressionTestingTool(BaseTool):
         }
 
         # Analyze error patterns
-        error_patterns = {
+        error_patterns: dict[str, list[str]] = {
             "authentication": ["auth", "login", "token", "session"],
             "api_integration": ["api", "endpoint", "response", "timeout"],
             "ui_elements": ["element", "selector", "click", "display"],
             "data_validation": ["validation", "format", "required", "invalid"],
         }
 
-        categorized_failures = {}
+        categorized_failures: dict[str, list[dict[str, Any]]] = {}
         for category, keywords in error_patterns.items():
             categorized_failures[category] = []
             for test in failed_tests:
@@ -488,9 +493,10 @@ class RegressionTestingTool(BaseTool):
                     categorized_failures[category].append(test)
 
         # Build root cause analysis
+        categories_list: list[dict[str, Any]] = root_causes["categories"]
         for category, failures in categorized_failures.items():
             if failures:
-                root_causes["categories"].append(
+                categories_list.append(
                     {
                         "category": category,
                         "count": len(failures),
@@ -500,19 +506,21 @@ class RegressionTestingTool(BaseTool):
                 )
 
         # Determine most common cause
-        if root_causes["categories"]:
-            most_common = max(root_causes["categories"], key=lambda x: x["count"])
+        if categories_list:
+            most_common = max(categories_list, key=lambda x: x["count"])
             root_causes["most_common_cause"] = most_common["category"]
             root_causes["confidence_score"] = most_common["percentage"] / 100
 
         # Generate recommendations
         root_causes["recommended_actions"] = self._generate_root_cause_recommendations(
-            root_causes["categories"]
+            categories_list
         )
 
         return root_causes
 
-    def _detect_regression(self, failed_tests: list[dict], test_suite: dict) -> bool:
+    def _detect_regression(
+        self, failed_tests: list[dict[str, Any]], test_suite: dict[str, Any]
+    ) -> bool:
         """Detect if failures represent a regression"""
         # Simple regression detection based on historical patterns
         # In real implementation, this would compare with previous test runs
@@ -525,7 +533,9 @@ class RegressionTestingTool(BaseTool):
 
         return len(failed_tests) > 3
 
-    def _generate_root_cause_recommendations(self, categories: list[dict]) -> list[str]:
+    def _generate_root_cause_recommendations(
+        self, categories: list[dict[str, Any]]
+    ) -> list[str]:
         """Generate recommendations based on root cause analysis"""
         recommendations = []
 
@@ -589,7 +599,9 @@ class SyntheticDataGeneratorTool(BaseTool):
             "data_quality_score": self._assess_data_quality(generated_data, data_spec),
         }
 
-    def _generate_user_data(self, count: int, spec: dict) -> list[dict]:
+    def _generate_user_data(
+        self, count: int, spec: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate synthetic user data"""
         users = []
 
@@ -634,7 +646,9 @@ class SyntheticDataGeneratorTool(BaseTool):
 
         return users
 
-    def _generate_transaction_data(self, count: int, spec: dict) -> list[dict]:
+    def _generate_transaction_data(
+        self, count: int, spec: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate synthetic transaction data"""
         transactions = []
 
@@ -670,7 +684,9 @@ class SyntheticDataGeneratorTool(BaseTool):
 
         return transactions
 
-    def _generate_product_data(self, count: int, spec: dict) -> list[dict]:
+    def _generate_product_data(
+        self, count: int, spec: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate synthetic product data"""
         products = []
 
@@ -721,12 +737,14 @@ class SyntheticDataGeneratorTool(BaseTool):
 
         return products
 
-    def _generate_edge_case_data(self, count: int, spec: dict) -> list[dict]:
+    def _generate_edge_case_data(
+        self, count: int, spec: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate edge case test data"""
         edge_cases = []
 
         # Boundary values
-        boundary_cases = [
+        boundary_cases: list[dict[str, Any]] = [
             {"type": "empty_string", "value": ""},
             {"type": "null_value", "value": None},
             {"type": "maximum_length", "value": "a" * 255},
@@ -747,7 +765,9 @@ class SyntheticDataGeneratorTool(BaseTool):
 
         return edge_cases
 
-    def _generate_generic_data(self, count: int, spec: dict) -> list[dict]:
+    def _generate_generic_data(
+        self, count: int, spec: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Generate generic test data"""
         data = []
 
@@ -765,7 +785,9 @@ class SyntheticDataGeneratorTool(BaseTool):
 
         return data
 
-    def _assess_data_quality(self, data: list[dict], spec: dict) -> float:
+    def _assess_data_quality(
+        self, data: list[dict[str, Any]], spec: dict[str, Any]
+    ) -> float:
         """Assess the quality of generated data"""
         if not data:
             return 0.0
@@ -795,10 +817,12 @@ class TestExecutionOptimizerTool(BaseTool):
     description: str = "Optimizes test execution order based on risk and code changes"
 
     def _run(
-        self, test_suite: dict[str, Any], code_changes: list[dict] | None = None
+        self,
+        test_suite: dict[str, Any],
+        code_changes: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Optimize test execution order"""
-        optimization_result = {
+        optimization_result: dict[str, Any] = {
             "original_order": [test["id"] for test in test_suite.get("test_cases", [])],
             "optimized_order": [],
             "optimization_strategy": None,
@@ -831,7 +855,9 @@ class TestExecutionOptimizerTool(BaseTool):
         return optimization_result
 
     def _calculate_risk_scores(
-        self, test_cases: list[dict], code_changes: list[dict] | None
+        self,
+        test_cases: list[dict[str, Any]],
+        code_changes: list[dict[str, Any]] | None,
     ) -> dict[str, float]:
         """Calculate risk scores for test cases"""
         risk_scores = {}
@@ -852,7 +878,7 @@ class TestExecutionOptimizerTool(BaseTool):
 
         return risk_scores
 
-    def _get_base_risk_score(self, test_case: dict) -> float:
+    def _get_base_risk_score(self, test_case: dict[str, Any]) -> float:
         """Get base risk score for a test case"""
         test_type = test_case.get("type", "functional")
         priority = test_case.get("priority", "medium")
@@ -872,7 +898,7 @@ class TestExecutionOptimizerTool(BaseTool):
         return type_risk.get(test_type, 0.4) + priority_adjustment.get(priority, 0.1)
 
     def _assess_code_change_impact(
-        self, test_case: dict, code_changes: list[dict]
+        self, test_case: dict[str, Any], code_changes: list[dict[str, Any]]
     ) -> float:
         """Assess the impact of code changes on a test case"""
         impact_score = 0.0
@@ -897,7 +923,9 @@ class TestExecutionOptimizerTool(BaseTool):
         return min(0.5, impact_score)  # Cap the impact score
 
     def _estimate_time_savings(
-        self, original_order: list[dict], optimized_order: list[dict]
+        self,
+        original_order: list[dict[str, Any]],
+        optimized_order: list[dict[str, Any]],
     ) -> float:
         """Estimate time savings from optimization"""
         # Simple estimation: if we find failures earlier, we save time
@@ -952,15 +980,17 @@ class FlakyTestDetectionTool(BaseTool):
             "timestamp": datetime.now().isoformat(),
         }
 
-    def _analyze_flaky_patterns(self, test_results: list[dict]) -> dict[str, Any]:
+    def _analyze_flaky_patterns(
+        self, test_results: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Analyze test execution history to identify flaky patterns"""
         flaky_tests = []
         stable_tests = []
 
         # Group results by test_id
-        test_executions = {}
+        test_executions: dict[str, list[dict[str, Any]]] = {}
         for result in test_results:
-            test_id = result.get("test_id")
+            test_id: str = result.get("test_id", "")
             if test_id not in test_executions:
                 test_executions[test_id] = []
             test_executions[test_id].append(result)
@@ -1008,7 +1038,9 @@ class FlakyTestDetectionTool(BaseTool):
             "total_analyzed": len(test_executions),
         }
 
-    def _analyze_error_patterns(self, executions: list[dict]) -> dict[str, Any]:
+    def _analyze_error_patterns(
+        self, executions: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Analyze error message patterns"""
         failed_executions = [e for e in executions if e.get("status") == "failed"]
 
@@ -1028,7 +1060,9 @@ class FlakyTestDetectionTool(BaseTool):
             "error_groups": error_groups,
         }
 
-    def _analyze_temporal_patterns(self, executions: list[dict]) -> dict[str, Any]:
+    def _analyze_temporal_patterns(
+        self, executions: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Analyze time-based flakiness patterns"""
         if len(executions) < 3:
             return {"time_based_flakiness": False, "pattern": None}
@@ -1087,7 +1121,7 @@ class FlakyTestDetectionTool(BaseTool):
 
     def _group_similar_errors(self, error_messages: list[str]) -> list[list[str]]:
         """Group similar error messages together"""
-        groups = []
+        groups: list[list[str]] = []
 
         for error_msg in error_messages:
             error_lower = error_msg.lower()
@@ -1120,7 +1154,7 @@ class FlakyTestDetectionTool(BaseTool):
         similarity = len(intersection) / len(union)
         return similarity > 0.6
 
-    def _get_consecutive_failures(self, executions: list[dict]) -> int:
+    def _get_consecutive_failures(self, executions: list[dict[str, Any]]) -> int:
         """Count consecutive failures from the end"""
         consecutive = 0
         for execution in reversed(executions):
@@ -1130,7 +1164,7 @@ class FlakyTestDetectionTool(BaseTool):
                 break
         return consecutive
 
-    def _manage_quarantine(self, flaky_tests: list[dict]) -> dict[str, Any]:
+    def _manage_quarantine(self, flaky_tests: list[dict[str, Any]]) -> dict[str, Any]:
         """Manage quarantine for flaky tests"""
         quarantine_actions = []
         current_date = datetime.now()
@@ -1201,7 +1235,7 @@ class FlakyTestDetectionTool(BaseTool):
         # For now, simulate with no quarantine
         return {"is_quarantined": False, "quarantine_start": None, "reason": None}
 
-    def _add_to_quarantine(self, test_id: str, start_date: datetime):
+    def _add_to_quarantine(self, test_id: str, start_date: datetime) -> None:
         """Add test to quarantine (simulated)"""
         # In real implementation, this would update a database
         pass
@@ -1270,7 +1304,9 @@ class FlakyTestDetectionTool(BaseTool):
 
         return conditions
 
-    def _calculate_flakiness_metrics(self, test_results: list[dict]) -> dict[str, Any]:
+    def _calculate_flakiness_metrics(
+        self, test_results: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Calculate overall flakiness metrics"""
         total_tests = len({r.get("test_id") for r in test_results})
         total_executions = len(test_results)
@@ -1284,9 +1320,9 @@ class FlakyTestDetectionTool(BaseTool):
             "highly_flaky": 0,  # > 50% failure rate
         }
 
-        test_executions = {}
+        test_executions: dict[str, list[dict[str, Any]]] = {}
         for result in test_results:
-            test_id = result.get("test_id")
+            test_id: str = result.get("test_id", "")
             if test_id not in test_executions:
                 test_executions[test_id] = []
             test_executions[test_id].append(result)
@@ -1472,8 +1508,8 @@ class VisualRegressionTool(BaseTool):
     def _cross_browser_compare(self, url: str) -> dict[str, Any]:
         """Compare rendering across browsers"""
         browsers = ["Chrome", "Firefox", "Safari", "Edge"]
-        results = []
-        inconsistencies = []
+        results: list[dict[str, Any]] = []
+        inconsistencies: list[dict[str, Any]] = []
 
         for browser in browsers:
             results.append(
@@ -1491,15 +1527,15 @@ class VisualRegressionTool(BaseTool):
             "inconsistencies": inconsistencies,
         }
 
-    def _test_components(self, config: dict) -> dict[str, Any]:
+    def _test_components(self, config: dict[str, Any]) -> dict[str, Any]:
         """Test individual component visual consistency"""
         components = config.get(
             "components",
             ["header", "navigation", "footer", "forms", "buttons", "cards"],
         )
 
-        results = []
-        issues = []
+        results: list[dict[str, Any]] = []
+        issues: list[dict[str, Any]] = []
 
         for component in components:
             results.append(
@@ -1512,7 +1548,7 @@ class VisualRegressionTool(BaseTool):
             "issues": issues,
         }
 
-    def _build_recommendations(self, issues: list) -> list[str]:
+    def _build_recommendations(self, issues: list[dict[str, Any]]) -> list[str]:
         recs = []
         if any("diff" in str(i).lower() for i in issues):
             recs.append(
@@ -1568,7 +1604,7 @@ class UXUsabilityTestingTool(BaseTool):
             "timestamp": datetime.now().isoformat(),
         }
 
-    def _analyze_sessions(self, sessions: list[dict]) -> dict[str, Any]:
+    def _analyze_sessions(self, sessions: list[dict[str, Any]]) -> dict[str, Any]:
         """Analyze user sessions for UX patterns"""
         if not sessions:
             return {
@@ -1611,13 +1647,13 @@ class UXUsabilityTestingTool(BaseTool):
             },
         }
 
-    def _generate_heatmaps(self, sessions: list[dict]) -> dict[str, Any]:
+    def _generate_heatmaps(self, sessions: list[dict[str, Any]]) -> dict[str, Any]:
         """Generate click/attention heatmap data"""
         if not sessions:
             return {"click_density": {}, "scroll_depth": {}, "attention_zones": []}
 
-        click_positions = {}
-        scroll_depths = []
+        click_positions: dict[str, int] = {}
+        scroll_depths: list[float] = []
 
         for session in sessions:
             clicks = session.get("clicks", [])
@@ -1661,7 +1697,7 @@ class UXUsabilityTestingTool(BaseTool):
             "hotspot_count": len([z for z in zones if z.get("intensity") == "high"]),
         }
 
-    def _analyze_ab_tests(self, ab_tests: list[dict]) -> dict[str, Any]:
+    def _analyze_ab_tests(self, ab_tests: list[dict[str, Any]]) -> dict[str, Any]:
         """Analyze A/B test results"""
         results = []
 
@@ -1754,7 +1790,7 @@ class UXUsabilityTestingTool(BaseTool):
             return 0.80
         return 0.5
 
-    def _validate_user_journeys(self, journeys: list[dict]) -> dict[str, Any]:
+    def _validate_user_journeys(self, journeys: list[dict[str, Any]]) -> dict[str, Any]:
         """Validate user journey completion and pain points"""
         if not journeys:
             return {"total_journeys": 0, "completion_rate": 0, "pain_points": []}
@@ -1794,10 +1830,10 @@ class UXUsabilityTestingTool(BaseTool):
 
     def _calculate_usability_score(
         self,
-        session_analysis: dict,
-        heatmap_data: dict,
-        ab_analysis: dict,
-        journey_validation: dict,
+        session_analysis: dict[str, Any],
+        heatmap_data: dict[str, Any],
+        ab_analysis: dict[str, Any],
+        journey_validation: dict[str, Any],
     ) -> float:
         """Calculate overall usability score (0-100)"""
         scores = []
@@ -1821,14 +1857,14 @@ class UXUsabilityTestingTool(BaseTool):
         hotspot_score = min(100, hotspots * 20)
         scores.append(hotspot_score * 0.15)
 
-        return round(sum(scores), 1)
+        return float(round(sum(scores), 1))
 
     def _generate_ux_recommendations(
         self,
-        session_analysis: dict,
-        heatmap_data: dict,
-        ab_analysis: dict,
-        journey_validation: dict,
+        session_analysis: dict[str, Any],
+        heatmap_data: dict[str, Any],
+        ab_analysis: dict[str, Any],
+        journey_validation: dict[str, Any],
     ) -> list[str]:
         """Generate UX improvement recommendations"""
         recs = []
@@ -2141,10 +2177,10 @@ class LocalizationTestingTool(BaseTool):
 
     def _calculate_i18n_score(
         self,
-        language_tests: dict,
-        rtl_tests: dict,
-        timezone_tests: dict,
-        formatting_tests: dict,
+        language_tests: dict[str, Any],
+        rtl_tests: dict[str, Any],
+        timezone_tests: dict[str, Any],
+        formatting_tests: dict[str, Any],
     ) -> float:
         """Calculate overall i18n score (0-100)"""
         scores = []
@@ -2177,10 +2213,10 @@ class LocalizationTestingTool(BaseTool):
 
     def _generate_i18n_recommendations(
         self,
-        language_tests: dict,
-        rtl_tests: dict,
-        timezone_tests: dict,
-        formatting_tests: dict,
+        language_tests: dict[str, Any],
+        rtl_tests: dict[str, Any],
+        timezone_tests: dict[str, Any],
+        formatting_tests: dict[str, Any],
     ) -> list[str]:
         """Generate i18n improvement recommendations"""
         recs = []
@@ -2218,7 +2254,7 @@ class MobileAppTestingTool(BaseTool):
     name: str = "Mobile App Testing"
     description: str = "Comprehensive mobile application testing for iOS and Android using Appium - covers functional, UI, performance, and compatibility testing"
 
-    PLATFORM_CONFIGS: ClassVar[dict] = {
+    PLATFORM_CONFIGS: ClassVar[dict[str, Any]] = {
         "ios": {
             "platform": "iOS",
             "browser_name": "Safari",
@@ -2233,7 +2269,7 @@ class MobileAppTestingTool(BaseTool):
         },
     }
 
-    DEVICE_PROFILES: ClassVar[list] = [
+    DEVICE_PROFILES: ClassVar[list[dict[str, Any]]] = [
         {
             "name": "iPhone 15 Pro",
             "platform": "ios",
@@ -2278,7 +2314,7 @@ class MobileAppTestingTool(BaseTool):
         test_cases = mobile_config.get("test_cases", [])
         platforms = mobile_config.get("platforms", ["ios", "android"])
 
-        results = {
+        results: dict[str, Any] = {
             "mobile_score": 0.0,
             "platform_results": {},
             "total_tests": len(test_cases),
@@ -2310,15 +2346,19 @@ class MobileAppTestingTool(BaseTool):
         return results
 
     async def _test_platform(
-        self, platform: str, app_path: str, test_cases: list[dict], config: dict
-    ) -> dict:
+        self,
+        platform: str,
+        app_path: str,
+        test_cases: list[dict[str, Any]],
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
         """Test on specific platform (iOS or Android)"""
         platform_config = self.PLATFORM_CONFIGS.get(platform, {})
         devices = (
             self.DEVICE_PROFILES[:3] if platform == "ios" else self.DEVICE_PROFILES[3:]
         )
 
-        platform_result = {
+        platform_result: dict[str, Any] = {
             "platform": platform,
             "devices_tested": [],
             "passed": 0,
@@ -2327,7 +2367,7 @@ class MobileAppTestingTool(BaseTool):
         }
 
         for device in devices:
-            device_result = {
+            device_result: dict[str, Any] = {
                 "device_name": device["name"],
                 "os_version": device["version"],
                 "tests_passed": 0,
@@ -2353,8 +2393,11 @@ class MobileAppTestingTool(BaseTool):
         return platform_result
 
     def _execute_mobile_test(
-        self, test_case: dict, device: dict, platform_config: dict
-    ) -> dict:
+        self,
+        test_case: dict[str, Any],
+        device: dict[str, Any],
+        platform_config: dict[str, Any],
+    ) -> dict[str, Any]:
         """Execute a single mobile test case"""
         test_type = test_case.get("type", "functional")
 
@@ -2369,7 +2412,9 @@ class MobileAppTestingTool(BaseTool):
         else:
             return {"passed": True, "test_type": test_type}
 
-    def _test_functional(self, test_case: dict, device: dict) -> dict:
+    def _test_functional(
+        self, test_case: dict[str, Any], device: dict[str, Any]
+    ) -> dict[str, Any]:
         """Test functional behavior of mobile app"""
         test_name = test_case.get("name", "test")
         return {
@@ -2379,7 +2424,9 @@ class MobileAppTestingTool(BaseTool):
             "device": device["name"],
         }
 
-    def _test_ui_elements(self, test_case: dict, device: dict) -> dict:
+    def _test_ui_elements(
+        self, test_case: dict[str, Any], device: dict[str, Any]
+    ) -> dict[str, Any]:
         """Test UI elements and responsiveness"""
         elements = test_case.get("elements", [])
         issues = []
@@ -2398,7 +2445,9 @@ class MobileAppTestingTool(BaseTool):
             "issues": issues if issues else None,
         }
 
-    def _test_performance(self, test_case: dict, device: dict) -> dict:
+    def _test_performance(
+        self, test_case: dict[str, Any], device: dict[str, Any]
+    ) -> dict[str, Any]:
         """Test mobile app performance metrics"""
         launch_time = test_case.get("max_launch_time_ms", 3000)
         return {
@@ -2416,8 +2465,11 @@ class MobileAppTestingTool(BaseTool):
         }
 
     def _test_compatibility(
-        self, test_case: dict, device: dict, platform_config: dict
-    ) -> dict:
+        self,
+        test_case: dict[str, Any],
+        device: dict[str, Any],
+        platform_config: dict[str, Any],
+    ) -> dict[str, Any]:
         """Test device and OS compatibility"""
         min_version = test_case.get("min_os_version", "14")
         device_version = device.get("version", "17")
@@ -2438,7 +2490,7 @@ class MobileAppTestingTool(BaseTool):
         }
 
     def _generate_mobile_recommendations(
-        self, platform_results: dict, issues: list
+        self, platform_results: dict[str, Any], issues: list[dict[str, Any]]
     ) -> list[str]:
         """Generate mobile testing recommendations"""
         recs = []
@@ -2468,7 +2520,7 @@ class DesktopAppTestingTool(BaseTool):
     name: str = "Desktop App Testing"
     description: str = "Comprehensive desktop application testing for Windows, macOS, and Linux - covers Electron apps, native apps, and cross-platform compatibility"
 
-    PLATFORM_CONFIGS: ClassVar[dict] = {
+    PLATFORM_CONFIGS: ClassVar[dict[str, Any]] = {
         "windows": {
             "platform": "Windows",
             "os_versions": ["10", "11"],
@@ -2486,7 +2538,7 @@ class DesktopAppTestingTool(BaseTool):
         },
     }
 
-    DESKTOP_PROFILES: ClassVar[list] = [
+    DESKTOP_PROFILES: ClassVar[list[dict[str, Any]]] = [
         {
             "name": "Windows 11",
             "platform": "windows",
@@ -2532,7 +2584,7 @@ class DesktopAppTestingTool(BaseTool):
         test_cases = desktop_config.get("test_cases", [])
         platforms = desktop_config.get("platforms", ["windows", "macos", "linux"])
 
-        results = {
+        results: dict[str, Any] = {
             "desktop_score": 0.0,
             "platform_results": {},
             "total_tests": len(test_cases),
@@ -2568,14 +2620,14 @@ class DesktopAppTestingTool(BaseTool):
         platform: str,
         app_path: str,
         app_type: str,
-        test_cases: list[dict],
-        config: dict,
-    ) -> dict:
+        test_cases: list[dict[str, Any]],
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
         """Test on specific desktop platform"""
         platform_config = self.PLATFORM_CONFIGS.get(platform, {})
         os_versions = platform_config.get("os_versions", ["latest"])
 
-        platform_result = {
+        platform_result: dict[str, Any] = {
             "platform": platform,
             "os_versions_tested": [],
             "passed": 0,
@@ -2584,7 +2636,7 @@ class DesktopAppTestingTool(BaseTool):
         }
 
         for os_version in os_versions:
-            os_result = {
+            os_result: dict[str, Any] = {
                 "os_version": os_version,
                 "app_type": app_type,
                 "tests_passed": 0,
@@ -2612,8 +2664,8 @@ class DesktopAppTestingTool(BaseTool):
         return platform_result
 
     def _execute_desktop_test(
-        self, test_case: dict, platform: str, os_version: str, app_type: str
-    ) -> dict:
+        self, test_case: dict[str, Any], platform: str, os_version: str, app_type: str
+    ) -> dict[str, Any]:
         """Execute a single desktop test case"""
         test_type = test_case.get("type", "functional")
 
@@ -2631,8 +2683,8 @@ class DesktopAppTestingTool(BaseTool):
             return {"passed": True, "test_type": test_type, "platform": platform}
 
     def _test_functional_desktop(
-        self, test_case: dict, platform: str, os_version: str
-    ) -> dict:
+        self, test_case: dict[str, Any], platform: str, os_version: str
+    ) -> dict[str, Any]:
         """Test functional behavior of desktop app"""
         return {
             "passed": True,
@@ -2642,7 +2694,9 @@ class DesktopAppTestingTool(BaseTool):
             "os_version": os_version,
         }
 
-    def _test_ui_desktop(self, test_case: dict, platform: str, os_version: str) -> dict:
+    def _test_ui_desktop(
+        self, test_case: dict[str, Any], platform: str, os_version: str
+    ) -> dict[str, Any]:
         """Test desktop UI rendering and responsiveness"""
         elements = test_case.get("elements", [])
         issues = []
@@ -2663,8 +2717,8 @@ class DesktopAppTestingTool(BaseTool):
         }
 
     def _test_integration_desktop(
-        self, test_case: dict, platform: str, os_version: str, app_type: str
-    ) -> dict:
+        self, test_case: dict[str, Any], platform: str, os_version: str, app_type: str
+    ) -> dict[str, Any]:
         """Test desktop app integration with OS and other apps"""
         integration_points = test_case.get("integration_points", [])
         issues = []
@@ -2686,8 +2740,8 @@ class DesktopAppTestingTool(BaseTool):
         }
 
     def _test_accessibility_desktop(
-        self, test_case: dict, platform: str, os_version: str
-    ) -> dict:
+        self, test_case: dict[str, Any], platform: str, os_version: str
+    ) -> dict[str, Any]:
         """Test desktop accessibility features"""
         return {
             "passed": True,
@@ -2703,7 +2757,7 @@ class DesktopAppTestingTool(BaseTool):
         }
 
     def _generate_desktop_recommendations(
-        self, platform_results: dict, issues: list
+        self, platform_results: dict[str, Any], issues: list[dict[str, Any]]
     ) -> list[str]:
         """Generate desktop testing recommendations"""
         recs = []
@@ -2782,7 +2836,9 @@ class CrossPlatformTestingTool(BaseTool):
 
         return results
 
-    async def _test_web_platform(self, target_url: str, test_suite: dict) -> dict:
+    async def _test_web_platform(
+        self, target_url: str, test_suite: dict[str, Any]
+    ) -> dict[str, Any]:
         """Test web platform using existing Playwright capabilities"""
         return {
             "score": 95.0,
@@ -2794,7 +2850,7 @@ class CrossPlatformTestingTool(BaseTool):
         }
 
     def _generate_cross_platform_recommendations(
-        self, platform_results: dict
+        self, platform_results: dict[str, Any]
     ) -> list[str]:
         """Generate unified cross-platform recommendations"""
         recs = []
@@ -2824,7 +2880,7 @@ class CrossPlatformTestingTool(BaseTool):
 
 
 class JuniorQAAgent:
-    def __init__(self):
+    def __init__(self) -> None:
         # Validate environment variables
         validation = config.validate_required_env_vars()
         if not all(validation.values()):
@@ -2925,7 +2981,9 @@ class JuniorQAAgent:
         )
 
         # Notify QA Manager of completion
-        await self._notify_manager_completion(session_id, scenario["id"], final_result)
+        await self._notify_manager_completion(
+            str(session_id), scenario["id"], final_result
+        )
 
         return final_result
 
@@ -2983,7 +3041,7 @@ class JuniorQAAgent:
         )
 
         await self._notify_manager_completion(
-            session_id, scenario.get("id", "visual"), result
+            str(session_id), scenario.get("id", "visual"), result
         )
 
         return {
@@ -3156,12 +3214,12 @@ class JuniorQAAgent:
         return optimized_suite
 
     async def _run_regression_tests(
-        self, test_suite: dict[str, Any], test_data: dict | None = None
+        self, test_suite: dict[str, Any], test_data: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Run the regression test suite"""
         regression_tool = RegressionTestingTool()
 
-        execution_result = regression_tool._run(test_suite, environment="staging")
+        execution_result = await regression_tool._run(test_suite, environment="staging")
 
         # Add test data information if provided
         if test_data:
@@ -3174,7 +3232,7 @@ class JuniorQAAgent:
         return execution_result
 
     async def _perform_detailed_root_cause_analysis(
-        self, failed_tests: list[dict], scenario: dict
+        self, failed_tests: list[dict[str, Any]], scenario: dict[str, Any]
     ) -> dict[str, Any]:
         """Perform detailed root cause analysis"""
         analysis_task = Task(
@@ -3244,8 +3302,8 @@ class JuniorQAAgent:
         return recommendations
 
     async def _notify_manager_completion(
-        self, session_id: str, scenario_id: str, result: dict
-    ):
+        self, session_id: str, scenario_id: str, result: dict[str, Any]
+    ) -> None:
         """Notify QA Manager of task completion"""
         notification = {
             "agent": "junior_qa",
@@ -3311,7 +3369,7 @@ class JuniorQAAgent:
         )
 
         await self._notify_manager_completion(
-            session_id, scenario.get("id", "flaky_analysis"), final_result
+            str(session_id), scenario.get("id", "flaky_analysis"), final_result
         )
 
         return final_result
@@ -3362,7 +3420,9 @@ class JuniorQAAgent:
             "analysis_period_days": 3,
         }
 
-    async def _apply_quarantine_actions(self, actions: list[dict]) -> dict[str, Any]:
+    async def _apply_quarantine_actions(
+        self, actions: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Apply quarantine actions to test configurations"""
         applied_actions = []
 
@@ -3391,7 +3451,7 @@ class JuniorQAAgent:
         }
 
     async def _update_test_configs(
-        self, retry_strategies: list[dict]
+        self, retry_strategies: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Update test execution configurations with retry strategies"""
         updated_configs = []
@@ -3415,7 +3475,7 @@ class JuniorQAAgent:
         return {"total_updated": len(updated_configs), "configs": updated_configs}
 
 
-async def main():
+async def main() -> None:
     """Main entry point for Junior QA agent with Celery worker"""
     # Apply AGNOS environment profile (dev/staging/prod defaults)
     try:
@@ -3431,8 +3491,8 @@ async def main():
     logger.info("Starting Junior QA Celery worker...")
 
     # Define Celery task for regression testing
-    @junior_agent.celery_app.task(bind=True, name="junior_qa.execute_regression_test")
-    def execute_regression_task(self, task_data_json: str):
+    @junior_agent.celery_app.task(bind=True, name="junior_qa.execute_regression_test")  # type: ignore[untyped-decorator]
+    def execute_regression_task(self: Any, task_data_json: str) -> dict[str, Any]:
         """Celery task wrapper for regression testing"""
         try:
             import asyncio
@@ -3445,23 +3505,23 @@ async def main():
             return {"status": "error", "error": str(e)}
 
     # Define Celery task for data generation
-    @junior_agent.celery_app.task(bind=True, name="junior_qa.generate_test_data")
-    def generate_test_data_task(self, task_data_json: str):
+    @junior_agent.celery_app.task(bind=True, name="junior_qa.generate_test_data")  # type: ignore[untyped-decorator]
+    def generate_test_data_task(self: Any, task_data_json: str) -> dict[str, Any]:
         """Celery task wrapper for test data generation"""
         try:
             import asyncio
 
             task_data = json.loads(task_data_json)
-            result = asyncio.run(junior_agent.generate_test_data(task_data))
+            result = asyncio.run(junior_agent.generate_test_data(task_data))  # type: ignore[attr-defined]
             return {"status": "success", "result": result}
         except Exception as e:
             logger.error(f"Celery data generation task failed: {e}")
             return {"status": "error", "error": str(e)}
 
     # Start Redis listener for real-time task processing
-    async def redis_task_listener():
+    async def redis_task_listener() -> None:
         """Listen for tasks from Redis pub/sub"""
-        pubsub = junior_agent.redis_client.pubsub()
+        pubsub = junior_agent.redis_client.pubsub()  # type: ignore[no-untyped-call]
         try:
             pubsub.subscribe("junior_qa:tasks")
 
@@ -3483,7 +3543,7 @@ async def main():
                                 task_data
                             )
                         elif task_type == "data_generation":
-                            result = await junior_agent.generate_test_data(task_data)
+                            result = await junior_agent.generate_test_data(task_data)  # type: ignore[attr-defined]
                         else:
                             result = await junior_agent.execute_regression_test(
                                 task_data
@@ -3501,7 +3561,7 @@ async def main():
     # Run both Celery worker and Redis listener
     import threading
 
-    def start_celery_worker():
+    def start_celery_worker() -> None:
         """Start Celery worker in separate thread"""
         argv = [
             "worker",
