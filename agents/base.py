@@ -24,7 +24,6 @@ from crewai import LLM, Agent, Crew, Process, Task
 
 from agents.constants import DEFINITIONS_DIR, validate_agent_key
 from config.environment import config
-from config.llm_integration import llm_service
 
 if TYPE_CHECKING:
     from shared.crewai_compat import BaseTool
@@ -127,6 +126,7 @@ class BaseAgent:
         # --- infrastructure (same for every agent) ---
         self.redis_client = config.get_redis_client()
         self.celery_app = config.get_celery_app(definition.celery_queue)
+        from config.llm_integration import llm_service
         self.llm_service = llm_service
         self.llm = LLM(
             model=definition.llm_model,

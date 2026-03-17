@@ -7,9 +7,8 @@ common patterns used across agents, config, and webgui modules.
 from __future__ import annotations
 
 import re
-from typing import Literal
-
 from pathlib import Path
+from typing import Literal
 
 # Canonical directory paths
 PROJECT_ROOT = Path(__file__).parent.parent

@@ -222,7 +222,7 @@ def _get_known_agents() -> list[dict]:
         from config.agent_registry import agent_registry
 
         agents = []
-        for name, preset_data in agent_registry._presets.items():
+        for preset_data in agent_registry._presets.values():
             for agent in preset_data.get("agents", []):
                 # Shallow copy to avoid mutating cached data
                 entry = dict(agent)

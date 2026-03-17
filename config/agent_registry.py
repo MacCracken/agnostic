@@ -13,7 +13,7 @@ import logging
 import os
 from dataclasses import dataclass
 
-from agents.constants import DOMAINS, PRESETS_DIR, SIZES
+from agents.constants import PRESETS_DIR
 
 logger = logging.getLogger(__name__)
 

@@ -14,7 +14,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from agents.constants import DEFINITIONS_DIR, PRESETS_DIR, SAFE_KEY_RE
+from agents.constants import DEFINITIONS_DIR, SAFE_KEY_RE
 from shared.audit import AuditAction, audit_log
 from webgui.routes.dependencies import get_current_user
 
