@@ -34,6 +34,30 @@ Remaining work in **Agnosticos** and **SecureYeoman** to fully consume AAS multi
 
 ---
 
+## AGNOS & SecureYeoman Integration
+
+*Cross-project integration items for the ecosystem.*
+
+### AGNOS Integration
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| GPU-aware crew scheduling | Medium | Detect available GPU on AGNOS host via `agnosys` GPU probe. Route compute-intensive agents to GPU-enabled nodes. Inspired by NemoClaw's compute-aware routing |
+| Crew status in AGNOS HUD | Medium | Push crew lifecycle events to AGNOS daimon for display in aethersafha HUD. Use `GET /crews` with status filter |
+| Crew cancellation from agnoshi | Small | Wire `POST /crews/{crew_id}/cancel` to AGNOS MCP tool `agnostic_cancel_crew` and agnoshi intent "cancel crew {id}" |
+| AGNOS fleet crew distribution | Large | Distribute crew agents across AGNOS edge fleet. Agent 1 runs on device A (has GPU), Agent 2 on device B. Requires fleet-aware orchestrator |
+
+### SecureYeoman Integration
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| Crew delegation from SY workflows | Medium | SY DAG workflow step type `agnostic_crew` that creates and monitors an Agnostic crew. Poll `GET /crews/{id}` until completion |
+| SY DLP integration for crew output | Medium | Route crew output through SY's DLP pipeline before returning to user. Prevents data leakage from crew agents |
+| SY audit forwarding for crew actions | Small | Forward crew action logs to SY's cryptographic audit trail via delegated auth |
+| Preset management from SY dashboard | Medium | SY Connections > Agnostic panel: browse/select presets, create crews, view crew history |
+
+---
+
 ## Engineering Backlog
 
 Items identified during code review and audit. Not blocking, but should be addressed over time.
