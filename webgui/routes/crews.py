@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -219,6 +220,18 @@ async def _run_crew_async(
             await _update_status("failed", {"error": "No agents could be created"})
             return
 
+        # GPU scheduling — assign agents to GPU devices based on requirements
+        from config.gpu_scheduler import apply_gpu_assignment, schedule_crew_gpus
+
+        gpu_plan = schedule_crew_gpus([a.definition for a in agents])
+
+        if gpu_plan.has_errors:
+            await _update_status(
+                "failed",
+                {"error": "GPU scheduling failed", "gpu_errors": gpu_plan.errors},
+            )
+            return
+
         # Execute each agent's handle_task sequentially (or could be parallel)
         task_data = {
             "session_id": session_id,
@@ -232,7 +245,25 @@ async def _run_crew_async(
 
         results = {}
         for agent in agents:
+            # Apply GPU assignment for this agent
+            assignment = gpu_plan.get_assignment(agent.definition.agent_key)
+            gpu_env = apply_gpu_assignment(assignment) if assignment else {}
+            saved_env: dict[str, str | None] = {}
+
             try:
+                # Set GPU environment for this agent's execution
+                for k, v in gpu_env.items():
+                    saved_env[k] = os.environ.get(k)
+                    os.environ[k] = v
+
+                if assignment and assignment.is_gpu:
+                    logger.info(
+                        "Agent %s running on GPU %d (%s)",
+                        agent.definition.agent_key,
+                        assignment.device_index,
+                        assignment.device_name,
+                    )
+
                 agent_result = await agent.handle_task(task_data)
                 results[agent.definition.agent_key] = agent_result
             except Exception as exc:
@@ -246,6 +277,13 @@ async def _run_crew_async(
                     "status": "failed",
                     "error": str(exc),
                 }
+            finally:
+                # Restore original environment
+                for k, original in saved_env.items():
+                    if original is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = original
 
         # Aggregate
         all_ok = all(r.get("status") == "completed" for r in results.values())
@@ -261,6 +299,7 @@ async def _run_crew_async(
                 "agents_failed": sum(
                     1 for r in results.values() if r.get("status") == "failed"
                 ),
+                "gpu_placement": gpu_plan.to_dict(),
                 "completed_at": datetime.now(UTC).isoformat(),
             },
         )

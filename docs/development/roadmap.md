@@ -43,9 +43,56 @@ Remaining work in **Agnosticos** and **SecureYeoman** to fully consume AAS multi
 | Item | Effort | Notes |
 |------|--------|-------|
 | GPU-aware crew scheduling | Medium | Detect available GPU on AGNOS host via `agnosys` GPU probe. Route compute-intensive agents to GPU-enabled nodes. Inspired by NemoClaw's compute-aware routing |
+| GPU memory monitoring & limits | Medium | Track per-agent VRAM usage via `nvidia-smi` / `agnosys` telemetry. Enforce per-crew GPU memory budgets. Reject or queue agents when VRAM headroom is insufficient |
+| Local LLM inference offload | Medium | When a local GPU is available, route eligible LLM calls (small models, embeddings, reranking) to a local inference server (vLLM/Ollama) instead of the cloud gateway. Controlled by `AGNOS_LOCAL_INFERENCE_ENABLED` and model size thresholds |
+| GPU-accelerated tool execution | Small | Allow tool definitions to declare `gpu_required: true`. The crew scheduler pins these tools to GPU-enabled agents/nodes. Initial targets: code analysis, embedding generation, image processing tools |
+| Multi-GPU scheduling across crews | Medium | When multiple GPUs are present (multi-card host or fleet), assign crews to specific GPUs to avoid contention. Use CUDA_VISIBLE_DEVICES pinning per crew process. Expose GPU slot availability via `/api/v1/gpu/status` |
 | Crew status in AGNOS HUD | Medium | Push crew lifecycle events to AGNOS daimon for display in aethersafha HUD. Use `GET /crews` with status filter |
 | Crew cancellation from agnoshi | Small | Wire `POST /crews/{crew_id}/cancel` to AGNOS MCP tool `agnostic_cancel_crew` and agnoshi intent "cancel crew {id}" |
-| AGNOS fleet crew distribution | Large | Distribute crew agents across AGNOS edge fleet. Agent 1 runs on device A (has GPU), Agent 2 on device B. Requires fleet-aware orchestrator |
+
+### AGNOS Fleet Crew Distribution
+
+A distributed AGNOS fleet running Agnostic in lockstep. Every node in the fleet is a full Agnostic participant — not a dumb worker receiving dispatched jobs, but a coordinated peer that understands the crew it belongs to, holds shared state, and executes in sync with the rest of the fleet. The fleet *is* the Agnostic instance, stretched across hardware.
+
+**Core concept:** A crew submitted to any fleet node is transparently distributed across the entire fleet. From the caller's perspective it's a single `POST /crews` — behind the scenes, agents fan out to the optimal nodes and execute as a unified crew with synchronized task handoffs, shared context, and a single aggregated result.
+
+**What this means:**
+
+- **Lockstep execution model** — All agents in a fleet-distributed crew share a synchronized execution clock. Task handoffs between agents are barrier-synchronized: Agent B on Node 2 does not begin until Agent A on Node 1 has committed its output to the shared state. This prevents drift, partial results, and ordering bugs. The crew behaves identically whether it runs on one node or twenty.
+- **Unified crew state** — A single Redis-backed state object represents the crew regardless of how many nodes participate. Every agent reads from and writes to the same logical state. Conflict resolution via optimistic locking (Redis WATCH/MULTI) ensures consistency without distributed consensus overhead.
+- **Any-node entry point** — A crew request can land on any fleet node. That node becomes the *coordinator* for that crew — it runs the placement engine, fans out agent assignments, and aggregates results. Other nodes are *participants*. If the coordinator fails, another node can pick up coordination from the checkpointed state.
+- **Agent placement** — The coordinator assigns each agent to a fleet node based on capabilities (GPU model/VRAM, CPU cores, RAM, installed tools, network locality). Agent 1 runs on a GPU workstation for inference-heavy work while Agent 2 runs on an edge device close to the data source. Placement is deterministic given the same fleet state — replayable and auditable.
+- **Fleet inventory** — Live registry of fleet nodes populated by `agnosys` hardware probes and kept current via heartbeat (default 10s TTL). Each node reports: GPU model/VRAM/utilization, CPU cores/load, RAM, disk, network latency to peers, installed tool capabilities. Exposed as `GET /api/v1/fleet/nodes`.
+- **Scheduling policies** — Pluggable strategies determine agent-to-node mapping:
+  - `gpu-affinity` — prefer GPU nodes for compute-heavy agents (default)
+  - `data-locality` — place agents near the data they process (minimize transfer)
+  - `balanced` — spread load evenly across nodes
+  - `cost-aware` — prefer cheaper/lower-power nodes first, escalate to GPU only when needed
+  - `lockstep-strict` — all agents co-located on fewest nodes possible to minimize network hops (for latency-critical crews)
+- **Inter-node agent communication** — Agents on different nodes communicate via Redis pub/sub with ordered message delivery. CrewAI task handoffs serialized as JSON with sequence numbers for exactly-once processing. Latency-sensitive crews can opt into gRPC direct links between nodes for sub-millisecond handoffs.
+- **Fault tolerance & recovery** — Crew state checkpointed to Redis after every task completion. If a node drops mid-crew, the coordinator detects the loss via heartbeat timeout, re-places the affected agent on another eligible node, and replays from the last checkpoint. The crew continues without restarting. If the *coordinator* drops, any participant can assume coordination from the same checkpoint.
+- **GPU-aware placement** — Nodes report GPU availability and VRAM headroom in real time. Agents with `gpu_required` tools or local-inference workloads are only placed on GPU nodes. Multi-GPU nodes can host multiple agents with per-agent CUDA_VISIBLE_DEVICES isolation. Fleet-wide GPU utilization visible at a glance.
+- **Security boundary** — Fleet nodes authenticate via mTLS (certificates issued by AGNOS CA). All agent-to-agent traffic encrypted in transit. Crew outputs aggregated at the coordinator before returning to the caller. No raw inter-node traffic is exposed outside the fleet mesh.
+- **Scaling model** — Adding a node to the fleet is additive: install Agnostic, point it at the fleet Redis, and it joins automatically via heartbeat registration. No reconfiguration of existing nodes. Removing a node triggers graceful drain — in-flight agents are re-placed before the node is deregistered.
+- **Node groups** — Fleet nodes can be organized into logical groups (e.g., `gpu-rack-1`, `edge-west`, `dev-lab`). A group acts as a scheduling unit — the placement engine can target a group rather than individual nodes, and scheduling policies apply at the group level. Crews can be pinned to a group (`"group": "gpu-rack-1"`) or span multiple groups. Groups enable: co-locating related agents on the same rack for low-latency handoffs, isolating tenants to dedicated hardware, running separate crews on separate clusters simultaneously, and treating a multi-GPU rack as a single high-capability unit. Groups are declared via node config (`AGNOS_FLEET_GROUP=gpu-rack-1`) and surfaced in the fleet inventory.
+
+**Deliverables:**
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| Fleet node inventory & heartbeat | Medium | `agnosys` probe reports hardware caps + load. Central registry with TTL-based liveness. `GET /api/v1/fleet/nodes` |
+| Fleet join/leave protocol | Medium | Auto-registration via heartbeat. Graceful drain on leave. Node discovery without manual config |
+| Node group support | Small | `AGNOS_FLEET_GROUP` config. Group-level scheduling, crew pinning (`"group": "gpu-rack-1"`). Groups in fleet inventory and HUD |
+| Unified crew state layer | Medium | Redis-backed shared state with optimistic locking. Single logical state object per crew regardless of node count |
+| Lockstep barrier sync | Medium | Barrier-synchronized task handoffs between agents on different nodes. Sequence-numbered messages for exactly-once delivery |
+| Placement engine | Large | Match agent requirements (GPU, memory, tools) to node capabilities. Pluggable scheduling policies. Deterministic placement |
+| Coordinator election & failover | Medium | Any-node entry point. Coordinator failure detected via heartbeat. Participant promotion from checkpointed state |
+| Inter-node task relay | Large | Serialize CrewAI task handoffs over Redis pub/sub with ordering guarantees. Optional gRPC fast path. Partial failure handling and retries |
+| Fleet-aware crew builder | Medium | Extend `assemble_team()` and `_run_crew_async()` to accept placement hints and distribute agents across nodes transparently |
+| Agent checkpoint & recovery | Medium | Persist agent state to Redis after each task. On node failure, reschedule agent on new node and resume from checkpoint |
+| Fleet GPU status dashboard | Small | Aggregate GPU utilization across all fleet nodes. Surface in AGNOS HUD and via `GET /api/v1/fleet/gpu` |
+| Fleet scaling test | Medium | Add/remove nodes from a running fleet while crews are executing. Verify zero disruption |
+| E2E test: multi-node lockstep crew | Medium | Spin up 3+ test containers as fleet nodes. Run a crew that spans all. Verify lockstep ordering, fault recovery, and output correctness |
 
 ### SecureYeoman Integration
 

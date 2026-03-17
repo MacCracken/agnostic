@@ -59,6 +59,10 @@ class AgentDefinition:
         llm_temperature: float = 0.1,
         verbose: bool = True,
         metadata: dict[str, Any] | None = None,
+        gpu_required: bool = False,
+        gpu_strict: bool = False,
+        gpu_preferred: bool = False,
+        gpu_memory_min_mb: int = 0,
     ):
         self.agent_key = agent_key
         self.name = name
@@ -77,9 +81,13 @@ class AgentDefinition:
         self.llm_temperature = llm_temperature
         self.verbose = verbose
         self.metadata = metadata or {}
+        self.gpu_required = gpu_required
+        self.gpu_strict = gpu_strict
+        self.gpu_preferred = gpu_preferred
+        self.gpu_memory_min_mb = gpu_memory_min_mb
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "agent_key": self.agent_key,
             "name": self.name,
             "role": self.role,
@@ -97,6 +105,16 @@ class AgentDefinition:
             "verbose": self.verbose,
             "metadata": self.metadata,
         }
+        # Only include GPU fields when non-default to keep payloads lean
+        if self.gpu_required:
+            d["gpu_required"] = True
+        if self.gpu_strict:
+            d["gpu_strict"] = True
+        if self.gpu_preferred:
+            d["gpu_preferred"] = True
+        if self.gpu_memory_min_mb:
+            d["gpu_memory_min_mb"] = self.gpu_memory_min_mb
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentDefinition:
