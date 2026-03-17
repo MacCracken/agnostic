@@ -19,6 +19,7 @@ from config.gpu_scheduler import (
     AgentGPURequirements,
     GPUAssignment,
     GPUPlacementPlan,
+    GPUSlotTracker,
     apply_gpu_assignment,
     schedule_crew_gpus,
 )
@@ -643,3 +644,292 @@ class TestGPUEndpoints:
         mock_detect.return_value = _make_gpu_status()
         resp = client.get("/api/v1/gpu/devices/99")
         assert resp.status_code == 404
+
+    @patch("config.gpu.detect_gpus")
+    def test_gpu_slots_endpoint(self, mock_detect, client):
+        mock_detect.return_value = _make_gpu_status()
+        resp = client.get("/api/v1/gpu/slots")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "tracker" in data
+        assert "adjusted_free_mb" in data
+
+    def test_gpu_inference_endpoint(self, client):
+        resp = client.get("/api/v1/gpu/inference")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "enabled" in data
+        assert "models" in data
+
+
+# ---------------------------------------------------------------------------
+# GPU slot tracker tests
+# ---------------------------------------------------------------------------
+
+
+class TestGPUSlotTracker:
+    def test_reserve_and_release(self):
+        tracker = GPUSlotTracker()
+        tracker.reserve("crew-1", 0, 4000)
+        tracker.reserve("crew-1", 1, 8000)
+        assert tracker.total_reserved(0) == 4000
+        assert tracker.total_reserved(1) == 8000
+        assert len(tracker.active_crews()) == 1
+
+        tracker.release("crew-1")
+        assert tracker.total_reserved(0) == 0
+        assert tracker.total_reserved(1) == 0
+        assert len(tracker.active_crews()) == 0
+
+    def test_multiple_crews(self):
+        tracker = GPUSlotTracker()
+        tracker.reserve("crew-1", 0, 4000)
+        tracker.reserve("crew-2", 0, 2000)
+        assert tracker.total_reserved(0) == 6000
+        assert len(tracker.active_crews()) == 2
+
+        tracker.release("crew-1")
+        assert tracker.total_reserved(0) == 2000
+
+    def test_adjusted_free(self):
+        tracker = GPUSlotTracker()
+        tracker.reserve("crew-1", 0, 4000)
+        status = _make_gpu_status()  # 22528 free on device 0
+        adjusted = tracker.adjusted_free(status)
+        assert adjusted[0] == 22528 - 4000
+
+    def test_to_dict(self):
+        tracker = GPUSlotTracker()
+        tracker.reserve("crew-1", 0, 4000)
+        d = tracker.to_dict()
+        assert d["active_crews"] == 1
+        assert "crew-1" in d["reservations"]
+
+    def test_release_nonexistent_crew(self):
+        tracker = GPUSlotTracker()
+        tracker.release("nope")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Tool GPU registration tests
+# ---------------------------------------------------------------------------
+
+
+class TestToolGPURegistration:
+    def test_register_gpu_tool(self):
+        from shared.crewai_compat import BaseTool
+
+        from agents.tool_registry import (
+            _REGISTRY,
+            register_gpu_tool,
+            tool_gpu_memory_min,
+            tool_requires_gpu,
+        )
+
+        @register_gpu_tool(gpu_memory_min_mb=4000)
+        class _TestGPUTool(BaseTool):
+            name: str = "TestGPUTool"
+            description: str = "A test GPU tool"
+
+            def _run(self, **kwargs):
+                return "ok"
+
+        assert tool_requires_gpu("_TestGPUTool")
+        assert tool_gpu_memory_min("_TestGPUTool") == 4000
+
+        # Cleanup
+        _REGISTRY.pop("_TestGPUTool", None)
+
+    def test_non_gpu_tool(self):
+        from agents.tool_registry import tool_gpu_memory_min, tool_requires_gpu
+
+        assert not tool_requires_gpu("NonExistentTool")
+        assert tool_gpu_memory_min("NonExistentTool") == 0
+
+    def test_infer_gpu_from_tools(self):
+        from shared.crewai_compat import BaseTool
+
+        from agents.base import AgentDefinition, BaseAgent
+        from agents.tool_registry import _REGISTRY, register_gpu_tool
+
+        @register_gpu_tool(gpu_memory_min_mb=6000)
+        class _InferTestTool(BaseTool):
+            name: str = "InferTestTool"
+            description: str = "GPU inference test"
+
+            def _run(self, **kwargs):
+                return "ok"
+
+        defn = AgentDefinition(
+            agent_key="infer-test",
+            name="Infer Test",
+            role="tester",
+            goal="test",
+            backstory="test",
+            tools=["_InferTestTool"],
+        )
+
+        # Simulate what BaseAgent.__init__ does
+        BaseAgent._infer_gpu_from_tools(defn)
+        assert defn.gpu_required is True
+        assert defn.gpu_memory_min_mb == 6000
+
+        # Cleanup
+        _REGISTRY.pop("_InferTestTool", None)
+
+    def test_explicit_gpu_not_overridden(self):
+        from agents.base import AgentDefinition, BaseAgent
+
+        defn = AgentDefinition(
+            agent_key="explicit-gpu",
+            name="Explicit",
+            role="r",
+            goal="g",
+            backstory="b",
+            gpu_preferred=True,
+            gpu_memory_min_mb=2000,
+        )
+
+        BaseAgent._infer_gpu_from_tools(defn)
+        # Should not be changed since gpu_preferred is already set
+        assert defn.gpu_memory_min_mb == 2000
+
+
+# ---------------------------------------------------------------------------
+# Local inference routing tests
+# ---------------------------------------------------------------------------
+
+
+class TestLocalInference:
+    def test_disabled_by_default(self):
+        from config.local_inference import route_inference
+
+        route = route_inference("gpt-4o")
+        assert not route.local
+        assert "disabled" in route.reason
+
+    def test_force_cloud(self):
+        from config.local_inference import route_inference
+
+        route = route_inference("gpt-4o", force_cloud=True)
+        assert not route.local
+        assert route.reason == "force_cloud"
+
+    def test_model_not_in_local_list(self):
+        import config.local_inference as li
+
+        old_enabled = li._ENABLED
+        li._ENABLED = True
+        try:
+            route = li.route_inference("gpt-4o")
+            assert not route.local
+            assert "not in local model list" in route.reason
+        finally:
+            li._ENABLED = old_enabled
+
+    @patch("config.local_inference._gpu_has_headroom", return_value=True)
+    def test_routes_to_ollama(self, mock_headroom):
+        import config.local_inference as li
+
+        old_enabled, old_models, old_provider = (
+            li._ENABLED,
+            li._LOCAL_MODELS,
+            li._PROVIDER,
+        )
+        li._ENABLED = True
+        li._LOCAL_MODELS = {"llama3.1:8b"}
+        li._PROVIDER = "ollama"
+        try:
+            route = li.route_inference("llama3.1:8b")
+            assert route.local
+            assert route.model_name == "ollama/llama3.1:8b"
+            assert route.reason == "routed_to_local"
+        finally:
+            li._ENABLED, li._LOCAL_MODELS, li._PROVIDER = (
+                old_enabled,
+                old_models,
+                old_provider,
+            )
+
+    @patch("config.local_inference._gpu_has_headroom", return_value=True)
+    def test_routes_to_vllm(self, mock_headroom):
+        import config.local_inference as li
+
+        old_enabled, old_models, old_provider = (
+            li._ENABLED,
+            li._LOCAL_MODELS,
+            li._PROVIDER,
+        )
+        li._ENABLED = True
+        li._LOCAL_MODELS = {"llama3.1:8b"}
+        li._PROVIDER = "vllm"
+        try:
+            route = li.route_inference("llama3.1:8b")
+            assert route.local
+            assert route.model_name == "openai/llama3.1:8b"
+        finally:
+            li._ENABLED, li._LOCAL_MODELS, li._PROVIDER = (
+                old_enabled,
+                old_models,
+                old_provider,
+            )
+
+    def test_model_too_large(self):
+        import config.local_inference as li
+
+        old_enabled, old_models = li._ENABLED, li._LOCAL_MODELS
+        li._ENABLED = True
+        li._LOCAL_MODELS = {"llama3:70b"}
+        try:
+            route = li.route_inference("llama3:70b")
+            assert not route.local
+            assert "too large" in route.reason
+        finally:
+            li._ENABLED, li._LOCAL_MODELS = old_enabled, old_models
+
+    @patch("config.local_inference._gpu_has_headroom", return_value=False)
+    def test_insufficient_vram(self, mock_headroom):
+        import config.local_inference as li
+
+        old_enabled, old_models = li._ENABLED, li._LOCAL_MODELS
+        li._ENABLED = True
+        li._LOCAL_MODELS = {"llama3.1:8b"}
+        try:
+            route = li.route_inference("llama3.1:8b")
+            assert not route.local
+            assert "VRAM" in route.reason
+        finally:
+            li._ENABLED, li._LOCAL_MODELS = old_enabled, old_models
+
+    def test_strips_provider_prefix(self):
+        import config.local_inference as li
+
+        old_enabled, old_models = li._ENABLED, li._LOCAL_MODELS
+        li._ENABLED = True
+        li._LOCAL_MODELS = {"llama3.1:8b"}
+        try:
+            with patch("config.local_inference._gpu_has_headroom", return_value=True):
+                route = li.route_inference("ollama/llama3.1:8b")
+                assert route.local
+        finally:
+            li._ENABLED, li._LOCAL_MODELS = old_enabled, old_models
+
+    def test_get_local_models(self):
+        import config.local_inference as li
+
+        old_models = li._LOCAL_MODELS
+        li._LOCAL_MODELS = {"llama3.1:8b", "nomic-embed-text"}
+        try:
+            models = li.get_local_models()
+            assert len(models) == 2
+            names = {m["name"] for m in models}
+            assert "llama3.1:8b" in names
+            assert "nomic-embed-text" in names
+        finally:
+            li._LOCAL_MODELS = old_models
+
+    def test_embedding_model_estimated_small(self):
+        from config.local_inference import _estimate_params_b
+
+        assert _estimate_params_b("nomic-embed-text") < 1.0
+        assert _estimate_params_b("bge-reranker-v2-m3") < 1.0

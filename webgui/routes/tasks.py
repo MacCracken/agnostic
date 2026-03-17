@@ -97,7 +97,16 @@ class A2ACapabilitiesResponse(BaseModel):
 WEBHOOK_MAX_RETRIES = min(int(os.getenv("WEBHOOK_MAX_RETRIES", "3")), 10)
 
 _webhook_http_client: Any = None
-_webhook_client_lock = asyncio.Lock()
+_webhook_client_lock: asyncio.Lock | None = None
+
+
+def _get_webhook_lock() -> asyncio.Lock:
+    """Lazily create the webhook client lock in the current event loop."""
+    global _webhook_client_lock
+    if _webhook_client_lock is None:
+        _webhook_client_lock = asyncio.Lock()
+    return _webhook_client_lock
+
 
 _TASK_ID_RE = re.compile(r"^[a-zA-Z0-9\-]{1,100}$")
 
@@ -105,7 +114,7 @@ _TASK_ID_RE = re.compile(r"^[a-zA-Z0-9\-]{1,100}$")
 async def _get_webhook_client() -> Any:
     """Return a shared httpx.AsyncClient for webhook delivery."""
     global _webhook_http_client
-    async with _webhook_client_lock:
+    async with _get_webhook_lock():
         if _webhook_http_client is None or _webhook_http_client.is_closed:
             import httpx
 
@@ -120,8 +129,19 @@ async def _fire_webhook(
 ) -> None:
     """POST task result to callback_url with optional HMAC-SHA256 signature.
 
+    Re-validates the callback URL at fire time to guard against stored SSRF.
     Retries up to WEBHOOK_MAX_RETRIES times with exponential backoff (1s, 2s, 4s, ...).
     """
+    # Re-validate at fire time — the stored URL could have been tampered with,
+    # or DNS could have changed since submission.
+    try:
+        _validate_callback_url(callback_url)
+    except ValueError as exc:
+        logger.warning(
+            "Webhook SSRF blocked at fire time for %s: %s", callback_url, exc
+        )
+        return
+
     body = json.dumps(payload)
     headers: dict[str, str] = {"Content-Type": "application/json"}
 

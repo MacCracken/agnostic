@@ -14,6 +14,23 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ### Added
 
+- **GPU-aware crew scheduling** — `config/gpu.py` detects NVIDIA GPUs via `nvidia-smi` or agnosys probe (`/var/lib/agnosys/gpu.json`). `config/gpu_scheduler.py` assigns agents to devices based on requirements. Per-agent `CUDA_VISIBLE_DEVICES` isolation. Cached probe with 30s TTL
+- **GPU memory monitoring & limits** — `CrewRunRequest.gpu_memory_budget_mb` enforces per-crew GPU memory caps. Scheduler pre-checks declared minimums against budget. VRAM snapshots captured before/after each GPU agent execution (stored in crew results as `gpu_vram`)
+- **Local LLM inference offload** — `config/local_inference.py` routes eligible models (small, embeddings, reranking) to local vLLM/Ollama/OpenAI-compatible servers. Integrated transparently into `LLMIntegrationService._llm_call`. GPU headroom check, model size heuristic (<14B default), 6 `AGNOS_LOCAL_INFERENCE_*` env vars
+- **GPU-accelerated tool execution** — `@register_gpu_tool(gpu_memory_min_mb=N)` decorator in tool registry. `tool_requires_gpu()`/`tool_gpu_memory_min()` queries. `BaseAgent._infer_gpu_from_tools()` auto-promotes agents with GPU tools. `list_registered_tools()` includes GPU info
+- **Multi-GPU scheduling across crews** — `GPUSlotTracker` tracks cross-crew GPU reservations process-wide. Crews reserve on start, release on finish (and on failure). Scheduler spreads agents across devices by free memory
+- **GPU API endpoints** — `GET /api/v1/gpu/status`, `/gpu/memory`, `/gpu/devices/{index}`, `/gpu/slots`, `/gpu/inference`
+- **AgentDefinition GPU fields** — `gpu_required`, `gpu_strict`, `gpu_preferred`, `gpu_memory_min_mb` (only serialized when non-default)
+- **67 GPU tests** — detection, scheduling, memory budgets, slot tracker, tool registration, local inference routing, all endpoints. Total: 1055 unit tests
+- **`TaskStatus` enum** (`agents/status.py`) — `StrEnum` with `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `PARTIAL`, `CANCELLED`. Single source of truth for status strings
+- **`require_admin` dependency** (`webgui/routes/dependencies.py`) — reusable `Depends()` for admin role checks, replacing 7+ inline duplications
+- **Version pruning** — `save_version()` now auto-prunes oldest versions when count exceeds `AGNOSTIC_MAX_VERSIONS` (default 50)
+- **Symlink traversal fix** — `AgentFactory.from_file()` blocks symlinks that resolve outside `DEFINITIONS_DIR`
+- **Webhook SSRF re-validation** — `_fire_webhook()` re-validates callback URL at fire time to guard against stored SSRF / DNS rebinding
+- **Background task tracking** — `_background_tasks` set in crews.py prevents GC of fire-and-forget `asyncio.Task` references
+- **Module-scope `asyncio.Lock` fix** — `_webhook_client_lock` in tasks.py lazily created via `_get_webhook_lock()` to avoid binding to wrong event loop
+- **Async file I/O** — `list_definitions` and `export_package` endpoints now use `run_in_executor` to avoid blocking the event loop
+- **`import_package()` dedup** — definition and preset install loops consolidated into shared loop
 - **18 crew presets** — 5 domains (quality, software-engineering, design, data-engineering, devops) x 3 sizes (lean, standard, large) + `complete-lean` + `quality-security` + `quality-performance`
 - **Crew assembler** (`agents/crew_assembler.py`) — `assemble_team()` builds agent definitions from natural-language team specs; `recommend_preset()` suggests best preset from task description
 - **Custom team composition** — `CrewRunRequest.team` (TeamSpec) enables "I need a 4-person team: UX, game engineer, game designer, project lead" style requests

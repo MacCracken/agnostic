@@ -36,6 +36,29 @@ def register_tool(cls: type[BaseTool]) -> type[BaseTool]:
     return cls
 
 
+def register_gpu_tool(*, gpu_memory_min_mb: int = 0) -> callable:
+    """Decorator: register a BaseTool subclass and mark it as GPU-requiring.
+
+    Usage::
+
+        @register_gpu_tool(gpu_memory_min_mb=4000)
+        class EmbeddingGenerationTool(BaseTool):
+            ...
+
+    The scheduler reads ``_gpu_required`` and ``_gpu_memory_min_mb`` from the
+    tool class to infer agent-level GPU requirements.
+    """
+
+    def _decorator(cls: type[BaseTool]) -> type[BaseTool]:
+        cls._gpu_required = True  # type: ignore[attr-defined]
+        cls._gpu_memory_min_mb = gpu_memory_min_mb  # type: ignore[attr-defined]
+        _check_registry_capacity(cls.__name__)
+        _REGISTRY[cls.__name__] = cls
+        return cls
+
+    return _decorator
+
+
 def register_tool_class(name: str, cls: type[BaseTool]) -> None:
     """Register a tool class under an explicit name."""
     _check_registry_capacity(name)
@@ -45,6 +68,22 @@ def register_tool_class(name: str, cls: type[BaseTool]) -> None:
 def get_tool(name: str) -> type[BaseTool] | None:
     """Look up a tool class by name.  Returns None if not found."""
     return _REGISTRY.get(name)
+
+
+def tool_requires_gpu(name: str) -> bool:
+    """Check if a registered tool requires GPU."""
+    cls = _REGISTRY.get(name)
+    if cls is None:
+        return False
+    return getattr(cls, "_gpu_required", False)
+
+
+def tool_gpu_memory_min(name: str) -> int:
+    """Get the minimum GPU memory (MB) a tool requires. Returns 0 if not GPU."""
+    cls = _REGISTRY.get(name)
+    if cls is None:
+        return 0
+    return getattr(cls, "_gpu_memory_min_mb", 0)
 
 
 # Dict alias — BaseAgent._resolve_tools does tool_registry.get(name) on this
@@ -180,14 +219,18 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
     return tool_cls
 
 
-def list_registered_tools() -> list[dict[str, str]]:
-    """List all registered tools with their names and descriptions."""
+def list_registered_tools() -> list[dict[str, Any]]:
+    """List all registered tools with their names, descriptions, and GPU info."""
     tools = []
     for name, cls in sorted(_REGISTRY.items()):
         desc = ""
         if hasattr(cls, "description"):
             desc = cls.description if isinstance(cls.description, str) else ""
-        tools.append({"name": name, "description": desc})
+        entry: dict[str, Any] = {"name": name, "description": desc}
+        if getattr(cls, "_gpu_required", False):
+            entry["gpu_required"] = True
+            entry["gpu_memory_min_mb"] = getattr(cls, "_gpu_memory_min_mb", 0)
+        tools.append(entry)
     return tools
 
 

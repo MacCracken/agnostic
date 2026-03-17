@@ -78,3 +78,36 @@ async def gpu_memory_summary(
         "free_mb": status.free_memory_mb,
         "devices": per_device,
     }
+
+
+@router.get("/gpu/slots")
+async def gpu_slots(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return cross-crew GPU slot reservations.
+
+    Shows which crews currently hold GPU memory reservations and how much.
+    """
+    from config.gpu import detect_gpus
+    from config.gpu_scheduler import gpu_slot_tracker
+
+    status = detect_gpus()
+    adjusted = gpu_slot_tracker.adjusted_free(status) if status.available else {}
+
+    return {
+        "tracker": gpu_slot_tracker.to_dict(),
+        "adjusted_free_mb": adjusted,
+    }
+
+
+@router.get("/gpu/inference")
+async def local_inference_status(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return local inference offload configuration and available models."""
+    from config.local_inference import get_local_models, is_enabled
+
+    return {
+        "enabled": is_enabled(),
+        "models": get_local_models(),
+    }

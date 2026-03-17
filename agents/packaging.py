@@ -201,45 +201,24 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
             manifest = PackageManifest.from_dict(manifest_data)
             result["manifest"] = manifest.to_dict()
 
-            # Install definitions
-            DEFINITIONS_DIR.mkdir(parents=True, exist_ok=True)
-            for name in zf.namelist():
-                if name.startswith("definitions/") and name.endswith(".json"):
+            # Install definitions and presets using shared logic
+            for prefix, target_dir, result_key, label in [
+                (
+                    "definitions/",
+                    DEFINITIONS_DIR,
+                    "definitions_installed",
+                    "definition",
+                ),
+                ("presets/", PRESETS_DIR, "presets_installed", "preset"),
+            ]:
+                target_dir.mkdir(parents=True, exist_ok=True)
+                for name in zf.namelist():
+                    if not (name.startswith(prefix) and name.endswith(".json")):
+                        continue
                     key = Path(name).stem
-                    # Validate key is safe (no path traversal)
                     if not SAFE_KEY_RE.match(key):
-                        result["errors"].append(f"Invalid definition key: {key}")
+                        result["errors"].append(f"Invalid {label} key: {key}")
                         continue
-                    # Per-entry size check
-                    entry_info = zf.getinfo(name)
-                    if entry_info.file_size > _MAX_ENTRY_SIZE:
-                        result["errors"].append(
-                            f"Entry {name} too large ({entry_info.file_size} bytes)"
-                        )
-                        continue
-                    # Validate content is valid JSON
-                    raw = zf.read(name)
-                    try:
-                        json.loads(raw)
-                    except json.JSONDecodeError:
-                        result["errors"].append(f"Invalid JSON in {name}")
-                        continue
-                    target = DEFINITIONS_DIR / f"{key}.json"
-                    if target.exists() and not overwrite:
-                        result["skipped"].append(f"definition:{key}")
-                        continue
-                    target.write_bytes(raw)
-                    result["definitions_installed"].append(key)
-
-            # Install presets
-            PRESETS_DIR.mkdir(parents=True, exist_ok=True)
-            for name in zf.namelist():
-                if name.startswith("presets/") and name.endswith(".json"):
-                    preset_name = Path(name).stem
-                    if not SAFE_KEY_RE.match(preset_name):
-                        result["errors"].append(f"Invalid preset name: {preset_name}")
-                        continue
-                    # Per-entry size check
                     entry_info = zf.getinfo(name)
                     if entry_info.file_size > _MAX_ENTRY_SIZE:
                         result["errors"].append(
@@ -252,12 +231,12 @@ def import_package(data: bytes, *, overwrite: bool = False) -> dict[str, Any]:
                     except json.JSONDecodeError:
                         result["errors"].append(f"Invalid JSON in {name}")
                         continue
-                    target = PRESETS_DIR / f"{preset_name}.json"
+                    target = target_dir / f"{key}.json"
                     if target.exists() and not overwrite:
-                        result["skipped"].append(f"preset:{preset_name}")
+                        result["skipped"].append(f"{label}:{key}")
                         continue
                     target.write_bytes(raw)
-                    result["presets_installed"].append(preset_name)
+                    result[result_key].append(key)
 
     except zipfile.BadZipFile:
         result["errors"].append("Invalid ZIP file")

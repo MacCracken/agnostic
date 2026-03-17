@@ -231,6 +231,15 @@ def require_permission(permission: Permission) -> Any:
     return _check
 
 
+async def require_admin(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """FastAPI dependency that requires super_admin or org_admin role."""
+    if user.get("role") not in ("super_admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
 # ---------------------------------------------------------------------------
 # Feature flags
 # ---------------------------------------------------------------------------

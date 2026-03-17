@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
 from agents.constants import DEFINITIONS_DIR, VERSIONS_DIR, validate_agent_key
 
 logger = logging.getLogger(__name__)
+
+_MAX_VERSIONS = int(os.environ.get("AGNOSTIC_MAX_VERSIONS", "50"))
 
 
 def _version_dir(agent_key: str) -> Path:
@@ -72,11 +75,35 @@ def save_version(
         json.dump(definition_data, f, indent=2)
 
     logger.info("Saved version v%d for agent '%s'", version_num, agent_key)
+
+    # Prune old versions if over the cap
+    _prune_old_versions(agent_key)
+
     return {
         "agent_key": agent_key,
         "version": version_num,
         "path": str(version_path),
     }
+
+
+def _prune_old_versions(agent_key: str) -> int:
+    """Delete oldest versions if count exceeds _MAX_VERSIONS. Returns count deleted."""
+    vdir = _version_dir(agent_key)
+    if not vdir.exists():
+        return 0
+    existing = sorted(vdir.glob("v*.json"))
+    if len(existing) <= _MAX_VERSIONS:
+        return 0
+    to_delete = existing[: len(existing) - _MAX_VERSIONS]
+    for p in to_delete:
+        p.unlink()
+    logger.info(
+        "Pruned %d old version(s) for agent '%s' (max=%d)",
+        len(to_delete),
+        agent_key,
+        _MAX_VERSIONS,
+    )
+    return len(to_delete)
 
 
 def list_versions(agent_key: str) -> list[dict[str, Any]]:

@@ -42,11 +42,6 @@ Remaining work in **Agnosticos** and **SecureYeoman** to fully consume AAS multi
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| ~~GPU-aware crew scheduling~~ | ~~Medium~~ | **Done.** `config/gpu.py` detects GPUs via nvidia-smi or agnosys probe. `config/gpu_scheduler.py` assigns agents to devices. `CUDA_VISIBLE_DEVICES` per-agent. `GET /api/v1/gpu/status` |
-| ~~GPU memory monitoring & limits~~ | ~~Medium~~ | **Done.** Per-crew `gpu_memory_budget_mb` enforced by scheduler. VRAM snapshots before/after each GPU agent. `GET /api/v1/gpu/memory` and `/gpu/devices/{index}` endpoints |
-| Local LLM inference offload | Medium | When a local GPU is available, route eligible LLM calls (small models, embeddings, reranking) to a local inference server (vLLM/Ollama) instead of the cloud gateway. Controlled by `AGNOS_LOCAL_INFERENCE_ENABLED` and model size thresholds |
-| GPU-accelerated tool execution | Small | Allow tool definitions to declare `gpu_required: true`. The crew scheduler pins these tools to GPU-enabled agents/nodes. Initial targets: code analysis, embedding generation, image processing tools |
-| Multi-GPU scheduling across crews | Medium | When multiple GPUs are present (multi-card host or fleet), assign crews to specific GPUs to avoid contention. Use CUDA_VISIBLE_DEVICES pinning per crew process. Expose GPU slot availability via `/api/v1/gpu/status` |
 | Crew status in AGNOS HUD | Medium | Push crew lifecycle events to AGNOS daimon for display in aethersafha HUD. Use `GET /crews` with status filter |
 | Crew cancellation from agnoshi | Small | Wire `POST /crews/{crew_id}/cancel` to AGNOS MCP tool `agnostic_cancel_crew` and agnoshi intent "cancel crew {id}" |
 
@@ -131,31 +126,21 @@ Items identified during code review and audit. Not blocking, but should be addre
 |------|--------|-------|
 | Process-level sandbox for `load_tool_from_source()` | Medium | Current `exec()` restricted builtins is defense-in-depth only. Add nsjail/gVisor/WASM isolation for untrusted tool code |
 | `.agpkg` import: multipart file upload endpoint | Small | Currently only Python API; HTTP file upload endpoint removed. Implement via FastAPI `UploadFile` |
-| Symlink traversal in `factory.from_file()` | Small | Add `resolved.is_relative_to(DEFINITIONS_DIR)` check after `Path.resolve()` |
 | Rate limiting on definition/preset/tool endpoints | Small | No per-user rate limits on CRUD mutations or tool upload |
-| Re-validate callback URL at webhook fire time in `_run_crew_async` | Small | SSRF check only at request time; stored config could be tampered |
 
 ### Performance
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| Async file I/O in definition/preset endpoints | Medium | `list_definitions`, `get_definition`, `create_definition`, etc. do sync `open()`/`json.load()` on the event loop. Use `aiofiles` or `run_in_executor` |
 | TTL cache for `list_definitions` / `list_presets` | Small | Re-scans filesystem on every request. Add 5s in-memory TTL cache (matches dashboard pattern) |
 | Shared infrastructure for crew agents | Medium | Each `BaseAgent` creates own Redis client + Celery app. Crew of 6 = 6 connections. Share across agents in same crew |
-| `export_package` sync ZIP on event loop | Small | Synchronous `zipfile.ZipFile` in async handler blocks under load |
 
 ### Code Quality
 
 | Item | Effort | Notes |
 |------|--------|-------|
 | `AgentDefinition` → Pydantic model or dataclass | Medium | Currently a plain class with manual `__init__`/`to_dict`/`from_dict`. Inconsistent with rest of codebase |
-| Extract `require_admin` FastAPI dependency | Small | Admin role check duplicated 7+ times. Should be reusable `Depends()` |
-| Status string enum | Small | `"completed"`, `"failed"`, `"pending"`, `"running"`, `"partial"` scattered as bare strings |
 | `_run_crew_async()` function split | Small | 147 lines. Split into `_build_agents`, `_execute_agents`, `_finalize_crew` |
-| `import_package()` loop dedup | Small | Definition and preset install loops nearly identical |
-| Background task reference tracking | Small | `asyncio.create_task` refs not tracked in a set |
-| `asyncio.Lock()` at module scope in `tasks.py` | Small | Pre-existing; may fail in Python 3.12+ |
-| Version pruning | Small | `save_version` creates unlimited `v{N}.json` files. Add max-versions cap with oldest eviction |
 
 ### Test Coverage
 
@@ -222,4 +207,4 @@ See also [Dependency Watch](dependency-watch.md).
 
 ---
 
-*Last Updated: 2026-03-17 · Version: 2026.3.16 · Test count: 922 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-17 · Version: 2026.3.17 · Test count: 1055 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

@@ -155,6 +155,9 @@ class BaseAgent:
         # --- resolve tools ---
         tools = self._resolve_tools(definition)
 
+        # --- infer GPU requirements from tools ---
+        self._infer_gpu_from_tools(definition)
+
         # --- build CrewAI Agent ---
         self.agent = Agent(
             role=definition.role,
@@ -173,6 +176,38 @@ class BaseAgent:
             definition.domain,
             len(tools),
         )
+
+    # ------------------------------------------------------------------
+    # GPU inference from tools
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _infer_gpu_from_tools(definition: AgentDefinition) -> None:
+        """Auto-promote agent GPU requirements if any of its tools need GPU.
+
+        If a tool is registered with ``@register_gpu_tool``, the agent
+        inherits ``gpu_required=True`` and the max ``gpu_memory_min_mb``
+        across all its GPU tools — unless the definition already sets
+        explicit GPU fields.
+        """
+        if definition.gpu_required or definition.gpu_preferred:
+            return  # explicit config takes precedence
+
+        if not definition.tools:
+            return
+
+        from agents.tool_registry import tool_gpu_memory_min, tool_requires_gpu
+
+        max_mem = 0
+        needs_gpu = False
+        for tool_name in definition.tools:
+            if tool_requires_gpu(tool_name):
+                needs_gpu = True
+                max_mem = max(max_mem, tool_gpu_memory_min(tool_name))
+
+        if needs_gpu:
+            definition.gpu_required = True
+            definition.gpu_memory_min_mb = max(definition.gpu_memory_min_mb, max_mem)
 
     # ------------------------------------------------------------------
     # Tool resolution

@@ -199,22 +199,43 @@ class LLMIntegrationService:
 
         start = time.monotonic()
         try:
+            # --- Local inference offload: check if this model can run locally --
+            effective_model = self.model_name
+            effective_base_url = self._base_url
+            effective_api_key: str | None = api_key
+            try:
+                from config.local_inference import route_inference
+
+                route = route_inference(self.model_name)
+                if route.local:
+                    effective_model = route.model_name
+                    effective_base_url = route.base_url
+                    effective_api_key = route.api_key or api_key
+                    logger.debug(
+                        "LLM call routed locally: %s → %s (%s)",
+                        self.model_name,
+                        route.model_name,
+                        route.reason,
+                    )
+            except Exception:
+                pass  # local inference not available, continue with cloud
+
             with trace_llm_call(
-                method_name, model=self.model_name, agent=self._agent_name
+                method_name, model=effective_model, agent=self._agent_name
             ) as span:
                 call_kwargs: dict[str, Any] = {
-                    "model": self.model_name,
+                    "model": effective_model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
                     "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
-                    "api_key": api_key,
+                    "api_key": effective_api_key,
                     "stream": stream,
                 }
-                if self._base_url:
-                    call_kwargs["base_url"] = self._base_url
+                if effective_base_url:
+                    call_kwargs["base_url"] = effective_base_url
                 if self._extra_headers:
                     call_kwargs["extra_headers"] = self._extra_headers
 

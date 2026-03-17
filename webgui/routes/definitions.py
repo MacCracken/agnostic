@@ -17,7 +17,10 @@ from pydantic import BaseModel, Field
 
 from agents.constants import DEFINITIONS_DIR, PRESETS_DIR, validate_agent_key
 from shared.audit import AuditAction, audit_log
-from webgui.routes.dependencies import PaginatedResponse, get_current_user
+from webgui.routes.dependencies import (
+    PaginatedResponse,
+    get_current_user,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -137,26 +140,33 @@ async def list_definitions(
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     """List all available agent definitions."""
-    items = []
-    if DEFINITIONS_DIR.exists():
-        for p in sorted(DEFINITIONS_DIR.glob("*.json")):
-            try:
-                with open(p) as f:
-                    data = json.load(f)
-                if domain and data.get("domain", "general") != domain:
+    import asyncio
+
+    def _scan() -> list[dict[str, Any]]:
+        items = []
+        if DEFINITIONS_DIR.exists():
+            for p in sorted(DEFINITIONS_DIR.glob("*.json")):
+                try:
+                    with open(p) as f:
+                        data = json.load(f)
+                    if domain and data.get("domain", "general") != domain:
+                        continue
+                    items.append(
+                        {
+                            "agent_key": data.get("agent_key", p.stem),
+                            "name": data.get("name", p.stem),
+                            "domain": data.get("domain", "general"),
+                            "focus": data.get("focus", ""),
+                            "complexity": data.get("complexity", "medium"),
+                            "tools": data.get("tools", []),
+                        }
+                    )
+                except Exception:
                     continue
-                items.append(
-                    {
-                        "agent_key": data.get("agent_key", p.stem),
-                        "name": data.get("name", p.stem),
-                        "domain": data.get("domain", "general"),
-                        "focus": data.get("focus", ""),
-                        "complexity": data.get("complexity", "medium"),
-                        "tools": data.get("tools", []),
-                    }
-                )
-            except Exception:
-                continue
+        return items
+
+    loop = asyncio.get_running_loop()
+    items = await loop.run_in_executor(None, _scan)
 
     total = len(items)
     return {
@@ -191,6 +201,7 @@ async def create_definition(
     user: dict[str, Any] = Depends(get_current_user),
 ) -> AgentDefinitionResponse:
     """Create a new agent definition."""
+
     if user.get("role") not in ("super_admin", "org_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -551,17 +562,22 @@ async def export_package_endpoint(
     user: dict[str, Any] = Depends(get_current_user),
 ) -> Response:
     """Export agent definitions and presets as a downloadable .agpkg bundle."""
+    import asyncio
 
     from agents.packaging import export_package
 
-    data = export_package(
-        name=req.name,
-        definition_keys=req.definition_keys,
-        preset_names=req.preset_names,
-        version=req.version,
-        description=req.description,
-        domain=req.domain,
-        author=req.author,
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(
+        None,
+        lambda: export_package(
+            name=req.name,
+            definition_keys=req.definition_keys,
+            preset_names=req.preset_names,
+            version=req.version,
+            description=req.description,
+            domain=req.domain,
+            author=req.author,
+        ),
     )
     return Response(
         content=data,

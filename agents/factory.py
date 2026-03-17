@@ -46,8 +46,12 @@ class AgentFactory:
         """
         path = Path(path)
         resolved = path.resolve()
-        # Block path traversal — resolved path must be under definitions dir
-        if not resolved.is_relative_to(DEFINITIONS_DIR) and not path.is_absolute():
+        # Block path traversal via symlinks — if the caller provided a path
+        # under DEFINITIONS_DIR, the resolved path must stay there.
+        # Absolute paths outside DEFINITIONS_DIR are allowed (e.g. preset loading).
+        if path != resolved and not resolved.is_relative_to(DEFINITIONS_DIR):
+            raise ValueError(f"Path traversal not allowed: {path}")
+        if not path.is_absolute() and not resolved.is_relative_to(DEFINITIONS_DIR):
             raise ValueError(f"Path traversal not allowed: {path}")
         if not resolved.exists():
             raise FileNotFoundError(f"Definition file not found: {resolved}")

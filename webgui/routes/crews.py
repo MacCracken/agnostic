@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Track background crew tasks to prevent garbage collection
+_background_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
+
 
 # ---------------------------------------------------------------------------
 # Request/response models
@@ -229,7 +232,11 @@ async def _run_crew_async(
             return
 
         # GPU scheduling — assign agents to GPU devices based on requirements
-        from config.gpu_scheduler import apply_gpu_assignment, schedule_crew_gpus
+        from config.gpu_scheduler import (
+            apply_gpu_assignment,
+            gpu_slot_tracker,
+            schedule_crew_gpus,
+        )
 
         gpu_plan = schedule_crew_gpus(
             [a.definition for a in agents],
@@ -242,6 +249,10 @@ async def _run_crew_async(
                 {"error": "GPU scheduling failed", "gpu_errors": gpu_plan.errors},
             )
             return
+
+        # Register GPU reservations for cross-crew tracking
+        for ga in gpu_plan.gpu_agents:
+            gpu_slot_tracker.reserve(crew_id, ga.device_index, ga.memory_reserved_mb)
 
         # Execute each agent's handle_task sequentially (or could be parallel)
         task_data = {
@@ -319,6 +330,9 @@ async def _run_crew_async(
         all_ok = all(r.get("status") == "completed" for r in results.values())
         final_status = "completed" if all_ok else "partial"
 
+        # Release GPU reservations now that all agents are done
+        gpu_slot_tracker.release(crew_id)
+
         await _update_status(
             final_status,
             {
@@ -336,6 +350,13 @@ async def _run_crew_async(
 
     except Exception as exc:
         logger.error("Crew %s failed: %s", crew_id, exc, exc_info=True)
+        # Release GPU slots on failure to prevent leaks
+        try:
+            from config.gpu_scheduler import gpu_slot_tracker as _tracker
+
+            _tracker.release(crew_id)
+        except Exception:
+            pass
         try:
             await _update_status("failed", {"error": str(exc)})
         except Exception:
@@ -359,6 +380,7 @@ async def _run_crew_async(
 
 
 def _crew_done_callback(task: asyncio.Task) -> None:  # type: ignore[type-arg]
+    _background_tasks.discard(task)
     if task.cancelled():
         return
     exc = task.exception()
@@ -507,6 +529,7 @@ async def run_crew(
             tenant_id=tenant_id,
         )
     )
+    _background_tasks.add(bg_task)
     bg_task.add_done_callback(_crew_done_callback)
 
     audit_log(

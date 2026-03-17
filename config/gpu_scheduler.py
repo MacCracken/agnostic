@@ -330,3 +330,74 @@ def apply_gpu_assignment(assignment: GPUAssignment) -> dict[str, str]:
         # Explicitly hide GPUs from CPU-only agents to prevent accidental use
         env["CUDA_VISIBLE_DEVICES"] = ""
     return env
+
+
+# ---------------------------------------------------------------------------
+# Multi-crew GPU slot tracker
+# ---------------------------------------------------------------------------
+
+
+class GPUSlotTracker:
+    """Track GPU reservations across concurrent crews.
+
+    When multiple crews run simultaneously on a multi-GPU host, each crew's
+    scheduler sees the *hardware* free memory but not what other crews have
+    reserved.  This tracker provides a process-wide view of reservations so
+    the scheduler can account for other active crews.
+
+    Usage::
+
+        tracker = GPUSlotTracker()
+        tracker.reserve("crew-123", 0, 4000)   # crew-123 reserves 4 GB on GPU 0
+        tracker.reserve("crew-123", 1, 8000)   # crew-123 reserves 8 GB on GPU 1
+        adjusted = tracker.adjusted_free(gpu_status)  # {0: hw_free - 4000, 1: hw_free - 8000}
+        tracker.release("crew-123")             # crew done, free all its slots
+    """
+
+    def __init__(self) -> None:
+        # crew_id → list of (device_index, reserved_mb)
+        self._reservations: dict[str, list[tuple[int, int]]] = {}
+
+    def reserve(self, crew_id: str, device_index: int, memory_mb: int) -> None:
+        """Record a GPU memory reservation for a crew."""
+        if crew_id not in self._reservations:
+            self._reservations[crew_id] = []
+        self._reservations[crew_id].append((device_index, memory_mb))
+
+    def release(self, crew_id: str) -> None:
+        """Release all GPU reservations for a crew."""
+        self._reservations.pop(crew_id, None)
+
+    def total_reserved(self, device_index: int) -> int:
+        """Total memory reserved on a device across all crews."""
+        total = 0
+        for reservations in self._reservations.values():
+            for idx, mem in reservations:
+                if idx == device_index:
+                    total += mem
+        return total
+
+    def adjusted_free(self, gpu_status: GPUStatus) -> dict[int, int]:
+        """Return per-device free memory adjusted for cross-crew reservations."""
+        result: dict[int, int] = {}
+        for dev in gpu_status.devices:
+            reserved = self.total_reserved(dev.index)
+            result[dev.index] = max(0, dev.memory_free_mb - reserved)
+        return result
+
+    def active_crews(self) -> list[str]:
+        """Return IDs of crews with active GPU reservations."""
+        return list(self._reservations.keys())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "active_crews": len(self._reservations),
+            "reservations": {
+                crew_id: [{"device": idx, "memory_mb": mem} for idx, mem in slots]
+                for crew_id, slots in self._reservations.items()
+            },
+        }
+
+
+# Process-wide singleton
+gpu_slot_tracker = GPUSlotTracker()
