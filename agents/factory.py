@@ -85,21 +85,19 @@ class AgentFactory:
 
     @classmethod
     def list_presets(cls) -> list[dict[str, Any]]:
-        """List available presets with metadata."""
+        """List available presets with metadata from the agent registry cache."""
+        from config.agent_registry import agent_registry
+
         presets = []
-        if PRESETS_DIR.exists():
-            for p in sorted(PRESETS_DIR.glob("*.json")):
-                try:
-                    with open(p) as f:
-                        data = json.load(f)
-                    presets.append({
-                        "name": p.stem,
-                        "description": data.get("description", ""),
-                        "domain": data.get("domain", "general"),
-                        "agent_count": len(data.get("agents", [])),
-                    })
-                except Exception as exc:
-                    logger.warning("Skipping invalid preset %s: %s", p, exc)
+        for name in agent_registry.list_presets():
+            data = agent_registry.get_preset(name)
+            if data:
+                presets.append({
+                    "name": name,
+                    "description": data.get("description", ""),
+                    "domain": data.get("domain", "general"),
+                    "agent_count": len(data.get("agents", [])),
+                })
         return presets
 
     @classmethod

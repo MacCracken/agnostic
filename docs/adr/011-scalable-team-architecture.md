@@ -28,13 +28,14 @@ We will implement a three-tier team configuration system:
 - **Best practices**: Aligns with industry QA role specialization (ISTQB/IREB standards)
 
 ## Implementation
-- `agents/definitions/presets/qa-lean.json` - Lean 3-agent preset
-- `agents/definitions/presets/qa-standard.json` - Standard 6-agent preset
-- `agents/definitions/presets/qa-large.json` - Large 9-agent preset
-- `config/agent_registry.py` - Loads presets, provides agent lookup and task routing
-- Environment variable `QA_TEAM_SIZE` controls team size (lean/standard/large)
-- QA Manager routes tasks based on team configuration
-- All new tools added to appropriate agent roles
+- `agents/definitions/presets/quality-lean.json` - Lean 3-agent preset
+- `agents/definitions/presets/quality-standard.json` - Standard 6-agent preset
+- `agents/definitions/presets/quality-large.json` - Large 9-agent preset
+- `agents/definitions/presets/quality-security.json` - Security-focused 2-agent preset
+- `agents/definitions/presets/quality-performance.json` - Performance-focused 2-agent preset
+- `config/agent_registry.py` - Loads all presets, provides agent lookup and task routing
+- Environment variable `QA_TEAM_SIZE` controls default team size (lean/standard/large)
+- All task submission flows through the generic crew builder
 
 ## Consequences
 - Agents must be aware of team configuration for proper routing

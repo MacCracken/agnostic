@@ -13,7 +13,8 @@ The assembler:
 """
 
 import logging
-import re
+
+from agents.constants import make_agent_key
 
 logger = logging.getLogger(__name__)
 
@@ -208,13 +209,6 @@ def recommend_preset(description: str) -> dict:
         "alternatives": alternatives[:3],
     }
 
-
-def make_agent_key(role: str) -> str:
-    """Convert a role name to a safe agent key (kebab-case)."""
-    key = role.lower().strip()
-    key = re.sub(r"[^a-z0-9]+", "-", key)
-    key = key.strip("-")
-    return key or "agent"
 
 
 # ---------------------------------------------------------------------------

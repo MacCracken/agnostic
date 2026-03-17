@@ -368,19 +368,19 @@ class TestAgentFactory:
         with pytest.raises(FileNotFoundError):
             AgentFactory.from_preset("nonexistent")
 
-    def test_list_presets(self, tmp_path, monkeypatch):
-        from agents import factory as factory_mod
+    def test_list_presets(self, monkeypatch):
+        from unittest.mock import MagicMock
+
         from agents.factory import AgentFactory
 
-        preset_dir = tmp_path / "presets"
-        preset_dir.mkdir()
-        monkeypatch.setattr(factory_mod, "PRESETS_DIR", preset_dir)
-
-        (preset_dir / "alpha.json").write_text(json.dumps({
+        mock_registry = MagicMock()
+        mock_registry.list_presets.return_value = ["alpha"]
+        mock_registry.get_preset.return_value = {
             "description": "Alpha crew",
             "domain": "alpha",
             "agents": [{"agent_key": "a1", "name": "A1", "role": "R", "goal": "G", "backstory": "B"}],
-        }))
+        }
+        monkeypatch.setattr("config.agent_registry.agent_registry", mock_registry)
 
         presets = AgentFactory.list_presets()
         assert len(presets) == 1

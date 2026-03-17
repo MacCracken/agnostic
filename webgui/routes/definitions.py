@@ -256,10 +256,24 @@ async def list_presets(
     size: str | None = Query(None, description="Filter by team size: lean, standard, large"),
     user: dict = Depends(get_current_user),
 ):
-    """List available crew presets."""
-    presets = []
+    """List available crew presets (registry cache + user-created on disk)."""
+    from config.agent_registry import agent_registry
+
+    # Collect preset data: registry first, then any disk-only presets
+    seen: set[str] = set()
+    all_presets: list[tuple[str, dict]] = []
+
+    for name in agent_registry.list_presets(domain=domain, size=size):
+        data = agent_registry.get_preset(name)
+        if data:
+            all_presets.append((name, data))
+            seen.add(name)
+
+    # Also check disk for user-created presets not in the registry
     if PRESETS_DIR.exists():
         for p in sorted(PRESETS_DIR.glob("*.json")):
+            if p.stem in seen:
+                continue
             try:
                 with open(p) as f:
                     data = json.load(f)
@@ -267,25 +281,29 @@ async def list_presets(
                     continue
                 if size and data.get("size", "standard") != size:
                     continue
-                agent_summaries = [
-                    PresetAgentSummary(
-                        agent_key=a.get("agent_key", ""),
-                        name=a.get("name", ""),
-                        role=a.get("role", ""),
-                        focus=a.get("focus", ""),
-                    )
-                    for a in data.get("agents", [])
-                ]
-                presets.append(PresetListItem(
-                    name=p.stem,
-                    description=data.get("description", ""),
-                    domain=data.get("domain", "general"),
-                    size=data.get("size", "standard"),
-                    agent_count=len(data.get("agents", [])),
-                    agents=agent_summaries,
-                ))
+                all_presets.append((p.stem, data))
             except Exception:
                 continue
+
+    presets = []
+    for name, data in all_presets:
+        agent_summaries = [
+            PresetAgentSummary(
+                agent_key=a.get("agent_key", ""),
+                name=a.get("name", ""),
+                role=a.get("role", ""),
+                focus=a.get("focus", ""),
+            )
+            for a in data.get("agents", [])
+        ]
+        presets.append(PresetListItem(
+            name=name,
+            description=data.get("description", ""),
+            domain=data.get("domain", "general"),
+            size=data.get("size", "standard"),
+            agent_count=len(data.get("agents", [])),
+            agents=agent_summaries,
+        ))
     return presets
 
 
@@ -296,12 +314,17 @@ async def get_preset(
 ):
     """Get full details of a crew preset."""
     _validate_path_key(preset_name, "preset_name")
-    path = PRESETS_DIR / f"{preset_name}.json"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Preset '{preset_name}' not found")
 
-    with open(path) as f:
-        data = json.load(f)
+    from config.agent_registry import agent_registry
+
+    data = agent_registry.get_preset(preset_name)
+    if not data:
+        # Fall back to file for user-created presets not in registry
+        path = PRESETS_DIR / f"{preset_name}.json"
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"Preset '{preset_name}' not found")
+        with open(path) as f:
+            data = json.load(f)
 
     return PresetResponse(
         name=data.get("name", preset_name),

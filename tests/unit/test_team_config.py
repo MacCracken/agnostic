@@ -26,8 +26,8 @@ class TestPresetLoading:
 
     def test_all_presets_loaded(self):
         registry = AgentRegistry()
-        # 5 domains x 3 sizes + complete-lean = 16
-        assert len(registry.list_presets()) >= 16
+        # 5 domains x 3 sizes + complete-lean + quality-security + quality-performance = 18
+        assert len(registry.list_presets()) >= 18
 
     def test_get_preset_by_name(self):
         registry = AgentRegistry()
@@ -58,7 +58,8 @@ class TestListPresetsFiltering:
     def test_filter_by_domain(self):
         registry = AgentRegistry()
         qa_presets = registry.list_presets(domain="quality")
-        assert len(qa_presets) == 3
+        # 3 sizes + security + performance = 5
+        assert len(qa_presets) == 5
         assert all("quality" in n for n in qa_presets)
 
     def test_filter_by_size(self):

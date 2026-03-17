@@ -1,0 +1,37 @@
+{
+  "name": "quality-performance",
+  "description": "Performance-focused quality crew — load testing, latency profiling, resilience validation, and metrics reporting",
+  "domain": "quality",
+  "size": "standard",
+  "version": "1.0.0",
+  "workflow_mode": "specialized",
+  "agents": [
+    {
+      "agent_key": "performance",
+      "name": "Performance & Resilience Agent",
+      "role": "Performance & Resilience Specialist",
+      "goal": "Monitor system performance, conduct load testing, stress testing, and validate resilience mechanisms",
+      "backstory": "You are a performance and resilience specialist with deep expertise in system optimization, load testing, chaos engineering, and infrastructure resilience. You ensure systems can handle expected loads and recover gracefully from failures.",
+      "focus": "Load testing, latency profiling, stress testing, resilience validation",
+      "domain": "quality",
+      "tools": ["PerformanceMonitoringTool", "LoadTestingTool", "ResilienceValidationTool", "AdvancedProfilingTool"],
+      "complexity": "high",
+      "celery_queue": "performance",
+      "redis_prefix": "performance",
+      "allow_delegation": true
+    },
+    {
+      "agent_key": "qa-analyst",
+      "name": "QA Analyst",
+      "role": "QA Analyst",
+      "goal": "Aggregate performance metrics into actionable reports with P95/P99 analysis and capacity recommendations",
+      "backstory": "You are a QA Analyst with 10+ years of experience in performance analytics. You transform raw performance data into clear reports with latency percentiles, throughput analysis, and capacity planning recommendations.",
+      "focus": "Performance metrics aggregation, latency analysis, capacity reporting",
+      "domain": "quality",
+      "tools": ["DataOrganizationReportingTool", "PerformanceProfilingTool", "ReleaseReadinessTool"],
+      "complexity": "medium",
+      "celery_queue": "qa_analyst",
+      "redis_prefix": "analyst"
+    }
+  ]
+}

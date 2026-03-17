@@ -16,8 +16,8 @@ Expand Agnostic into **AAS (Agnostic Agentics Systems)** — a general-purpose a
 
 1. **Agents are defined declaratively** via JSON/YAML definitions, not hardcoded Python classes
 2. **Crews are assembled dynamically** from presets, agent keys, or inline definitions via API
-3. **QA remains a first-class preset** — all existing QA functionality is preserved as the `qa-standard` preset
-4. **The platform is domain-agnostic** — new domains (data-engineering, devops, custom) can be added without code changes
+3. **Quality remains a first-class preset** — all existing QA functionality is preserved as the `quality-standard` preset (renamed from `qa-standard` in 2026.3.17)
+4. **The platform is domain-agnostic** — 5 built-in domains (quality, software-engineering, design, data-engineering, devops) each with lean/standard/large sizes, plus custom team composition
 
 ### Architecture
 

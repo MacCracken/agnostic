@@ -503,7 +503,7 @@ _TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "agnostic_list_presets": ("GET", "/api/v1/presets"),
     "agnostic_list_definitions": ("GET", "/api/v1/definitions"),
     "agnostic_create_agent": ("POST", "/api/v1/a2a/receive"),
-    "agnostic_preset_recommend": ("POST", "/api/v1/crews"),  # handled directly
+    "agnostic_preset_recommend": ("POST", "/api/v1/presets/recommend"),  # dispatched directly, no real route
 }
 
 

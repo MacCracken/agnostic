@@ -148,12 +148,12 @@ Performance & Resilience Agent      ─┘
 
 | Module | Purpose |
 |--------|---------|
-| `config/agent_registry.py` | Config-driven `AgentRegistry` + `AgentDefinition`; reads `team_config.json` |
+| `config/agent_registry.py` | Preset-driven `AgentRegistry` + `AgentDefinition`; loads from `agents/definitions/presets/` |
 | `config/model_manager.py` | Multi-provider LLM manager (OpenAI, Anthropic, Google, Ollama, LM Studio) with fallback chains |
 | `config/models.json` | Provider routing strategy, retries, timeouts |
 | `config/llm_integration.py` | Direct LLM calls via litellm for tool implementations (scenario gen, fuzzy verification, etc.) |
 | `config/environment.py` | `Config` class — env vars, Redis client factory, Celery app factory |
-| `config/team_config_loader.py` | Lean / Standard / Large team preset loading |
+| `agents/crew_assembler.py` | Team assembly from role specs; preset recommendation |
 | `shared/metrics.py` | Prometheus metrics with no-op fallback; `get_metrics_text()` |
 | `shared/logging_config.py` | Structured logging — JSON via structlog or stdlib text |
 | `shared/resilience.py` | `CircuitBreaker`, `retry_async` decorator, `GracefulShutdown` |
@@ -256,14 +256,14 @@ CORS_ALLOWED_ORIGINS=http://localhost:18789,http://localhost:3001
 
 ## Adding New Agents
 
-The **Plugin Architecture** ([ADR-013](../adr/013-plugin-architecture.md)) means adding a new agent requires **no code changes** to the manager or WebGUI — only 5 steps:
+Adding a new agent or crew requires **no code changes** to the WebGUI or orchestration layer:
 
-1. **Create `agents/<name>/`** — implement an agent class using `crewai.Agent`; extend `BaseTool` (from `shared.crewai_compat`) for custom tools.
-2. **Register in `config/team_config.json`** — add an entry with `role`, `celery_task`, `celery_queue`, and `redis_prefix` fields. `AgentRegistry` picks it up automatically.
-3. **Add worker service to `docker-compose.yml`** — use the `x-worker-common` anchor with `AGENT_ROLE: <name>`. All workers share the single `agnostic:latest` image.
-4. **Add K8s manifest** — add to `k8s/manifests/` or extend the Helm chart.
+1. **Create a preset** — add a JSON file to `agents/definitions/presets/` following the `{domain}-{size}.json` naming convention. Define agents with `agent_key`, `name`, `role`, `goal`, `backstory`, `focus`, `domain`, and `tools`.
+2. **Or create an individual definition** — add a JSON file to `agents/definitions/` for single agents that can be composed into ad-hoc crews via the API.
+3. **Or use the API** — POST `/api/v1/presets` or POST `/api/v1/definitions` to create presets/agents dynamically.
+4. **Or use the team assembler** — POST `/api/v1/crews` with a `team` spec to describe members by role and context; the assembler matches existing agents or generates inline definitions.
 
-The `AgentRegistry` in `config/agent_registry.py` routes tasks via `registry.route_task()` and the WebGUI welcome message regenerates dynamically from `registry.get_agents_for_team()`.
+The `AgentRegistry` in `config/agent_registry.py` loads all presets at startup. The crew builder at `webgui/routes/crews.py` handles execution.
 
 ---
 

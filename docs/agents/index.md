@@ -112,20 +112,47 @@ class MySpecialisedAgent(BaseAgent):
 
 ## Built-in Presets
 
-### QA Crew (`qa-standard`)
+Each domain has **lean** (2-3 agents), **standard** (3-6 agents), and **large** (6-9 agents) presets. Plus specialty presets for security and performance.
 
-The original 6-agent QA team — the default preset.
+### Quality Crew (`quality-standard`)
 
-| Agent | Capabilities | Primary Focus | Source |
-|-------|--------------|---------------|--------|
-| **QA Manager** | Test planning, delegation, fuzzy verification | Orchestration | `agents/manager/qa_manager.py` |
-| **Senior QA Engineer** | Self-healing UI, model-based testing, edge cases | Complex Testing | `agents/senior/senior_qa.py` |
-| **Junior QA Worker** | Regression execution, data generation, optimization | Test Automation | `agents/junior/junior_qa.py` |
-| **QA Analyst** | Reporting, security assessment, performance profiling | Analysis & Reporting | `agents/analyst/qa_analyst.py` |
-| **Security & Compliance** | OWASP, GDPR, PCI DSS, SOC 2, ISO 27001, HIPAA | Security & Compliance | `agents/security_compliance/qa_security_compliance.py` |
-| **Performance & Resilience** | Load testing, performance monitoring, resilience checks | Performance | `agents/performance/qa_performance.py` |
+The 6-agent quality crew — the default preset.
 
-### Data Engineering Crew (`data-engineering`)
+| Agent | Capabilities | Primary Focus |
+|-------|--------------|---------------|
+| **QA Manager** | Test planning, delegation, fuzzy verification | Orchestration |
+| **Senior QA Engineer** | Self-healing UI, model-based testing, edge cases | Complex Testing |
+| **Junior QA Worker** | Regression execution, data generation, optimization | Test Automation |
+| **QA Analyst** | Reporting, security assessment, performance profiling | Analysis & Reporting |
+| **Security & Compliance** | OWASP, GDPR, PCI DSS, SOC 2, ISO 27001, HIPAA | Security & Compliance |
+| **Performance & Resilience** | Load testing, performance monitoring, resilience checks | Performance |
+
+Also: `quality-lean` (3), `quality-large` (9), `quality-security` (2), `quality-performance` (2)
+
+### Software Engineering Crew (`software-engineering-standard`)
+
+| Agent | Primary Focus |
+|-------|---------------|
+| **Tech Lead** | Architecture, decisions, task decomposition, code standards |
+| **Backend Engineer** | API development, data modelling, service integration |
+| **Frontend Engineer** | UI implementation, component architecture, state management |
+| **Code Reviewer** | Code review, static analysis, security review |
+| **Tech Debt Engineer** | Debt triage, dependency upgrades, refactoring |
+
+Also: `software-engineering-lean` (2), `software-engineering-large` (8)
+
+### Design Crew (`design-standard`)
+
+| Agent | Primary Focus |
+|-------|---------------|
+| **UX Lead** | User research, personas, journey mapping, information architecture |
+| **UI Designer** | Visual design, prototyping, interaction design |
+| **Design Systems Engineer** | Design tokens, component libraries, style guides |
+| **Accessibility Specialist** | WCAG compliance, ARIA patterns, screen reader testing |
+
+Also: `design-lean` (2), `design-large` (7)
+
+### Data Engineering Crew (`data-engineering-standard`)
 
 | Agent | Primary Focus |
 |-------|---------------|
@@ -133,13 +160,26 @@ The original 6-agent QA team — the default preset.
 | **Data Quality Engineer** | Validation, anomaly detection, SLA monitoring |
 | **DataOps Engineer** | Infrastructure monitoring, incident response, backfills |
 
-### DevOps Crew (`devops`)
+Also: `data-engineering-lean` (2), `data-engineering-large` (6)
+
+### DevOps Crew (`devops-standard`)
 
 | Agent | Primary Focus |
 |-------|---------------|
 | **Deployment Manager** | CI/CD orchestration, canary analysis, rollback planning |
 | **Infrastructure Monitor** | Monitoring, alerting, SLA tracking, anomaly detection |
 | **Incident Responder** | Incident triage, RCA, post-mortems, runbook creation |
+
+Also: `devops-lean` (2), `devops-large` (6)
+
+### Cross-Domain (`complete-lean`)
+
+| Agent | Primary Focus |
+|-------|---------------|
+| **Project Lead** | Cross-functional coordination, requirements decomposition |
+| **Full-Stack Engineer** | End-to-end implementation, testing, tech debt |
+| **Product Designer** | UX research, visual design, prototyping, accessibility |
+| **QA Engineer** | Functional testing, regression, security, performance |
 
 ---
 

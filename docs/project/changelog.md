@@ -10,37 +10,65 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ---
 
+## [2026.3.17]
+
+### Added
+
+- **18 crew presets** — 5 domains (quality, software-engineering, design, data-engineering, devops) x 3 sizes (lean, standard, large) + `complete-lean` + `quality-security` + `quality-performance`
+- **Crew assembler** (`agents/crew_assembler.py`) — `assemble_team()` builds agent definitions from natural-language team specs; `recommend_preset()` suggests best preset from task description
+- **Custom team composition** — `CrewRunRequest.team` (TeamSpec) enables "I need a 4-person team: UX, game engineer, game designer, project lead" style requests
+- **`agnostic_preset_recommend` MCP tool** — given a description, returns the best preset + size + alternatives
+- **`domain` + `size` params on `agnostic_run_crew`** — auto-selects preset (e.g. `domain="design", size="large"`)
+- **Shared constants** — `agents/constants.py` now exports `DOMAINS`, `SIZES`, `DomainType`, `SizeType`, `make_agent_key()`
+- **`TeamSpec.from_payload()`** classmethod for dict→TeamSpec conversion
+- **`_crew_to_task_response()`** helper eliminates response wrapping duplication
+- **40 new unit tests** — `test_crew_assembler.py` (26), `test_constants.py` (14). Total: 992 unit tests
+
+### Changed
+
+- **Domain rename** — `qa` → `quality` across all presets, registry, MCP tools, API endpoints, and A2A protocol
+- **All task submission routes through crew builder** — `POST /api/v1/tasks`, `/tasks/security`, `/tasks/performance`, `/tasks/regression`, `/tasks/full`, all 4 legacy MCP tools (`agnostic_submit_task`, `agnostic_security_scan`, `agnostic_performance_test`, `agnostic_qa_orchestrate`), A2A `a2a:delegate`, and Chainlit chat — all now use `run_crew()`
+- **`agnostic_list_presets`** — now returns agent details (key, name, role, focus) per preset; supports `size` filter
+- **Convenience endpoints use targeted presets** — `/tasks/security` → `quality-security`, `/tasks/performance` → `quality-performance`, `/tasks/full` → `quality-large`
+- **Preset loading consolidated** — `definitions.list_presets`, `factory.list_presets` read from `AgentRegistry` cache (no per-request file I/O)
+- **Agent registry refactored** — loads from preset JSON files; `list_presets(domain, size)`, `list_domains()`, `get_preset_name(domain, size)`
+- **A2A delegate** — supports `domain`+`size`, `preset`, `team`, `agent_definitions`; defaults to `quality-standard`
+
+### Removed
+
+- **Legacy QA pipeline** — `QAManagerAgent`, `OptimizedQAManager`, `_run_task_async()`, `_task_done_callback()`, legacy `submit_task()` Celery path
+- **`config/team_config.json`** and **`config/team_config_loader.py`** — replaced by preset JSON files + `AgentRegistry`
+- **`agents/manager/qa_manager_optimized.py`** — deleted entirely
+- **`QAManagerAgent` class** — removed from `qa_manager.py` (tools `TestPlanDecompositionTool` and `FuzzyVerificationTool` retained)
+
+---
+
 ## [2026.3.14]
 
 ### Added
 
-- **General-purpose agent platform** — expanded from QA-only to support any domain (data-engineering, DevOps, custom). QA remains a first-class preset. See ADR-029
+- **General-purpose agent platform** — expanded from QA-only to support any domain. See ADR-029
 - **`BaseAgent` class** (`agents/base.py`) — generic agent foundation with shared Redis/Celery/LLM/CrewAI init, task lifecycle, inter-crew delegation via `delegate_to()`
 - **`AgentDefinition` schema** — runtime-loadable agent definitions from JSON, YAML, or API dicts
 - **`AgentFactory`** (`agents/factory.py`) — create agents from files, dicts, presets, or definitions with caching
 - **Tool registry** (`agents/tool_registry.py`) — global `@register_tool` decorator, name-based lookup, `load_tool_from_source()` for dynamic tool upload with sandboxed exec
-- **Crew presets** — `qa-standard` (6 agents), `data-engineering` (3 agents), `devops` (3 agents) in `agents/definitions/presets/`
 - **Agent definition CRUD API** — POST/GET/PUT/DELETE `/api/v1/definitions/{key}` with admin auth, domain filtering, pagination
 - **Preset management API** — GET/POST/DELETE `/api/v1/presets/{name}` with built-in preset protection
 - **Crew builder API** — POST `/api/v1/crews` assembles and runs crews from presets, agent keys, or inline definitions; GET `/api/v1/crews/{id}` for status polling
 - **Agent versioning** (`agents/versioning.py`) — save/list/get/rollback versions via API at `/api/v1/definitions/{key}/versions`
 - **Agent packaging** (`agents/packaging.py`) — `.agpkg` ZIP bundles with manifest for export (POST `/api/v1/packages/export`) and import
 - **Custom tool upload** — POST `/api/v1/tools/upload` with sandboxed compilation; GET `/api/v1/tools` lists all registered tools
-- **5 new MCP tools** — `agnostic_run_crew`, `agnostic_crew_status`, `agnostic_list_presets`, `agnostic_list_definitions`, `agnostic_create_agent` with dispatch routing (32 total)
-- **A2A `a2a:create_agent`** — new message type for dynamic agent creation via SecureYeoman or other A2A peers
-- **A2A crew delegation** — `a2a:delegate` now routes to crew builder when `preset` or `agent_definitions` are present in the payload
-- **Dynamic A2A capabilities** — `/a2a/capabilities` returns loaded presets instead of hardcoded QA list
-- **89 new unit tests** — `test_base_agent.py` (32), `test_definitions_api.py` (27), `test_crews_api.py` (12), `test_phase4.py` (18). Total: 922 unit tests
+- **MCP crew tools** — `agnostic_run_crew`, `agnostic_crew_status`, `agnostic_list_presets`, `agnostic_list_definitions`, `agnostic_create_agent`
+- **A2A crew delegation** — `a2a:delegate` routes to crew builder; `a2a:create_agent` for dynamic agent creation
+- **Dynamic A2A capabilities** — `/a2a/capabilities` returns loaded presets
 
 ### Changed
 
-- **Branding** — "Agentic QA Team System" → "AAS — Agnostic Agentics Systems" in README, docs, dashboard. Container/artifact names remain `agnostic`
-- **Database models** — added `domain` and `crew_preset` columns to `TestSession`; added `domain` to `TestResult` and `TestReport`; new aliases `AgentSession`, `TaskResult`, `TaskMetrics`, `TaskReport` (table names unchanged, no migration needed)
-- **AGNOS registration** — `get_all_agents()` and `get_all_capabilities()` merge static QA agents with dynamically-loaded preset agents; capability advertisement uses dynamic list
-- **Dashboard timeline** — `_get_session_timeline()` discovers dynamic agent prefixes via Redis SCAN (not limited to 6 QA agents)
+- **Branding** — "Agentic QA Team System" → "AAS — Agnostic Agentics Systems". Container/artifact names remain `agnostic`
+- **Database models** — added `domain` and `crew_preset` columns (no migration needed)
+- **AGNOS registration** — merges static + dynamic preset agents
+- **Dashboard timeline** — discovers dynamic agent prefixes via Redis SCAN
 - **MCP server name** — `agnostic-qa` → `agnostic`
-- **Router aggregation** — `webgui/api.py` includes new `definitions` and `crews` routers
-- **Documentation** — README.md, docs/README.md, docs/agents/index.md, docker/README.md all updated for multi-domain platform. ADR-029 added (29 total)
 
 ---
 

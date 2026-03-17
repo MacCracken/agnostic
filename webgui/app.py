@@ -67,6 +67,7 @@ class AgenticQAGUI:
         self, session_id: str, requirements: dict[str, Any]
     ) -> dict[str, Any]:
         """Submit requirements via the generic crew builder."""
+        self._evict_old_sessions()
         try:
             from webgui.routes.crews import CrewRunRequest, run_crew
 

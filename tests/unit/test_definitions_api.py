@@ -89,6 +89,17 @@ def tmp_definitions(tmp_path, monkeypatch):
 
     monkeypatch.setattr(defs_mod, "DEFINITIONS_DIR", defs_dir)
     monkeypatch.setattr(defs_mod, "PRESETS_DIR", presets_dir)
+
+    # Also reset the registry to use the tmp presets dir so list_presets
+    # reads from the empty tmp dir, not the real presets.
+    from config.agent_registry import AgentRegistry, agent_registry
+    import config.agent_registry as reg_mod
+
+    empty_registry = AgentRegistry.__new__(AgentRegistry)
+    empty_registry._agents = {}
+    empty_registry._presets = {}
+    monkeypatch.setattr(reg_mod, "agent_registry", empty_registry)
+
     return {"definitions": defs_dir, "presets": presets_dir}
 
 

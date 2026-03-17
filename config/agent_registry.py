@@ -13,15 +13,11 @@ import logging
 import os
 from dataclasses import dataclass
 
-from agents.constants import PRESETS_DIR
+from agents.constants import DOMAINS, PRESETS_DIR, SIZES
 
 logger = logging.getLogger(__name__)
 
 _PRESETS_DIR = str(PRESETS_DIR)
-
-# All domains follow {domain}-{size} naming convention.
-_DOMAINS = ["quality", "software-engineering", "design", "data-engineering", "devops"]
-_SIZES = ["lean", "standard", "large"]
 
 
 @dataclass(frozen=True)

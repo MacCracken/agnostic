@@ -394,18 +394,11 @@ async def submit_security_task(
     user: dict = Depends(get_current_user),
 ):
     """Submit a security-focused task with a targeted security crew."""
-    from webgui.routes.crews import CrewRunRequest, TeamSpec, run_crew
+    from webgui.routes.crews import CrewRunRequest, run_crew
 
     standards = req.standards or ["OWASP", "GDPR", "PCI DSS"]
     crew_req = CrewRunRequest(
-        team=TeamSpec(
-            members=[
-                {"role": "Security Lead", "context": f"Standards: {', '.join(standards)}", "lead": True},
-                {"role": "Security & Compliance Specialist", "context": "Vulnerability scanning, penetration testing"},
-                {"role": "QA Analyst", "context": "Security findings aggregation and risk scoring"},
-            ],
-            project_context=req.description,
-        ),
+        preset="quality-security",
         title=req.title,
         description=f"{req.description}\nStandards: {', '.join(standards)}",
         target_url=req.target_url,
@@ -421,17 +414,10 @@ async def submit_performance_task(
     user: dict = Depends(get_current_user),
 ):
     """Submit a performance-focused task with a targeted performance crew."""
-    from webgui.routes.crews import CrewRunRequest, TeamSpec, run_crew
+    from webgui.routes.crews import CrewRunRequest, run_crew
 
     crew_req = CrewRunRequest(
-        team=TeamSpec(
-            members=[
-                {"role": "Performance & Resilience Specialist", "context": "Load testing, latency profiling, stress testing", "lead": True},
-                {"role": "Infrastructure Monitor", "context": "System health, resource usage during tests"},
-                {"role": "QA Analyst", "context": "Performance metrics aggregation and reporting"},
-            ],
-            project_context=req.description,
-        ),
+        preset="quality-performance",
         title=req.title,
         description=f"{req.description}\nFocus: performance testing, load testing, latency profiling",
         target_url=req.target_url,

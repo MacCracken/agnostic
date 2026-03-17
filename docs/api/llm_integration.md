@@ -2,7 +2,7 @@
 
 ## Overview
 
-The LLM Integration service provides unified access to multiple language model providers for intelligent analysis capabilities across all QA agents.
+The LLM Integration service provides unified access to multiple language model providers for intelligent analysis capabilities across all agent crews.
 
 ## Configuration
 
