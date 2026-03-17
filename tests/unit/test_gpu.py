@@ -485,3 +485,161 @@ class TestAgnosysProbe:
             from config.gpu import _probe_agnosys
 
             assert _probe_agnosys() is None
+
+
+# ---------------------------------------------------------------------------
+# Memory budget tests
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryBudget:
+    def test_budget_exceeded_by_declared_minimums(self):
+        agents = [
+            _make_agent_def("a1", gpu_required=True, gpu_memory_min_mb=8000),
+            _make_agent_def("a2", gpu_required=True, gpu_memory_min_mb=8000),
+        ]
+        plan = schedule_crew_gpus(
+            agents, gpu_status=_make_gpu_status(), memory_budget_mb=10000
+        )
+        assert plan.has_errors
+        assert "budget exceeded" in plan.errors[0]
+
+    def test_budget_within_limit(self):
+        agents = [
+            _make_agent_def("a1", gpu_required=True, gpu_memory_min_mb=4000),
+            _make_agent_def("a2", gpu_required=True, gpu_memory_min_mb=4000),
+        ]
+        plan = schedule_crew_gpus(
+            agents, gpu_status=_make_gpu_status(), memory_budget_mb=10000
+        )
+        assert not plan.has_errors
+        assert len(plan.gpu_agents) == 2
+
+    def test_budget_none_means_unlimited(self):
+        agents = [
+            _make_agent_def("a1", gpu_required=True, gpu_memory_min_mb=20000),
+        ]
+        plan = schedule_crew_gpus(
+            agents, gpu_status=_make_gpu_status(), memory_budget_mb=None
+        )
+        assert not plan.has_errors
+        assert len(plan.gpu_agents) == 1
+
+    def test_budget_zero_means_unlimited(self):
+        agents = [
+            _make_agent_def("a1", gpu_required=True, gpu_memory_min_mb=20000),
+        ]
+        plan = schedule_crew_gpus(
+            agents, gpu_status=_make_gpu_status(), memory_budget_mb=0
+        )
+        assert not plan.has_errors
+
+    def test_runtime_budget_caps_later_agents(self):
+        """When budget runs low during scheduling, later agents fall back to CPU."""
+        agents = [
+            _make_agent_def("a1", gpu_required=True, gpu_memory_min_mb=8000),
+            _make_agent_def("a2", gpu_required=True, gpu_memory_min_mb=8000),
+        ]
+        # Budget allows first agent but not second
+        plan = schedule_crew_gpus(
+            agents, gpu_status=_make_gpu_status(), memory_budget_mb=9000
+        )
+        # Pre-check: 8000+8000=16000 > 9000 → errors
+        assert plan.has_errors
+
+    def test_budget_with_mixed_agents(self):
+        agents = [
+            _make_agent_def("cpu", gpu_required=False),
+            _make_agent_def("gpu", gpu_required=True, gpu_memory_min_mb=4000),
+        ]
+        plan = schedule_crew_gpus(
+            agents, gpu_status=_make_gpu_status(), memory_budget_mb=5000
+        )
+        assert not plan.has_errors
+        assert not plan.get_assignment("cpu").is_gpu
+        assert plan.get_assignment("gpu").is_gpu
+
+
+# ---------------------------------------------------------------------------
+# check_memory_usage tests
+# ---------------------------------------------------------------------------
+
+
+class TestCheckMemoryUsage:
+    @patch("config.gpu.detect_gpus")
+    def test_returns_usage_for_valid_device(self, mock_detect):
+        mock_detect.return_value = _make_gpu_status()
+        from config.gpu import check_memory_usage
+
+        usage = check_memory_usage(0)
+        assert usage is not None
+        assert usage["total_mb"] == 24576
+        assert usage["free_mb"] == 22528
+
+    @patch("config.gpu.detect_gpus")
+    def test_returns_none_for_missing_device(self, mock_detect):
+        mock_detect.return_value = _make_gpu_status()
+        from config.gpu import check_memory_usage
+
+        assert check_memory_usage(99) is None
+
+
+# ---------------------------------------------------------------------------
+# GPU endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestGPUEndpoints:
+    @pytest.fixture()
+    def client(self):
+        from unittest.mock import AsyncMock
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from webgui.routes.gpu import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+
+        # Override auth
+        from webgui.routes.dependencies import get_current_user
+
+        app.dependency_overrides[get_current_user] = lambda: {
+            "user_id": "test",
+            "role": "admin",
+        }
+
+        return TestClient(app)
+
+    @patch("config.gpu.detect_gpus")
+    def test_gpu_status_endpoint(self, mock_detect, client):
+        mock_detect.return_value = _make_gpu_status()
+        resp = client.get("/api/v1/gpu/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["available"] is True
+        assert data["device_count"] == 1
+
+    @patch("config.gpu.detect_gpus")
+    def test_gpu_memory_endpoint(self, mock_detect, client):
+        mock_detect.return_value = _make_gpu_status()
+        resp = client.get("/api/v1/gpu/memory")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["device_count"] == 1
+        assert data["total_mb"] == 24576
+        assert len(data["devices"]) == 1
+
+    @patch("config.gpu.detect_gpus")
+    def test_gpu_device_detail_endpoint(self, mock_detect, client):
+        mock_detect.return_value = _make_gpu_status()
+        resp = client.get("/api/v1/gpu/devices/0")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "NVIDIA RTX 4090"
+
+    @patch("config.gpu.detect_gpus")
+    def test_gpu_device_not_found(self, mock_detect, client):
+        mock_detect.return_value = _make_gpu_status()
+        resp = client.get("/api/v1/gpu/devices/99")
+        assert resp.status_code == 404

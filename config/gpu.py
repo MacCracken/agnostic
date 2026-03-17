@@ -298,6 +298,23 @@ def get_gpu_status() -> GPUStatus:
     return detect_gpus()
 
 
+def check_memory_usage(device_index: int) -> dict[str, int] | None:
+    """Get current memory usage for a specific GPU device.
+
+    Returns dict with ``total_mb``, ``used_mb``, ``free_mb`` or None if
+    the device isn't found.  Always forces a fresh probe.
+    """
+    status = detect_gpus(force=True)
+    for dev in status.devices:
+        if dev.index == device_index:
+            return {
+                "total_mb": dev.memory_total_mb,
+                "used_mb": dev.memory_used_mb,
+                "free_mb": dev.memory_free_mb,
+            }
+    return None
+
+
 def reset_cache() -> None:
     """Clear the cached GPU status (useful in tests)."""
     global _cached_status

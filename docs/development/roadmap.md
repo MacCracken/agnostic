@@ -42,13 +42,29 @@ Remaining work in **Agnosticos** and **SecureYeoman** to fully consume AAS multi
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| GPU-aware crew scheduling | Medium | Detect available GPU on AGNOS host via `agnosys` GPU probe. Route compute-intensive agents to GPU-enabled nodes. Inspired by NemoClaw's compute-aware routing |
-| GPU memory monitoring & limits | Medium | Track per-agent VRAM usage via `nvidia-smi` / `agnosys` telemetry. Enforce per-crew GPU memory budgets. Reject or queue agents when VRAM headroom is insufficient |
+| ~~GPU-aware crew scheduling~~ | ~~Medium~~ | **Done.** `config/gpu.py` detects GPUs via nvidia-smi or agnosys probe. `config/gpu_scheduler.py` assigns agents to devices. `CUDA_VISIBLE_DEVICES` per-agent. `GET /api/v1/gpu/status` |
+| ~~GPU memory monitoring & limits~~ | ~~Medium~~ | **Done.** Per-crew `gpu_memory_budget_mb` enforced by scheduler. VRAM snapshots before/after each GPU agent. `GET /api/v1/gpu/memory` and `/gpu/devices/{index}` endpoints |
 | Local LLM inference offload | Medium | When a local GPU is available, route eligible LLM calls (small models, embeddings, reranking) to a local inference server (vLLM/Ollama) instead of the cloud gateway. Controlled by `AGNOS_LOCAL_INFERENCE_ENABLED` and model size thresholds |
 | GPU-accelerated tool execution | Small | Allow tool definitions to declare `gpu_required: true`. The crew scheduler pins these tools to GPU-enabled agents/nodes. Initial targets: code analysis, embedding generation, image processing tools |
 | Multi-GPU scheduling across crews | Medium | When multiple GPUs are present (multi-card host or fleet), assign crews to specific GPUs to avoid contention. Use CUDA_VISIBLE_DEVICES pinning per crew process. Expose GPU slot availability via `/api/v1/gpu/status` |
 | Crew status in AGNOS HUD | Medium | Push crew lifecycle events to AGNOS daimon for display in aethersafha HUD. Use `GET /crews` with status filter |
 | Crew cancellation from agnoshi | Small | Wire `POST /crews/{crew_id}/cancel` to AGNOS MCP tool `agnostic_cancel_crew` and agnoshi intent "cancel crew {id}" |
+
+### AGNOS-side Integration (work needed in AGNOS / Agnosticos)
+
+Agnostic's GPU features are **OS-agnostic by design** — `nvidia-smi` probing and `CUDA_VISIBLE_DEVICES` work on any Linux/Windows host with NVIDIA drivers. Running on AGNOS gets additional benefits: `agnosys` hardware probes, fleet-wide GPU inventory, HUD integration, and daimon-coordinated scheduling.
+
+| Item | Where | Effort | Notes |
+|------|-------|--------|-------|
+| `agnosys` GPU probe JSON | AGNOS | Small | `agnosys` already probes hardware — add GPU fields to the probe output and write `/var/lib/agnosys/gpu.json` (Agnostic already reads this path) |
+| GPU status in aethersafha HUD | Agnosticos | Medium | Consume `GET /api/v1/gpu/status` and `GET /api/v1/gpu/memory` from the Agnostic instance. Show per-device VRAM bars, utilization, and temperature in the Agent HUD |
+| GPU placement in crew HUD cards | Agnosticos | Small | When displaying crew status, show which agents are on GPU vs CPU and their VRAM usage (data already in crew result `gpu_placement` and per-agent `gpu_vram`) |
+| agnoshi GPU intents | AGNOS | Small | "show gpu status", "show gpu memory" intents that call Agnostic GPU endpoints via MCP |
+| Fleet GPU aggregation | AGNOS | Medium | Aggregate `GET /api/v1/gpu/status` across all fleet nodes into a single fleet-wide GPU inventory. Feed into fleet placement engine |
+| agnosys GPU budget recommendations | AGNOS | Small | Based on observed VRAM usage patterns, recommend `gpu_memory_budget_mb` values for common crew presets |
+| MCP tool: `agnostic_gpu_status` | Agnosticos | Small | New MCP tool exposing GPU status so other AGNOS components can query Agnostic's GPU state without HTTP |
+| Daimon GPU event forwarding | AGNOS | Medium | Forward GPU allocation/release events from crew runs to the daimon event stream. Enables fleet-wide GPU utilization tracking and alerting |
+| Non-AGNOS fallback docs | Agnostic | Small | Document the GPU feature behavior on non-AGNOS hosts: nvidia-smi only, no fleet inventory, no HUD — all scheduling still works |
 
 ### AGNOS Fleet Crew Distribution
 

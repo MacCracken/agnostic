@@ -105,6 +105,14 @@ class CrewRunRequest(BaseModel):
     callback_url: str | None = None
     callback_secret: str | None = None
 
+    # GPU options
+    gpu_memory_budget_mb: int | None = Field(
+        None,
+        ge=0,
+        description="Max total GPU memory (MB) this crew may use. "
+        "0 or None = unlimited. Scheduler rejects if budget exceeded.",
+    )
+
 
 class CrewRunResponse(BaseModel):
     crew_id: str
@@ -223,7 +231,10 @@ async def _run_crew_async(
         # GPU scheduling — assign agents to GPU devices based on requirements
         from config.gpu_scheduler import apply_gpu_assignment, schedule_crew_gpus
 
-        gpu_plan = schedule_crew_gpus([a.definition for a in agents])
+        gpu_plan = schedule_crew_gpus(
+            [a.definition for a in agents],
+            memory_budget_mb=crew_config.get("gpu_memory_budget_mb"),
+        )
 
         if gpu_plan.has_errors:
             await _update_status(
@@ -264,7 +275,26 @@ async def _run_crew_async(
                         assignment.device_name,
                     )
 
+                # Snapshot VRAM before execution
+                vram_before = None
+                if assignment and assignment.is_gpu:
+                    from config.gpu import check_memory_usage
+
+                    vram_before = check_memory_usage(assignment.device_index)
+
                 agent_result = await agent.handle_task(task_data)
+
+                # Snapshot VRAM after execution
+                if assignment and assignment.is_gpu and vram_before:
+                    vram_after = check_memory_usage(assignment.device_index)
+                    if vram_after:
+                        agent_result["gpu_vram"] = {
+                            "device_index": assignment.device_index,
+                            "before_mb": vram_before["used_mb"],
+                            "after_mb": vram_after["used_mb"],
+                            "delta_mb": vram_after["used_mb"] - vram_before["used_mb"],
+                        }
+
                 results[agent.definition.agent_key] = agent_result
             except Exception as exc:
                 logger.error(
@@ -463,6 +493,7 @@ async def run_crew(
         "process": req.process,
         "callback_url": req.callback_url,
         "callback_secret": req.callback_secret,
+        "gpu_memory_budget_mb": req.gpu_memory_budget_mb,
     }
 
     # Fire-and-forget

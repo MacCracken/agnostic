@@ -143,12 +143,16 @@ class GPUPlacementPlan:
 def schedule_crew_gpus(
     agent_definitions: list[Any],
     gpu_status: GPUStatus | None = None,
+    memory_budget_mb: int | None = None,
 ) -> GPUPlacementPlan:
     """Create a GPU placement plan for a list of agent definitions.
 
     Args:
         agent_definitions: List of AgentDefinition objects or dicts.
         gpu_status: Pre-fetched GPU status. If None, will probe.
+        memory_budget_mb: Optional crew-wide GPU memory budget in MB.
+            If set, the total reserved GPU memory across all agents must
+            not exceed this limit.
 
     Returns:
         A GPUPlacementPlan with assignments for each agent.
@@ -167,6 +171,25 @@ def schedule_crew_gpus(
         for dev in gpu_status.devices:
             device_free[dev.index] = dev.memory_free_mb
 
+    # Budget enforcement: pre-check total declared minimums
+    if memory_budget_mb is not None and memory_budget_mb > 0:
+        total_declared = sum(
+            r.gpu_memory_min_mb
+            for r in requirements
+            if r.gpu_required or r.gpu_preferred
+        )
+        if total_declared > memory_budget_mb:
+            plan.errors.append(
+                f"Crew GPU memory budget exceeded: agents declare {total_declared} MB "
+                f"but budget is {memory_budget_mb} MB"
+            )
+            # Still assign CPU for all agents so the plan is complete
+            for req in requirements:
+                plan.assignments.append(
+                    GPUAssignment(agent_key=req.agent_key, device_index=-1)
+                )
+            return plan
+
     # Sort: strict GPU-required first, then preferred, then others
     # This ensures critical agents get GPU slots before optional ones
     def _priority(req: AgentGPURequirements) -> int:
@@ -180,9 +203,17 @@ def schedule_crew_gpus(
 
     sorted_reqs = sorted(requirements, key=_priority)
 
+    budget_remaining = (
+        memory_budget_mb if memory_budget_mb and memory_budget_mb > 0 else None
+    )
+
     for req in sorted_reqs:
-        assignment = _assign_device(req, gpu_status, device_free, plan)
+        assignment = _assign_device(
+            req, gpu_status, device_free, plan, budget_remaining
+        )
         plan.assignments.append(assignment)
+        if budget_remaining is not None and assignment.is_gpu:
+            budget_remaining -= assignment.memory_reserved_mb
 
     # Re-sort assignments back to original agent order
     key_order = {
@@ -192,10 +223,13 @@ def schedule_crew_gpus(
     plan.assignments.sort(key=lambda a: key_order.get(a.agent_key, 999))
 
     if plan.gpu_agents:
+        total_reserved = sum(a.memory_reserved_mb for a in plan.gpu_agents)
         logger.info(
-            "GPU scheduling: %d/%d agents assigned to GPU (%s)",
+            "GPU scheduling: %d/%d agents on GPU, %d MB reserved%s (%s)",
             len(plan.gpu_agents),
             len(plan.assignments),
+            total_reserved,
+            f" (budget: {memory_budget_mb} MB)" if memory_budget_mb else "",
             ", ".join(f"{a.agent_key}→GPU:{a.device_index}" for a in plan.gpu_agents),
         )
 
@@ -207,6 +241,7 @@ def _assign_device(
     gpu_status: GPUStatus,
     device_free: dict[int, int],
     plan: GPUPlacementPlan,
+    budget_remaining: int | None = None,
 ) -> GPUAssignment:
     """Assign a single agent to a GPU device or CPU."""
 
@@ -238,6 +273,19 @@ def _assign_device(
         msg = (
             f"Agent '{req.agent_key}' needs {min_mem} MB GPU memory "
             f"but no device has enough free"
+        )
+        if req.gpu_required and req.gpu_strict:
+            plan.errors.append(msg)
+        else:
+            plan.warnings.append(f"{msg} — falling back to CPU")
+        return GPUAssignment(agent_key=req.agent_key, device_index=-1)
+
+    # Budget check — if this agent's memory would exceed remaining budget, skip
+    agent_mem = min_mem if min_mem > 0 else 1
+    if budget_remaining is not None and agent_mem > budget_remaining:
+        msg = (
+            f"Agent '{req.agent_key}' needs {agent_mem} MB but crew budget "
+            f"has only {budget_remaining} MB remaining"
         )
         if req.gpu_required and req.gpu_strict:
             plan.errors.append(msg)
