@@ -41,7 +41,7 @@ def test_a2a_capabilities(http_client: httpx.Client):
     data = resp.json()
     assert "capabilities" in data
     cap_names = [c["name"] for c in data["capabilities"]]
-    assert "qa" in cap_names
+    assert "quality" in cap_names
 
 
 def test_prometheus_metrics(http_client: httpx.Client):

@@ -81,7 +81,7 @@ def test_a2a_roundtrip_delegate_to_structured_results(
     assert caps.status_code == 200
     caps_data = caps.json()
     cap_names = [c["name"] for c in caps_data["capabilities"]]
-    assert "qa" in cap_names
+    assert "quality" in cap_names
     assert "mcp" in caps_data  # MCP discovery metadata
 
     # 4. Retrieve structured results for the session (if task completed)
@@ -181,7 +181,7 @@ def test_mcp_tool_discovery_and_invoke(http_client: httpx.Client, api_headers: d
     info_resp = http_client.get("/api/v1/mcp/server-info", headers=api_headers)
     assert info_resp.status_code == 200
     info = info_resp.json()
-    assert info["name"] == "agnostic-qa"
+    assert info["name"] == "agnostic"
 
     # Invoke a read-only tool
     invoke_resp = http_client.post(
