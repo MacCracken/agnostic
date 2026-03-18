@@ -12,8 +12,6 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 |------|--------|-------|
 | E2E test: SY → Agnostic crew delegation | Medium | End-to-end test that SY can delegate a non-QA crew task to Agnostic and poll status |
 | E2E test: dynamic agent creation via A2A | Small | SY creates an agent definition on Agnostic via A2A, then runs a crew with it |
-| Documentation: cross-project API contract | Small | Document the new API surface (crew endpoints, preset endpoints, A2A message types) as a shared contract |
-| Non-AGNOS GPU fallback docs | Small | Document GPU feature behavior on non-AGNOS hosts: nvidia-smi only, no fleet inventory, no HUD — all scheduling still works |
 
 ---
 
@@ -54,21 +52,9 @@ A distributed AGNOS fleet running Agnostic in lockstep. Every node in the fleet 
 
 ## Engineering Backlog
 
-Security hardening, performance, and code quality sections cleared — all items completed. Remaining:
+All security, performance, code quality, and test coverage sections cleared. Remaining:
 
-### Test Coverage
-
-| Item | Effort | Notes |
-|------|--------|-------|
-| ZIP bomb / entry count limit tests | Small | `_MAX_UNCOMPRESSED_SIZE` and `_MAX_ENTRY_COUNT` checks untested |
-| `AgentFactory.invalidate_cache()` selective test | Small | Path-specific invalidation untested |
-| YAML definition loading test | Small | `factory.from_file()` YAML branch untested |
-| `_run_crew_async()` integration test | Medium | Background execution mocked away in current tests |
-| `delegate_to()` edge cases | Small | Invalid key rejection, missing file, delegation failure untested |
-| `rollback_definition` endpoint test | Small | API-level rollback test missing |
-| Factory/registry cache bounds tests | Small | Eviction behavior at `_CACHE_MAX_SIZE` / `_REGISTRY_MAX_SIZE` untested |
-
-### Benchmarking
+### Benchmarking (Docker required)
 
 | Item | Effort | Notes |
 |------|--------|-------|
@@ -118,4 +104,4 @@ See also [Dependency Watch](dependency-watch.md).
 
 ---
 
-*Last Updated: 2026-03-17 · Version: 2026.3.17 · Test count: 1087 (unit) + 10 fleet E2E scaffolds + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-17 · Version: 2026.3.17 · Test count: 1099 (unit) + 10 fleet E2E scaffolds + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

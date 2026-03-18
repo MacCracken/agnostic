@@ -581,7 +581,9 @@ class TestPackageSafetyLimits:
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("manifest.json", json.dumps({"name": "big-entry"}))
-            big_json = json.dumps({"agent_key": "big", "data": "x" * (pkg._MAX_ENTRY_SIZE + 1)})
+            big_json = json.dumps(
+                {"agent_key": "big", "data": "x" * (pkg._MAX_ENTRY_SIZE + 1)}
+            )
             zf.writestr("definitions/big.json", big_json)
 
         result = pkg.import_package(buf.getvalue())
@@ -662,7 +664,11 @@ class TestFactoryCache:
             AgentFactory._definition_cache.clear()
 
     def test_registry_max_size(self):
-        from agents.tool_registry import _REGISTRY, _REGISTRY_MAX_SIZE, _check_registry_capacity
+        from agents.tool_registry import (
+            _REGISTRY,
+            _REGISTRY_MAX_SIZE,
+            _check_registry_capacity,
+        )
 
         old_size = len(_REGISTRY)
         # This just tests the check doesn't raise when under limit

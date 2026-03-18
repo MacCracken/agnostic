@@ -56,7 +56,16 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 - **Agent checkpoint & recovery** — `CrewStateManager.checkpoint_agent()` / `get_checkpoint()` persist agent state to Redis. Coordinator reads checkpoints on failover to resume from last known state
 - **Fleet-aware crew builder** — `_run_crew_async()` detects fleet mode when `AGNOS_FLEET_ENABLED=true` and multiple nodes are alive. Creates `FleetCoordinator`, runs placement, distributes task handoffs to remote nodes via relay, executes local agents, collects all results. Falls back to single-node execution when fleet is disabled or only one node. `CrewRunRequest` gains `scheduling_policy` and `group` fields
 - **Fleet E2E test scaffolds** — `tests/e2e/test_fleet_scaling.py` (4 tests: add/remove nodes, graceful drain, rejoin) and `tests/e2e/test_fleet_lockstep.py` (6 tests: span all nodes, barrier ordering, coordinator failover, result aggregation, group pinning, GPU affinity). Gated by `FLEET_E2E_TESTS=true` env var, need Docker compose
-- **32 fleet tests** — node model, capabilities probe, crew state CRUD, barrier sync, checkpoints, coordinator transfer, placement (7 policies), relay messages, dedup, coordinator lifecycle, endpoint tests. Total: 1087 unit tests
+- **Test coverage sweep** — 13 new tests completing all backlog test coverage items:
+  - ZIP bomb / entry count / per-entry size limit tests (`TestPackageSafetyLimits`)
+  - `AgentFactory.invalidate_cache()` selective + cache eviction at max size (`TestFactoryCache`)
+  - Tool registry `_REGISTRY_MAX_SIZE` bounds test
+  - YAML definition loading via `from_file()` (`TestYAMLLoading`)
+  - `delegate_to()` edge cases: invalid key rejection, missing file, failure propagation (`TestDelegateToEdgeCases`)
+  - `rollback_definition` API endpoint test + nonexistent version 404 (`TestPhase4Endpoints`)
+- **Cross-project API contract** (`docs/guides/api-contract.md`) — documents all shared API surface: crew endpoints, preset endpoints, A2A protocol message types, GPU endpoints, fleet endpoints, authentication, webhooks, MCP tools
+- **Non-AGNOS GPU fallback docs** (`docs/guides/gpu-non-agnos.md`) — documents GPU behavior on non-AGNOS hosts: what works everywhere (nvidia-smi, scheduling, CUDA isolation) vs AGNOS-only features (agnosys probe, HUD, fleet aggregation)
+- **32 fleet tests** — node model, capabilities probe, crew state CRUD, barrier sync, checkpoints, coordinator transfer, placement (7 policies), relay messages, dedup, coordinator lifecycle, endpoint tests. Total: 1099 unit tests
 - **18 crew presets** — 5 domains (quality, software-engineering, design, data-engineering, devops) x 3 sizes (lean, standard, large) + `complete-lean` + `quality-security` + `quality-performance`
 - **Crew assembler** (`agents/crew_assembler.py`) — `assemble_team()` builds agent definitions from natural-language team specs; `recommend_preset()` suggests best preset from task description
 - **Custom team composition** — `CrewRunRequest.team` (TeamSpec) enables "I need a 4-person team: UX, game engineer, game designer, project lead" style requests

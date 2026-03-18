@@ -309,7 +309,9 @@ class BaseAgent:
             target_agent_key,
         )
 
-        target = AgentFactory.from_file(DEFINITIONS_DIR / f"{target_agent_key}.json")
+        target = AgentFactory.from_file(
+            (DEFINITIONS_DIR / f"{target_agent_key}.json").resolve()
+        )
 
         # Inject delegation context so the target knows who sent the task
         enriched = {
