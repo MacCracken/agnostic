@@ -116,6 +116,18 @@ class CrewRunRequest(BaseModel):
         "0 or None = unlimited. Scheduler rejects if budget exceeded.",
     )
 
+    # Fleet options
+    scheduling_policy: str | None = Field(
+        None,
+        description="Fleet scheduling policy: gpu-affinity (default), balanced, "
+        "cost-aware, lockstep-strict, data-locality. Only used in fleet mode.",
+    )
+    group: str | None = Field(
+        None,
+        description="Fleet node group to pin this crew to (e.g. 'gpu-rack-1'). "
+        "Only used in fleet mode.",
+    )
+
 
 class CrewRunResponse(BaseModel):
     crew_id: str
@@ -350,42 +362,129 @@ async def _run_crew_async(
             await _update_status("failed", {"error": "No agents could be created"})
             return
 
-        # Phase 2: GPU scheduling
-        from config.gpu_scheduler import gpu_slot_tracker, schedule_crew_gpus
+        # Phase 1.5: Fleet distribution (if enabled and nodes available)
+        fleet_mode = False
+        fleet_coordinator = None
+        try:
+            from config.fleet.node import FLEET_ENABLED
 
-        gpu_plan = schedule_crew_gpus(
-            [a.definition for a in agents],
-            memory_budget_mb=crew_config.get("gpu_memory_budget_mb"),
-        )
+            if FLEET_ENABLED:
+                from config.fleet.coordinator import FleetCoordinator
+                from config.fleet.registry import fleet_registry
 
-        if gpu_plan.has_errors:
-            await _update_status(
-                "failed",
-                {"error": "GPU scheduling failed", "gpu_errors": gpu_plan.errors},
+                fleet_nodes = await fleet_registry.get_alive_nodes()
+                if len(fleet_nodes) > 1:
+                    fleet_mode = True
+                    fleet_coordinator = FleetCoordinator(crew_id)
+                    fleet_plan = await fleet_coordinator.plan_and_distribute(
+                        [a.definition for a in agents],
+                        fleet_nodes,
+                        {
+                            "session_id": session_id,
+                            "scenario": {
+                                "id": crew_id,
+                                "name": crew_config.get("title", "Crew task"),
+                                "description": crew_config.get("description", ""),
+                                "target_url": crew_config.get("target_url"),
+                            },
+                        },
+                        policy=crew_config.get("scheduling_policy", "gpu-affinity"),
+                        group=crew_config.get("group"),
+                    )
+                    if fleet_plan.has_errors:
+                        await _update_status(
+                            "failed",
+                            {
+                                "error": "Fleet placement failed",
+                                "fleet_errors": fleet_plan.errors,
+                            },
+                        )
+                        return
+        except ImportError:
+            pass
+
+        if fleet_mode and fleet_coordinator:
+            # Fleet path: execute local agents, collect all results
+            from config.fleet.node import FLEET_NODE_ID
+
+            local_placements = [
+                p for p in fleet_plan.placements if p.node_id == FLEET_NODE_ID
+            ]
+            local_agents = [
+                a
+                for a in agents
+                if any(p.agent_key == a.definition.agent_key for p in local_placements)
+            ]
+
+            task_data = {
+                "session_id": session_id,
+                "scenario": {
+                    "id": crew_id,
+                    "name": crew_config.get("title", "Crew task"),
+                    "description": crew_config.get("description", ""),
+                    "target_url": crew_config.get("target_url"),
+                },
+            }
+
+            # Execute local agents and submit results to coordinator
+            from config.gpu_scheduler import schedule_crew_gpus
+
+            local_gpu_plan = schedule_crew_gpus(
+                [a.definition for a in local_agents],
+                memory_budget_mb=crew_config.get("gpu_memory_budget_mb"),
             )
-            return
+            local_results = await _execute_agents(
+                local_agents, task_data, local_gpu_plan, crew_id
+            )
+            for agent_key, result in local_results.items():
+                fleet_coordinator.submit_result(agent_key, result)
 
-        for ga in gpu_plan.gpu_agents:
-            gpu_slot_tracker.reserve(crew_id, ga.device_index, ga.memory_reserved_mb)
+            # Wait for remote results
+            results = await fleet_coordinator.collect_results()
+            await fleet_coordinator.cleanup()
 
-        # Phase 3: Execute agents
-        task_data = {
-            "session_id": session_id,
-            "scenario": {
-                "id": crew_id,
-                "name": crew_config.get("title", "Crew task"),
-                "description": crew_config.get("description", ""),
-                "target_url": crew_config.get("target_url"),
-            },
-        }
+        else:
+            # Local path: single-node execution (original behavior)
 
-        results = await _execute_agents(agents, task_data, gpu_plan, crew_id)
+            # Phase 2: GPU scheduling
+            from config.gpu_scheduler import gpu_slot_tracker, schedule_crew_gpus
+
+            gpu_plan = schedule_crew_gpus(
+                [a.definition for a in agents],
+                memory_budget_mb=crew_config.get("gpu_memory_budget_mb"),
+            )
+
+            if gpu_plan.has_errors:
+                await _update_status(
+                    "failed",
+                    {"error": "GPU scheduling failed", "gpu_errors": gpu_plan.errors},
+                )
+                return
+
+            for ga in gpu_plan.gpu_agents:
+                gpu_slot_tracker.reserve(
+                    crew_id, ga.device_index, ga.memory_reserved_mb
+                )
+
+            # Phase 3: Execute agents
+            task_data = {
+                "session_id": session_id,
+                "scenario": {
+                    "id": crew_id,
+                    "name": crew_config.get("title", "Crew task"),
+                    "description": crew_config.get("description", ""),
+                    "target_url": crew_config.get("target_url"),
+                },
+            }
+
+            results = await _execute_agents(agents, task_data, gpu_plan, crew_id)
 
         # Aggregate
         all_ok = all(r.get("status") == "completed" for r in results.values())
         final_status = "completed" if all_ok else "partial"
 
-        gpu_slot_tracker.release(crew_id)
+        if not fleet_mode:
+            gpu_slot_tracker.release(crew_id)
 
         # DLP scan — route crew output through SY's DLP pipeline if enabled
         try:
@@ -611,6 +710,8 @@ async def run_crew(
         "callback_url": req.callback_url,
         "callback_secret": req.callback_secret,
         "gpu_memory_budget_mb": req.gpu_memory_budget_mb,
+        "scheduling_policy": req.scheduling_policy,
+        "group": req.group,
     }
 
     # Fire-and-forget

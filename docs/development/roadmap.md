@@ -47,9 +47,8 @@ A distributed AGNOS fleet running Agnostic in lockstep. Every node in the fleet 
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| Fleet-aware crew builder | Medium | Extend `assemble_team()` and `_run_crew_async()` to accept placement hints and distribute agents across nodes transparently |
-| Fleet scaling test | Medium | Add/remove nodes from a running fleet while crews are executing. Verify zero disruption |
-| E2E test: multi-node lockstep crew | Medium | Spin up 3+ test containers as fleet nodes. Run a crew that spans all. Verify lockstep ordering, fault recovery, and output correctness |
+| Fleet scaling test | Medium | Add/remove nodes from a running fleet while crews are executing. Verify zero disruption. Test scaffold in `tests/e2e/test_fleet_scaling.py` — needs Docker compose |
+| E2E test: multi-node lockstep crew | Medium | Spin up 3+ test containers as fleet nodes. Run a crew that spans all. Verify lockstep ordering, fault recovery, and output correctness. Test scaffold in `tests/e2e/test_fleet_lockstep.py` — needs Docker compose |
 
 ---
 
@@ -119,4 +118,4 @@ See also [Dependency Watch](dependency-watch.md).
 
 ---
 
-*Last Updated: 2026-03-17 · Version: 2026.3.17 · Test count: 1087 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-17 · Version: 2026.3.17 · Test count: 1087 (unit) + 10 fleet E2E scaffolds + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
