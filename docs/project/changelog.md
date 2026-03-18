@@ -37,6 +37,10 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 - **`.agpkg` multipart file upload** — `POST /api/v1/packages/import` accepts `multipart/form-data` with 10 MB limit
 - **`require_rate_limit` dependency** — Redis-backed per-user rate limiter factory in `dependencies.py`
 - **Benchmark scripts** — `tests/benchmarks/bench_definitions.py` (10/50/200/500 files) and `tests/benchmarks/bench_packaging.py` (50 defs + 10 presets export/import)
+- **Process-level tool sandbox** (`agents/tool_sandbox.py`) — AST analysis blocks dangerous imports/exec/eval/MRO walking, subprocess validation compiles in isolated child process with resource limits (RLIMIT_AS, RLIMIT_CPU, RLIMIT_NOFILE). `AGNOS_TOOL_SANDBOX_ENABLED/TIMEOUT/MAX_MEM_MB` env vars
+- **`AgentDefinition` → Pydantic** — converted from plain class to `pydantic.BaseModel` with `model_validator`, `Field(exclude=True)` for tool_instances, `arbitrary_types_allowed`. Full backward compat (`to_dict`, `from_dict`, `__repr__`)
+- **Shared Redis/Celery infra** — `BaseAgent.__init__` accepts optional `redis_client`, `celery_app`, `llm_service` kwargs. `AgentFactory.from_preset/from_file/from_dict/from_definition` pass `**shared` through. `_build_agents_sync` creates one Redis client + one Celery app per crew (not per agent)
+- **`_run_crew_async()` split** — extracted `_build_agents_sync()`, `_execute_agents()`, `_finalize_crew()` as standalone functions. Main function now 4 clear phases
 - **18 crew presets** — 5 domains (quality, software-engineering, design, data-engineering, devops) x 3 sizes (lean, standard, large) + `complete-lean` + `quality-security` + `quality-performance`
 - **Crew assembler** (`agents/crew_assembler.py`) — `assemble_team()` builds agent definitions from natural-language team specs; `recommend_preset()` suggests best preset from task description
 - **Custom team composition** — `CrewRunRequest.team` (TeamSpec) enables "I need a 4-person team: UX, game engineer, game designer, project lead" style requests

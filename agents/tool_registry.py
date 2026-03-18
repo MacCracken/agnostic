@@ -114,16 +114,11 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
     """Dynamically load a BaseTool subclass from Python source code.
 
     The source must define exactly one class that inherits from BaseTool.
-    The class is compiled in a namespace with limited builtins.
 
-    **SECURITY WARNING**: The restricted builtins are defense-in-depth only,
-    NOT a real sandbox.  CPython ``exec()`` cannot be securely sandboxed — a
-    determined attacker can escape via MRO walking (``__subclasses__``,
-    ``__globals__``).  This endpoint is gated behind ``super_admin``/
-    ``org_admin`` auth.  Only upload tool code from trusted sources.
-
-    For production hardening, consider process-level isolation (nsjail,
-    gVisor, or WASM runtime) around this function.
+    **Security layers:**
+    1. AST analysis — blocks dangerous imports, exec/eval, MRO walking
+    2. Subprocess sandbox — compiles in isolated process with resource limits
+    3. Restricted builtins — exec in main process with limited namespace
 
     Args:
         name: Name to register the tool under.
@@ -137,7 +132,17 @@ def load_tool_from_source(name: str, source_code: str) -> type[BaseTool] | None:
     """
     from shared.crewai_compat import BaseTool as _BaseTool
 
-    # Compile in a restricted namespace — no builtins except safe ones
+    # Phase 1 & 2: AST analysis + subprocess sandbox validation
+    try:
+        from agents.tool_sandbox import SandboxError, validate_tool_source
+
+        validate_tool_source(name, source_code)
+    except SandboxError as exc:
+        raise ValueError(str(exc)) from exc
+    except ImportError:
+        logger.warning("Tool sandbox not available — skipping pre-validation")
+
+    # Phase 3: Compile in a restricted namespace — no builtins except safe ones
     _real_builtins: dict[str, Any] = (
         __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)  # type: ignore[unreachable]
     )

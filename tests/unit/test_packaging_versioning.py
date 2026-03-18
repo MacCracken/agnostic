@@ -336,13 +336,13 @@ class MyCustomTool(BaseTool):
     def test_load_invalid_source(self):
         from agents.tool_registry import load_tool_from_source
 
-        with pytest.raises(ValueError, match="compilation failed"):
+        with pytest.raises(ValueError, match="[Ss]yntax"):
             load_tool_from_source("Bad", "this is not valid python {{{")
 
     def test_load_no_basetool(self):
         from agents.tool_registry import load_tool_from_source
 
-        with pytest.raises(ValueError, match="No BaseTool subclass"):
+        with pytest.raises(ValueError, match="[Nn]o.*class"):
             load_tool_from_source("Empty", "x = 42")
 
     def test_list_registered_tools(self):

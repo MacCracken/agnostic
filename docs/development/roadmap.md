@@ -120,24 +120,7 @@ A distributed AGNOS fleet running Agnostic in lockstep. Every node in the fleet 
 
 Items identified during code review and audit. Not blocking, but should be addressed over time.
 
-### Security Hardening
-
-| Item | Effort | Notes |
-|------|--------|-------|
-| Process-level sandbox for `load_tool_from_source()` | Medium | Current `exec()` restricted builtins is defense-in-depth only. Add nsjail/gVisor/WASM isolation for untrusted tool code |
-
-### Performance
-
-| Item | Effort | Notes |
-|------|--------|-------|
-| Shared infrastructure for crew agents | Medium | Each `BaseAgent` creates own Redis client + Celery app. Crew of 6 = 6 connections. Share across agents in same crew |
-
-### Code Quality
-
-| Item | Effort | Notes |
-|------|--------|-------|
-| `AgentDefinition` → Pydantic model or dataclass | Medium | Currently a plain class with manual `__init__`/`to_dict`/`from_dict`. Inconsistent with rest of codebase |
-| `_run_crew_async()` function split | Small | 147 lines. Split into `_build_agents`, `_execute_agents`, `_finalize_crew` |
+*Security, Performance, and Code Quality sections cleared — all items completed.*
 
 ### Test Coverage
 

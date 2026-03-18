@@ -27,18 +27,26 @@ class AgentFactory:
     _CACHE_MAX_SIZE = 200
 
     @classmethod
-    def from_definition(cls, definition: AgentDefinition) -> BaseAgent:
-        """Create an agent directly from an AgentDefinition."""
-        return BaseAgent(definition)
+    def from_definition(
+        cls,
+        definition: AgentDefinition,
+        **shared: Any,
+    ) -> BaseAgent:
+        """Create an agent directly from an AgentDefinition.
+
+        Pass ``redis_client``, ``celery_app``, and/or ``llm_service`` as kwargs
+        to share infrastructure across agents in the same crew.
+        """
+        return BaseAgent(definition, **shared)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> BaseAgent:
+    def from_dict(cls, data: dict[str, Any], **shared: Any) -> BaseAgent:
         """Create an agent from a plain dict (e.g. API request body)."""
         defn = AgentDefinition.from_dict(data)
-        return BaseAgent(defn)
+        return BaseAgent(defn, **shared)
 
     @classmethod
-    def from_file(cls, path: str | Path) -> BaseAgent:
+    def from_file(cls, path: str | Path, **shared: Any) -> BaseAgent:
         """Load an agent definition from a JSON or YAML file.
 
         The resolved path must be under the project's definitions directory
@@ -56,7 +64,7 @@ class AgentFactory:
         if not resolved.exists():
             raise FileNotFoundError(f"Definition file not found: {resolved}")
         defn = cls._load_definition_file(resolved)
-        return BaseAgent(defn)
+        return BaseAgent(defn, **shared)
 
     @classmethod
     def invalidate_cache(cls, path: str | None = None) -> None:
@@ -67,8 +75,12 @@ class AgentFactory:
             cls._definition_cache.pop(str(Path(path).resolve()), None)
 
     @classmethod
-    def from_preset(cls, preset_name: str) -> list[BaseAgent]:
-        """Load all agents for a named preset (e.g. 'quality-standard')."""
+    def from_preset(cls, preset_name: str, **shared: Any) -> list[BaseAgent]:
+        """Load all agents for a named preset (e.g. 'quality-standard').
+
+        Pass ``redis_client``, ``celery_app``, and/or ``llm_service`` to
+        share infrastructure across all agents in the preset crew.
+        """
         if not SAFE_KEY_RE.match(preset_name):
             raise ValueError(f"Invalid preset name: {preset_name!r}")
         preset_path = PRESETS_DIR / f"{preset_name}.json"
@@ -83,7 +95,7 @@ class AgentFactory:
         agents = []
         for agent_data in preset_data.get("agents", []):
             defn = AgentDefinition.from_dict(agent_data)
-            agents.append(BaseAgent(defn))
+            agents.append(BaseAgent(defn, **shared))
 
         logger.info("Loaded preset '%s' with %d agents", preset_name, len(agents))
         return agents

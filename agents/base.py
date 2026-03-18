@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from crewai import LLM, Agent, Crew, Process, Task
+from pydantic import BaseModel, Field, model_validator
 
 from agents.constants import DEFINITIONS_DIR, validate_agent_key
 from config.environment import config
@@ -31,60 +32,46 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AgentDefinition:
+class AgentDefinition(BaseModel):
     """Runtime-loadable agent definition (from YAML, JSON, or API).
 
-    This is the *new* generic definition that replaces the frozen dataclass
-    in config/agent_registry.py for dynamically-created agents.  The registry
-    dataclass is still used for config-driven QA agents.
+    Pydantic model that replaces the previous plain class. Provides
+    automatic validation, serialization, and schema generation.
     """
 
-    def __init__(
-        self,
-        *,
-        agent_key: str,
-        name: str,
-        role: str,
-        goal: str,
-        backstory: str,
-        focus: str = "",
-        domain: str = "general",
-        tools: list[str] | None = None,
-        tool_instances: list[BaseTool] | None = None,
-        complexity: str = "medium",
-        celery_queue: str | None = None,
-        redis_prefix: str | None = None,
-        allow_delegation: bool = False,
-        llm_model: str | None = None,
-        llm_temperature: float = 0.1,
-        verbose: bool = True,
-        metadata: dict[str, Any] | None = None,
-        gpu_required: bool = False,
-        gpu_strict: bool = False,
-        gpu_preferred: bool = False,
-        gpu_memory_min_mb: int = 0,
-    ):
-        self.agent_key = agent_key
-        self.name = name
-        self.role = role
-        self.goal = goal
-        self.backstory = backstory
-        self.focus = focus
-        self.domain = domain
-        self.tools = tools or []
-        self.tool_instances = tool_instances or []
-        self.complexity = complexity
-        self.celery_queue = celery_queue or agent_key.replace("-", "_")
-        self.redis_prefix = redis_prefix or agent_key.split("-")[0]
-        self.allow_delegation = allow_delegation
-        self.llm_model = llm_model or os.getenv("OPENAI_MODEL", "gpt-4o")
-        self.llm_temperature = llm_temperature
-        self.verbose = verbose
-        self.metadata = metadata or {}
-        self.gpu_required = gpu_required
-        self.gpu_strict = gpu_strict
-        self.gpu_preferred = gpu_preferred
-        self.gpu_memory_min_mb = gpu_memory_min_mb
+    model_config = {"arbitrary_types_allowed": True, "extra": "ignore"}
+
+    agent_key: str
+    name: str
+    role: str
+    goal: str
+    backstory: str
+    focus: str = ""
+    domain: str = "general"
+    tools: list[str] = Field(default_factory=list)
+    tool_instances: list[Any] = Field(default_factory=list, exclude=True)
+    complexity: str = "medium"
+    celery_queue: str | None = None
+    redis_prefix: str | None = None
+    allow_delegation: bool = False
+    llm_model: str | None = None
+    llm_temperature: float = 0.1
+    verbose: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    gpu_required: bool = False
+    gpu_strict: bool = False
+    gpu_preferred: bool = False
+    gpu_memory_min_mb: int = 0
+
+    @model_validator(mode="after")
+    def _set_defaults(self) -> AgentDefinition:
+        if self.celery_queue is None:
+            self.celery_queue = self.agent_key.replace("-", "_")
+        if self.redis_prefix is None:
+            self.redis_prefix = self.agent_key.split("-")[0]
+        if self.llm_model is None:
+            self.llm_model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        return self
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -135,18 +122,28 @@ class BaseAgent:
     2. Implement domain-specific task methods
     """
 
-    def __init__(self, definition: AgentDefinition):
+    def __init__(
+        self,
+        definition: AgentDefinition,
+        *,
+        redis_client: Any | None = None,
+        celery_app: Any | None = None,
+        llm_service: Any | None = None,
+    ):
         self.definition = definition
         self.logger = logging.getLogger(
             f"agents.{definition.domain}.{definition.agent_key}"
         )
 
-        # --- infrastructure (same for every agent) ---
-        self.redis_client = config.get_redis_client()
-        self.celery_app = config.get_celery_app(definition.celery_queue)
-        from config.llm_integration import llm_service
+        # --- infrastructure: accept shared instances or create new ones ---
+        self.redis_client = redis_client or config.get_redis_client()
+        self.celery_app = celery_app or config.get_celery_app(definition.celery_queue)
+        if llm_service is not None:
+            self.llm_service = llm_service
+        else:
+            from config.llm_integration import llm_service as _llm_svc
 
-        self.llm_service = llm_service
+            self.llm_service = _llm_svc
         self.llm = LLM(
             model=definition.llm_model or "gpt-4o",
             temperature=definition.llm_temperature,

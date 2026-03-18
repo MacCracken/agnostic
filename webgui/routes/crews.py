@@ -143,6 +143,135 @@ class CrewStatusResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _build_agents_sync(crew_config: dict[str, Any]) -> list[Any]:
+    """Build agent instances from crew config (runs in executor).
+
+    Agents in the same crew share a single Redis client and Celery app
+    to avoid creating N connections for an N-agent crew.
+    """
+    from agents.factory import AgentFactory
+    from config.environment import config as env_config
+
+    # Shared infrastructure for all agents in this crew
+    shared = {
+        "redis_client": env_config.get_redis_client(),
+        "celery_app": env_config.get_celery_app("crew_shared"),
+    }
+
+    source = crew_config.get("source")
+    if source == "preset":
+        return AgentFactory.from_preset(crew_config["preset"], **shared)
+    if source == "keys":
+        built = []
+        for key in crew_config["agent_keys"]:
+            if not SAFE_KEY_RE.match(key):
+                raise ValueError(f"Invalid agent key: {key!r}")
+            built.append(
+                AgentFactory.from_file(DEFINITIONS_DIR / f"{key}.json", **shared)
+            )
+        return built
+    if source == "inline":
+        return [
+            AgentFactory.from_dict(d, **shared)
+            for d in crew_config["agent_definitions"]
+        ]
+    return []
+
+
+async def _execute_agents(
+    agents: list[Any],
+    task_data: dict[str, Any],
+    gpu_plan: Any,
+    crew_id: str,
+) -> dict[str, Any]:
+    """Execute each agent sequentially with GPU env management and VRAM tracking."""
+    from config.gpu_scheduler import apply_gpu_assignment
+
+    results: dict[str, Any] = {}
+    for agent in agents:
+        assignment = gpu_plan.get_assignment(agent.definition.agent_key)
+        gpu_env = apply_gpu_assignment(assignment) if assignment else {}
+        saved_env: dict[str, str | None] = {}
+
+        try:
+            for k, v in gpu_env.items():
+                saved_env[k] = os.environ.get(k)
+                os.environ[k] = v
+
+            if assignment and assignment.is_gpu:
+                logger.info(
+                    "Agent %s running on GPU %d (%s)",
+                    agent.definition.agent_key,
+                    assignment.device_index,
+                    assignment.device_name,
+                )
+
+            # Snapshot VRAM before execution
+            vram_before = None
+            if assignment and assignment.is_gpu:
+                from config.gpu import check_memory_usage
+
+                vram_before = check_memory_usage(assignment.device_index)
+
+            agent_result = await agent.handle_task(task_data)
+
+            # Snapshot VRAM after execution
+            if assignment and assignment.is_gpu and vram_before:
+                vram_after = check_memory_usage(assignment.device_index)
+                if vram_after:
+                    agent_result["gpu_vram"] = {
+                        "device_index": assignment.device_index,
+                        "before_mb": vram_before["used_mb"],
+                        "after_mb": vram_after["used_mb"],
+                        "delta_mb": vram_after["used_mb"] - vram_before["used_mb"],
+                    }
+
+            results[agent.definition.agent_key] = agent_result
+        except Exception as exc:
+            logger.error(
+                "Agent %s failed in crew %s: %s",
+                agent.definition.agent_key,
+                crew_id,
+                exc,
+            )
+            results[agent.definition.agent_key] = {
+                "status": "failed",
+                "error": str(exc),
+            }
+        finally:
+            for k, original in saved_env.items():
+                if original is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = original
+
+    return results
+
+
+async def _finalize_crew(
+    crew_id: str,
+    crew_config: dict[str, Any],
+    redis_client: Any,
+    crew_redis_key: str,
+) -> None:
+    """Fire webhook callback if configured."""
+    callback_url = crew_config.get("callback_url")
+    if not callback_url:
+        return
+    try:
+        from webgui.routes.tasks import _fire_webhook
+
+        raw = await redis_client.get(crew_redis_key)
+        if raw:
+            record = json.loads(raw)
+            if record.get("status"):
+                await _fire_webhook(
+                    callback_url, crew_config.get("callback_secret"), record
+                )
+    except Exception as exc:
+        logger.warning("Crew %s webhook failed: %s", crew_id, exc)
+
+
 async def _run_crew_async(
     crew_id: str,
     task_id: str,
@@ -151,13 +280,18 @@ async def _run_crew_async(
     redis_client: Any,
     tenant_id: str = "default",
 ) -> None:
-    """Run a generic crew asynchronously."""
+    """Run a generic crew asynchronously.
+
+    Phases:
+    1. _build_agents_sync — instantiate agents from config (in executor)
+    2. GPU scheduling — assign agents to devices
+    3. _execute_agents — run each agent with GPU env isolation
+    4. _finalize_crew — fire webhook callback
+    """
     import time as _time
 
     from shared.database.tenants import tenant_manager
-    from shared.metrics import (
-        ACTIVE_CREW_TASKS,
-    )
+    from shared.metrics import ACTIVE_CREW_TASKS
 
     crew_start = _time.monotonic()
     source = crew_config.get("source", "unknown")
@@ -171,13 +305,11 @@ async def _run_crew_async(
     ) -> dict[str, Any]:
         now = datetime.now(UTC).isoformat()
 
-        # Read both records concurrently (2 round-trips → 1)
         raw_crew, raw_task = await asyncio.gather(
             redis_client.get(crew_redis_key),
             redis_client.get(task_redis_key),
         )
 
-        # Update in-memory
         crew_record: dict[str, Any] = json.loads(raw_crew) if raw_crew else {}
         crew_record["status"] = status
         crew_record["updated_at"] = now
@@ -199,7 +331,6 @@ async def _run_crew_async(
             }
         )
 
-        # Write both records + publish concurrently (3 round-trips → 1)
         await asyncio.gather(
             redis_client.setex(crew_redis_key, 86400, json.dumps(crew_record)),
             redis_client.setex(task_redis_key, 86400, json.dumps(task_record)),
@@ -211,41 +342,16 @@ async def _run_crew_async(
     try:
         await _update_status("running")
 
-        # Build agents from config
-        source = crew_config.get("source")
-        agents = []
-
-        def _build_agents() -> list[Any]:
-            from agents.factory import AgentFactory
-
-            built = []
-            if source == "preset":
-                built = AgentFactory.from_preset(crew_config["preset"])
-            elif source == "keys":
-                for key in crew_config["agent_keys"]:
-                    if not SAFE_KEY_RE.match(key):
-                        raise ValueError(f"Invalid agent key: {key!r}")
-                    agent = AgentFactory.from_file(DEFINITIONS_DIR / f"{key}.json")
-                    built.append(agent)
-            elif source == "inline":
-                for defn_dict in crew_config["agent_definitions"]:
-                    agent = AgentFactory.from_dict(defn_dict)
-                    built.append(agent)
-            return built
-
+        # Phase 1: Build agents
         loop = asyncio.get_running_loop()
-        agents = await loop.run_in_executor(None, _build_agents)
+        agents = await loop.run_in_executor(None, _build_agents_sync, crew_config)
 
         if not agents:
             await _update_status("failed", {"error": "No agents could be created"})
             return
 
-        # GPU scheduling — assign agents to GPU devices based on requirements
-        from config.gpu_scheduler import (
-            apply_gpu_assignment,
-            gpu_slot_tracker,
-            schedule_crew_gpus,
-        )
+        # Phase 2: GPU scheduling
+        from config.gpu_scheduler import gpu_slot_tracker, schedule_crew_gpus
 
         gpu_plan = schedule_crew_gpus(
             [a.definition for a in agents],
@@ -259,11 +365,10 @@ async def _run_crew_async(
             )
             return
 
-        # Register GPU reservations for cross-crew tracking
         for ga in gpu_plan.gpu_agents:
             gpu_slot_tracker.reserve(crew_id, ga.device_index, ga.memory_reserved_mb)
 
-        # Execute each agent's handle_task sequentially (or could be parallel)
+        # Phase 3: Execute agents
         task_data = {
             "session_id": session_id,
             "scenario": {
@@ -274,81 +379,26 @@ async def _run_crew_async(
             },
         }
 
-        results = {}
-        for agent in agents:
-            # Apply GPU assignment for this agent
-            assignment = gpu_plan.get_assignment(agent.definition.agent_key)
-            gpu_env = apply_gpu_assignment(assignment) if assignment else {}
-            saved_env: dict[str, str | None] = {}
-
-            try:
-                # Set GPU environment for this agent's execution
-                for k, v in gpu_env.items():
-                    saved_env[k] = os.environ.get(k)
-                    os.environ[k] = v
-
-                if assignment and assignment.is_gpu:
-                    logger.info(
-                        "Agent %s running on GPU %d (%s)",
-                        agent.definition.agent_key,
-                        assignment.device_index,
-                        assignment.device_name,
-                    )
-
-                # Snapshot VRAM before execution
-                vram_before = None
-                if assignment and assignment.is_gpu:
-                    from config.gpu import check_memory_usage
-
-                    vram_before = check_memory_usage(assignment.device_index)
-
-                agent_result = await agent.handle_task(task_data)
-
-                # Snapshot VRAM after execution
-                if assignment and assignment.is_gpu and vram_before:
-                    vram_after = check_memory_usage(assignment.device_index)
-                    if vram_after:
-                        agent_result["gpu_vram"] = {
-                            "device_index": assignment.device_index,
-                            "before_mb": vram_before["used_mb"],
-                            "after_mb": vram_after["used_mb"],
-                            "delta_mb": vram_after["used_mb"] - vram_before["used_mb"],
-                        }
-
-                results[agent.definition.agent_key] = agent_result
-            except Exception as exc:
-                logger.error(
-                    "Agent %s failed in crew %s: %s",
-                    agent.definition.agent_key,
-                    crew_id,
-                    exc,
-                )
-                results[agent.definition.agent_key] = {
-                    "status": "failed",
-                    "error": str(exc),
-                }
-            finally:
-                # Restore original environment
-                for k, original in saved_env.items():
-                    if original is None:
-                        os.environ.pop(k, None)
-                    else:
-                        os.environ[k] = original
+        results = await _execute_agents(agents, task_data, gpu_plan, crew_id)
 
         # Aggregate
         all_ok = all(r.get("status") == "completed" for r in results.values())
         final_status = "completed" if all_ok else "partial"
 
-        # Release GPU reservations now that all agents are done
         gpu_slot_tracker.release(crew_id)
 
         # Record metrics
-        from shared.metrics import CREW_AGENT_COUNT, CREW_RUN_DURATION, CREW_RUNS_TOTAL
+        from shared.metrics import (
+            CREW_AGENT_COUNT,
+            CREW_RUN_DURATION,
+            CREW_RUNS_TOTAL,
+            GPU_AGENTS_SCHEDULED,
+        )
 
         CREW_RUNS_TOTAL.labels(source=source, status=final_status).inc()
         CREW_RUN_DURATION.labels(source=source).observe(_time.monotonic() - crew_start)
         CREW_AGENT_COUNT.labels(source=source).observe(len(agents))
-        for ga in gpu_plan.gpu_agents:
+        for _ga in gpu_plan.gpu_agents:
             GPU_AGENTS_SCHEDULED.inc()
         ACTIVE_CREW_TASKS.dec()
 
@@ -373,7 +423,6 @@ async def _run_crew_async(
         from shared.metrics import CREW_RUNS_TOTAL as _CRT
 
         _CRT.labels(source=source, status="failed").inc()
-        # Release GPU slots on failure to prevent leaks
         try:
             from config.gpu_scheduler import gpu_slot_tracker as _tracker
 
@@ -385,21 +434,8 @@ async def _run_crew_async(
         except Exception:
             logger.exception("Crew %s: failed to update status", crew_id)
 
-    # Webhook callback — only fire if we have a valid record
-    callback_url = crew_config.get("callback_url")
-    if callback_url:
-        try:
-            from webgui.routes.tasks import _fire_webhook
-
-            raw = await redis_client.get(crew_redis_key)
-            if raw:
-                record = json.loads(raw)
-                if record.get("status"):
-                    await _fire_webhook(
-                        callback_url, crew_config.get("callback_secret"), record
-                    )
-        except Exception as exc:
-            logger.warning("Crew %s webhook failed: %s", crew_id, exc)
+    # Phase 4: Webhook
+    await _finalize_crew(crew_id, crew_config, redis_client, crew_redis_key)
 
 
 def _crew_done_callback(task: asyncio.Task) -> None:  # type: ignore[type-arg]
