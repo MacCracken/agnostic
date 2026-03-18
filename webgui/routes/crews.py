@@ -578,7 +578,7 @@ async def _run_crew_async(
             )
 
         # Phase 3: Aggregate, DLP, audit, metrics
-        final_status = await _aggregate_and_finalize(
+        await _aggregate_and_finalize(
             crew_id,
             results,
             agents,

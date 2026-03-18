@@ -10,7 +10,7 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 
 ---
 
-## [2026.3.17]
+## [2026.3.17-2]
 
 ### Added
 

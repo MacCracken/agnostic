@@ -294,7 +294,7 @@ def _assign_device(
         return GPUAssignment(agent_key=req.agent_key, device_index=-1)
 
     # Pick the device with the most free memory (spread load)
-    best_idx, best_free = max(candidates, key=lambda c: c[1])
+    best_idx, _best_free = max(candidates, key=lambda c: c[1])
 
     # Reserve memory — use declared minimum, or a nominal 1 MB to track
     # that this device has an agent assigned (spreads load on ties)

@@ -190,7 +190,7 @@ def _validate_in_subprocess(source_code: str, name: str) -> None:
             timeout=_SANDBOX_TIMEOUT,
             env={
                 "PATH": "",
-                "HOME": "/tmp",
+                "HOME": "/tmp",  # nosec B108 - intentional: sandbox child gets disposable HOME
                 "PYTHONDONTWRITEBYTECODE": "1",
             },
         )
@@ -208,12 +208,12 @@ def _validate_in_subprocess(source_code: str, name: str) -> None:
 
             err = json.loads(result.stdout.strip())
             raise SandboxError(f"Tool '{name}': {err.get('error', 'unknown error')}")
-        except (json.JSONDecodeError, SandboxError):
-            if isinstance(sys.exc_info()[1], SandboxError):
-                raise
+        except SandboxError:
+            raise
+        except (json.JSONDecodeError, Exception) as exc:
             raise SandboxError(
                 f"Tool '{name}' validation failed: {result.stderr.strip() or result.stdout.strip()}"
-            )
+            ) from exc
 
 
 def validate_tool_source(name: str, source_code: str) -> None:

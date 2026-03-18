@@ -19,7 +19,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from config.fleet.node import FleetNode
+from config.fleet.node import (
+    FleetNode,  # noqa: TC001 — used at runtime in function signatures and attribute access
+)
 from config.fleet.state import AgentPlacement
 
 logger = logging.getLogger(__name__)
@@ -165,7 +167,7 @@ def _place_gpu_affinity(
 
     for defn in definitions:
         key = _agent_key(defn)
-        needs_gpu, gpu_mem = _get_gpu_req(defn)
+        needs_gpu, _gpu_mem = _get_gpu_req(defn)
 
         if needs_gpu:
             if not gpu_nodes:
