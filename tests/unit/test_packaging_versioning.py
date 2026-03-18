@@ -470,3 +470,317 @@ class UploadedTool(BaseTool):
             },
         )
         assert resp.status_code == 400
+
+    def test_rollback_endpoint(self, admin_client):
+        """API-level rollback test."""
+        import agents.versioning as ver
+
+        defn = {
+            "agent_key": "rb-test",
+            "name": "V1",
+            "role": "R",
+            "goal": "G",
+            "backstory": "B",
+        }
+        admin_client.post("/api/v1/definitions", json=defn)
+
+        ver_dir = self.defs_dir / "versions"
+        with (
+            patch.object(ver, "DEFINITIONS_DIR", self.defs_dir),
+            patch.object(ver, "VERSIONS_DIR", ver_dir),
+        ):
+            # Save v1
+            admin_client.post("/api/v1/definitions/rb-test/versions")
+
+            # Update to v2
+            defn["name"] = "V2"
+            admin_client.put("/api/v1/definitions/rb-test", json=defn)
+            admin_client.post("/api/v1/definitions/rb-test/versions")
+
+            # Rollback to v1
+            resp = admin_client.post(
+                "/api/v1/definitions/rb-test/rollback", json={"version": 1}
+            )
+            assert resp.status_code == 200
+            assert resp.json()["rolled_back_to"] == 1
+
+            # Verify active is now V1
+            resp = admin_client.get("/api/v1/definitions/rb-test")
+            assert resp.json()["name"] == "V1"
+
+    def test_rollback_nonexistent_version_endpoint(self, admin_client):
+        import agents.versioning as ver
+
+        defn = {
+            "agent_key": "rb-miss",
+            "name": "Test",
+            "role": "R",
+            "goal": "G",
+            "backstory": "B",
+        }
+        admin_client.post("/api/v1/definitions", json=defn)
+
+        ver_dir = self.defs_dir / "versions"
+        with (
+            patch.object(ver, "DEFINITIONS_DIR", self.defs_dir),
+            patch.object(ver, "VERSIONS_DIR", ver_dir),
+        ):
+            resp = admin_client.post(
+                "/api/v1/definitions/rb-miss/rollback", json={"version": 99}
+            )
+            assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# ZIP bomb / entry count limit tests
+# ---------------------------------------------------------------------------
+
+
+class TestPackageSafetyLimits:
+    def test_entry_count_limit(self, tmp_path, monkeypatch):
+        """Reject packages with more than _MAX_ENTRY_COUNT entries."""
+        import agents.packaging as pkg
+
+        monkeypatch.setattr(pkg, "DEFINITIONS_DIR", tmp_path / "d")
+        monkeypatch.setattr(pkg, "PRESETS_DIR", tmp_path / "p")
+
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("manifest.json", json.dumps({"name": "bomb"}))
+            for i in range(pkg._MAX_ENTRY_COUNT + 1):
+                zf.writestr(f"definitions/agent-{i:04d}.json", '{"agent_key": "x"}')
+
+        result = pkg.import_package(buf.getvalue())
+        assert any("entries" in e for e in result.get("errors", []))
+
+    def test_total_size_limit(self, tmp_path, monkeypatch):
+        """Reject packages exceeding _MAX_UNCOMPRESSED_SIZE."""
+        import agents.packaging as pkg
+
+        monkeypatch.setattr(pkg, "DEFINITIONS_DIR", tmp_path / "d")
+        monkeypatch.setattr(pkg, "PRESETS_DIR", tmp_path / "p")
+
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("manifest.json", json.dumps({"name": "big"}))
+            # Single large entry exceeding total limit
+            big_data = "x" * (pkg._MAX_UNCOMPRESSED_SIZE + 1)
+            zf.writestr("definitions/big.json", big_data)
+
+        result = pkg.import_package(buf.getvalue())
+        assert any("size" in e.lower() for e in result.get("errors", []))
+
+    def test_per_entry_size_limit(self, tmp_path, monkeypatch):
+        """Reject individual entries exceeding _MAX_ENTRY_SIZE."""
+        import agents.packaging as pkg
+
+        monkeypatch.setattr(pkg, "DEFINITIONS_DIR", tmp_path / "d")
+        monkeypatch.setattr(pkg, "PRESETS_DIR", tmp_path / "p")
+        (tmp_path / "d").mkdir()
+
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("manifest.json", json.dumps({"name": "big-entry"}))
+            big_json = json.dumps({"agent_key": "big", "data": "x" * (pkg._MAX_ENTRY_SIZE + 1)})
+            zf.writestr("definitions/big.json", big_json)
+
+        result = pkg.import_package(buf.getvalue())
+        assert any("too large" in e for e in result.get("errors", []))
+
+
+# ---------------------------------------------------------------------------
+# AgentFactory cache tests
+# ---------------------------------------------------------------------------
+
+
+class TestFactoryCache:
+    @pytest.fixture(autouse=True)
+    def _mock_infra(self):
+        fake_llm_mod = ModuleType("config.llm_integration")
+        fake_llm_mod.llm_service = MagicMock()
+        sys.modules.setdefault("config.llm_integration", fake_llm_mod)
+        with (
+            patch("agents.base.config") as mock_config,
+            patch("config.llm_integration.llm_service"),
+            patch("agents.base.LLM"),
+            patch("agents.base.Agent"),
+        ):
+            mock_config.get_redis_client.return_value = MagicMock()
+            mock_config.get_celery_app.return_value = MagicMock()
+            yield
+
+    def test_invalidate_cache_selective(self, tmp_path):
+        from agents.factory import AgentFactory
+
+        AgentFactory._definition_cache.clear()
+
+        defn_data = {
+            "agent_key": "cache-test",
+            "name": "Cache",
+            "role": "R",
+            "goal": "G",
+            "backstory": "B",
+        }
+        p = tmp_path / "cache-test.json"
+        p.write_text(json.dumps(defn_data))
+
+        # Load to populate cache
+        with patch.object(AgentFactory, "from_file") as mock_ff:
+            # Call the real _load_definition_file
+            AgentFactory._load_definition_file(p)
+
+        assert str(p.resolve()) in AgentFactory._definition_cache
+
+        # Selective invalidation
+        AgentFactory.invalidate_cache(str(p))
+        assert str(p.resolve()) not in AgentFactory._definition_cache
+
+    def test_cache_eviction_at_max_size(self, tmp_path):
+        from agents.factory import AgentFactory
+
+        AgentFactory._definition_cache.clear()
+        old_max = AgentFactory._CACHE_MAX_SIZE
+        AgentFactory._CACHE_MAX_SIZE = 3
+
+        try:
+            for i in range(4):
+                defn_data = {
+                    "agent_key": f"evict-{i}",
+                    "name": f"E{i}",
+                    "role": "R",
+                    "goal": "G",
+                    "backstory": "B",
+                }
+                p = tmp_path / f"evict-{i}.json"
+                p.write_text(json.dumps(defn_data))
+                AgentFactory._load_definition_file(p)
+
+            # Should have evicted the oldest
+            assert len(AgentFactory._definition_cache) <= 3
+        finally:
+            AgentFactory._CACHE_MAX_SIZE = old_max
+            AgentFactory._definition_cache.clear()
+
+    def test_registry_max_size(self):
+        from agents.tool_registry import _REGISTRY, _REGISTRY_MAX_SIZE, _check_registry_capacity
+
+        old_size = len(_REGISTRY)
+        # This just tests the check doesn't raise when under limit
+        _check_registry_capacity("test-tool-xyz")
+
+        # Simulate full registry
+        saved = dict(_REGISTRY)
+        try:
+            _REGISTRY.clear()
+            for i in range(_REGISTRY_MAX_SIZE):
+                _REGISTRY[f"tool-{i}"] = MagicMock()
+
+            with pytest.raises(ValueError, match="full"):
+                _check_registry_capacity("one-too-many")
+        finally:
+            _REGISTRY.clear()
+            _REGISTRY.update(saved)
+
+
+# ---------------------------------------------------------------------------
+# YAML definition loading test
+# ---------------------------------------------------------------------------
+
+
+class TestYAMLLoading:
+    @pytest.fixture(autouse=True)
+    def _mock_infra(self):
+        fake_llm_mod = ModuleType("config.llm_integration")
+        fake_llm_mod.llm_service = MagicMock()
+        sys.modules.setdefault("config.llm_integration", fake_llm_mod)
+        with (
+            patch("agents.base.config") as mock_config,
+            patch("config.llm_integration.llm_service"),
+            patch("agents.base.LLM"),
+            patch("agents.base.Agent"),
+        ):
+            mock_config.get_redis_client.return_value = MagicMock()
+            mock_config.get_celery_app.return_value = MagicMock()
+            yield
+
+    def test_from_file_yaml(self, tmp_path):
+        pytest.importorskip("yaml")
+        from agents.factory import AgentFactory
+
+        yaml_content = """
+agent_key: yaml-agent
+name: YAML Agent
+role: tester
+goal: test yaml loading
+backstory: loaded from yaml
+domain: quality
+"""
+        p = tmp_path / "yaml-agent.yml"
+        p.write_text(yaml_content)
+
+        agent = AgentFactory.from_file(p)
+        assert agent.definition.agent_key == "yaml-agent"
+        assert agent.definition.domain == "quality"
+        AgentFactory.invalidate_cache(str(p))
+
+
+# ---------------------------------------------------------------------------
+# delegate_to() edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestDelegateToEdgeCases:
+    @pytest.fixture(autouse=True)
+    def _mock_infra(self):
+        fake_llm_mod = ModuleType("config.llm_integration")
+        fake_llm_mod.llm_service = MagicMock()
+        sys.modules.setdefault("config.llm_integration", fake_llm_mod)
+        with (
+            patch("agents.base.config") as mock_config,
+            patch("config.llm_integration.llm_service"),
+            patch("agents.base.LLM"),
+            patch("agents.base.Agent"),
+        ):
+            mock_config.get_redis_client.return_value = MagicMock()
+            mock_config.get_celery_app.return_value = MagicMock()
+            yield
+
+    @pytest.mark.asyncio
+    async def test_invalid_key_rejected(self):
+        from agents.base import AgentDefinition, BaseAgent
+
+        agent = BaseAgent(
+            AgentDefinition(
+                agent_key="src", name="S", role="R", goal="G", backstory="B"
+            )
+        )
+        with pytest.raises(ValueError, match="Invalid"):
+            await agent.delegate_to("../traversal", {})
+
+    @pytest.mark.asyncio
+    async def test_missing_target_file(self):
+        from agents.base import AgentDefinition, BaseAgent
+
+        agent = BaseAgent(
+            AgentDefinition(
+                agent_key="src", name="S", role="R", goal="G", backstory="B"
+            )
+        )
+        with pytest.raises(FileNotFoundError):
+            await agent.delegate_to("nonexistent-agent", {})
+
+    @pytest.mark.asyncio
+    async def test_delegation_failure_propagates(self):
+        from agents.base import AgentDefinition, BaseAgent
+
+        agent = BaseAgent(
+            AgentDefinition(
+                agent_key="src", name="S", role="R", goal="G", backstory="B"
+            )
+        )
+        mock_target = MagicMock()
+        mock_target.handle_task = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with patch("agents.factory.AgentFactory.from_file", return_value=mock_target):
+            with pytest.raises(RuntimeError, match="boom"):
+                await agent.delegate_to("valid-target", {})
