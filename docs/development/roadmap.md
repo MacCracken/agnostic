@@ -22,7 +22,6 @@ Remaining work in **Agnosticos** and **SecureYeoman** to fully consume AAS multi
 | Item | Effort | Notes |
 |------|--------|-------|
 | Preset selector UI | Medium | Connections > Agnostic panel should show presets and allow crew selection |
-| MCP auto-discovery integration test | Small | Verify the 5 new crew tools auto-appear in SY's MCP discovery |
 
 ### Shared / Cross-project
 
@@ -57,7 +56,6 @@ Agnostic's GPU features are **OS-agnostic by design** — `nvidia-smi` probing a
 | agnoshi GPU intents | AGNOS | Small | "show gpu status", "show gpu memory" intents that call Agnostic GPU endpoints via MCP |
 | Fleet GPU aggregation | AGNOS | Medium | Aggregate `GET /api/v1/gpu/status` across all fleet nodes into a single fleet-wide GPU inventory. Feed into fleet placement engine |
 | agnosys GPU budget recommendations | AGNOS | Small | Based on observed VRAM usage patterns, recommend `gpu_memory_budget_mb` values for common crew presets |
-| MCP tool: `agnostic_gpu_status` | Agnosticos | Small | New MCP tool exposing GPU status so other AGNOS components can query Agnostic's GPU state without HTTP |
 | Daimon GPU event forwarding | AGNOS | Medium | Forward GPU allocation/release events from crew runs to the daimon event stream. Enables fleet-wide GPU utilization tracking and alerting |
 | Non-AGNOS fallback docs | Agnostic | Small | Document the GPU feature behavior on non-AGNOS hosts: nvidia-smi only, no fleet inventory, no HUD — all scheduling still works |
 
@@ -110,8 +108,6 @@ A distributed AGNOS fleet running Agnostic in lockstep. Every node in the fleet 
 | Item | Effort | Notes |
 |------|--------|-------|
 | Crew delegation from SY workflows | Medium | SY DAG workflow step type `agnostic_crew` that creates and monitors an Agnostic crew. Poll `GET /crews/{id}` until completion |
-| SY DLP integration for crew output | Medium | Route crew output through SY's DLP pipeline before returning to user. Prevents data leakage from crew agents |
-| SY audit forwarding for crew actions | Small | Forward crew action logs to SY's cryptographic audit trail via delegated auth |
 | Preset management from SY dashboard | Medium | SY Connections > Agnostic panel: browse/select presets, create crews, view crew history |
 
 ---

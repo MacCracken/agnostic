@@ -297,6 +297,34 @@ MCP_TOOLS: list[dict[str, Any]] = [
         "category": "a2a",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    # --- GPU ---
+    {
+        "name": "agnostic_gpu_status",
+        "description": "Get GPU status — available devices, VRAM, utilization, temperature",
+        "category": "gpu",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "force": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Force fresh probe (bypass cache)",
+                },
+            },
+        },
+    },
+    {
+        "name": "agnostic_gpu_memory",
+        "description": "Get aggregated GPU memory usage across all devices",
+        "category": "gpu",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "agnostic_gpu_slots",
+        "description": "Show active GPU reservations across running crews",
+        "category": "gpu",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
     # --- Webhook management ---
     {
         "name": "agnostic_subscribe_webhook",
@@ -520,6 +548,9 @@ _TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "agnostic_qa_orchestrate": ("POST", "/api/v1/tasks"),
     "agnostic_generate_report": ("POST", "/api/v1/reports/generate"),
     "agnostic_list_reports": ("GET", "/api/v1/reports"),
+    "agnostic_gpu_status": ("GET", "/api/v1/gpu/status"),
+    "agnostic_gpu_memory": ("GET", "/api/v1/gpu/memory"),
+    "agnostic_gpu_slots": ("GET", "/api/v1/gpu/slots"),
     "agnostic_health": ("GET", "/health"),
     "agnostic_metrics": ("GET", "/api/v1/metrics"),
     "agnostic_agent_metrics": ("GET", "/api/v1/dashboard/agent-metrics"),
@@ -965,6 +996,27 @@ async def _dispatch_tool(
 
         return {"metrics": get_metrics_text()}
 
+    async def _gpu_status(
+        _tn: str, args: dict[str, Any], _u: dict[str, Any]
+    ) -> dict[str, Any]:
+        from config.gpu import detect_gpus
+
+        return detect_gpus(force=bool(args.get("force"))).to_dict()
+
+    async def _gpu_memory(
+        _tn: str, _a: dict[str, Any], _u: dict[str, Any]
+    ) -> dict[str, Any]:
+        from webgui.routes.gpu import gpu_memory_summary
+
+        return await gpu_memory_summary(user=_u)
+
+    async def _gpu_slots(
+        _tn: str, _a: dict[str, Any], _u: dict[str, Any]
+    ) -> dict[str, Any]:
+        from webgui.routes.gpu import gpu_slots
+
+        return await gpu_slots(user=_u)
+
     dispatch: dict[str, Any] = {
         "agnostic_task_status": _task_status,
         "agnostic_dashboard": _dashboard,
@@ -990,6 +1042,9 @@ async def _dispatch_tool(
         "agnostic_preset_recommend": _preset_recommend,
         "agnostic_health": _health,
         "agnostic_metrics": _metrics,
+        "agnostic_gpu_status": _gpu_status,
+        "agnostic_gpu_memory": _gpu_memory,
+        "agnostic_gpu_slots": _gpu_slots,
     }
 
     handler = dispatch.get(tool_name)

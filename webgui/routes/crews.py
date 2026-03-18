@@ -387,6 +387,42 @@ async def _run_crew_async(
 
         gpu_slot_tracker.release(crew_id)
 
+        # DLP scan — route crew output through SY's DLP pipeline if enabled
+        try:
+            from shared.yeoman_dlp import scan_crew_output
+
+            result_payload = {
+                "agent_results": results,
+                "agents_succeeded": sum(
+                    1 for r in results.values() if r.get("status") == "completed"
+                ),
+                "agents_failed": sum(
+                    1 for r in results.values() if r.get("status") == "failed"
+                ),
+            }
+            result_payload = await scan_crew_output(crew_id, result_payload)
+            # Update results from (possibly sanitized) payload
+            results = result_payload.get("agent_results", results)
+        except ImportError:
+            pass
+
+        # Audit forwarding — log crew completion to SY's audit trail
+        try:
+            from shared.yeoman_audit import forward_crew_event
+
+            await forward_crew_event(
+                "crew_completed" if all_ok else "crew_partial",
+                crew_id,
+                detail={
+                    "source": source,
+                    "agent_count": len(agents),
+                    "status": final_status,
+                    "gpu_agents": len(gpu_plan.gpu_agents),
+                },
+            )
+        except ImportError:
+            pass
+
         # Record metrics
         from shared.metrics import (
             CREW_AGENT_COUNT,
@@ -598,6 +634,21 @@ async def run_crew(
         resource_id=crew_id,
         detail={"source": source, "agents": agent_names},
     )
+
+    # Forward crew creation to SY audit trail
+    try:
+        from shared.yeoman_audit import forward_crew_event
+
+        asyncio.get_running_loop().create_task(
+            forward_crew_event(
+                "crew_created",
+                crew_id,
+                actor=user.get("user_id"),
+                detail={"source": source, "agents": agent_names},
+            )
+        )
+    except ImportError:
+        pass
 
     return CrewRunResponse(
         crew_id=crew_id,
