@@ -6,60 +6,18 @@ See [Dependency Watch](dependency-watch.md) for upstream blockers that affect ti
 
 ---
 
-## Downstream Integration (pending)
-
-Remaining work in **Agnosticos** and **SecureYeoman** to fully consume AAS multi-domain capabilities.
-
-### Agnosticos (AGNOS OS)
-
-| Item | Effort | Notes |
-|------|--------|-------|
-| Agent HUD multi-domain UI | Medium | Group agents by domain in the HUD. Add domain filter/tabs |
-| RPC method registration for crew agents | Medium | Dynamic agents from presets need RPC methods registered on-the-fly |
-
-### SecureYeoman
-
-| Item | Effort | Notes |
-|------|--------|-------|
-| Preset selector UI | Medium | Connections > Agnostic panel should show presets and allow crew selection |
-
-### Shared / Cross-project
+## Cross-project (shared)
 
 | Item | Effort | Notes |
 |------|--------|-------|
 | E2E test: SY → Agnostic crew delegation | Medium | End-to-end test that SY can delegate a non-QA crew task to Agnostic and poll status |
 | E2E test: dynamic agent creation via A2A | Small | SY creates an agent definition on Agnostic via A2A, then runs a crew with it |
 | Documentation: cross-project API contract | Small | Document the new API surface (crew endpoints, preset endpoints, A2A message types) as a shared contract |
+| Non-AGNOS GPU fallback docs | Small | Document GPU feature behavior on non-AGNOS hosts: nvidia-smi only, no fleet inventory, no HUD — all scheduling still works |
 
 ---
 
-## AGNOS & SecureYeoman Integration
-
-*Cross-project integration items for the ecosystem.*
-
-### AGNOS Integration
-
-| Item | Effort | Notes |
-|------|--------|-------|
-| Crew status in AGNOS HUD | Medium | Push crew lifecycle events to AGNOS daimon for display in aethersafha HUD. Use `GET /crews` with status filter |
-| Crew cancellation from agnoshi | Small | Wire `POST /crews/{crew_id}/cancel` to AGNOS MCP tool `agnostic_cancel_crew` and agnoshi intent "cancel crew {id}" |
-
-### AGNOS-side Integration (work needed in AGNOS / Agnosticos)
-
-Agnostic's GPU features are **OS-agnostic by design** — `nvidia-smi` probing and `CUDA_VISIBLE_DEVICES` work on any Linux/Windows host with NVIDIA drivers. Running on AGNOS gets additional benefits: `agnosys` hardware probes, fleet-wide GPU inventory, HUD integration, and daimon-coordinated scheduling.
-
-| Item | Where | Effort | Notes |
-|------|-------|--------|-------|
-| `agnosys` GPU probe JSON | AGNOS | Small | `agnosys` already probes hardware — add GPU fields to the probe output and write `/var/lib/agnosys/gpu.json` (Agnostic already reads this path) |
-| GPU status in aethersafha HUD | Agnosticos | Medium | Consume `GET /api/v1/gpu/status` and `GET /api/v1/gpu/memory` from the Agnostic instance. Show per-device VRAM bars, utilization, and temperature in the Agent HUD |
-| GPU placement in crew HUD cards | Agnosticos | Small | When displaying crew status, show which agents are on GPU vs CPU and their VRAM usage (data already in crew result `gpu_placement` and per-agent `gpu_vram`) |
-| agnoshi GPU intents | AGNOS | Small | "show gpu status", "show gpu memory" intents that call Agnostic GPU endpoints via MCP |
-| Fleet GPU aggregation | AGNOS | Medium | Aggregate `GET /api/v1/gpu/status` across all fleet nodes into a single fleet-wide GPU inventory. Feed into fleet placement engine |
-| agnosys GPU budget recommendations | AGNOS | Small | Based on observed VRAM usage patterns, recommend `gpu_memory_budget_mb` values for common crew presets |
-| Daimon GPU event forwarding | AGNOS | Medium | Forward GPU allocation/release events from crew runs to the daimon event stream. Enables fleet-wide GPU utilization tracking and alerting |
-| Non-AGNOS fallback docs | Agnostic | Small | Document the GPU feature behavior on non-AGNOS hosts: nvidia-smi only, no fleet inventory, no HUD — all scheduling still works |
-
-### AGNOS Fleet Crew Distribution
+## AGNOS Fleet Crew Distribution
 
 A distributed AGNOS fleet running Agnostic in lockstep. Every node in the fleet is a full Agnostic participant — not a dumb worker receiving dispatched jobs, but a coordinated peer that understands the crew it belongs to, holds shared state, and executes in sync with the rest of the fleet. The fleet *is* the Agnostic instance, stretched across hardware.
 
@@ -103,20 +61,11 @@ A distributed AGNOS fleet running Agnostic in lockstep. Every node in the fleet 
 | Fleet scaling test | Medium | Add/remove nodes from a running fleet while crews are executing. Verify zero disruption |
 | E2E test: multi-node lockstep crew | Medium | Spin up 3+ test containers as fleet nodes. Run a crew that spans all. Verify lockstep ordering, fault recovery, and output correctness |
 
-### SecureYeoman Integration
-
-| Item | Effort | Notes |
-|------|--------|-------|
-| Crew delegation from SY workflows | Medium | SY DAG workflow step type `agnostic_crew` that creates and monitors an Agnostic crew. Poll `GET /crews/{id}` until completion |
-| Preset management from SY dashboard | Medium | SY Connections > Agnostic panel: browse/select presets, create crews, view crew history |
-
 ---
 
 ## Engineering Backlog
 
-Items identified during code review and audit. Not blocking, but should be addressed over time.
-
-*Security, Performance, and Code Quality sections cleared — all items completed.*
+Security hardening, performance, and code quality sections cleared — all items completed. Remaining:
 
 ### Test Coverage
 
