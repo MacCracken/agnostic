@@ -21,6 +21,7 @@ from webgui.routes import (
     crews,
     dashboard,
     definitions,
+    fleet,
     gpu,
     integration,
     mcp,
@@ -47,6 +48,7 @@ api_router.include_router(reports.router)
 api_router.include_router(agents.router)
 api_router.include_router(definitions.router)
 api_router.include_router(crews.router)
+api_router.include_router(fleet.router)
 api_router.include_router(gpu.router)
 api_router.include_router(integration.router)
 api_router.include_router(persistence.router)

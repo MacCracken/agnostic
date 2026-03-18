@@ -45,6 +45,12 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
 - **SY audit forwarding** (`shared/yeoman_audit.py`) — crew lifecycle events (created, completed, partial, failed) forwarded to SecureYeoman's cryptographic audit trail. Batched async push (50 entries). `YEOMAN_AUDIT_ENABLED`, `_URL`, `_API_KEY` env vars. Wired into crew creation and completion
 - **GPU MCP tools** — `agnostic_gpu_status`, `agnostic_gpu_memory`, `agnostic_gpu_slots` added to Agnostic MCP server (35 tools total). Handler dispatch wired to GPU endpoints
 - **SY MCP tool updates** (`agnostic-tools.ts`) — 8 new tools: `agnostic_gpu_status`, `agnostic_gpu_memory`, `agnostic_gpu_slots`, `agnostic_local_inference`, `agnostic_import_package`, `agnostic_crew_cancel`, `agnostic_list_crews`. MCP auto-discovery verified
+- **Fleet foundation** (`config/fleet/`) — 3 modules implementing the distributed fleet core:
+  - `node.py` — `FleetNode` and `NodeCapabilities` dataclasses. `probe_local()` detects CPU, RAM, GPU, tools, Python/CrewAI versions. 7 `AGNOS_FLEET_*` env vars
+  - `registry.py` — `FleetRegistry` with Redis-backed node inventory (`fleet:node:*`, `fleet:nodes` SET, `fleet:group:*` SETs). Auto-registration, async heartbeat loop, dead node eviction, group queries
+  - `state.py` — `CrewStateManager` for distributed crew execution. `CrewState`/`AgentPlacement` with Redis optimistic locking. Barrier sequence numbers, coordinator tracking/failover, agent checkpoints for recovery
+- **Fleet API endpoints** (`webgui/routes/fleet.py`) — `GET /api/v1/fleet/nodes`, `/fleet/nodes/{id}`, `/fleet/groups`, `/fleet/status`, `/fleet/gpu`, `POST /fleet/evict`
+- **20 fleet tests** — node model, capabilities probe, crew state CRUD, barrier sync, checkpoints, coordinator transfer, endpoint tests. Total: 1075 unit tests
 - **18 crew presets** — 5 domains (quality, software-engineering, design, data-engineering, devops) x 3 sizes (lean, standard, large) + `complete-lean` + `quality-security` + `quality-performance`
 - **Crew assembler** (`agents/crew_assembler.py`) — `assemble_team()` builds agent definitions from natural-language team specs; `recommend_preset()` suggests best preset from task description
 - **Custom team composition** — `CrewRunRequest.team` (TeamSpec) enables "I need a 4-person team: UX, game engineer, game designer, project lead" style requests
