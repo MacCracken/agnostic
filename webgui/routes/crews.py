@@ -284,6 +284,207 @@ async def _finalize_crew(
         logger.warning("Crew %s webhook failed: %s", crew_id, exc)
 
 
+def _build_task_data(
+    session_id: str, crew_id: str, crew_config: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the task data dict passed to each agent."""
+    return {
+        "session_id": session_id,
+        "scenario": {
+            "id": crew_id,
+            "name": crew_config.get("title", "Crew task"),
+            "description": crew_config.get("description", ""),
+            "target_url": crew_config.get("target_url"),
+        },
+    }
+
+
+async def _try_fleet_execution(
+    crew_id: str,
+    agents: list[Any],
+    task_data: dict[str, Any],
+    crew_config: dict[str, Any],
+    update_status: Any,
+) -> tuple[dict[str, Any], int] | None:
+    """Attempt fleet-distributed execution.
+
+    Returns ``(results, gpu_agent_count)`` if fleet mode activated,
+    or ``None`` to fall back to local execution.
+    """
+    try:
+        from config.fleet.node import FLEET_ENABLED
+
+        if not FLEET_ENABLED:
+            return None
+    except ImportError:
+        return None
+
+    from config.fleet.coordinator import FleetCoordinator
+    from config.fleet.node import FLEET_NODE_ID
+    from config.fleet.registry import fleet_registry
+
+    fleet_nodes = await fleet_registry.get_alive_nodes()
+    if len(fleet_nodes) <= 1:
+        return None
+
+    coordinator = FleetCoordinator(crew_id)
+    fleet_plan = await coordinator.plan_and_distribute(
+        [a.definition for a in agents],
+        fleet_nodes,
+        task_data,
+        policy=crew_config.get("scheduling_policy", "gpu-affinity"),
+        group=crew_config.get("group"),
+    )
+    if fleet_plan.has_errors:
+        await update_status(
+            "failed",
+            {"error": "Fleet placement failed", "fleet_errors": fleet_plan.errors},
+        )
+        return {}, 0
+
+    # Execute local agents
+    local_agents = [
+        a
+        for a in agents
+        if any(
+            p.agent_key == a.definition.agent_key and p.node_id == FLEET_NODE_ID
+            for p in fleet_plan.placements
+        )
+    ]
+
+    from config.gpu_scheduler import schedule_crew_gpus
+
+    local_gpu_plan = schedule_crew_gpus(
+        [a.definition for a in local_agents],
+        memory_budget_mb=crew_config.get("gpu_memory_budget_mb"),
+    )
+    local_results = await _execute_agents(
+        local_agents, task_data, local_gpu_plan, crew_id
+    )
+    for agent_key, result in local_results.items():
+        coordinator.submit_result(agent_key, result)
+
+    results = await coordinator.collect_results()
+    await coordinator.cleanup()
+    return results, 0
+
+
+async def _run_local(
+    crew_id: str,
+    agents: list[Any],
+    task_data: dict[str, Any],
+    crew_config: dict[str, Any],
+    update_status: Any,
+) -> tuple[dict[str, Any], int]:
+    """Single-node local execution with GPU scheduling.
+
+    Returns ``(results, gpu_agent_count)``.
+    """
+    from config.gpu_scheduler import gpu_slot_tracker, schedule_crew_gpus
+
+    gpu_plan = schedule_crew_gpus(
+        [a.definition for a in agents],
+        memory_budget_mb=crew_config.get("gpu_memory_budget_mb"),
+    )
+
+    if gpu_plan.has_errors:
+        await update_status(
+            "failed",
+            {"error": "GPU scheduling failed", "gpu_errors": gpu_plan.errors},
+        )
+        return {}, 0
+
+    for ga in gpu_plan.gpu_agents:
+        gpu_slot_tracker.reserve(crew_id, ga.device_index, ga.memory_reserved_mb)
+
+    results = await _execute_agents(agents, task_data, gpu_plan, crew_id)
+
+    gpu_slot_tracker.release(crew_id)
+    return results, len(gpu_plan.gpu_agents)
+
+
+async def _aggregate_and_finalize(
+    crew_id: str,
+    results: dict[str, Any],
+    agents: list[Any],
+    gpu_agent_count: int,
+    source: str,
+    crew_start: float,
+    _time: Any,
+    update_status: Any,
+    active_crew_tasks: Any,
+) -> str:
+    """Aggregate results, run DLP scan, forward audit, record metrics."""
+    all_ok = all(r.get("status") == "completed" for r in results.values())
+    final_status = "completed" if all_ok else "partial"
+
+    # DLP scan
+    try:
+        from shared.yeoman_dlp import scan_crew_output
+
+        result_payload = {
+            "agent_results": results,
+            "agents_succeeded": sum(
+                1 for r in results.values() if r.get("status") == "completed"
+            ),
+            "agents_failed": sum(
+                1 for r in results.values() if r.get("status") == "failed"
+            ),
+        }
+        result_payload = await scan_crew_output(crew_id, result_payload)
+        results = result_payload.get("agent_results", results)
+    except ImportError:
+        pass
+
+    # Audit forwarding
+    try:
+        from shared.yeoman_audit import forward_crew_event
+
+        await forward_crew_event(
+            "crew_completed" if all_ok else "crew_partial",
+            crew_id,
+            detail={
+                "source": source,
+                "agent_count": len(agents),
+                "status": final_status,
+                "gpu_agents": gpu_agent_count,
+            },
+        )
+    except ImportError:
+        pass
+
+    # Metrics
+    from shared.metrics import (
+        CREW_AGENT_COUNT,
+        CREW_RUN_DURATION,
+        CREW_RUNS_TOTAL,
+        GPU_AGENTS_SCHEDULED,
+    )
+
+    CREW_RUNS_TOTAL.labels(source=source, status=final_status).inc()
+    CREW_RUN_DURATION.labels(source=source).observe(_time.monotonic() - crew_start)
+    CREW_AGENT_COUNT.labels(source=source).observe(len(agents))
+    for _ in range(gpu_agent_count):
+        GPU_AGENTS_SCHEDULED.inc()
+    active_crew_tasks.dec()
+
+    await update_status(
+        final_status,
+        {
+            "agent_results": results,
+            "agents_succeeded": sum(
+                1 for r in results.values() if r.get("status") == "completed"
+            ),
+            "agents_failed": sum(
+                1 for r in results.values() if r.get("status") == "failed"
+            ),
+            "completed_at": datetime.now(UTC).isoformat(),
+        },
+    )
+
+    return final_status
+
+
 async def _run_crew_async(
     crew_id: str,
     task_id: str,
@@ -362,194 +563,31 @@ async def _run_crew_async(
             await _update_status("failed", {"error": "No agents could be created"})
             return
 
-        # Phase 1.5: Fleet distribution (if enabled and nodes available)
-        fleet_mode = False
-        fleet_coordinator = None
-        try:
-            from config.fleet.node import FLEET_ENABLED
+        task_data = _build_task_data(session_id, crew_id, crew_config)
 
-            if FLEET_ENABLED:
-                from config.fleet.coordinator import FleetCoordinator
-                from config.fleet.registry import fleet_registry
-
-                fleet_nodes = await fleet_registry.get_alive_nodes()
-                if len(fleet_nodes) > 1:
-                    fleet_mode = True
-                    fleet_coordinator = FleetCoordinator(crew_id)
-                    fleet_plan = await fleet_coordinator.plan_and_distribute(
-                        [a.definition for a in agents],
-                        fleet_nodes,
-                        {
-                            "session_id": session_id,
-                            "scenario": {
-                                "id": crew_id,
-                                "name": crew_config.get("title", "Crew task"),
-                                "description": crew_config.get("description", ""),
-                                "target_url": crew_config.get("target_url"),
-                            },
-                        },
-                        policy=crew_config.get("scheduling_policy", "gpu-affinity"),
-                        group=crew_config.get("group"),
-                    )
-                    if fleet_plan.has_errors:
-                        await _update_status(
-                            "failed",
-                            {
-                                "error": "Fleet placement failed",
-                                "fleet_errors": fleet_plan.errors,
-                            },
-                        )
-                        return
-        except ImportError:
-            pass
-
-        if fleet_mode and fleet_coordinator:
-            # Fleet path: execute local agents, collect all results
-            from config.fleet.node import FLEET_NODE_ID
-
-            local_placements = [
-                p for p in fleet_plan.placements if p.node_id == FLEET_NODE_ID
-            ]
-            local_agents = [
-                a
-                for a in agents
-                if any(p.agent_key == a.definition.agent_key for p in local_placements)
-            ]
-
-            task_data = {
-                "session_id": session_id,
-                "scenario": {
-                    "id": crew_id,
-                    "name": crew_config.get("title", "Crew task"),
-                    "description": crew_config.get("description", ""),
-                    "target_url": crew_config.get("target_url"),
-                },
-            }
-
-            # Execute local agents and submit results to coordinator
-            from config.gpu_scheduler import schedule_crew_gpus
-
-            local_gpu_plan = schedule_crew_gpus(
-                [a.definition for a in local_agents],
-                memory_budget_mb=crew_config.get("gpu_memory_budget_mb"),
-            )
-            local_results = await _execute_agents(
-                local_agents, task_data, local_gpu_plan, crew_id
-            )
-            for agent_key, result in local_results.items():
-                fleet_coordinator.submit_result(agent_key, result)
-
-            # Wait for remote results
-            results = await fleet_coordinator.collect_results()
-            await fleet_coordinator.cleanup()
-
-        else:
-            # Local path: single-node execution (original behavior)
-
-            # Phase 2: GPU scheduling
-            from config.gpu_scheduler import gpu_slot_tracker, schedule_crew_gpus
-
-            gpu_plan = schedule_crew_gpus(
-                [a.definition for a in agents],
-                memory_budget_mb=crew_config.get("gpu_memory_budget_mb"),
-            )
-
-            if gpu_plan.has_errors:
-                await _update_status(
-                    "failed",
-                    {"error": "GPU scheduling failed", "gpu_errors": gpu_plan.errors},
-                )
-                return
-
-            for ga in gpu_plan.gpu_agents:
-                gpu_slot_tracker.reserve(
-                    crew_id, ga.device_index, ga.memory_reserved_mb
-                )
-
-            # Phase 3: Execute agents
-            task_data = {
-                "session_id": session_id,
-                "scenario": {
-                    "id": crew_id,
-                    "name": crew_config.get("title", "Crew task"),
-                    "description": crew_config.get("description", ""),
-                    "target_url": crew_config.get("target_url"),
-                },
-            }
-
-            results = await _execute_agents(agents, task_data, gpu_plan, crew_id)
-
-        # Aggregate
-        all_ok = all(r.get("status") == "completed" for r in results.values())
-        final_status = "completed" if all_ok else "partial"
-
-        if not fleet_mode:
-            gpu_slot_tracker.release(crew_id)
-
-        # DLP scan — route crew output through SY's DLP pipeline if enabled
-        try:
-            from shared.yeoman_dlp import scan_crew_output
-
-            result_payload = {
-                "agent_results": results,
-                "agents_succeeded": sum(
-                    1 for r in results.values() if r.get("status") == "completed"
-                ),
-                "agents_failed": sum(
-                    1 for r in results.values() if r.get("status") == "failed"
-                ),
-            }
-            result_payload = await scan_crew_output(crew_id, result_payload)
-            # Update results from (possibly sanitized) payload
-            results = result_payload.get("agent_results", results)
-        except ImportError:
-            pass
-
-        # Audit forwarding — log crew completion to SY's audit trail
-        try:
-            from shared.yeoman_audit import forward_crew_event
-
-            await forward_crew_event(
-                "crew_completed" if all_ok else "crew_partial",
-                crew_id,
-                detail={
-                    "source": source,
-                    "agent_count": len(agents),
-                    "status": final_status,
-                    "gpu_agents": len(gpu_plan.gpu_agents),
-                },
-            )
-        except ImportError:
-            pass
-
-        # Record metrics
-        from shared.metrics import (
-            CREW_AGENT_COUNT,
-            CREW_RUN_DURATION,
-            CREW_RUNS_TOTAL,
-            GPU_AGENTS_SCHEDULED,
+        # Phase 2: Execute — fleet distributed or local single-node
+        fleet_result = await _try_fleet_execution(
+            crew_id, agents, task_data, crew_config, _update_status
         )
 
-        CREW_RUNS_TOTAL.labels(source=source, status=final_status).inc()
-        CREW_RUN_DURATION.labels(source=source).observe(_time.monotonic() - crew_start)
-        CREW_AGENT_COUNT.labels(source=source).observe(len(agents))
-        for _ga in gpu_plan.gpu_agents:
-            GPU_AGENTS_SCHEDULED.inc()
-        ACTIVE_CREW_TASKS.dec()
+        if fleet_result is not None:
+            results, gpu_agent_count = fleet_result
+        else:
+            results, gpu_agent_count = await _run_local(
+                crew_id, agents, task_data, crew_config, _update_status
+            )
 
-        await _update_status(
-            final_status,
-            {
-                "agent_results": results,
-                "agents_succeeded": sum(
-                    1 for r in results.values() if r.get("status") == "completed"
-                ),
-                "agents_failed": sum(
-                    1 for r in results.values() if r.get("status") == "failed"
-                ),
-                "gpu_placement": gpu_plan.to_dict(),
-                "completed_at": datetime.now(UTC).isoformat(),
-            },
+        # Phase 3: Aggregate, DLP, audit, metrics
+        final_status = await _aggregate_and_finalize(
+            crew_id,
+            results,
+            agents,
+            gpu_agent_count,
+            source,
+            crew_start,
+            _time,
+            _update_status,
+            ACTIVE_CREW_TASKS,
         )
 
     except Exception as exc:

@@ -74,38 +74,24 @@ class AgentDefinition(BaseModel):
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {
-            "agent_key": self.agent_key,
-            "name": self.name,
-            "role": self.role,
-            "goal": self.goal,
-            "backstory": self.backstory,
-            "focus": self.focus,
-            "domain": self.domain,
-            "tools": self.tools,
-            "complexity": self.complexity,
-            "celery_queue": self.celery_queue,
-            "redis_prefix": self.redis_prefix,
-            "allow_delegation": self.allow_delegation,
-            "llm_model": self.llm_model,
-            "llm_temperature": self.llm_temperature,
-            "verbose": self.verbose,
-            "metadata": self.metadata,
-        }
-        # Only include GPU fields when non-default to keep payloads lean
-        if self.gpu_required:
-            d["gpu_required"] = True
-        if self.gpu_strict:
-            d["gpu_strict"] = True
-        if self.gpu_preferred:
-            d["gpu_preferred"] = True
-        if self.gpu_memory_min_mb:
-            d["gpu_memory_min_mb"] = self.gpu_memory_min_mb
+        """Serialize to dict. GPU fields excluded when default (keeps payloads lean)."""
+        d = self.model_dump(
+            exclude={"tool_instances"},
+            exclude_defaults=False,
+        )
+        # Strip GPU fields when at their defaults
+        for key in ("gpu_required", "gpu_strict", "gpu_preferred"):
+            if not d.get(key):
+                d.pop(key, None)
+        if not d.get("gpu_memory_min_mb"):
+            d.pop("gpu_memory_min_mb", None)
         return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentDefinition:
-        return cls(**{k: v for k, v in data.items() if k != "tool_instances"})
+        return cls.model_validate(
+            {k: v for k, v in data.items() if k != "tool_instances"}
+        )
 
     def __repr__(self) -> str:
         return f"AgentDefinition(key={self.agent_key!r}, name={self.name!r}, domain={self.domain!r})"

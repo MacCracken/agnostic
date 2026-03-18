@@ -63,6 +63,8 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
   - YAML definition loading via `from_file()` (`TestYAMLLoading`)
   - `delegate_to()` edge cases: invalid key rejection, missing file, failure propagation (`TestDelegateToEdgeCases`)
   - `rollback_definition` API endpoint test + nonexistent version 404 (`TestPhase4Endpoints`)
+- **`_run_crew_async()` refactor** — extracted `_build_task_data()`, `_try_fleet_execution()`, `_run_local()`, `_aggregate_and_finalize()`. Main function is now ~30 lines orchestrating 4 clean phases. Fleet and local paths fully separated
+- **`AgentDefinition.to_dict()` → `model_dump()`** — `to_dict()` now delegates to `model_dump(exclude={"tool_instances"})` with GPU field stripping. `from_dict()` uses `model_validate()`. Full backward compat preserved
 - **Cross-project API contract** (`docs/guides/api-contract.md`) — documents all shared API surface: crew endpoints, preset endpoints, A2A protocol message types, GPU endpoints, fleet endpoints, authentication, webhooks, MCP tools
 - **Non-AGNOS GPU fallback docs** (`docs/guides/gpu-non-agnos.md`) — documents GPU behavior on non-AGNOS hosts: what works everywhere (nvidia-smi, scheduling, CUDA isolation) vs AGNOS-only features (agnosys probe, HUD, fleet aggregation)
 - **32 fleet tests** — node model, capabilities probe, crew state CRUD, barrier sync, checkpoints, coordinator transfer, placement (7 policies), relay messages, dedup, coordinator lifecycle, endpoint tests. Total: 1099 unit tests
