@@ -47,17 +47,7 @@ A distributed AGNOS fleet running Agnostic in lockstep. Every node in the fleet 
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| ~~Fleet node inventory & heartbeat~~ | ~~Medium~~ | **Done.** `config/fleet/node.py` + `registry.py`. `FleetNode`, `NodeCapabilities.probe_local()`, Redis-backed registry with TTL heartbeat. `GET /api/v1/fleet/nodes`, `/fleet/status`, `/fleet/gpu` |
-| ~~Fleet join/leave protocol~~ | ~~Medium~~ | **Done.** Auto-registration via `fleet_registry.register()`, graceful drain via `deregister()`, dead node eviction. `POST /api/v1/fleet/evict` |
-| ~~Node group support~~ | ~~Small~~ | **Done.** `AGNOS_FLEET_GROUP` config, `fleet:group:{name}` Redis sets, `GET /api/v1/fleet/groups`, group filtering on node queries |
-| ~~Unified crew state layer~~ | ~~Medium~~ | **Done.** `config/fleet/state.py`. `CrewState`/`AgentPlacement` with Redis WATCH/MULTI. Barrier sync, coordinator tracking, agent checkpoints |
-| Lockstep barrier sync | Medium | Barrier-synchronized task handoffs between agents on different nodes. Sequence-numbered messages for exactly-once delivery |
-| Placement engine | Large | Match agent requirements (GPU, memory, tools) to node capabilities. Pluggable scheduling policies. Deterministic placement |
-| Coordinator election & failover | Medium | Any-node entry point. Coordinator failure detected via heartbeat. Participant promotion from checkpointed state |
-| Inter-node task relay | Large | Serialize CrewAI task handoffs over Redis pub/sub with ordering guarantees. Optional gRPC fast path. Partial failure handling and retries |
 | Fleet-aware crew builder | Medium | Extend `assemble_team()` and `_run_crew_async()` to accept placement hints and distribute agents across nodes transparently |
-| Agent checkpoint & recovery | Medium | Persist agent state to Redis after each task. On node failure, reschedule agent on new node and resume from checkpoint |
-| Fleet GPU status dashboard | Small | Aggregate GPU utilization across all fleet nodes. Surface in AGNOS HUD and via `GET /api/v1/fleet/gpu` |
 | Fleet scaling test | Medium | Add/remove nodes from a running fleet while crews are executing. Verify zero disruption |
 | E2E test: multi-node lockstep crew | Medium | Spin up 3+ test containers as fleet nodes. Run a crew that spans all. Verify lockstep ordering, fault recovery, and output correctness |
 
@@ -129,4 +119,4 @@ See also [Dependency Watch](dependency-watch.md).
 
 ---
 
-*Last Updated: 2026-03-17 · Version: 2026.3.17 · Test count: 1075 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-17 · Version: 2026.3.17 · Test count: 1087 (unit) + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*

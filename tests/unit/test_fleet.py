@@ -367,3 +367,188 @@ class TestFleetEndpoints:
         assert data["enabled"] is True
         assert data["total_nodes"] == 1
         assert data["total_gpus"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Placement engine tests
+# ---------------------------------------------------------------------------
+
+
+class TestPlacementEngine:
+    def _make_nodes(self) -> list[FleetNode]:
+        return [
+            FleetNode(
+                node_id="gpu-1",
+                group="gpu-rack",
+                capabilities=NodeCapabilities(
+                    cpu_cores=8,
+                    gpu_count=2,
+                    gpu_vram_total_mb=48000,
+                    gpu_vram_free_mb=40000,
+                ),
+                last_heartbeat=time.time(),
+            ),
+            FleetNode(
+                node_id="cpu-1",
+                group="cpu-rack",
+                capabilities=NodeCapabilities(cpu_cores=16),
+                last_heartbeat=time.time(),
+            ),
+            FleetNode(
+                node_id="cpu-2",
+                group="cpu-rack",
+                capabilities=NodeCapabilities(cpu_cores=8),
+                last_heartbeat=time.time(),
+            ),
+        ]
+
+    def _make_defs(self) -> list[dict]:
+        return [
+            {"agent_key": "gpu-agent", "gpu_required": True, "gpu_memory_min_mb": 8000},
+            {"agent_key": "cpu-agent-1"},
+            {"agent_key": "cpu-agent-2"},
+        ]
+
+    def test_gpu_affinity(self):
+        from config.fleet.placement import place_agents
+
+        plan = place_agents(
+            self._make_defs(), self._make_nodes(), policy="gpu-affinity"
+        )
+        assert not plan.has_errors
+        assert len(plan.placements) == 3
+        gpu_placement = next(p for p in plan.placements if p.agent_key == "gpu-agent")
+        assert gpu_placement.node_id == "gpu-1"
+
+    def test_balanced(self):
+        from config.fleet.placement import place_agents
+
+        plan = place_agents(self._make_defs(), self._make_nodes(), policy="balanced")
+        assert not plan.has_errors
+        node_ids = {p.node_id for p in plan.placements}
+        assert len(node_ids) == 3  # spread across all 3 nodes
+
+    def test_lockstep_strict(self):
+        from config.fleet.placement import place_agents
+
+        plan = place_agents(
+            self._make_defs(), self._make_nodes(), policy="lockstep-strict"
+        )
+        assert not plan.has_errors
+        gpu_p = next(p for p in plan.placements if p.agent_key == "gpu-agent")
+        assert gpu_p.node_id == "gpu-1"
+        # CPU agents co-located on most capable node
+        cpu_nodes = {
+            p.node_id for p in plan.placements if not p.agent_key.startswith("gpu")
+        }
+        assert len(cpu_nodes) == 1
+
+    def test_cost_aware(self):
+        from config.fleet.placement import place_agents
+
+        plan = place_agents(self._make_defs(), self._make_nodes(), policy="cost-aware")
+        assert not plan.has_errors
+        gpu_p = next(p for p in plan.placements if p.agent_key == "gpu-agent")
+        assert gpu_p.node_id == "gpu-1"
+        # CPU agents should prefer non-GPU nodes
+        cpu_placements = [
+            p for p in plan.placements if not p.agent_key.startswith("gpu")
+        ]
+        assert all(p.node_id != "gpu-1" for p in cpu_placements)
+
+    def test_group_filter(self):
+        from config.fleet.placement import place_agents
+
+        defs = [{"agent_key": "a1"}, {"agent_key": "a2"}]
+        plan = place_agents(defs, self._make_nodes(), group="cpu-rack")
+        assert not plan.has_errors
+        assert all(p.node_id in ("cpu-1", "cpu-2") for p in plan.placements)
+
+    def test_no_nodes(self):
+        from config.fleet.placement import place_agents
+
+        plan = place_agents([{"agent_key": "a1"}], [])
+        assert plan.has_errors
+
+    def test_no_gpu_nodes_fallback(self):
+        from config.fleet.placement import place_agents
+
+        cpu_only = [
+            FleetNode(
+                node_id="cpu-1",
+                capabilities=NodeCapabilities(cpu_cores=4),
+                last_heartbeat=time.time(),
+            )
+        ]
+        defs = [{"agent_key": "gpu-agent", "gpu_required": True}]
+        plan = place_agents(defs, cpu_only, policy="gpu-affinity")
+        assert not plan.has_errors
+        assert len(plan.warnings) == 1
+        assert plan.placements[0].node_id == "cpu-1"
+
+
+# ---------------------------------------------------------------------------
+# Relay message tests
+# ---------------------------------------------------------------------------
+
+
+class TestTaskRelay:
+    def test_relay_message_round_trip(self):
+        from config.fleet.relay import RelayMessage
+
+        msg = RelayMessage(
+            crew_id="crew-1",
+            agent_key="a1",
+            source_node="n1",
+            target_node="n2",
+            seq=1,
+            msg_type="task_handoff",
+            payload={"task": "do stuff"},
+        )
+        json_str = msg.to_json()
+        restored = RelayMessage.from_json(json_str)
+        assert restored.crew_id == "crew-1"
+        assert restored.seq == 1
+        assert restored.payload["task"] == "do stuff"
+
+    def test_dedup(self):
+        from config.fleet.relay import TaskRelay
+
+        relay = TaskRelay()
+        assert not relay._is_duplicate("crew-1", 1)
+        assert relay._is_duplicate("crew-1", 1)  # second time = duplicate
+        assert not relay._is_duplicate("crew-1", 2)
+
+    def test_seq_counter(self):
+        from config.fleet.relay import TaskRelay
+
+        relay = TaskRelay()
+        assert relay._next_seq("crew-1") == 1
+        assert relay._next_seq("crew-1") == 2
+        assert relay._next_seq("crew-2") == 1  # independent per crew
+
+    def test_cleanup(self):
+        from config.fleet.relay import TaskRelay
+
+        relay = TaskRelay()
+        relay._next_seq("crew-1")
+        relay._is_duplicate("crew-1", 1)
+        relay.cleanup("crew-1")
+        assert "crew-1" not in relay._seen_seqs
+        assert "crew-1" not in relay._seq_counter
+
+
+# ---------------------------------------------------------------------------
+# Coordinator tests
+# ---------------------------------------------------------------------------
+
+
+class TestFleetCoordinator:
+    def test_submit_result(self):
+        from config.fleet.coordinator import FleetCoordinator
+
+        coord = FleetCoordinator("crew-1", node_id="n1")
+        coord._expected_agents = {"a1", "a2"}
+        coord.submit_result("a1", {"status": "completed", "output": "done"})
+        assert "a1" in coord._results
+        assert coord._results["a1"]["status"] == "completed"

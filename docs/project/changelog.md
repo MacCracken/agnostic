@@ -50,7 +50,11 @@ See `scripts/build-release.sh` for the build-and-rename workflow.
   - `registry.py` — `FleetRegistry` with Redis-backed node inventory (`fleet:node:*`, `fleet:nodes` SET, `fleet:group:*` SETs). Auto-registration, async heartbeat loop, dead node eviction, group queries
   - `state.py` — `CrewStateManager` for distributed crew execution. `CrewState`/`AgentPlacement` with Redis optimistic locking. Barrier sequence numbers, coordinator tracking/failover, agent checkpoints for recovery
 - **Fleet API endpoints** (`webgui/routes/fleet.py`) — `GET /api/v1/fleet/nodes`, `/fleet/nodes/{id}`, `/fleet/groups`, `/fleet/status`, `/fleet/gpu`, `POST /fleet/evict`
-- **20 fleet tests** — node model, capabilities probe, crew state CRUD, barrier sync, checkpoints, coordinator transfer, endpoint tests. Total: 1075 unit tests
+- **Placement engine** (`config/fleet/placement.py`) — assigns agents to fleet nodes. 5 scheduling policies: `gpu-affinity` (default), `balanced`, `cost-aware`, `lockstep-strict`, `data-locality`. GPU-aware routing, group filtering, load-based spreading
+- **Inter-node task relay** (`config/fleet/relay.py`) — Redis pub/sub message passing between fleet nodes. `RelayMessage` with sequence numbers for exactly-once delivery. Publish task handoffs and results. Async subscription with deduplication
+- **Fleet coordinator** (`config/fleet/coordinator.py`) — `FleetCoordinator` manages distributed crew lifecycle: placement, task distribution, result collection, node health monitoring. `promote_coordinator()` for failover. Dead node detection triggers re-placement
+- **Agent checkpoint & recovery** — `CrewStateManager.checkpoint_agent()` / `get_checkpoint()` persist agent state to Redis. Coordinator reads checkpoints on failover to resume from last known state
+- **32 fleet tests** — node model, capabilities probe, crew state CRUD, barrier sync, checkpoints, coordinator transfer, placement (7 policies), relay messages, dedup, coordinator lifecycle, endpoint tests. Total: 1087 unit tests
 - **18 crew presets** — 5 domains (quality, software-engineering, design, data-engineering, devops) x 3 sizes (lean, standard, large) + `complete-lean` + `quality-security` + `quality-performance`
 - **Crew assembler** (`agents/crew_assembler.py`) — `assemble_team()` builds agent definitions from natural-language team specs; `recommend_preset()` suggests best preset from task description
 - **Custom team composition** — `CrewRunRequest.team` (TeamSpec) enables "I need a 4-person team: UX, game engineer, game designer, project lead" style requests
