@@ -83,41 +83,7 @@ See also [Dependency Watch](dependency-watch.md).
 | Item | Blocker |
 |------|---------|
 | Python 3.14 support | crewai 1.11.0rc1 still `requires-python <3.14` — sole remaining blocker. chromadb 1.1.1 is now unblocked (`>=3.9`). See [Dependency Watch](dependency-watch.md) |
-
----
-
-## v2 — Rust Core
-
-Rewrite the performance-critical infrastructure layer in Rust. Python remains the agent execution boundary (CrewAI, LLM calls, tool registry). The split mirrors how AGNOS already works: Rust core with Python agent workers.
-
-**Motivation**: The fleet coordination layer (node registry, placement engine, relay, coordinator, crew state, barrier sync) is concurrent stateful systems code — Rust's sweet spot. Python's GIL and async overhead will become bottlenecks when fleet runs at scale with dozens of nodes and hundreds of concurrent crews.
-
-**Rust core candidates** (in priority order):
-
-| Module | Current | Why Rust |
-|--------|---------|----------|
-| Fleet registry & heartbeat | `config/fleet/registry.py` | High-frequency Redis writes, concurrent node tracking, TTL management |
-| Placement engine | `config/fleet/placement.py` | Deterministic scheduling across many nodes, needs to be fast and predictable |
-| Inter-node relay | `config/fleet/relay.py` | Redis pub/sub message ordering, sequence dedup, high throughput |
-| Fleet coordinator | `config/fleet/coordinator.py` | Concurrent result collection, health monitoring, failover — all GIL-sensitive |
-| Crew state manager | `config/fleet/state.py` | Redis optimistic locking, barrier sync, checkpoint persistence |
-| GPU scheduler | `config/gpu_scheduler.py` | Multi-device assignment, memory tracking, cross-crew slot management |
-| GPU detection | `config/gpu.py` | nvidia-smi parsing, cached probing — light but benefits from zero-cost abstractions |
-
-**Python boundary** (stays Python):
-
-| Module | Why Python |
-|--------|-----------|
-| Agent definitions & factory | CrewAI `Agent`/`Crew`/`Task` are Python classes |
-| LLM integration | litellm, anthropic SDK, OpenAI SDK — all Python |
-| Tool registry | Tools are Python `BaseTool` subclasses, dynamic loading via `exec()` |
-| Crew assembler | NLP-style fuzzy matching, keyword scoring — Python-native |
-| Local inference routing | litellm model routing, Ollama/vLLM clients — Python ecosystem |
-| WebGUI / FastAPI | REST API, Chainlit app — Python web framework |
-
-**Integration approach**: Rust core exposes a Python API via PyO3/maturin. The fleet modules become a `agnostic-fleet` Rust crate compiled as a Python extension module. Python code calls `from agnostic_fleet import FleetRegistry, PlacementEngine` etc. — drop-in replacement, same API, 10-100x faster internals.
-
-**Prerequisites**: Fleet running at scale (real multi-node deployments), benchmarks showing Python as the bottleneck, AGNOS fleet infrastructure stable.
+| v2 Rust core | Wrap v1 items first. Fleet + GPU infrastructure rewritten in Rust via PyO3/maturin. See **[roadmap-v2.md](roadmap-v2.md)** |
 
 ---
 
