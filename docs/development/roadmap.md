@@ -78,12 +78,90 @@ See also [Dependency Watch](dependency-watch.md).
 
 ---
 
+## AgnosAI — Rust-Native Agent Orchestration
+
+**Priority**: P1 — Strategic. Replaces CrewAI with a purpose-built Rust framework. Eliminates Python GIL bottleneck, 200+ transitive dependencies, and CrewAI release churn. Python retained only for legacy tools — sandboxed (seccomp + Landlock + cgroups). Full design in **[roadmap-v2.md](roadmap-v2.md)**.
+
+**Source projects**: Agnosticos daimon/hoosh (orchestrator, IPC, pub/sub, LLM gateway, RL — 8997+ tests), SecureYeoman (13-provider AI routing, model router, 9-tier sandbox), Agnostic v1 (agent definitions, crew assembly, fleet, presets).
+
+### Phase 1 — Core Crate (Foundation)
+
+| Item | Effort | Source | Notes |
+|------|--------|--------|-------|
+| `agnosai-core`: shared types (Agent, Task, Crew, Message, Resource) | Small | Agnosticos `agnos-common` | Serde-serializable, JSON/YAML definition compat with v1 |
+| `agnosai-orchestrator`: orchestrator with `Arc<RwLock<State>>` | Medium | Agnosticos `daimon/orchestrator` | Priority queues, task lifecycle, agent assignment |
+| Priority task scheduler with DAG resolution | Medium | Agnosticos `scheduling.rs` + new | Topological sort, concurrent execution of independent tasks |
+| Agent scoring (CPU, GPU, capability, affinity) | Small | Agnosticos `scoring.rs` | Load-aware, preemption-capable |
+| IPC (Unix sockets, length-prefixed framing) | Small | Agnosticos `ipc.rs` | 64 KB max message, 64 concurrent connections |
+| Topic pub/sub with wildcards | Small | Agnosticos `pubsub.rs` | `"task.*"` matches `"task.completed"` |
+| Agent definition loader (JSON/YAML) | Small | Agnostic v1 `agents/base.py` format | Zero migration cost for existing 18 presets |
+| Crew runner (assemble → execute → aggregate) | Medium | New | Replaces CrewAI `Crew.kickoff()` |
+| Cargo workspace setup + CI | Small | New | Workspace with `crates/`, GitHub Actions, `cargo test` |
+
+### Phase 2 — LLM & Tools
+
+| Item | Effort | Source | Notes |
+|------|--------|--------|-------|
+| `agnosai-llm`: LlmProvider trait + OpenAI provider | Medium | Agnosticos hoosh + SY model router | Direct HTTP via `reqwest`, no Python SDK |
+| Anthropic, Ollama, Gemini providers | Medium | SY provider implementations | Direct HTTP, SSE streaming |
+| Remaining providers (DeepSeek, Mistral, Groq, LM Studio, hoosh) | Small each | SY + Agnosticos | All OpenAI-compatible except hoosh (budget-aware) |
+| Model router (task-complexity scoring) | Small | SY `model-router.ts` | Fast/Capable/Premium tier selection |
+| Provider health ring buffer + failover | Small | SY health scoring | 5-point buffer, 3 failures → unhealthy |
+| Response cache (LRU + TTL) | Small | SY + Agnosticos | Dedup redundant inference |
+| Token budget accounting | Small | Agnosticos hoosh | Per-agent budgets, pool management |
+| Rate limiter (semaphore-based) | Small | Agnosticos `rate_limiter.rs` | Per-agent concurrent limits |
+| `agnosai-tools`: native Rust tool trait + registry | Medium | Agnostic v1 `tool_registry.py` | `#[agnosai_tool]` proc macro |
+| `agnosai-sandbox`: WASM sandbox (wasmtime) | Medium | Agnosticos `sandbox_mod/` | Memory-isolated, capability-controlled |
+| `agnosai-sandbox`: Python tool bridge (sandboxed subprocess) | Medium | New | seccomp + Landlock + cgroups, stdin/stdout JSON |
+
+### Phase 3 — Fleet Distribution
+
+| Item | Effort | Source | Notes |
+|------|--------|--------|-------|
+| `agnosai-fleet`: node registry + heartbeat | Medium | Agnostic v1 `fleet/registry.py` | Redis-backed, 10s TTL, DashMap |
+| Placement engine (5 scheduling policies) | Medium | Agnostic v1 `fleet/placement.py` | gpu-affinity, balanced, cost-aware, data-locality, lockstep-strict |
+| Inter-node relay (Redis pub/sub + optional gRPC) | Medium | Agnostic v1 `fleet/relay.py` | Ordered delivery, sequence dedup |
+| Fleet coordinator (fan-out, aggregation, failover) | Large | Agnostic v1 `fleet/coordinator.py` | Any-node entry, coordinator takeover |
+| Crew state manager (barrier sync, checkpoints) | Medium | Agnostic v1 `fleet/state.py` | Redis optimistic locking |
+| GPU detection + scheduler | Medium | Agnostic v1 `gpu.py` + `gpu_scheduler.py` | Atomic VRAM tracking, multi-device |
+| Federation (multi-cluster) | Large | Agnosticos `federation/` | Raft-inspired election, mDNS/DNS-SD, mTLS |
+
+### Phase 4 — API Server & Migration Prep
+
+| Item | Effort | Source | Notes |
+|------|--------|--------|-------|
+| `agnosai-server`: axum HTTP server with REST API | Medium | Mirrors Agnostic v1 FastAPI routes | Wire-compatible: same request/response shapes |
+| MCP server (tool advertisement) | Medium | Agnostic v1 `routes/mcp.py` | Same 27 tool names and schemas |
+| A2A protocol (SY webhooks) | Medium | Agnostic v1 `routes/yeoman_webhooks.py` | Same callback protocol — SY changes nothing |
+| SSE streaming for crew execution | Small | New | Real-time crew progress |
+| JWT auth + AGNOS token delegation | Small | Agnostic v1 `routes/auth.py` | |
+| `agnosai-definitions`: preset library (18 presets) | Small | Agnostic v1 `definitions/presets/` | Copy JSON files, verify loading |
+| Crew assembler (team spec → agent list) | Medium | Agnostic v1 `crew_assembler.py` | Fuzzy matching in Rust |
+| `agnosai-learning`: RL module | Medium | Agnosticos `learning.rs` + `rl_optimizer.rs` | UCB1, experience replay, capability confidence |
+| Definition versioning + .agpkg packaging | Small | Agnostic v1 `versioning.py` + `packaging.py` | |
+
+### Phase 5 — Agnostic Cutover
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| Feature flag: `AGNOSTIC_BACKEND=agnosai\|crewai` | Small | Default `crewai` during migration |
+| Port v1 unit tests to run against both backends | Medium | Assert identical behavior across 1099 tests |
+| Port v1 E2E tests | Medium | Docker compose with AgnosAI binary |
+| Migrate presets one domain at a time | Medium | quality → software-engineering → devops → design → data-engineering |
+| Port high-value Python tools to native Rust | Large | Code analysis, security assessment, test generation first |
+| Community tool SDK (WASM) | Medium | `agnosai-tool-sdk` crate for third-party tools |
+| Remove CrewAI dependency | Small | Delete `crewai_compat.py`, prune `requirements.txt` |
+| Remove Python fleet code | Small | Delete `config/fleet/*.py`, `config/gpu*.py` |
+| Update Docker image — single binary | Medium | ~15-25 MB binary replaces 1.5 GB Python container |
+| Update docs + ADR | Small | ADR for CrewAI → AgnosAI migration decision |
+
+---
+
 ## Long-term / Blocked
 
 | Item | Blocker |
 |------|---------|
-| Python 3.14 support | crewai 1.11.0rc1 still `requires-python <3.14` — sole remaining blocker. chromadb 1.1.1 is now unblocked (`>=3.9`). See [Dependency Watch](dependency-watch.md) |
-| v2 Rust core | Wrap v1 items first. Fleet + GPU infrastructure rewritten in Rust via PyO3/maturin. See **[roadmap-v2.md](roadmap-v2.md)** |
+| Python 3.14 support | crewai 1.11.0rc1 still `requires-python <3.14` — sole remaining blocker. chromadb 1.1.1 is now unblocked (`>=3.9`). See [Dependency Watch](dependency-watch.md). Moot once AgnosAI replaces CrewAI. |
 
 ---
 
@@ -105,4 +183,4 @@ See also [Dependency Watch](dependency-watch.md).
 
 ---
 
-*Last Updated: 2026-03-17 · Version: 2026.3.17-2 · Test count: 1099 (unit) + 10 fleet E2E scaffolds + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
+*Last Updated: 2026-03-18 · Version: 2026.3.17-2 · Test count: 1099 (unit) + 10 fleet E2E scaffolds + 24 (e2e) · [Changelog](../project/changelog.md) · [Dependency Watch](dependency-watch.md)*
