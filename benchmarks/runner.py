@@ -98,13 +98,18 @@ def _agnosai_payload(crew_config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _poll_crewai(
+async def _poll_crew(
     client: httpx.AsyncClient,
     base_url: str,
     crew_id: str,
     headers: dict[str, str],
 ) -> dict[str, Any]:
-    """Poll the CrewAI status endpoint until the crew finishes or times out."""
+    """Poll a crew status endpoint until the crew finishes or times out.
+
+    Works for both CrewAI and AgnosAI backends — both expose
+    ``GET /api/v1/crews/{crew_id}`` returning a JSON object with a
+    ``status`` field.
+    """
     deadline = time.perf_counter() + _POLL_TIMEOUT
     while time.perf_counter() < deadline:
         await asyncio.sleep(_POLL_INTERVAL)
@@ -165,12 +170,12 @@ async def _run_one(
         body = resp.json()
         status = body.get("status", "unknown")
 
-        # CrewAI returns "pending" — we need to poll until done.
-        if status == "pending" and backend == "crewai":
-            crew_id = body.get("crew_id", "")
+        # Both backends may return "pending" — poll until done.
+        if status == "pending":
+            crew_id = body.get("crew_id", body.get("id", ""))
             if crew_id:
-                logger.info("  polling crew %s...", crew_id[:12])
-                final = await _poll_crewai(client, base_url, crew_id, headers)
+                logger.info("  polling %s crew %s...", backend, crew_id[:12])
+                final = await _poll_crew(client, base_url, crew_id, headers)
                 status = final.get("status", "unknown")
                 body = final
 

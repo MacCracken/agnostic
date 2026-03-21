@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
@@ -20,7 +21,8 @@ _EXECUTE_TIMEOUT = float(os.getenv("AGNOSAI_EXECUTE_TIMEOUT", "600"))
 def _translate_crew_config(crew_config: dict[str, Any]) -> dict[str, Any]:
     """Translate an Agnostic crew_config dict into an AgnosAI CrewRunRequest."""
     agents = []
-    for member in crew_config.get("agents", []):
+    raw_agents = crew_config.get("agents") or crew_config.get("agent_definitions") or []
+    for member in raw_agents:
         agent: dict[str, Any] = {
             "agent_key": member.get("agent_key", member.get("role", "agent")),
             "name": member.get("name", member.get("role", "Agent")),
@@ -29,7 +31,7 @@ def _translate_crew_config(crew_config: dict[str, Any]) -> dict[str, Any]:
         }
         # Optional fields — only include if present.
         for key in ("backstory", "domain", "tools", "complexity", "llm_model"):
-            if key in member and member[key]:
+            if member.get(key):
                 agent[key] = member[key]
         for key in ("gpu_required", "gpu_preferred"):
             if member.get(key):
@@ -50,9 +52,13 @@ def _translate_crew_config(crew_config: dict[str, Any]) -> dict[str, Any]:
             tasks.append(task)
     else:
         # Single-task fallback from title/description.
-        tasks.append({
-            "description": crew_config.get("description", crew_config.get("title", "Execute crew")),
-        })
+        tasks.append(
+            {
+                "description": crew_config.get(
+                    "description", crew_config.get("title", "Execute crew")
+                ),
+            }
+        )
 
     process = crew_config.get("process", "sequential")
 
@@ -96,11 +102,20 @@ class AgnosAIBackend(CrewBackend):
                 resp.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 body = exc.response.text
-                logger.error("AgnosAI crew creation failed (%s): %s", exc.response.status_code, body)
-                return BackendResult(status="failed", error=f"AgnosAI HTTP {exc.response.status_code}: {body}")
+                logger.error(
+                    "AgnosAI crew creation failed (%s): %s",
+                    exc.response.status_code,
+                    body,
+                )
+                return BackendResult(
+                    status="failed",
+                    error=f"AgnosAI HTTP {exc.response.status_code}: {body}",
+                )
             except httpx.RequestError as exc:
                 logger.error("AgnosAI unreachable: %s", exc)
-                return BackendResult(status="failed", error=f"AgnosAI unreachable: {exc}")
+                return BackendResult(
+                    status="failed", error=f"AgnosAI unreachable: {exc}"
+                )
 
         data = resp.json()
 
@@ -141,5 +156,62 @@ class AgnosAIBackend(CrewBackend):
                             continue
 
     async def cancel_crew(self, crew_id: str) -> dict[str, Any]:
-        # AgnosAI cancel endpoint is future work.
-        return {"error": "Cancel not yet supported by AgnosAI server"}
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                resp = await client.post(
+                    f"{self.base_url}/api/v1/crews/{crew_id}/cancel",
+                    headers=self._headers(),
+                )
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPStatusError as exc:
+                return {
+                    "error": f"AgnosAI cancel failed: HTTP {exc.response.status_code}"
+                }
+            except httpx.RequestError as exc:
+                return {"error": f"AgnosAI unreachable: {exc}"}
+
+    # ------------------------------------------------------------------
+    # Sync helpers — query AgnosAI's definition/preset/tool registries
+    # ------------------------------------------------------------------
+
+    async def list_definitions(self) -> list[dict[str, Any]]:
+        """Fetch agent definitions from AgnosAI."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{self.base_url}/api/v1/agents/definitions",
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def push_definition(self, definition: dict[str, Any]) -> dict[str, Any]:
+        """Create an agent definition on AgnosAI."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{self.base_url}/api/v1/agents/definitions",
+                json=definition,
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def list_presets(self) -> list[dict[str, Any]]:
+        """Fetch built-in presets from AgnosAI."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{self.base_url}/api/v1/presets",
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        """Fetch registered tools from AgnosAI."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{self.base_url}/api/v1/tools",
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()

@@ -328,7 +328,13 @@ async def _try_fleet_execution(
             group=crew_config.get("group"),
         )
         if plan.get("has_errors"):
-            await update_status("failed", {"error": "Fleet placement failed", "fleet_errors": plan.get("errors", [])})
+            await update_status(
+                "failed",
+                {
+                    "error": "Fleet placement failed",
+                    "fleet_errors": plan.get("errors", []),
+                },
+            )
             return {}, 0
         results = await fleet_shim.collect_results(crew_id)
         return results, 0
@@ -591,6 +597,10 @@ async def _run_crew_async(
         _backend_name = os.getenv("AGNOSTIC_BACKEND", "crewai").lower()
         if _backend_name == "agnosai":
             from agents.backend.router import get_backend
+
+            # Populate resolved agent definitions so the backend can
+            # translate them regardless of original source (preset/keys/inline).
+            crew_config["agents"] = [a.definition.to_dict() for a in agents]
             backend = get_backend()
             backend_result = await backend.execute_crew(
                 crew_config, session_id, crew_id, task_id
@@ -933,6 +943,13 @@ async def cancel_crew(
             status_code=409,
             detail=f"Crew cannot be cancelled — current status is '{current_status}'",
         )
+
+    # Forward cancellation to AgnosAI if that backend is active.
+    if os.getenv("AGNOSTIC_BACKEND", "crewai").lower() == "agnosai":
+        from agents.backend.router import get_backend
+
+        backend = get_backend()
+        await backend.cancel_crew(crew_id)
 
     now = datetime.now(UTC).isoformat()
     record["status"] = "cancelled"
