@@ -184,5 +184,9 @@ artifacts/
 benchmark-results/
 load-test-results/
 
+# Ollama model data
+ollama_data/
+.ollama/
+
 # Profile data
 *.prof

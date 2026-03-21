@@ -22,6 +22,11 @@
 # Dev: spin up redis + postgres as separate containers.
 #
 #   docker compose --profile dev up -d
+#
+# Benchmarks: spin up both backends + Ollama for head-to-head comparison.
+#
+#   docker compose --profile benchmark up -d
+#   .venv/bin/python -m benchmarks.run
 
 services:
   agnostic:
@@ -107,9 +112,11 @@ services:
     build:
       context: ../agnosai
       dockerfile: Dockerfile
-    profiles: ["agnosai", "e2e"]
+    profiles: ["agnosai", "e2e", "benchmark"]
     ports:
       - "8080:8080"
+    environment:
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
     networks:
       - qa-network
     restart: unless-stopped
@@ -118,6 +125,30 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Ollama local LLM server (--profile benchmark or --profile ollama)
+  # Provides a local inference backend for fair CrewAI-vs-AgnosAI comparison.
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["benchmark", "ollama"]
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+    networks:
+      - qa-network
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # ---------------------------------------------------------------------------
   # Dev infrastructure (--profile dev)
@@ -163,3 +194,4 @@ volumes:
   agnostic_data:
   redis_data:
   postgres_data:
+  ollama_data:
