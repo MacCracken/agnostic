@@ -145,6 +145,7 @@ markers = [
     "redis: marks tests that require Redis",
     "rabbitmq: marks tests that require RabbitMQ",
     "security: marks tests related to security scanning",
+    "benchmark: CrewAI vs AgnosAI benchmark tests",
 ]
 filterwarnings = [
     "error",

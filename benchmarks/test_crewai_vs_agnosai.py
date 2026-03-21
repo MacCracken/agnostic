@@ -20,7 +20,12 @@ import logging
 
 import pytest
 
-from benchmarks.report import build_report, render_markdown, save_json
+from benchmarks.report import (
+    build_report,
+    render_history_markdown,
+    render_markdown,
+    save_json,
+)
 from benchmarks.runner import (
     RunResult,
     check_health,
@@ -42,19 +47,16 @@ _ALL_RESULTS: list[RunResult] = []
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_ollama(ollama_url: str, ollama_model: str) -> None:
     """Ensure Ollama is running and the model is available."""
-    loop = asyncio.get_event_loop()
-
-    available = loop.run_until_complete(check_ollama(ollama_url, ollama_model))
+    available = asyncio.run(check_ollama(ollama_url, ollama_model))
     if not available:
         logger.info("Model %s not found — attempting pull...", ollama_model)
-        pulled = loop.run_until_complete(pull_ollama_model(ollama_url, ollama_model))
+        pulled = asyncio.run(pull_ollama_model(ollama_url, ollama_model))
         if not pulled:
             pytest.skip(f"Ollama model {ollama_model} unavailable at {ollama_url}")
 
 
 def _skip_unless_healthy(url: str, name: str) -> None:
-    loop = asyncio.get_event_loop()
-    if not loop.run_until_complete(check_health(url)):
+    if not asyncio.run(check_health(url)):
         pytest.skip(f"{name} server not reachable at {url}")
 
 
@@ -76,8 +78,7 @@ def _run_bench(
 ) -> list[RunResult]:
     scenarios = build_scenarios(ollama_model)
     sc = scenarios[scenario_idx]
-    loop = asyncio.get_event_loop()
-    results = loop.run_until_complete(
+    results = asyncio.run(
         run_scenario(
             backend=backend,
             base_url=base_url,
@@ -222,5 +223,11 @@ def _generate_report(
         md = render_markdown(report)
         (out_dir / "latest.md").write_text(md)
         print("\n" + md)
+
+        # Write combined history markdown
+        history_md = render_history_markdown(out_dir / "history.json")
+        if history_md:
+            (out_dir / "history.md").write_text(history_md)
+            print("\n" + history_md)
 
     request.addfinalizer(_finalizer)

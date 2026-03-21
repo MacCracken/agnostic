@@ -62,9 +62,25 @@ def build_report(
 
 
 def save_json(report: dict[str, Any], path: Path) -> None:
-    """Write the report to a JSON file."""
+    """Write the report to a JSON file, archiving previous runs.
+
+    Previous results are preserved under a ``runs`` list in a combined
+    ``history.json`` file in the same directory.  The ``latest.json``
+    file is always overwritten with the most recent run.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2) + "\n")
+
+    # Append to history
+    history_path = path.parent / "history.json"
+    history: list[dict[str, Any]] = []
+    if history_path.exists():
+        try:
+            history = json.loads(history_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            history = []
+    history.append(report)
+    history_path.write_text(json.dumps(history, indent=2) + "\n")
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -126,3 +142,36 @@ def render_markdown(report: dict[str, Any]) -> str:
 
     lines.append("")
     return "\n".join(lines)
+
+
+def render_history_markdown(history_path: Path) -> str:
+    """Render all historical runs as a combined markdown document."""
+    if not history_path.exists():
+        return ""
+    try:
+        runs: list[dict[str, Any]] = json.loads(history_path.read_text())
+    except (json.JSONDecodeError, ValueError):
+        return ""
+
+    sections: list[str] = ["# Benchmark History", ""]
+    for i, run in enumerate(runs, 1):
+        sections.append(f"## Run {i} — {run.get('generated_at', 'unknown')}")
+        meta = run.get("metadata", {})
+        if meta.get("ollama_model"):
+            sections.append(f"LLM: Ollama `{meta['ollama_model']}`")
+        if meta.get("bench_rounds"):
+            sections.append(f"Rounds: {meta['bench_rounds']}")
+        sections.append("")
+
+        # Per-scenario table
+        sections.append("| Scenario | Backend | OK/Total | Mean (s) | Median (s) |")
+        sections.append("|----------|---------|----------|----------|------------|")
+        for s in run.get("scenarios", []):
+            lat = s["latency"]
+            sections.append(
+                f"| {s['scenario']} | {s['backend']} "
+                f"| {s['success_count']}/{s['rounds']} "
+                f"| {lat['mean']:.3f} | {lat['median']:.3f} |"
+            )
+        sections.append("")
+    return "\n".join(sections)
