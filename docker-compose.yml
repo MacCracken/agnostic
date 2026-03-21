@@ -75,6 +75,10 @@ services:
       AGNOS_TOKEN_BUDGET_URL: ${AGNOS_TOKEN_BUDGET_URL:-http://localhost:8088}
       AGNOS_TOKEN_BUDGET_POOL: ${AGNOS_TOKEN_BUDGET_POOL:-agnostic-qa}
       AGNOS_PROFILE: ${AGNOS_PROFILE:-}
+      # Backend selection: "crewai" or "agnosai"
+      AGNOSTIC_BACKEND: ${AGNOSTIC_BACKEND:-crewai}
+      AGNOSAI_URL: ${AGNOSAI_URL:-http://agnosai-server:8080}
+      AGNOSAI_API_KEY: ${AGNOSAI_API_KEY:-}
     networks:
       - qa-network
     volumes:
@@ -94,6 +98,26 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # ---------------------------------------------------------------------------
+  # AgnosAI Rust server (--profile agnosai or --profile e2e)
+  # ---------------------------------------------------------------------------
+  agnosai-server:
+    image: agnosai:latest
+    build:
+      context: ../agnosai
+      dockerfile: Dockerfile
+    profiles: ["agnosai", "e2e"]
+    ports:
+      - "8080:8080"
+    networks:
+      - qa-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ---------------------------------------------------------------------------
   # Dev infrastructure (--profile dev)

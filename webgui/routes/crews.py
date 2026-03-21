@@ -310,7 +310,29 @@ async def _try_fleet_execution(
 
     Returns ``(results, gpu_agent_count)`` if fleet mode activated,
     or ``None`` to fall back to local execution.
+
+    When ``AGNOSTIC_BACKEND=agnosai``, delegates to the AgnosAI fleet
+    shim instead of the Python fleet coordinator.
     """
+    # AgnosAI backend uses its own fleet via the shim.
+    if os.getenv("AGNOSTIC_BACKEND", "crewai").lower() == "agnosai":
+        from config.fleet.shim import fleet_shim
+
+        nodes = await fleet_shim.get_alive_nodes()
+        if len(nodes) <= 1:
+            return None
+        plan = await fleet_shim.plan_and_distribute(
+            [a.definition.to_dict() for a in agents],
+            task_data,
+            policy=crew_config.get("scheduling_policy", "gpu-affinity"),
+            group=crew_config.get("group"),
+        )
+        if plan.get("has_errors"):
+            await update_status("failed", {"error": "Fleet placement failed", "fleet_errors": plan.get("errors", [])})
+            return {}, 0
+        results = await fleet_shim.collect_results(crew_id)
+        return results, 0
+
     try:
         from config.fleet.node import FLEET_ENABLED
 
@@ -565,17 +587,29 @@ async def _run_crew_async(
 
         task_data = _build_task_data(session_id, crew_id, crew_config)
 
-        # Phase 2: Execute — fleet distributed or local single-node
-        fleet_result = await _try_fleet_execution(
-            crew_id, agents, task_data, crew_config, _update_status
-        )
-
-        if fleet_result is not None:
-            results, gpu_agent_count = fleet_result
+        # Phase 2: Execute — agnosai backend or legacy crewai path
+        _backend_name = os.getenv("AGNOSTIC_BACKEND", "crewai").lower()
+        if _backend_name == "agnosai":
+            from agents.backend.router import get_backend
+            backend = get_backend()
+            backend_result = await backend.execute_crew(
+                crew_config, session_id, crew_id, task_id
+            )
+            results = backend_result.agent_results
+            gpu_agent_count = 0
+            if backend_result.error:
+                await _update_status("failed", {"error": backend_result.error})
+                return
         else:
-            results, gpu_agent_count = await _run_local(
+            fleet_result = await _try_fleet_execution(
                 crew_id, agents, task_data, crew_config, _update_status
             )
+            if fleet_result is not None:
+                results, gpu_agent_count = fleet_result
+            else:
+                results, gpu_agent_count = await _run_local(
+                    crew_id, agents, task_data, crew_config, _update_status
+                )
 
         # Phase 3: Aggregate, DLP, audit, metrics
         await _aggregate_and_finalize(

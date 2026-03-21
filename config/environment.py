@@ -25,6 +25,16 @@ class Config:
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
         self.environment = os.getenv("ENVIRONMENT", "development")
 
+        # Backend selection: "crewai" (default) or "agnosai"
+        self.agnostic_backend = os.getenv("AGNOSTIC_BACKEND", "crewai").lower()
+        if self.agnostic_backend not in ("crewai", "agnosai"):
+            raise ValueError(
+                f"Invalid AGNOSTIC_BACKEND={self.agnostic_backend!r}. "
+                "Must be 'crewai' or 'agnosai'."
+            )
+        self.agnosai_url = os.getenv("AGNOSAI_URL", "http://localhost:8080")
+        self.agnosai_api_key = os.getenv("AGNOSAI_API_KEY", "")
+
         # Redis Configuration
         self.redis_host = os.getenv("REDIS_HOST", "redis")
         self.redis_port = int(os.getenv("REDIS_PORT", "6379"))
