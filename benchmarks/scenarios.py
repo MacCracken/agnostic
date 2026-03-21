@@ -26,6 +26,28 @@ def _make_ollama_model(model: str) -> str:
     return f"ollama/{model}"
 
 
+def _agent(
+    key: str,
+    name: str,
+    role: str,
+    goal: str,
+    backstory: str,
+    model: str,
+    complexity: str = "medium",
+) -> dict[str, Any]:
+    """Build an agent definition dict with all required fields."""
+    return {
+        "agent_key": key,
+        "name": name,
+        "role": role,
+        "goal": goal,
+        "backstory": backstory,
+        "complexity": complexity,
+        "llm_model": model,
+        "tools": [],
+    }
+
+
 def build_scenarios(ollama_model: str) -> list[BenchScenario]:
     """Return all benchmark scenarios configured for the given Ollama model."""
     model = _make_ollama_model(ollama_model)
@@ -39,15 +61,15 @@ def build_scenarios(ollama_model: str) -> list[BenchScenario]:
             crew_config={
                 "name": "bench-single",
                 "agents": [
-                    {
-                        "agent_key": "bench-analyst",
-                        "name": "Benchmark Analyst",
-                        "role": "analyst",
-                        "goal": "Analyse the given data and produce a summary",
-                        "complexity": "low",
-                        "llm_model": model,
-                        "tools": [],
-                    },
+                    _agent(
+                        "bench-analyst",
+                        "Benchmark Analyst",
+                        "analyst",
+                        "Analyse the given data and produce a summary",
+                        "You are a data analyst who summarises financial data concisely.",
+                        model,
+                        "low",
+                    ),
                 ],
                 "tasks": [
                     {
@@ -70,33 +92,31 @@ def build_scenarios(ollama_model: str) -> list[BenchScenario]:
             crew_config={
                 "name": "bench-seq-3",
                 "agents": [
-                    {
-                        "agent_key": "bench-researcher",
-                        "name": "Researcher",
-                        "role": "researcher",
-                        "goal": "Gather relevant facts",
-                        "complexity": "medium",
-                        "llm_model": model,
-                        "tools": [],
-                    },
-                    {
-                        "agent_key": "bench-writer",
-                        "name": "Writer",
-                        "role": "writer",
-                        "goal": "Draft a clear report from research",
-                        "complexity": "medium",
-                        "llm_model": model,
-                        "tools": [],
-                    },
-                    {
-                        "agent_key": "bench-reviewer",
-                        "name": "Reviewer",
-                        "role": "reviewer",
-                        "goal": "Review the report for accuracy and clarity",
-                        "complexity": "low",
-                        "llm_model": model,
-                        "tools": [],
-                    },
+                    _agent(
+                        "bench-researcher",
+                        "Researcher",
+                        "researcher",
+                        "Gather relevant facts",
+                        "You are a thorough researcher who finds key facts quickly.",
+                        model,
+                    ),
+                    _agent(
+                        "bench-writer",
+                        "Writer",
+                        "writer",
+                        "Draft a clear report from research",
+                        "You are a technical writer who produces clear executive summaries.",
+                        model,
+                    ),
+                    _agent(
+                        "bench-reviewer",
+                        "Reviewer",
+                        "reviewer",
+                        "Review the report for accuracy and clarity",
+                        "You are an editor who reviews reports for factual accuracy.",
+                        model,
+                        "low",
+                    ),
                 ],
                 "tasks": [
                     {
@@ -123,33 +143,30 @@ def build_scenarios(ollama_model: str) -> list[BenchScenario]:
             crew_config={
                 "name": "bench-par-3",
                 "agents": [
-                    {
-                        "agent_key": "bench-security",
-                        "name": "Security Analyst",
-                        "role": "security analyst",
-                        "goal": "Identify security concerns",
-                        "complexity": "medium",
-                        "llm_model": model,
-                        "tools": [],
-                    },
-                    {
-                        "agent_key": "bench-perf",
-                        "name": "Performance Analyst",
-                        "role": "performance analyst",
-                        "goal": "Identify performance bottlenecks",
-                        "complexity": "medium",
-                        "llm_model": model,
-                        "tools": [],
-                    },
-                    {
-                        "agent_key": "bench-ux",
-                        "name": "UX Analyst",
-                        "role": "UX analyst",
-                        "goal": "Evaluate user experience",
-                        "complexity": "medium",
-                        "llm_model": model,
-                        "tools": [],
-                    },
+                    _agent(
+                        "bench-security",
+                        "Security Analyst",
+                        "security analyst",
+                        "Identify security concerns",
+                        "You are an application security specialist focused on OWASP top 10.",
+                        model,
+                    ),
+                    _agent(
+                        "bench-perf",
+                        "Performance Analyst",
+                        "performance analyst",
+                        "Identify performance bottlenecks",
+                        "You are a performance engineer who profiles web applications.",
+                        model,
+                    ),
+                    _agent(
+                        "bench-ux",
+                        "UX Analyst",
+                        "UX analyst",
+                        "Evaluate user experience",
+                        "You are a UX researcher who evaluates accessibility and usability.",
+                        model,
+                    ),
                 ],
                 "tasks": [
                     {
@@ -176,42 +193,39 @@ def build_scenarios(ollama_model: str) -> list[BenchScenario]:
             crew_config={
                 "name": "bench-dag-diamond",
                 "agents": [
-                    {
-                        "agent_key": "bench-planner",
-                        "name": "Planner",
-                        "role": "planner",
-                        "goal": "Create a project plan",
-                        "complexity": "medium",
-                        "llm_model": model,
-                        "tools": [],
-                    },
-                    {
-                        "agent_key": "bench-frontend",
-                        "name": "Frontend Dev",
-                        "role": "frontend developer",
-                        "goal": "Implement frontend tasks",
-                        "complexity": "medium",
-                        "llm_model": model,
-                        "tools": [],
-                    },
-                    {
-                        "agent_key": "bench-backend",
-                        "name": "Backend Dev",
-                        "role": "backend developer",
-                        "goal": "Implement backend tasks",
-                        "complexity": "medium",
-                        "llm_model": model,
-                        "tools": [],
-                    },
-                    {
-                        "agent_key": "bench-integrator",
-                        "name": "Integrator",
-                        "role": "integration engineer",
-                        "goal": "Integrate frontend and backend",
-                        "complexity": "low",
-                        "llm_model": model,
-                        "tools": [],
-                    },
+                    _agent(
+                        "bench-planner",
+                        "Planner",
+                        "planner",
+                        "Create a project plan",
+                        "You are a project manager who breaks work into milestones.",
+                        model,
+                    ),
+                    _agent(
+                        "bench-frontend",
+                        "Frontend Dev",
+                        "frontend developer",
+                        "Implement frontend tasks",
+                        "You are a React developer who designs component hierarchies.",
+                        model,
+                    ),
+                    _agent(
+                        "bench-backend",
+                        "Backend Dev",
+                        "backend developer",
+                        "Implement backend tasks",
+                        "You are a FastAPI developer who designs REST endpoint structures.",
+                        model,
+                    ),
+                    _agent(
+                        "bench-integrator",
+                        "Integrator",
+                        "integration engineer",
+                        "Integrate frontend and backend",
+                        "You are an integration engineer who defines API contracts.",
+                        model,
+                        "low",
+                    ),
                 ],
                 "tasks": [
                     {
@@ -245,23 +259,47 @@ def build_scenarios(ollama_model: str) -> list[BenchScenario]:
             crew_config={
                 "name": "bench-large-qa",
                 "agents": [
-                    {
-                        "agent_key": f"bench-qa-{i}",
-                        "name": f"QA Agent {i}",
-                        "role": role,
-                        "goal": goal,
-                        "complexity": "low",
-                        "llm_model": model,
-                        "tools": [],
-                    }
-                    for i, (role, goal) in enumerate(
+                    _agent(
+                        f"bench-qa-{i}",
+                        f"QA Agent {i}",
+                        role,
+                        goal,
+                        backstory,
+                        model,
+                        "low",
+                    )
+                    for i, (role, goal, backstory) in enumerate(
                         [
-                            ("test planner", "Plan test strategy"),
-                            ("functional tester", "Write functional tests"),
-                            ("regression tester", "Run regression checks"),
-                            ("security tester", "Check for vulnerabilities"),
-                            ("performance tester", "Run load tests"),
-                            ("qa reporter", "Aggregate and report results"),
+                            (
+                                "test planner",
+                                "Plan test strategy",
+                                "You are a QA lead who designs test strategies.",
+                            ),
+                            (
+                                "functional tester",
+                                "Write functional tests",
+                                "You are a QA engineer who writes functional test cases.",
+                            ),
+                            (
+                                "regression tester",
+                                "Run regression checks",
+                                "You are a QA engineer focused on regression testing.",
+                            ),
+                            (
+                                "security tester",
+                                "Check for vulnerabilities",
+                                "You are a security tester who checks for OWASP vulnerabilities.",
+                            ),
+                            (
+                                "performance tester",
+                                "Run load tests",
+                                "You are a performance engineer who designs load tests.",
+                            ),
+                            (
+                                "qa reporter",
+                                "Aggregate and report results",
+                                "You are a QA analyst who aggregates test results into reports.",
+                            ),
                         ]
                     )
                 ],

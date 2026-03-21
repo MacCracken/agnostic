@@ -16,6 +16,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# How long to wait for an async crew to finish (seconds).
+_POLL_INTERVAL = 2.0
+_POLL_TIMEOUT = 300.0
+
 
 @dataclass
 class RunResult:
@@ -94,6 +98,31 @@ def _agnosai_payload(crew_config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _poll_crewai(
+    client: httpx.AsyncClient,
+    base_url: str,
+    crew_id: str,
+    headers: dict[str, str],
+) -> dict[str, Any]:
+    """Poll the CrewAI status endpoint until the crew finishes or times out."""
+    deadline = time.perf_counter() + _POLL_TIMEOUT
+    while time.perf_counter() < deadline:
+        await asyncio.sleep(_POLL_INTERVAL)
+        try:
+            resp = await client.get(
+                f"{base_url}/api/v1/crews/{crew_id}", headers=headers
+            )
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            status = data.get("status", "")
+            if status in ("completed", "failed", "partial", "error"):
+                return data
+        except httpx.RequestError:
+            continue
+    return {"status": "timeout", "error": "Crew did not finish within poll timeout"}
+
+
 async def _run_one(
     client: httpx.AsyncClient,
     backend: str,
@@ -118,9 +147,34 @@ async def _run_one(
     t0 = time.perf_counter()
     try:
         resp = await client.post(url, json=payload, headers=headers)
-        wall = time.perf_counter() - t0
-        body = resp.json() if resp.status_code < 500 else {}
+
+        if resp.status_code >= 400:
+            wall = time.perf_counter() - t0
+            body = resp.json() if resp.status_code < 500 else {}
+            return RunResult(
+                backend=backend,
+                scenario=scenario_name,
+                round_num=round_num,
+                wall_secs=wall,
+                status="error",
+                http_status=resp.status_code,
+                error=f"HTTP {resp.status_code}: {body.get('detail', resp.text[:200])}",
+                response_body=body,
+            )
+
+        body = resp.json()
         status = body.get("status", "unknown")
+
+        # CrewAI returns "pending" — we need to poll until done.
+        if status == "pending" and backend == "crewai":
+            crew_id = body.get("crew_id", "")
+            if crew_id:
+                logger.info("  polling crew %s...", crew_id[:12])
+                final = await _poll_crewai(client, base_url, crew_id, headers)
+                status = final.get("status", "unknown")
+                body = final
+
+        wall = time.perf_counter() - t0
         return RunResult(
             backend=backend,
             scenario=scenario_name,
@@ -160,6 +214,7 @@ async def run_scenario(
                 client, backend, base_url, crew_config, scenario_name, r + 1, api_key
             )
             results.append(result)
+            logger.info("  -> %s in %.2fs", result.status, result.wall_secs)
             # Small pause between rounds to avoid hammering Ollama.
             if r < rounds - 1:
                 await asyncio.sleep(1.0)
