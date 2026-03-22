@@ -42,16 +42,27 @@ def build_report(
     for (backend, scenario), runs in sorted(groups.items()):
         times = [r.wall_secs for r in runs if r.status != "error"]
         success = sum(1 for r in runs if r.status not in ("error", "failed"))
-        scenarios.append(
-            {
-                "backend": backend,
-                "scenario": scenario,
-                "rounds": len(runs),
-                "success_count": success,
-                "failure_count": len(runs) - success,
-                "latency": _stats(times),
+        entry: dict[str, Any] = {
+            "backend": backend,
+            "scenario": scenario,
+            "rounds": len(runs),
+            "success_count": success,
+            "failure_count": len(runs) - success,
+            "latency": _stats(times),
+        }
+        # Server-side profiling (AgnosAI 0.21.3+)
+        profiled = [r for r in runs if r.profile_wall_ms > 0]
+        if profiled:
+            server_ms = [r.profile_wall_ms for r in profiled]
+            entry["profile"] = {
+                "server_wall_ms": _stats([float(v) for v in server_ms]),
+                "task_count": profiled[0].profile_task_count,
+                "cost_usd": sum(r.profile_cost_usd for r in profiled) / len(profiled),
+                "overhead_ms": _stats(
+                    [r.wall_secs * 1000 - r.profile_wall_ms for r in profiled]
+                ),
             }
-        )
+        scenarios.append(entry)
 
     report: dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -115,6 +126,32 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"| {lat['mean']:.3f} | {lat['median']:.3f} "
             f"| {lat['min']:.3f} | {lat['max']:.3f} | {lat['stdev']:.3f} |"
         )
+
+    # Server-side profiling section (AgnosAI 0.21.3+)
+    profiled = [s for s in report["scenarios"] if "profile" in s]
+    if profiled:
+        lines.append("")
+        lines.append("## Server-Side Profiling (AgnosAI 0.21.3+)")
+        lines.append("")
+        lines.append(
+            "| Scenario | Backend | Server Wall (ms) "
+            "| HTTP Overhead (ms) | Tasks | Avg Cost (USD) |"
+        )
+        lines.append(
+            "|----------|---------|-------------------"
+            "|--------------------|-------|----------------|"
+        )
+        for s in profiled:
+            p = s["profile"]
+            sw = p["server_wall_ms"]
+            oh = p["overhead_ms"]
+            lines.append(
+                f"| {s['scenario']} | {s['backend']} "
+                f"| {sw['mean']:.1f} "
+                f"| {oh['mean']:.1f} "
+                f"| {p['task_count']} "
+                f"| {p['cost_usd']:.4f} |"
+            )
 
     # Comparison section — pair up same-scenario across backends.
     crewai = {s["scenario"]: s for s in report["scenarios"] if s["backend"] == "crewai"}

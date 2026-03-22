@@ -33,6 +33,11 @@ class RunResult:
     http_status: int = 0
     error: str | None = None
     response_body: dict[str, Any] = field(default_factory=dict)
+    # Server-side profiling (AgnosAI 0.21.3+)
+    profile_wall_ms: int = 0
+    profile_task_ms: dict[str, int] = field(default_factory=dict)
+    profile_task_count: int = 0
+    profile_cost_usd: float = 0.0
 
 
 async def check_health(base_url: str, *, timeout: float = 5.0) -> bool:
@@ -128,6 +133,16 @@ async def _poll_crew(
     return {"status": "timeout", "error": "Crew did not finish within poll timeout"}
 
 
+def _extract_profile(result: RunResult, body: dict[str, Any]) -> None:
+    """Populate server-side profile fields from the response body (AgnosAI 0.21.3+)."""
+    profile = body.get("profile") or body.get("result", {}).get("profile")
+    if profile and isinstance(profile, dict):
+        result.profile_wall_ms = profile.get("wall_ms", 0)
+        result.profile_task_ms = profile.get("task_ms", {})
+        result.profile_task_count = profile.get("task_count", 0)
+        result.profile_cost_usd = profile.get("cost_usd", 0.0)
+
+
 async def _run_one(
     client: httpx.AsyncClient,
     backend: str,
@@ -180,7 +195,7 @@ async def _run_one(
                 body = final
 
         wall = time.perf_counter() - t0
-        return RunResult(
+        result = RunResult(
             backend=backend,
             scenario=scenario_name,
             round_num=round_num,
@@ -189,6 +204,8 @@ async def _run_one(
             http_status=resp.status_code,
             response_body=body,
         )
+        _extract_profile(result, body)
+        return result
     except httpx.RequestError as exc:
         wall = time.perf_counter() - t0
         return RunResult(

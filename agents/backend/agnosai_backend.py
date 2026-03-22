@@ -128,9 +128,21 @@ class AgnosAIBackend(CrewBackend):
                 "output": result.get("output", ""),
             }
 
+        # Extract execution profile (0.21.3+).
+        profile: CrewProfile | None = None
+        raw_profile = data.get("profile")
+        if raw_profile and isinstance(raw_profile, dict):
+            profile = CrewProfile(
+                wall_ms=raw_profile.get("wall_ms", 0),
+                task_ms=raw_profile.get("task_ms", {}),
+                task_count=raw_profile.get("task_count", 0),
+                cost_usd=raw_profile.get("cost_usd", 0.0),
+            )
+
         return BackendResult(
             status=data.get("status", "unknown"),
             agent_results=agent_results,
+            profile=profile,
         )
 
     async def get_crew_status(self, crew_id: str) -> dict[str, Any]:

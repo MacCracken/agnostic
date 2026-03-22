@@ -471,6 +471,24 @@ Build `agnosai-core` and `agnosai-orchestrator` with the essential primitives.
 
 **Exit criteria**: Full API compatibility with Agnostic v1. Can swap the backend without changing any caller.
 
+### Phase 4.5 — Unix Socket IPC Transport
+
+Replace the HTTP (`httpx`) transport between Agnostic and AgnosAI with a direct Unix socket connection using AgnosAI's existing IPC framing protocol.
+
+| Item | Source | Effort |
+|------|--------|--------|
+| Python socket client matching AgnosAI IPC framing (4-byte BE u32 length + JSON, 16 MiB max) | AgnosAI `agnosai-orchestrator/ipc.rs` | Medium |
+| `AgnosAIBackend` socket transport (replace `httpx` calls with socket IPC) | `agents/backend/agnosai_backend.py` | Medium |
+| `FleetShim` socket transport (replace `httpx` calls with socket IPC) | `config/fleet/shim.py` | Small |
+| Transport selection: `AGNOSAI_TRANSPORT=http\|socket` env var, default `http` for backward compat | New | Small |
+| Socket path config: `AGNOSAI_SOCKET_PATH` (default `/tmp/agnosai.sock` or co-located via Docker volume) | New | Small |
+| Reconnect + backoff on socket disconnect | New | Small |
+| Profiling data passthrough over socket (CrewProfile in responses) | AgnosAI 0.21.3+ | Small |
+
+**Why**: HTTP adds ~1-5ms overhead per call (TCP handshake, serialization, headers). Unix socket IPC with length-prefixed framing is <0.1ms for co-located processes. This matters for high-frequency fleet coordination and streaming crew events.
+
+**Exit criteria**: `AGNOSAI_TRANSPORT=socket` routes all backend + fleet calls through Unix socket IPC. HTTP remains as fallback. Benchmarks show measurable latency reduction.
+
 ### Phase 5 — Agnostic Migration
 
 | Item | Effort | Notes |

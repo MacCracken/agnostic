@@ -441,6 +441,8 @@ async def _aggregate_and_finalize(
     _time: Any,
     update_status: Any,
     active_crew_tasks: Any,
+    *,
+    backend_profile: Any | None = None,
 ) -> str:
     """Aggregate results, run DLP scan, forward audit, record metrics."""
     all_ok = all(r.get("status") == "completed" for r in results.values())
@@ -496,19 +498,22 @@ async def _aggregate_and_finalize(
         GPU_AGENTS_SCHEDULED.inc()
     active_crew_tasks.dec()
 
-    await update_status(
-        final_status,
-        {
-            "agent_results": results,
-            "agents_succeeded": sum(
-                1 for r in results.values() if r.get("status") == "completed"
-            ),
-            "agents_failed": sum(
-                1 for r in results.values() if r.get("status") == "failed"
-            ),
-            "completed_at": datetime.now(UTC).isoformat(),
-        },
-    )
+    status_payload: dict[str, Any] = {
+        "agent_results": results,
+        "agents_succeeded": sum(
+            1 for r in results.values() if r.get("status") == "completed"
+        ),
+        "agents_failed": sum(
+            1 for r in results.values() if r.get("status") == "failed"
+        ),
+        "completed_at": datetime.now(UTC).isoformat(),
+    }
+    if backend_profile is not None:
+        from dataclasses import asdict
+
+        status_payload["profile"] = asdict(backend_profile)
+
+    await update_status(final_status, status_payload)
 
     return final_status
 
@@ -606,11 +611,13 @@ async def _run_crew_async(
                 crew_config, session_id, crew_id, task_id
             )
             results = backend_result.agent_results
+            backend_profile = backend_result.profile
             gpu_agent_count = 0
             if backend_result.error:
                 await _update_status("failed", {"error": backend_result.error})
                 return
         else:
+            backend_profile = None
             fleet_result = await _try_fleet_execution(
                 crew_id, agents, task_data, crew_config, _update_status
             )
@@ -632,6 +639,7 @@ async def _run_crew_async(
             _time,
             _update_status,
             ACTIVE_CREW_TASKS,
+            backend_profile=backend_profile,
         )
 
     except Exception as exc:

@@ -84,6 +84,10 @@ services:
       AGNOSTIC_BACKEND: ${AGNOSTIC_BACKEND:-crewai}
       AGNOSAI_URL: ${AGNOSAI_URL:-http://agnosai-server:8080}
       AGNOSAI_API_KEY: ${AGNOSAI_API_KEY:-}
+      # litellm uses OLLAMA_URL for ollama/ prefixed model routing
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      # Override Caddy's XDG_DATA_HOME so CrewAI's ChromaDB storage is writable
+      XDG_DATA_HOME: /home/agnostic/.local/share
     networks:
       - qa-network
     volumes:
@@ -117,6 +121,7 @@ services:
       - "8080:8080"
     environment:
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      HOOSH_URL: ${HOOSH_URL:-http://ollama:11434}
     networks:
       - qa-network
     restart: unless-stopped
@@ -127,18 +132,28 @@ services:
       retries: 5
 
   # ---------------------------------------------------------------------------
-  # Ollama local LLM server (--profile benchmark or --profile ollama)
-  # Provides a local inference backend for fair CrewAI-vs-AgnosAI comparison.
+  # Ollama local LLM server — one profile per GPU backend.
+  # Pick exactly one ollama-* profile for your hardware:
+  #
+  #   NVIDIA:  docker compose --profile benchmark --profile ollama-nvidia up -d
+  #   AMD:     docker compose --profile benchmark --profile ollama-amd up -d
+  #   Vulkan:  docker compose --profile benchmark --profile ollama-vulkan up -d
+  #   CPU:     docker compose --profile benchmark --profile ollama-cpu up -d
+  #
+  # All variants register the network alias "ollama" so other services
+  # reach them at http://ollama:11434 without config changes.
   # ---------------------------------------------------------------------------
-  ollama:
+  ollama-nvidia:
     image: ollama/ollama:latest
-    profiles: ["benchmark", "ollama"]
+    profiles: ["ollama-nvidia"]
     ports:
       - "${OLLAMA_PORT:-11434}:11434"
     environment:
       OLLAMA_HOST: "0.0.0.0"
     networks:
-      - qa-network
+      qa-network:
+        aliases:
+          - ollama
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
@@ -150,6 +165,57 @@ services:
               count: all
               capabilities: [gpu]
 
+  ollama-amd:
+    image: ollama/ollama:rocm
+    profiles: ["ollama-amd"]
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+    networks:
+      qa-network:
+        aliases:
+          - ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    restart: unless-stopped
+
+  ollama-vulkan:
+    image: ollama/ollama:latest
+    profiles: ["ollama-vulkan"]
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+      OLLAMA_VULKAN: "true"
+    networks:
+      qa-network:
+        aliases:
+          - ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    devices:
+      - /dev/dri:/dev/dri
+    restart: unless-stopped
+
+  ollama-cpu:
+    image: ollama/ollama:latest
+    profiles: ["ollama-cpu"]
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+    networks:
+      qa-network:
+        aliases:
+          - ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
   # ---------------------------------------------------------------------------
   # Dev infrastructure (--profile dev)
   # Separate containers for isolated development and testing.
@@ -157,7 +223,7 @@ services:
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
-    profiles: ["dev"]
+    profiles: ["dev", "benchmark"]
     ports:
       - "6379:6379"
     networks:

@@ -67,7 +67,15 @@ async def main(args: argparse.Namespace) -> int:
     scenarios = build_scenarios(args.model)
     all_results = []
 
-    for backend, url in backends:
+    for i, (backend, url) in enumerate(backends):
+        # Cooldown between backends — wait for in-flight Ollama requests
+        # from the previous backend to drain.  Without this, async crews
+        # that exceeded the poll timeout keep running and starve the next
+        # backend of Ollama capacity.
+        if i > 0:
+            logger.info("Waiting %ds for Ollama to drain...", args.cooldown)
+            await asyncio.sleep(args.cooldown)
+
         for sc in scenarios:
             results = await run_scenario(
                 backend=backend,
@@ -101,6 +109,12 @@ def cli() -> None:
     p.add_argument("--model", default="qwen2.5:1.5b", help="Ollama model name")
     p.add_argument("--rounds", type=int, default=5, help="Rounds per scenario")
     p.add_argument("--api-key", default="", help="API key for both servers")
+    p.add_argument(
+        "--cooldown",
+        type=int,
+        default=30,
+        help="Seconds to wait between backends for Ollama to drain (default 30)",
+    )
     args = p.parse_args()
     sys.exit(asyncio.run(main(args)))
 
