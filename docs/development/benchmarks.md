@@ -143,7 +143,7 @@ stack and can reach the host Ollama directly on `localhost:11434`.
 ```bash
 docker run -d --name bench-agnosai --network host \
   -e HOOSH_URL=http://127.0.0.1:11434 \
-  ghcr.io/maccracken/agnosai:latest
+  ghcr.io/maccracken/agnosai:1.0.2
 ```
 
 Key env vars:

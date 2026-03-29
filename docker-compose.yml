@@ -112,10 +112,7 @@ services:
   # AgnosAI Rust server (--profile agnosai or --profile e2e)
   # ---------------------------------------------------------------------------
   agnosai-server:
-    image: ${AGNOSAI_IMAGE:-ghcr.io/maccracken/agnosai:latest}
-    build:
-      context: ${AGNOSAI_BUILD_CONTEXT:-../agnosai}
-      dockerfile: Dockerfile
+    image: ${AGNOSAI_IMAGE:-ghcr.io/maccracken/agnosai:1.0.2}
     profiles: ["agnosai", "e2e", "benchmark"]
     ports:
       - "8080:8080"
