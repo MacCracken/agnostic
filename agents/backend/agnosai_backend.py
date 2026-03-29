@@ -29,26 +29,35 @@ def _translate_crew_config(crew_config: dict[str, Any]) -> dict[str, Any]:
             "role": member.get("role", ""),
             "goal": member.get("goal", ""),
         }
-        # Optional fields — only include if present.
+        # Optional scalar/string fields — only include if present.
         for key in ("backstory", "domain", "tools", "complexity", "llm_model"):
             if member.get(key):
                 agent[key] = member[key]
-        for key in ("gpu_required", "gpu_preferred"):
-            if member.get(key):
-                agent[key] = member[key]
-        if member.get("gpu_memory_min_mb"):
-            agent["gpu_memory_min_mb"] = member["gpu_memory_min_mb"]
+        # Modern hardware requirements — prefer over legacy fields.
+        if member.get("hardware"):
+            agent["hardware"] = member["hardware"]
+        else:
+            for key in ("gpu_required", "gpu_preferred"):
+                if member.get(key):
+                    agent[key] = member[key]
+            if member.get("gpu_memory_min_mb"):
+                agent["gpu_memory_min_mb"] = member["gpu_memory_min_mb"]
+        # Personality profile (bhava).
+        if member.get("personality"):
+            agent["personality"] = member["personality"]
         agents.append(agent)
 
     # Build tasks from the crew_config description.
     tasks = []
     if crew_config.get("tasks"):
-        for i, t in enumerate(crew_config["tasks"]):
+        for t in crew_config["tasks"]:
             task: dict[str, Any] = {"description": t.get("description", "")}
             if t.get("expected_output"):
                 task["expected_output"] = t["expected_output"]
             if t.get("dependencies"):
                 task["dependencies"] = t["dependencies"]
+            if t.get("priority"):
+                task["priority"] = t["priority"]
             tasks.append(task)
     else:
         # Single-task fallback from title/description.
@@ -160,12 +169,28 @@ class AgnosAIBackend(CrewBackend):
                 f"{self.base_url}/api/v1/crews/{crew_id}/stream",
                 headers=self._headers(),
             ) as resp:
+                event_type = ""
                 async for line in resp.aiter_lines():
-                    if line.startswith("data: "):
+                    if line.startswith("event: "):
+                        event_type = line[7:].strip()
+                    elif line.startswith("data: "):
                         try:
-                            yield json.loads(line[6:])
+                            data = json.loads(line[6:])
                         except json.JSONDecodeError:
                             continue
+                        # Inject the SSE event type for downstream consumers.
+                        if event_type:
+                            data["_sse_event"] = event_type
+                        # Skip control events, forward crew events.
+                        if event_type == "error":
+                            logger.warning(
+                                "AgnosAI SSE error for crew %s: %s",
+                                crew_id,
+                                data.get("data", {}).get("message", data),
+                            )
+                        elif event_type != "connected":
+                            yield data
+                        event_type = ""
 
     async def cancel_crew(self, crew_id: str) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=30) as client:

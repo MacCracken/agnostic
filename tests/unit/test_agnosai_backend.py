@@ -190,6 +190,88 @@ class TestAgnosAIBackendExecute:
         assert "unreachable" in result.error.lower()
 
 
+class TestTranslateCrewConfigNewFields:
+    """Verify _translate_crew_config forwards hardware, personality, and priority."""
+
+    def test_hardware_field_forwarded(self):
+        config = {
+            "agents": [
+                {
+                    "role": "trainer",
+                    "goal": "train",
+                    "hardware": {
+                        "accelerators": ["cuda"],
+                        "min_memory_mb": 16384,
+                        "min_device_count": 2,
+                    },
+                }
+            ],
+        }
+        result = _translate_crew_config(config)
+        agent = result["agents"][0]
+        assert agent["hardware"]["min_memory_mb"] == 16384
+        assert "gpu_required" not in agent
+
+    def test_legacy_gpu_when_no_hardware(self):
+        config = {
+            "agents": [
+                {
+                    "role": "trainer",
+                    "goal": "train",
+                    "gpu_required": True,
+                    "gpu_memory_min_mb": 8192,
+                }
+            ],
+        }
+        result = _translate_crew_config(config)
+        agent = result["agents"][0]
+        assert agent["gpu_required"] is True
+        assert agent["gpu_memory_min_mb"] == 8192
+        assert "hardware" not in agent
+
+    def test_personality_forwarded(self):
+        config = {
+            "agents": [
+                {
+                    "role": "advisor",
+                    "goal": "advise",
+                    "personality": {
+                        "openness": 0.8,
+                        "conscientiousness": 0.9,
+                    },
+                }
+            ],
+        }
+        result = _translate_crew_config(config)
+        assert result["agents"][0]["personality"]["openness"] == 0.8
+
+    def test_task_priority_forwarded(self):
+        config = {
+            "agents": [{"role": "w", "goal": "g"}],
+            "tasks": [
+                {"description": "urgent task", "priority": "high"},
+                {"description": "normal task"},
+            ],
+        }
+        result = _translate_crew_config(config)
+        assert result["tasks"][0]["priority"] == "high"
+        assert "priority" not in result["tasks"][1]
+
+    def test_profile_parsed_from_response(self):
+        """Verify execute_crew extracts CrewProfile from response."""
+        from agents.backend.base import CrewProfile
+
+        profile_data = {
+            "wall_ms": 1500,
+            "task_ms": {"t1": 800},
+            "task_count": 1,
+            "cost_usd": 0.003,
+        }
+        p = CrewProfile(**profile_data)
+        assert p.wall_ms == 1500
+        assert p.cost_usd == 0.003
+
+
 class TestTranslateCrewConfigSources:
     """Verify _translate_crew_config handles all crew_config shapes."""
 
