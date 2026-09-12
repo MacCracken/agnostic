@@ -69,6 +69,32 @@ stdlib = [
 # all 24 `.tcyr`, the bench, the fuzz harness). Nothing in `src/` needed a line
 # changed: agnostic's own code uses no `Result`/`Option`/`Either` at all.
 # 2.0.8 pins kavach 3.12.5 + libro 2.10.x, which are migrated. Move both.
+# ⛔ THE FOUR PINS BELOW ARE NOT OPTIONAL, AND THEY MUST PRECEDE [deps.agnosai].
+# agnosai 2.0.8's own published manifest declares bote, majra, ai-hwaccel and tyche
+# with `path = "../<sibling>"` ALONGSIDE their tags. A path override makes the tag
+# INERT: on a machine that has those siblings checked out, resolution reads the
+# working tree; on CI, which has none, it reads the tag. Same commit, two different
+# `lib/` trees, so `cyrius.lock` is written differently on each and the
+# "Lockfile agrees with a clean resolution" gate can never pass. Declaring them here
+# WITHOUT a path removes the override from this repo's resolution entirely, so the
+# lock is a function of the tags alone. Tags match what agnosai 2.0.8 itself pins —
+# changing one here without checking agnosai is how the two silently diverge.
+[deps.bote]
+git = "https://github.com/MacCracken/bote.git"
+tag = "3.3.8"
+
+[deps.majra]
+git = "https://github.com/MacCracken/majra.git"
+tag = "2.7.2"
+
+[deps.ai-hwaccel]
+git = "https://github.com/MacCracken/ai-hwaccel.git"
+tag = "2.3.22"
+
+[deps.tyche]
+git = "https://github.com/MacCracken/tyche.git"
+tag = "1.0.1"
+
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
 tag = "2.0.8"
