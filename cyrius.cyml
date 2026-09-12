@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "agnostic — TODO"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.5.35"
+cyrius = "6.6.2"
 
 [build]
 entry = "src/main.cyr"
@@ -60,9 +60,18 @@ stdlib = [
 # one alone leaves this repo red: 2.0.4 pulls libro 2.8.8 (patra 1.13.9), which
 # would downgrade against a 6.5.34 snapshot just as surely as 2.0.5 upgraded
 # against a 6.5.32 one.
+#
+# ⚠ **The same lockstep at 6.6.2 — and this time the stale half was the DEP.**
+# The 6.6.2 `Result` value form retires `payload()` / `tag()` / 1-arg
+# `result_unwrap()`. agnosai 2.0.6 pins kavach 3.12.2, whose `dist/kavach.cyr`
+# predates that flip, so bumping `[package].cyrius` alone left 41 hard compile
+# errors in vendored `lib/` — 34 of them in kavach — on EVERY surface (build,
+# all 24 `.tcyr`, the bench, the fuzz harness). Nothing in `src/` needed a line
+# changed: agnostic's own code uses no `Result`/`Option`/`Either` at all.
+# 2.0.8 pins kavach 3.12.5 + libro 2.10.x, which are migrated. Move both.
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
-tag = "2.0.6"
+tag = "2.0.8"
 modules = ["dist/agnosai.cyr"]
 
 [release]
