@@ -20,6 +20,16 @@ locally-produced lock describes a sibling worktree CI will never see — is unto
 any toolchain release and is the more dangerous half. Retiring the script because the
 ordering half got fixed would drop that guard.
 
+### Also — `lib/` refreshed to the 6.6.3 stdlib snapshot
+
+CI runs `cyrius lib sync --full` before `cyrius deps`, which rewrites every vendored stdlib
+leaf from the pinned toolchain. Six committed leaves were stale against 6.6.3 — `ganita`,
+`mabda`, `niyama`, `vani`, `yantra`, `yukti` — so the lock-check step reported "the resolved FILE SET
+changed" on the first push. They are refreshed here, and the lock re-resolved with the exact
+CI sequence; a second run is byte-identical, so the committed lock is what CI computes.
+(A local `cyrius deps` alone does NOT refresh them — only the `--full` sync does, which is
+why the lock looked clean locally.)
+
 ## [0.1.1] - 2026-09-11
 
 ### Changed
