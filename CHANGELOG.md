@@ -4,6 +4,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2] - cyrius 6.6.3
+
+`cyrius` 6.6.2 -> **6.6.3**. No source change; re-vendored and rebuilt.
+
+6.6.3 makes `cyrius.lock` deterministic. `_deps_lock_dir` wrote its hash lines in
+`dir_list` (readdir) order, so a fresh checkout on another machine produced the same
+hashes in a different SEQUENCE — the defect `scripts/lock-check.sh` was written to
+tolerate, and the reason its comparison is order-insensitive. The `lib/` names in the
+lock are now emitted sorted; verified here.
+
+⚠ **`scripts/lock-check.sh` STAYS.** It guards two things, and 6.6.3 fixes only one.
+The other — a `path = "../<dep>"` override silently winning over that dep's `tag`, so a
+locally-produced lock describes a sibling worktree CI will never see — is untouched by
+any toolchain release and is the more dangerous half. Retiring the script because the
+ordering half got fixed would drop that guard.
+
 ## [0.1.1] - 2026-09-11
 
 ### Changed
