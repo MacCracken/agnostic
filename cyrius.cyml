@@ -97,7 +97,7 @@ tag = "1.0.1"
 
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
-tag = "2.0.8"
+tag = "2.0.9"
 modules = ["dist/agnosai.cyr"]
 
 [release]

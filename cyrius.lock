@@ -1,4 +1,4 @@
-commit	c75cc323d6d1cb86c4ad1f672f773e5c5bbb3419	agnosai	https://github.com/MacCracken/agnosai.git	2.0.8
+commit	56bd5783a0b94070e88ddf4f460e60bf0dca4782	agnosai	https://github.com/MacCracken/agnosai.git	2.0.9
 commit	385d0ad44da179344c817bb4bf58b419717f059b	sigil	https://github.com/MacCracken/sigil.git	3.12.16
 commit	3e43a36b803906f62cb1eed9864a65d99f2cf57a	bote	https://github.com/MacCracken/bote.git	3.3.8
 commit	69dbd0abd1a1c8a14c71a3a1e3552ff72806e285	majra	https://github.com/MacCracken/majra.git	2.7.2
@@ -60,7 +60,7 @@ d86e95aa17266cf10d634825da8a1ce3e13a8b654fec8178c684297c52b14cb6  lib/process.cy
 2606533fa73831ec89acfffe96a1a438b2adb21be6b5b70ca02e76b6a77c6dbb  lib/tls.cyr
 293aba79206fc1201a8998b64f51d00d8cb8ac3a5cb2f4ed96c1ca5a4b5aa2cd  lib/trait.cyr
 df03f0619d56598ef8dba98335f8e7b606924c37cf418fa78e6bfb999afdef0b  lib/yukti.cyr
-5e7703966351d793474e70711186fc54a430b22bb65eabeb489d27f4a70c3f7e  lib/agnosai.cyr
+aca8ea03899cffb6b6fdbebdef04b416759bf25c88a119b53b0bd811e2c2cac0  lib/agnosai.cyr
 09cf81bf4f10758da7967a5f6628b2feed53b0fb5e6e11cac0b273725465e6d8  lib/assert.cyr
 c88c2ab7f87fdbf63d8e8cb12d43471e7863315f8053341f295b2237788e6d78  lib/args.cyr
 90846b2f95ca0ed3166b257735b390c4ac835f3f1de17e7ee532fdc89584c251  lib/patra.cyr

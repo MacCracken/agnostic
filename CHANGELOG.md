@@ -11,6 +11,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Toolchain `6.5.35` → `6.6.2`.** No source change; the value form needed none.
   Build, tests, and any bench/fuzz/distlib target the repo ships re-verified at the new pin.
 
+- **agnosai `2.0.8` → `2.0.9` — fixes the aarch64 cross-build.** agnosai's
+  `sandbox/spawn.cyr` wired the child's stdio with raw `syscall(SYS_DUP2, fd, n)`.
+  aarch64 Linux has **no `dup2` syscall at all** (only `dup3`), so the constant is
+  undefined there and `Cross-build aarch64` failed on the vendored bundle with
+  `undefined variable 'SYS_DUP2'`. The x86_64 build never touches that path, which is
+  why it shipped green. 2.0.9 uses the stdlib's `sys_dup2()`, which exists on both
+  targets. Verified here: aarch64 cross-build OK (6,086,136 bytes).
+
+- **`scripts/lock-check.sh` replaces the inline `git diff --quiet -- cyrius.lock`.**
+  `cyrius deps` does NOT emit the lock's entries in a stable ORDER across machines, so
+  the byte-exact gate failed for every lock committed from another machine — it
+  reported `98 insertions(+), 98 deletions(-)` while an order-insensitive compare of
+  the same two files was EMPTY (identical hashes for all 117 entries, different
+  sequence). The script — adopted verbatim from commandress, which hit this on its
+  first CI run — compares the `commit` pins and the file set as sorted sets, so it
+  still catches a changed hash, an added entry or a dropped pin. Upstream:
+  cyrius `docs/development/issues/2026-09-12-cyrius-lock-unstable-order.md`.
+
+- **`bote`, `majra`, `ai-hwaccel` and `tyche` are now pinned explicitly, ahead of
+  `[deps.agnosai]`.** agnosai's own published manifest declares them with
+  `path = "../<sibling>"` beside their tags; a path override makes the tag inert, so a
+  machine with those siblings checked out resolves the working tree while CI resolves
+  the tag. Declaring them here without a path removes the override from this repo's
+  resolution.
+
 
 ### Changed — agnosai 2.0.4 → 2.0.5, Cyrius pin 6.5.32 → 6.5.34, and `[deps.agnosai]` loses its `path`
 
