@@ -96,6 +96,19 @@ jobs:
             echo "  run 'cyrius lib sync --full && cyrius deps' on a machine whose toolchain matches"
             echo "  the cyrius.cyml pin, then commit the result."
             git diff --stat -- cyrius.lock | sed 's/^/  /'
+            # ⚠ PRINT THE DIFF, NOT JUST THE STAT. A stat alone cannot tell "the hashes
+            # changed" from "the same hashes came back in a different ORDER" — cyrius.lock
+            # is NOT sorted, so a pure permutation shows as N insertions + N deletions and
+            # is indistinguishable from real content drift. Without these lines the failure
+            # is undiagnosable off-runner: it does NOT reproduce on a clean checkout with a
+            # cold CYRIUS_HOME, a cold dep cache and the 6.6.2 release tarball, so the
+            # runner is the only place the evidence exists.
+            echo "  --- diff (first 40 lines) ---"
+            git --no-pager diff -- cyrius.lock | head -40 | sed 's/^/  /'
+            echo "  --- order-insensitive compare (EMPTY means a pure REORDER) ---"
+            git show HEAD:cyrius.lock | sort > /tmp/lock-head.sorted
+            sort cyrius.lock > /tmp/lock-new.sorted
+            diff /tmp/lock-head.sorted /tmp/lock-new.sorted | head -20 | sed 's/^/  /' || true
             exit 1
           fi
           echo "cyrius.lock matches ($(grep -c '^commit' cyrius.lock || echo 0) commit-pinned dep(s))"
