@@ -91,26 +91,19 @@ jobs:
             echo "no git deps declared — no lockfile expected"
             exit 0
           fi
-          if ! git diff --quiet -- cyrius.lock; then
-            echo "::error::the committed cyrius.lock does not match a clean resolution at this pin"
-            echo "  run 'cyrius lib sync --full && cyrius deps' on a machine whose toolchain matches"
-            echo "  the cyrius.cyml pin, then commit the result."
-            git diff --stat -- cyrius.lock | sed 's/^/  /'
-            # ⚠ PRINT THE DIFF, NOT JUST THE STAT. A stat alone cannot tell "the hashes
-            # changed" from "the same hashes came back in a different ORDER" — cyrius.lock
-            # is NOT sorted, so a pure permutation shows as N insertions + N deletions and
-            # is indistinguishable from real content drift. Without these lines the failure
-            # is undiagnosable off-runner: it does NOT reproduce on a clean checkout with a
-            # cold CYRIUS_HOME, a cold dep cache and the 6.6.2 release tarball, so the
-            # runner is the only place the evidence exists.
-            echo "  --- diff (first 40 lines) ---"
-            git --no-pager diff -- cyrius.lock | head -40 | sed 's/^/  /'
-            echo "  --- order-insensitive compare (EMPTY means a pure REORDER) ---"
-            git show HEAD:cyrius.lock | sort > /tmp/lock-head.sorted
-            sort cyrius.lock > /tmp/lock-new.sorted
-            diff /tmp/lock-head.sorted /tmp/lock-new.sorted | head -20 | sed 's/^/  /' || true
-            exit 1
-          fi
+          # ⛔ NOT `git diff --quiet -- cyrius.lock`. `cyrius deps` does NOT emit the
+          # lock's entries in a stable ORDER across machines, so a byte-exact compare
+          # tests the filesystem, not the dependency graph. Proven here 2026-09-12: this
+          # gate reported "98 insertions(+), 98 deletions(-)" while an order-insensitive
+          # compare of the same two files came back EMPTY — identical hashes for all 117
+          # entries, different sequence. commandress hit this on its first CI run and
+          # solved it; scripts/lock-check.sh is that solution, adopted verbatim.
+          #
+          # --no-resolve because the 'Resolve dependencies' step above already ran
+          # `cyrius deps`. The script baselines from `git show HEAD:cyrius.lock`, NOT the
+          # working tree — without that it would compare a regeneration against another
+          # regeneration and pass unconditionally (commandress audit 2026-08-26 A-03).
+          scripts/lock-check.sh --no-resolve
           echo "cyrius.lock matches ($(grep -c '^commit' cyrius.lock || echo 0) commit-pinned dep(s))"
 
       - name: Symbol check
