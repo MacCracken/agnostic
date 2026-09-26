@@ -195,6 +195,13 @@ fn sys_uname(out): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return 0 - 38;   # ENOSYS — Windows has no uname (GetVersionEx)
     #endif
+    # DEFAULT ARM — see the note on sys_utimensat in syscalls_linux_common.cyr:
+    # this preprocessor has no `#else`, so a chain naming only some targets falls
+    # off the end on every other one and returns the register's leftovers. This
+    # file COMPILES for cx (v6.6.6 gave the cx driver a target predefine), so
+    # without this a cx consumer got garbage from a call it had every reason to
+    # trust. CHANGELOG [6.6.6]
+    return 0 - 38;
 }
 
 # Pointer to the nodename (hostname) field of a filled utsname buffer.
@@ -319,6 +326,8 @@ fn sys_sysinfo(out): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return 0 - 38;   # ENOSYS — Windows uses GlobalMemoryStatusEx / GetTickCount64
     #endif
+    # DEFAULT ARM — ENOSYS on any target this chain does not name. CHANGELOG [6.6.6]
+    return 0 - 38;
 }
 
 # Fill a caller-provided sysinfo buffer, asking for `len` bytes. Returns 0 / -errno.
@@ -479,6 +488,8 @@ fn sys_gettid(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return 0 - 38;   # ENOSYS — Windows GetCurrentThreadId not yet wired
     #endif
+    # DEFAULT ARM — ENOSYS on any target this chain does not name. CHANGELOG [6.6.6]
+    return 0 - 38;
 }
 
 # ================================================================
@@ -512,4 +523,11 @@ fn is_root(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return 0;
     #endif
+    # DEFAULT ARM — 0, and deliberately NOT the -38/ENOSYS the rest of this file
+    # uses for "not wired": this fn is a BOOLEAN read as `if (is_root())`, so any
+    # non-zero "error" is indistinguishable from "yes, root". Falling off the end
+    # returned the register's leftovers, which is the same coin flip with worse
+    # odds — on a target this chain does not name (cx today), answer "not root".
+    # CHANGELOG [6.6.6]
+    return 0;
 }

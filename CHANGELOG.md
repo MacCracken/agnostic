@@ -4,6 +4,135 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-09-26
+
+### Changed — Cyrius `6.6.3` → **`6.6.6`**, agnosai `2.0.9` → **`2.1.0`**, every pinned dep to its latest tag
+
+No source change. Re-vendored, re-locked and rebuilt. **24 suites, 1,175 assertions,
+0 failed — identical to the 6.6.3 baseline**, which was re-run on the 0.1.2 tree for
+the comparison. Every CI gate green under the pin: lock-check, `check-symbols.sh`,
+`check-clean.sh` (`deps --verify` 118/0; lib snapshot 111 files, **zero** differing),
+DCE build (x86_64 **5,345,232 B**, was 5,078,792), aarch64 cross-build
+(**6,487,552 B**), bench, and the fuzz harness.
+
+| dep | 0.1.2 | 0.1.3 | how it arrives |
+|---|---|---|---|
+| `agnosai` | 2.0.9 | **2.1.0** | direct |
+| `bote` | 3.3.8 | **3.3.13** | direct pin, matching agnosai 2.1.0's |
+| `majra` | 2.7.2 | **2.9.1** | direct pin, matching agnosai 2.1.0's |
+| `ai-hwaccel` | 2.3.22 | **2.4.0** | direct pin, matching agnosai 2.1.0's |
+| `tyche` | 1.0.1 | **1.1.0** | direct pin, matching agnosai 2.1.0's |
+| `kavach` | 3.12.5 | **3.13.1** | transitive via agnosai |
+| `libro` | 2.10.0 | **2.10.3** | transitive via bote |
+| `sigil` | 3.12.16 | **3.12.18** | folded stdlib; also declared by agnosai, kavach, libro |
+| `patra` | 1.13.10 | **1.14.3** | folded stdlib; also declared by libro |
+
+✅ **The lockstep holds with no hold and no allowance.** 6.6.6 folds sigil 3.12.18 and
+patra 1.14.3 — exactly the tags the chain declares. ⚠ **"Latest" stops there for those
+two, on purpose:** sigil 3.13.2 and patra 1.15.0 are tagged, but no Cyrius release folds
+them yet, and pinning either here would make `lib/` diverge from the snapshot that
+`check-clean.sh` requires. They move with the Cyrius release that folds them.
+
+⚠ **Verified against the remote and against CI's shape, not the local cache.** All nine
+dep tags and `cyrius` 6.6.6 were confirmed on GitHub through the API before any pin
+moved. The whole resolution was then reproduced from scratch — a fresh copy of the tree,
+an **empty** dep cache, no sibling checkouts — and it produced a `lib/` and
+`cyrius.lock` byte-identical to the ones in this change, with `lock-check.sh` passing. The
+6.6.6 release tarball CI installs was downloaded, checksum-verified, and its 111-file
+stdlib compared to `lib/`: zero differ.
+
+### What moved in the tree
+
+- **`lib/alloc_cx.cyr` is new** — part of the 6.6.6 stdlib snapshot (the cx target's
+  allocator variant). 118 files locked, up from 117; still 9 commit pins.
+- **`cyrius.lock` gains a trailing `cyrius 6.6.6` line** (tab-separated): 6.6.x records which toolchain
+  wrote the lock. `lock-check.sh` compares it as part of the file set, so a lock written
+  under another toolchain now shows up there as a change.
+- **`sys` joins the compile set** (52 → 53 modules): sigil 3.12.18 replaced a raw
+  `syscall(63)` — `uname(2)` on x86_64, `read(2)` on aarch64 — with `lib/sys.cyr`'s
+  `sys_uname`, and its sidecar now declares `sys`.
+
+### Build warnings — duplicate `fn` definitions 19 → 1
+
+All 19 at 0.1.2 were kavach's: the `syserr_*` / `agnosys_*` / `wrap_syscall` family it
+redefined over sigil and bote-core, plus two derived `SpawnedProcess_*` accessors.
+kavach 3.13.1 no longer carries them. The one left is `uname_release`, defined in both
+`lib/sys.cyr` and `lib/sigil.cyr` with **identical** bodies (`return uts + UTS_RELEASE;`),
+so which copy wins does not matter; `check-lib-symbols.py` confirms `UTS_RELEASE` does
+not diverge.
+
+Unchanged and pre-existing — present on the 6.6.3 build too:
+
+- two `assigning non-pointer to typed pointer` in `src/server/serve.cyr`
+  (`_agnostic_serve_send`'s `body`), **reported against `src/routes/crews.cyr`** — the
+  diagnostic mis-attribution `handoff.md` §5 already records — and five in
+  `lib/agnosai.cyr`;
+- `cyrius deps`' `refusing to overwrite stdlib leaf 'sigil'` / `'patra'`. **Benign
+  here:** each skipped dep artifact was hashed against its tag and against
+  `git show 6.6.6:lib/<mod>`, and is byte-identical to the folded copy that is kept.
+
+### Removed — the `STDIN` entry in `scripts/lib-symbol-allow.txt`
+
+kavach 3.12.9 renamed `InjectionMethod`'s members to `KAVACH_INJECT_*`, so its `STDIN = 2`
+no longer shadows `lib/io.cyr`'s `var STDIN = 0` — the collision that would have
+injected a stdin-requested secret into the environment. That fix arrives here with
+kavach 3.13.1, the divergence is gone from the compile set, and the line is deleted as
+the file's own rule requires. The allow-list is now empty, so the gate protects `STDIN`
+again.
+
+### Arriving through the chain — checked against what `src/` actually calls
+
+- ⛔→✅ **patra 1.14.0 fixes a B+ tree split that silently stranded index subtrees:**
+  an indexed `SELECT` lost rows that a full scan still found. The trigger is a
+  separator tie — duplicate keys straddling a split — reproduced upstream on the
+  automatic first-INT-column index with no `CREATE INDEX` at all. **Not reachable from
+  this tree's reads:** every key agnostic indexes (`uid`, `kid`, `tid`, `crew_id`,
+  `dkey`) is unique by construction, and the one duplicate-keyed index — the audit
+  store's `src`, which every agnostic entry sets to `"agnostic"` — is never read
+  through: `patrastore_load_all` is a plain `SELECT *` scan, and `patrastore_by_source`
+  is not called. A by-source audit query would have been the first thing to hit it.
+  Upstream offers no repair for a file written before the fix.
+- patra 1.14.0's contract changes — `patra_begin` can fail with `PATRA_ERR_IO`,
+  `patrastore_close` rolls back an open transaction, `INSERT OR IGNORE` /
+  AUTOINCREMENT / `ALTER … ADD COLUMN` semantics — touch no call `src/` makes: it uses
+  prepare / bind / exec / query and never opens a transaction.
+- **sigil 3.12.16 → 3.12.18 changes only `luks` and `sysinfo`** (aarch64 and macOS
+  fixes). Argon2id, SHA-256 and HMAC-SHA256 — everything `src/auth/crypto.cyr` stands
+  on — are untouched.
+- **libro 2.10.3:** the audit-chain format and `PatraStore` are unchanged; `uuid_v4`
+  now draws from `random_bytes`, and timestamps come from `clock_epoch_secs`.
+- **agnosai 2.1.0:** crew submit / poll / cancel are unchanged. ⚠ **There is still no
+  tool-registry handle** — the orchestrator never holds one; whoever builds the
+  orchestrator builds the registry (`agnosai_tool_registry_new`, then
+  `agnosai_app_state_new(orch, tools, …)`) — so M6's registry-ownership decision
+  (`handoff.md` §8) stays open. The one breaking signature,
+  `agnosai_agnos_http_transport` (new `detail_out`), is not called here. agnosai's own
+  HTTP fixes (415 for non-JSON bodies, query-string stripping, `HEAD`) live in its serve
+  loop and do not reach agnostic's sandhi server. Audit and pub/sub timestamps are now
+  wall-clock rather than monotonic; nothing in `src/` reads one, and the crew events
+  agnostic forwards carry only `event_type` and `data`.
+- **kavach 3.12.8 – 3.13.1:** stricter seccomp (32-bit and x32 syscalls killed; `clone`
+  with `CLONE_NEW*` and the new mount API killed; `clone3` answers `ENOSYS`),
+  `config_stdin` / `config_env` / `config_workdir` honoured — a payload used to read the
+  host's stdin — and `SANDBOX_POLICY_SIZE` 104 → 136. Nothing in `src/` calls kavach.
+- **majra 2.9.0** breaks its encrypted-IPC handshake and signed-envelope wire formats
+  (both ends must upgrade); 2.8.1 fixes IPC nonce reuse and a relay use-after-free, and
+  stops `patra_queue_new` re-running `patra_init()` — which swapped patra's
+  process-wide mutexes — on every open. Transitive only; `src/` does not call majra.
+- **ai-hwaccel 2.4.0** lists a GPU seen by both Vulkan and a vendor API once (profile
+  JSON schema v5 → v6); **tyche 1.1.0** makes `rng_normal` bit-identical across
+  architectures, at 347 ns a draw instead of 92. Neither is called from `src/`.
+- **bote 3.3.13:** `ping` answers `{}` instead of method-not-found; MCP `2025-06-18` is
+  accepted.
+
+### Docs
+
+`docs/development/state.md` (Version, Toolchain, Dependencies, gate counts — it still
+described 0.1.0 on 6.5.35) and `handoff.md` §1, §2 and §6 are refreshed. §2's
+`CYRIUS_HOME` shim procedure is **retired**: the versioned-wrapper defect it worked
+around was fixed upstream at v6.5.42, and the installed `cyrius` now re-execs the
+toolchain the manifest pins — verified here with 6.6.6 current and a 6.6.3 pin.
+
 ## [0.1.2] - cyrius 6.6.3
 
 `cyrius` 6.6.2 -> **6.6.3**. No source change; re-vendored and rebuilt.

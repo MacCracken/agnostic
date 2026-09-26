@@ -2,7 +2,8 @@
 
 > **Start here.** This is the orientation document for picking up the Python → Cyrius port.
 > It is deliberately short and links outward rather than restating.
-> Last refreshed: **2026-08-23**, after M5 and the M6 viability gate.
+> Last refreshed: **2026-08-23**, after M5 and the M6 viability gate. The toolchain
+> and dependency facts in §2 and §6 were refreshed **2026-09-26**, at 0.1.3.
 
 Read in this order:
 
@@ -44,45 +45,30 @@ an operator has provisioned a user. What keeps that from being fail-open:
 loopback, and refuses to start with auth *required* when no users and no
 bootstrap credential exist.
 
-Version is **0.1.0** and stays there. Per decision #4 the whole port ships as
+Version is **0.1.3** — see `CHANGELOG.md`. Per decision #4 the port's milestones
+ship together as **1.0.0** (§4).
 
 ## 2. ⚠ Build it correctly, or you will write a lock CI cannot reproduce
 
 This has bitten repeatedly and is the single most important operational fact here.
 
-**The pin is `6.5.35`.** `cyrius build`, `cyrius deps` and `cyrius lib sync` all
-provision from the **installed** toolchain, not the manifest pin, so running them
-under drift rewrites `lib/` and `cyrius.lock` with content CI — which installs the
-pin — cannot reproduce. CI has a fatal drift gate precisely for this.
+**The pin is `6.6.6`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
+under a toolchain other than the pin rewrites `lib/` and `cyrius.lock` with content
+CI — which installs the pin — cannot reproduce. CI has a fatal drift gate precisely
+for this. Read `cyrius --version` before provisioning: it must print
+`manifest-pin: 6.6.6` with **no** `drift` on the line.
 
-### ⛔ The versioned wrapper does NOT pin the compiler
+### ✅ The wrapper pins the compiler now — the `CYRIUS_HOME` shim is retired
 
-The obvious move is wrong, and it is worth stating plainly because it looks right:
-
-```bash
-~/.cyrius/versions/6.5.35/bin/cyrius build ...   # ← does NOT use cycc 6.5.35
-```
-
-`cyrius` resolves `cycc` through **`$CYRIUS_HOME/bin`** → `~/.cyrius/current`, not
-relative to its own path and not via `PATH`. The 6.5.32 wrapper compiled with
-`cycc 6.5.33` and only said so in a warning whose one documented response is to
-silence it. Filed as
-`cyrius/docs/development/issues/2026-08-22-versioned-wrapper-does-not-pin-cycc.md`.
-
-**Build a `CYRIUS_HOME` shim instead**, and confirm the drift line is absent:
-
-```bash
-SHIM=/tmp/cyrius-home-6.5.35
-mkdir -p $SHIM
-ln -s ~/.cyrius/versions/6.5.35/bin $SHIM/bin
-ln -s ~/.cyrius/versions/6.5.35/lib $SHIM/lib
-ln -s ~/.cyrius/versions          $SHIM/versions   # `lib sync` needs versions/<pin>/lib
-ln -s ~/.cyrius/deps              $SHIM/deps
-cp    ~/.cyrius/dlopen-helper     $SHIM/
-echo 6.5.35 > $SHIM/current
-export CYRIUS_HOME=$SHIM PATH=$SHIM/bin:$PATH
-cyrius which && cycc --version      # must both say 6.5.35
-```
+Through 6.5.41 a versioned wrapper resolved `cycc` through `$CYRIUS_HOME/bin` →
+`~/.cyrius/current`, so `~/.cyrius/versions/<pin>/bin/cyrius` compiled with
+whatever was current, and this section prescribed a `CYRIUS_HOME` shim. **Fixed
+upstream at v6.5.42** (`2026-08-22-versioned-wrapper-does-not-pin-cycc.md`, now
+archived), and the installed `cyrius` also re-execs the toolchain the manifest
+pins. Verified 2026-09-26: with 6.6.6 current and this repo still pinned to 6.6.3,
+`cyrius --version` answered 6.6.3 and `cyrius which` pointed into
+`versions/6.6.3/`. So with the pin installed under `~/.cyrius/versions/`, plain
+`cyrius` is enough — confirm with `cyrius which`.
 
 ### ⛔ Never read `~/.cyrius/versions/<V>/lib/` as ground truth
 
@@ -293,30 +279,20 @@ already filed from this port.
 
 | Repo | Version | How it arrives |
 |---|---|---|
-| `agnosai` | **2.0.6** | direct, `git` + `tag` — **no `path`** |
-| `bote` | **3.3.7** | transitive via agnosai |
-| `libro` | **2.8.12** | transitive via bote — the audit chain |
-| `majra` | **2.7.0** | transitive |
-| `kavach` | **3.12.2** | transitive |
-| `sigil` | **3.12.9** | folded stdlib + declared by agnosai |
-| `patra` | **1.13.10** | folded into the 6.5.35 stdlib |
-| `ai-hwaccel` / `tyche` | 2.3.18 / 1.0.1 | transitive |
+| `agnosai` | **2.1.0** | direct, `git` + `tag` — **no `path`** |
+| `bote` | **3.3.13** | direct pin, matching agnosai 2.1.0's |
+| `majra` | **2.9.1** | direct pin, matching agnosai 2.1.0's |
+| `ai-hwaccel` / `tyche` | **2.4.0** / **1.1.0** | direct pins, matching agnosai 2.1.0's |
+| `libro` | **2.10.3** | transitive via bote — the audit chain |
+| `kavach` | **3.13.1** | transitive via agnosai |
+| `sigil` | **3.12.18** | folded into the 6.6.6 stdlib; also declared by agnosai, kavach, libro |
+| `patra` | **1.14.3** | folded into the 6.6.6 stdlib; also declared by libro |
 
-### ⚠ ONE OUTSTANDING ITEM: agnosai `2.0.6` is tagged locally, not on the remote
-
-At the time of writing, `refs/tags/2.0.6` returns **404** from the GitHub API — the
-*commit* is pushed, the *tag* is not. `cyrius deps` therefore could not fetch it,
-and the dependency was resolved from a **locally seeded cache** of the tagged tree
-(`git archive 2.0.6` into `~/.cyrius/deps/agnosai/2.0.6`), hash-verified against
-`git show 2.0.6:dist/agnosai.cyr`.
-
-Consequences, both benign once the push lands:
-
-- The lock carries **8** commit pins instead of 9 — `agnosai` has none.
-- **CI cannot resolve this dependency until the tag is pushed.**
-
-**After `git push --tags` in agnosai, re-run `cyrius deps` here** to add the
-missing commit pin. Nothing else needs to change; the bytes already match.
+✅ **All nine carry a commit pin in `cyrius.lock`**, and every tag was confirmed on
+the GitHub remote (API, not `gh`) before its pin moved. The agnosai 2.0.6 episode
+this section used to describe — a tag pushed as a commit only, resolved from a
+locally seeded cache — is closed. The check that caught it still applies to every
+bump: a pushed *commit* is not a pushed *tag*.
 
 ### `[deps.agnosai]` has no `path`, deliberately
 
@@ -327,8 +303,8 @@ Do not add it back.
 
 ### ✅ No `[deps.patra]` hold at this pin
 
-6.5.35 folds patra 1.13.10, which is what libro 2.8.12 declares, so `lib/` matches
-the snapshot with **zero** files differing. The hold that agnosai 2.0.5 needed —
+6.6.6 folds patra 1.14.3 (and sigil 3.12.18), which is what libro 2.10.3 declares,
+so `lib/` matches the snapshot with **zero** files differing. The hold that agnosai 2.0.5 needed —
 because no published Cyrius folded 1.13.10 at the time — is **not** reintroduced
 here and must not be. The general rule: taking a patra version through a transitive
 `[deps.patra]` obliges a Cyrius pin that folds the same version; the two are one
@@ -339,17 +315,17 @@ change.
 - **`yantra`** — needs `Page.captureScreenshot` on its CDP surface before **M6**'s
   browser-automation tools. Not started.
 - **`bayan`** — a `bayan_pdf_*` request should be filed before **M8** reports.
-- **`kavach`** — `InjectionMethod.STDIN` collides with `io.cyr`'s `var STDIN = 0`
-  and collapses onto `ENV_VAR`, so a secret requested on stdin would be injected
-  into the environment. **Filed with a repro**
-  (`2026-08-22-injectionmethod-stdin-aliases-env-var.md`); unreachable from this
-  tree, and allow-listed in `scripts/lib-symbol-allow.txt` with that reference.
-  **Delete the allow-list line when the fix lands.**
-- **Known and deferred**: kavach ↔ sigil share the whole `syserr_*` family and
-  seven `agnosys_*` helpers; `libro` and `majra` both define `_sub_new`. 20
-  duplicate-`fn` warnings at build. All are `fn`, so they announce themselves —
-  unlike the `var` case, which does not. `scripts/check-lib-symbols.sh` (Rule 4 of
-  `check-symbols.sh`) is what now catches the silent kind.
+- ✅ **`kavach` `STDIN` — CLOSED at 0.1.3.** `InjectionMethod.STDIN` collided with
+  `io.cyr`'s `var STDIN = 0` and collapsed onto `ENV_VAR`. kavach 3.12.9 prefixed
+  the members (`KAVACH_INJECT_*`), that fix arrived here with 3.13.1, and the
+  allow-list line in `scripts/lib-symbol-allow.txt` is deleted — the file is empty.
+- **Duplicate-`fn` warnings: 19 → 1 at 0.1.3** (measured; the "20" once recorded
+  here included libro ↔ majra `_sub_new`, which was already gone by 0.1.2). All 19
+  were kavach's: the `syserr_*` / `agnosys_*` copies it shared with sigil and
+  bote-core, which 3.13.1 dropped. The one left is `uname_release` in
+  `lib/sys.cyr` and `lib/sigil.cyr`, with identical bodies. All are `fn`, so they announce
+  themselves — unlike the `var` case, which does not. `scripts/check-lib-symbols.py`
+  (Rule 4 of `check-symbols.sh`) is what catches the silent kind.
 
 ---
 

@@ -11,5 +11,7 @@
 # 2026-08-05 to 2026-08-07) it silently reverted a fix for two days.
 #
 #   <NAME>   # <why it is safe here> — <upstream issue>
-
-STDIN   # io.cyr's fd 0 vs kavach's InjectionMethod.STDIN=2; under this repo's ordering io.cyr wins, so STDIN collapses onto ENV_VAR (both 0) and kavach's credential guards alias. Unreachable here: across the WHOLE compile set (52 modules) `STDIN` occurs exactly 4 times -- the io.cyr definition and kavach's own three (enum member, secretref_stdin setter, injection guard). Nothing reads it expecting fd 0, and no src/ here calls secretref/credential_/inject_via. Filed: kavach/docs/development/issues/2026-08-22-injectionmethod-stdin-aliases-env-var.md
+#
+# Empty since 0.1.3. `STDIN` (io.cyr's fd 0 vs kavach's InjectionMethod.STDIN = 2)
+# lived here until kavach 3.12.9 prefixed its members to KAVACH_INJECT_*; the
+# kavach 3.13.1 uptake brought that fix in, so the gate protects the name again.

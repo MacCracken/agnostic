@@ -2,52 +2,49 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-08-22, after M4 + agnosai 2.0.5 uptake + M5 part 1.
+> Last refreshed: 2026-09-26, at **0.1.3** — Cyrius 6.6.6, agnosai 2.1.0.
+> (Version, Toolchain, Dependencies and the gate counts were refreshed then; the
+> milestone narrative below is as of M6 part 1 and did not move.)
 >
 > **Picking this port up?** Start at [`handoff.md`](handoff.md) — orientation,
-> the build procedure that avoids an unreproducible lock, and what M5 must do.
+> the build procedure that avoids an unreproducible lock, and what M6 must decide.
 > This file is the numbers.
 
 ## Version
 
-**0.1.0** — scaffolded 2026-08-20 via `cyrius init`. No releases yet; **1.0.0**
-is the target cut, not 2.x. The Cyrius line is the first SemVer line — the
-Python line was CalVer (`2026.3.18`).
+**0.1.3** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
 
-- **Cyrius pin**: `6.5.35` (`cyrius.cyml [package].cyrius`).
-- ⚠ **`refs/tags/2.0.6` was NOT on the remote when this pin landed** — the commit
-was pushed, the tag was not. The dep was resolved from a locally seeded cache of
-the tagged tree (hash-verified against `git show 2.0.6:dist/agnosai.cyr`), so the
-lock carries **8** commit pins instead of 9: `agnosai` has none. Re-run
-`cyrius deps` once the tag is pushed to add it. **CI cannot resolve this dep until
-the tag exists on the remote.**
+- **Cyrius pin**: `6.6.6` (`cyrius.cyml [package].cyrius`). The GitHub release and
+  its signed `x86_64-linux` tarball were verified, and the tarball's stdlib is
+  byte-identical to `lib/` — so CI's `lib sync --full` reproduces this tree.
 
-✅ **No `[deps.patra]` hold at this pin.** 6.5.35 folds 1.13.10, which is what
-libro 2.8.12 declares, so `lib/` matches the snapshot with zero files differing.
-Do not reintroduce the hold 2.0.5 needed.
+✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.6 folds **sigil
+3.12.18** and **patra 1.14.3**, which are exactly the tags agnosai 2.1.0, kavach
+3.13.1 and libro 2.10.3 declare, so `lib/` matches the snapshot with zero files
+differing. ⚠ sigil 3.13.x and patra 1.15.0 are tagged but folded by no Cyrius
+release yet; taking either means waiting for the release that folds it.
 
-⚠ **The pin and `[deps.agnosai]` move TOGETHER.** agnosai 2.0.5 carries
-  bote 3.3.3 → libro 2.8.10, which declares `[deps.patra] = 1.13.10`, and
-  `cyrius deps` overlays a declared dep's copy on top of the `lib sync --full`
-  snapshot on every resolve. Only a Cyrius folding 1.13.10 (**6.5.34**) leaves
-  `lib/` matching the pin, and `check-clean.sh` allows no file to differ. Bumping
-  one alone goes red in either direction — this is what kept agnosai's `main` red
-  before 2.0.5. ⛔ The wrong fixes, both tried and rejected: a `[deps.patra]` hold
-  in this manifest, and a `check-clean` allowance.
-- ⚠ **An earlier version of this section claimed `6.5.32/lib` and `6.5.33/lib`
-  were byte-identical. That was wrong** — they differ in `lib/vani.cyr`. Check
-  what a release folds with `git show <tag>:lib/<mod>` in `~/Repos/cyrius`.
-- ⚠ **`~/.cyrius/versions/<pin>/bin/cyrius` does NOT pin `cycc`.** It resolves the
-  compiler through `$CYRIUS_HOME/bin` → `~/.cyrius/current`, not relative to
-  itself and not via `PATH`. To certify against a pin the wrapper does not match,
-  build a `CYRIUS_HOME` shim (`bin`, `lib`, `versions`, `deps` symlinks plus a
-  `current` file) and confirm the drift line is absent. Filed:
-  `cyrius/docs/development/issues/2026-08-22-versioned-wrapper-does-not-pin-cycc.md`.
+⚠ **The pin and the dep tags move TOGETHER.** `cyrius deps` resolves a declared
+  dep's dist on top of the `lib sync --full` snapshot, and `check-clean.sh` allows
+  no file to differ from the snapshot — so a chain that declares a patra/sigil the
+  pinned Cyrius does not fold goes red, in either direction (this is what kept
+  agnosai's `main` red before its 2.0.5). ⛔ The wrong fixes, both tried and
+  rejected: a `[deps.patra]` hold in this manifest, and a `check-clean` allowance.
+- `cyrius deps` prints `refusing to overwrite stdlib leaf 'sigil'` / `'patra'` on
+  every resolve (it did at 6.6.3 too). **Benign here:** the skipped dep artifacts
+  were hashed against both the sigil/patra tags and `git show 6.6.6:lib/<mod>`, and
+  are byte-identical to the folded copies the snapshot keeps.
+- ✅ **The wrapper pins `cycc` now** — fixed upstream at v6.5.42, and the installed
+  `cyrius` re-execs the toolchain the manifest pins. The `CYRIUS_HOME` shim this
+  section used to prescribe is no longer needed; confirm with `cyrius --version`
+  (a `manifest-pin:` line with **no** `drift`) and `cyrius which`.
 - ⚠ **Never read `~/.cyrius/versions/<V>/lib/` as ground truth.** A concurrent
   session working on cyrius rewrites those files in place; that produced a wrong
-  diagnosis on 2026-08-22 ("6.5.33 folds patra 1.13.10" — it does not).
+  diagnosis on 2026-08-22 ("6.5.33 folds patra 1.13.10" — it does not). Check what
+  a release folds with `git show <tag>:lib/<mod>` in `~/Repos/cyrius`.
 
 ## Dependencies
 
@@ -58,13 +55,18 @@ took the lock from **1 commit pin to 9**.
 
 | dep | pin | how it arrives |
 |---|---|---|
-| `agnosai` | **2.0.6** | direct, `git` + `tag` |
-| `sigil` | 3.12.9 | transitive via agnosai; also declared in `[deps].stdlib` |
-| `bote` | **3.3.7** | transitive |
-| `libro` | **2.8.12** | transitive via bote — the audit chain |
-| `patra` | **1.13.10** | folded into the 6.5.35 stdlib |
-| `kavach` | **3.12.2** | transitive |
-| `majra` / `ai-hwaccel` / `tyche` | **2.7.0** / 2.3.18 / 1.0.1 | transitive |
+| `agnosai` | **2.1.0** | direct, `git` + `tag` |
+| `bote` / `majra` / `ai-hwaccel` / `tyche` | **3.3.13** / **2.9.1** / **2.4.0** / **1.1.0** | direct pins, matching agnosai 2.1.0's own |
+| `kavach` | **3.13.1** | transitive via agnosai |
+| `libro` | **2.10.3** | transitive via bote — the audit chain |
+| `sigil` | **3.12.18** | folded stdlib (`[deps].stdlib`); also declared by agnosai, kavach, libro |
+| `patra` | **1.14.3** | folded stdlib (`[deps].stdlib`); also declared by libro |
+
+`cyrius.lock` — **118 files locked, 9 commit pins** (every dep above), plus a
+trailing `cyrius 6.6.6` line recording the toolchain that wrote it. All nine dep
+tags and `cyrius` 6.6.6 were confirmed on the GitHub remote before the pins moved,
+and a sibling-free
+resolution from an empty dep cache reproduced `lib/` and the lock byte for byte.
 
 ✅ **Both sibling work-arounds are REMOVED** (2026-08-22). patra 1.13.10 stopped
 `patra_init` clobbering the host log level, and libro 2.8.9 stopped a `PatraStore`
@@ -83,7 +85,7 @@ definitions, all `agnostic_*`-prefixed. 837 of those lines are the generated
 
 **Tests: 24 suites, 1,175 assertions, 0 failed** (`cyrius test`). Gates green:
 `check-symbols.sh` (**now 4 rules** — Rule 4 is the new `lib/`↔`lib/` constant
-check), `check-clean.sh`, `deps --verify` 115/0.
+check), `check-clean.sh`, `deps --verify` 118/0.
 
 **M5 — identity and tenancy — is done.** `src/auth/` holds credential primitives
 (`crypto`), users and API keys (`store`), HS256 tokens (`jwt`), the static
@@ -200,7 +202,9 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**16 suites, 771 assertions, 0 failed** (`cyrius test`, run under the pin).
+**24 suites, 1,175 assertions, 0 failed** (`cyrius test`, under the 6.6.6 pin —
+identical to the 6.6.3 baseline it replaced). The per-suite list below predates
+M5 and M6; its counts are as of then.
 
 ⚠ Counts here are assertion-suite lines only. `cyrius test`'s final
 `N passed, 0 failed` line is the **suite** tally, not a suite — earlier figures
@@ -229,18 +233,17 @@ in this repo (`222`) and in agnosai (`8,038`) double-counted it.
   manifest** that is M6's contract
 - `tests/agnostic.bcyr` — benchmark stub · `tests/agnostic.fcyr` — fuzz stub
 
-## Dependencies
+## Dependency layout
 
-One `[deps.*]` block: **agnosai 2.0.4** (`modules = ["dist/agnosai.cyr"]`),
-linked in-process rather than called over HTTP. Everything crew/task/agent/
-scheduling-shaped lives there; Agnostic owns the product tier.
+**agnosai 2.1.0** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
+than called over HTTP. Everything crew/task/agent/scheduling-shaped lives there;
+Agnostic owns the product tier. Versions and pins: see the table under
+[Dependencies](#dependencies) above.
 
-`cyrius.lock` — **115 deps locked**, 1 commit-pinned, `deps --verify` 115/0.
-`lib/` holds 108 `.cyr`: 101 from the pinned toolchain snapshot plus 7 arriving
-transitively through agnosai (`kavach`, `ai-hwaccel`, `bote-core`, `libro`,
-`majra`, `tyche`, and `agnosai` itself).
-
-Transitive versions that matter: **kavach 3.11.15**, **ai-hwaccel 2.3.18**.
+`lib/` holds **118** `.cyr`: **111** from the 6.6.6 stdlib snapshot plus 7 dep
+dists (`agnosai`, `bote-core`, `majra`, `ai-hwaccel`, `tyche`, `kavach`, `libro`).
+`deps --verify` 118/0. The compile set `check-lib-symbols.py` resolves is **53**
+modules — `sys` joined at 0.1.3, because sigil 3.12.18 calls `sys_uname`.
 
 ## Consumers
 
@@ -295,10 +298,13 @@ and both are platform-variant families (`syscalls_*`, `async_*`) where exactly
 one variant is prepended per target. `HTTP_OK`/`HTTP_NOT_FOUND` are defined by
 both `http.cyr` and `sandhi.cyr` with identical values — redundant, not a defect.
 
-⚠ Still open, and visible only as build warnings (all `fn`, so they warn):
-kavach ↔ sigil share the whole `syserr_*` family and seven `agnosys_*` helpers;
-`libro` and `majra` both define `_sub_new`. 20 duplicate-`fn` warnings in total.
-Deferred deliberately — they are upstream, and they announce themselves.
+✅ **Duplicate-`fn` warnings: 19 at 0.1.2, 1 at 0.1.3** — both measured on a DCE
+build; the "20" once recorded here included libro ↔ majra `_sub_new`, already gone
+by 0.1.2. All 19 were kavach's: 3.13.1 no longer redefines the `syserr_*` /
+`agnosys_*` family and the rest of what it shared with sigil and bote-core. The one
+left is `uname_release`, in both `lib/sys.cyr` and
+`lib/sigil.cyr` with **identical** bodies (`return uts + UTS_RELEASE;`), so which
+one wins does not matter. Upstream, and it announces itself.
 
 ## Preset library
 

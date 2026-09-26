@@ -55,6 +55,30 @@ fn _w_terminate(wbuf, woff): i64 {
     return woff + 2;
 }
 
+# v6.6.6 — the heap buffer for a `cmd /s /c` command line, SIZED FROM ITS INPUTS.
+# Returns 0 after a NAMED refusal; the caller adds its own context and fails closed.
+#
+# `_w_append_cstr` above does NOT bound-check — it stores until the source cstr's NUL —
+# so a FIXED buffer here is a heap overwrite waiting for a long enough path, and a
+# SILENT one. `_win_cmdline` (cbt/build.cyr) was changed from exactly this shape at
+# 6.6.5 for that reason, and `_win_wcmdline3` / `_win_wcmdline_vec` above have always
+# sized from their arguments; the two `cmd /s /c` builders in this file and the two in
+# cbt/build.cyr were the last fixed ones. `nchars` is the caller's own content; the
+# margin covers the literal `cmd /s /c ""`/`" < "`/`" > "` scaffolding.
+#
+# The ceiling is Windows' own: a command line maxes at 32,767 characters, past which
+# CreateProcessW fails anyway — so refuse there rather than build something unspawnable.
+# CHANGELOG [6.6.6].
+fn _w_cmdbuf(nchars): i64 {
+    var need = (nchars + 32) * 2 + 8;
+    if (need > 65536) {
+        var m = "error: command line exceeds the Windows 32767-character limit\n";
+        sys_write(2, m, strlen(m));
+        return 0;
+    }
+    return alloc(need);
+}
+
 # Build a writable UTF-16LE command line "cmd [arg1 [arg2]]" on the heap.
 # (CreateProcessW may modify lpCommandLine in place, so it must be writable
 # heap, never a read-only literal.) Returns the buffer pointer.
@@ -226,7 +250,8 @@ fn _win_wait_timeout(pi, ms, killed_out): i64 {
 # atomic tmp+rename can't be used here). Returns the child exit code; 1 if the
 # spawn itself fails.
 fn _win_compile_spawn(cc, source, output): i64 {
-    var wbuf = alloc(16384);
+    var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(output));
+    if (wbuf == 0) { return 1; }
     var o = 0;
     o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
     o = _w_append_cstr(wbuf, o, cc);
@@ -429,7 +454,8 @@ fn exec_env_str(args, env): i64 {
 # literal argv and nothing piped. See CHANGELOG; mirrors the POSIX
 # /bin/sh -c fix in lib/process.cyr.
 fn exec_cmd(cmdline): i64 {
-    var wbuf = alloc(16384);
+    var wbuf = _w_cmdbuf(strlen(cmdline));
+    if (wbuf == 0) { return 0 - 1; }
     var o = 0;
     o = _w_append_cstr(wbuf, o, "cmd /s /c \"");
     o = _w_append_cstr(wbuf, o, cmdline);
