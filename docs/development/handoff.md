@@ -3,8 +3,8 @@
 > **Start here.** This is the orientation document for picking up the Python → Cyrius port.
 > It is deliberately short and links outward rather than restating.
 > Last refreshed: **2026-08-23**, after M5 and the M6 viability gate. The toolchain
-> and dependency facts in §2 and §6 were refreshed **2026-09-26**, at 0.1.3, and §5
-> gained the store-lock rules at 0.1.4.
+> and dependency facts in §2 and §6 were refreshed **2026-09-26**, at 0.1.3; §5
+> gained the store-lock rules at 0.1.4 and the borrow/TLS rules at 0.1.5.
 
 Read in this order:
 
@@ -46,7 +46,7 @@ an operator has provisioned a user. What keeps that from being fail-open:
 loopback, and refuses to start with auth *required* when no users and no
 bootstrap credential exist.
 
-Version is **0.1.4** — see `CHANGELOG.md`. Per decision #4 the port's milestones
+Version is **0.1.5** — see `CHANGELOG.md`. Per decision #4 the port's milestones
 ship together as **1.0.0** (§4).
 
 ## 2. ⚠ Build it correctly, or you will write a lock CI cannot reproduce
@@ -273,6 +273,18 @@ then, against a real requirement. Out of scope for v1.0.
   suite rather than racing in production. Follow the wrapper shape — `lock; var r =
   _x_locked(...); unlock; return r;` — and never hold the lock across Argon2 or an
   engine call. `scripts/check-store-lock.py` enforces the shape; ADR 0003 says why.
+- **`str_new` / `str_new_a` / `str_from` BORROW — they never copy.** Only the
+  16-byte header is allocated. Wrapping a `patra_result_get_str` pointer that way
+  and keeping it past `patra_result_free` shipped twice (fixed 0.1.5): a segfault
+  when a large result was unmapped, and — worse — a principal's tenant silently
+  reading another user's bytes when a small one was recycled. Copy with
+  `str_from_buf`, or `alloc_via` + `memcpy`; `check-store-lock.py` rule 3 checks it.
+- **`thread_local_init` is not idempotent, and lazy library init runs on whatever
+  thread gets there first.** Each call installs a new zeroed TLS block. sigil's
+  first `cbank()` calls it — so the first hash, if it happened on a pool worker,
+  replaced that worker's block and sandhi's arena slot with it (fixed 0.1.5 by
+  `agnostic_crypto_main_init()` first thing in mount). Anything with a lazy
+  per-process init belongs on the main thread, before `run_pooled`.
 - **Never pair a lock with `defer`.** cycc 6.6.6 skips a pending `defer` when the
   function returns through `return f(...)` — for any callee. A skipped unlock is a
   deadlock on the next caller. Filed upstream 2026-09-26 with a repro.

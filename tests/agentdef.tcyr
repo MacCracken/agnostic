@@ -369,6 +369,58 @@ fn test_store_is_bounded_and_never_evicts() {
       "and so does the uncached one, decoded straight from patra");
 }
 
+# ⭐ 0.1.5 — the listing used to hand back keys that pointed into a FREED patra
+# result set. `str_new` borrows its bytes; it does not copy them. A large result
+# is unmapped when freed, so with ~300 rows `GET /api/v1/agents/definitions`
+# segfaulted hashing the first key; a small one is recycled, so a short listing
+# could silently read another query's bytes instead. Nothing here listed, so no
+# suite saw either.
+fn test_listing_a_large_store() {
+    test_group("definitions/list-large");
+
+    _t_open_db();
+    var a = arena_allocator(4194304);
+    var rj: i64[1];
+    var n = 300;
+    var i = 0;
+    var made = 0;
+    while (i < n) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "{\"key\":\"many-");
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, "\",\"role\":\"r\",\"goal\":\"g\"}");
+        var d = agnostic_agent_def_decode_a(a, agnostic_decode_a(a, str_builder_build(sb)),
+          0 - 1, &rj);
+        if (agnostic_definitions_create(agnostic_agent_def_key(d), d) == AGNOSTIC_DEF_OK) {
+            made = made + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(made, n, "300 definitions are stored");
+
+    var keys = agnostic_definitions_keys();
+    assert_eq(vec_len(keys), n, "the key snapshot has all 300");
+    # Another query, so freed memory is reused before the keys are read.
+    agnostic_definitions_count();
+    var intact = 0;
+    var answer = 0;
+    i = 0;
+    while (i < vec_len(keys)) {
+        var k = vec_get(keys, i);
+        if (str_starts_with(k, str_from("many-")) == 1) { intact = intact + 1; }
+        if (agnostic_definitions_get(k) != 0) { answer = answer + 1; }
+        i = i + 1;
+    }
+    assert_eq(intact, n, "every key is still its own bytes after the result set is freed");
+    assert_eq(answer, n, "and every key still resolves");
+
+    var resp = agnostic_route_definitions_list_a(a);
+    assert_neq(resp, 0, "the listing renders");
+    assert_eq(agnostic_response_status(resp), HTTP_OK, "200");
+    assert_eq(_t_has(agnostic_encode_a(a, agnostic_response_body(resp)), "\"total\":300"), 1,
+      "and lists all 300 — none skipped as \"removed\" because its key went bad");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -382,6 +434,7 @@ fn main() {
     test_store_crud();
     test_store_survives_a_reopen();
     test_store_is_bounded_and_never_evicts();
+    test_listing_a_large_store();
     return assert_summary();
 }
 

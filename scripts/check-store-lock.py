@@ -25,6 +25,14 @@ The rules, over `src/`:
   2. A call to a store-locked function (rule 1's `*_locked` kind, or one that
      calls another) comes from a function that is itself `*_locked`, or that
      called `agnostic_store_lock()` earlier in its body.
+  3. Nothing BORROWS a result string (added at 0.1.5). `patra_result_get_str`
+     points into the result set, which `patra_result_free` releases, and
+     `str_new` / `str_new_a` / `str_from` / `str_from_a` keep the pointer they are
+     given rather than copying it. So neither that call nor a variable assigned
+     from it may be handed to one of them — copy it (`str_from_buf`, or
+     `alloc_via` + `memcpy`). Both 0.1.4 cases were exactly this: the definitions
+     listing segfaulted on ~300 rows, and a principal's tenant read back another
+     user's once the next query recycled the freed block.
 
 "Earlier" is textual order within the function, which is what the store's
 wrappers look like: `agnostic_store_lock(); var r = _x_locked(...);
@@ -38,6 +46,8 @@ import re
 import sys
 
 STORE = "src/engine/store.cyr"
+GETSTR = "patra_result_get_str("
+BORROWER = r"\b(str_new|str_new_a|str_from|str_from_a)\s*\("
 LOCK = "agnostic_store_lock()"
 ACCESSOR = "agnostic_store_db()"
 
@@ -114,7 +124,22 @@ def main():
                 store_locked.add(nm)
                 grew = True
 
+    reads = 0
     for nm, (path, start, body) in sorted(fns.items(), key=lambda kv: (kv[1][0], kv[1][1])):
+        # Rule 3 — every file, store.cyr included.
+        borrowed = set()
+        for n, code in body:
+            if GETSTR in code:
+                reads += 1
+                m = re.match(r"\s*(?:var\s+)?(\w+)\s*=[^=].*\bpatra_result_get_str\s*\(", code)
+                if m:
+                    borrowed.add(m.group(1))
+            if re.search(BORROWER, code):
+                src = GETSTR in code or any(re.search(r"\b%s\b" % re.escape(v), code) for v in borrowed)
+                if src:
+                    problems.append(
+                        f"{path}:{n}: rule 3 — `{nm}` wraps a patra result string in a "
+                        f"BORROWING Str; it dangles once the result set is freed — copy it")
         if path == STORE:
             continue
         locked_by_name = is_locked_name(nm)
@@ -135,13 +160,15 @@ def main():
                         f"without holding {LOCK}")
 
     if problems:
-        print("store-lock check FAILED — the shared patra handle is reachable without the store lock:")
+        print("store-lock check FAILED — the shared patra handle is reachable without the store lock,")
+        print("or a result string outlives its result set:")
         for p in problems:
             print("  " + p)
         print("  See the header of src/engine/store.cyr.")
         return 1
     print(f"store lock OK — {len(store_locked)} store-locked functions, "
-          f"every handle fetch and every call to one is under {LOCK}")
+          f"every handle fetch and every call to one is under {LOCK}; "
+          f"{reads} result-string reads, none borrowed")
     return 0
 
 

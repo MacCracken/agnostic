@@ -371,7 +371,12 @@ fn _agnostic_definitions_keys_locked(): i64 {
     while (i < n) {
         var p = patra_result_get_str(rs, i, 0);
         var l = patra_result_get_str_len(rs, i, 0);
-        if (p != 0 && l > 0) { vec_push(out, str_new(p, l)); }
+        # ⛔ COPY, not `str_new` — which borrows. `p` points into `rs`, freed two
+        # lines down. Until 0.1.5 every key here dangled: a large result set is
+        # unmapped on free, so listing ~300 definitions segfaulted hashing the
+        # first key, and a small one is recycled, so a short listing could read
+        # another query's bytes and skip entries as "removed".
+        if (p != 0 && l > 0) { vec_push(out, str_from_buf(p, l)); }
         i = i + 1;
     }
     patra_result_free(rs);

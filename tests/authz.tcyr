@@ -132,6 +132,16 @@ fn test_tenant_crud() {
     assert_eq(agnostic_tenant_delete_a(a, str_from("acme")), 1, "it deletes");
     assert_eq(agnostic_tenants_count(), 0, "and is gone");
     assert_eq(agnostic_tenant_delete_a(a, str_from("acme")), 0, "deleting again does nothing");
+
+    # ⭐ 0.1.5 — a name read back is a COPY. It used to borrow from the freed
+    # result set, so reading a second tenant's name overwrote the first.
+    var t1 = agnostic_tenant_create_a(a, str_from("initech"), str_from("Initech"));
+    var t2 = agnostic_tenant_create_a(a, str_from("umbrella"), str_from("Umbrella Corp"));
+    var n1 = agnostic_tenant_name_a(a, t1);
+    var n2 = agnostic_tenant_name_a(a, t2);
+    assert_eq(str_eq_cstr(n2, "Umbrella Corp"), 1, "the second name reads back");
+    assert_eq(str_eq_cstr(n1, "Initech"), 1,
+      "and the first is still its own — not the query that came after it");
 }
 
 fn test_tenant_bucket_is_rechecked() {

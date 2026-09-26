@@ -183,6 +183,33 @@ fn agnostic_unhex(hex: Str, out): i64 {
     return n / 2;
 }
 
+# --- sigil's per-thread crypto state --------------------------------------
+
+# Initialise sigil's crypto thread state on the calling thread, which MUST be the
+# main thread, before any worker exists. Mount does it first thing. Returns 1.
+#
+# ⛔ **Without this, the first hash in the process killed the server** (fixed
+# 0.1.5). sigil initialises lazily: the first `cbank()` — every `sha256`,
+# `hmac_sha256` and Argon2 — runs `crypto_tls_main_init()`, which calls
+# `thread_local_init()`, and that installs a FRESH TLS block on whichever thread
+# got there first. In the server that was a pool worker hashing on a request
+# path, so its own block was replaced and sandhi's per-request arena slot went
+# with it. The worker's next request had no arena, and the handler's first `_a`
+# call dereferenced it: measured, one definition create and then the 16th
+# `GET /health` took the process down, once the round-robin reached that worker.
+#
+# sigil states the contract this meets: a server that spawns crypto worker
+# threads calls `crypto_tls_main_init()` once on the MAIN thread at startup.
+#
+# ⚠ **Order within mount matters.** `thread_local_init` is not idempotent on
+# Linux — each call installs a new, zeroed block. Called first, anything mount
+# initialises afterwards on this thread (patra's parse scratch, via `patra_init`)
+# sets itself up on the final block; called after them, it would wipe them.
+fn agnostic_crypto_main_init(): i64 {
+    crypto_tls_main_init();
+    return 1;
+}
+
 # --- SHA-256 --------------------------------------------------------------
 
 # SHA-256 of `len` bytes at `data` into `out32`. Returns 1.

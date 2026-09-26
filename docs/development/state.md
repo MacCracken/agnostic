@@ -2,8 +2,8 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-09-26, at **0.1.4** — the store and audit locks (Cyrius 6.6.6,
-> agnosai 2.1.0, unchanged from 0.1.3).
+> Last refreshed: 2026-09-26, at **0.1.5** — the two server crashes 0.1.4 left open
+> are fixed (Cyrius 6.6.6, agnosai 2.1.0, unchanged from 0.1.3).
 > (Version, Toolchain, Dependencies and the gate counts were refreshed then; the
 > milestone narrative below is as of M6 part 1 and did not move.)
 >
@@ -13,7 +13,7 @@
 
 ## Version
 
-**0.1.4** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.5** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -80,11 +80,11 @@ a process kill with no diagnostic).
 
 ## Source
 
-**M4 complete; M5 complete; M6 started** — 39 files, 10,544 lines, 640 top-level
+**M4 complete; M5 complete; M6 started** — 39 files, 10,617 lines, 643 top-level
 definitions, all `agnostic_*`-prefixed. 837 of those lines are the generated
 `src/presets_data.cyr`.
 
-**Tests: 25 suites, 1,218 assertions, 0 failed** (`cyrius test`). Gates green:
+**Tests: 26 suites, 1,240 assertions, 0 failed** (`cyrius test`). Gates green:
 `check-symbols.sh` (**now 4 rules** — Rule 4 is the new `lib/`↔`lib/` constant
 check), `check-clean.sh`, `deps --verify` 118/0.
 
@@ -204,7 +204,7 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**25 suites, 1,218 assertions, 0 failed** (`cyrius test`, under the 6.6.6 pin).
+**26 suites, 1,240 assertions, 0 failed** (`cyrius test`, under the 6.6.6 pin).
 `tests/store_concurrency.tcyr` (43, 0.1.4) is the only multi-threaded suite. The per-suite list below predates
 M5 and M6; its counts are as of then.
 
@@ -260,7 +260,7 @@ Agnostic is built to stand on its own, not as a required layer.
 |---|---|
 | audit-clean | [`2026-08-20-audit-m1.md`](../audit/2026-08-20-audit-m1.md) — 0 CRITICAL / 0 HIGH / 1 MEDIUM / 2 LOW; the MEDIUM is accepted with a documented bound |
 | fmt / lint / vet / deny | `check-clean.sh` OK |
-| store lock (0.1.4) | `check-store-lock.py`, in `check-clean.sh` — every handle fetch under the store lock |
+| store lock (0.1.4, 0.1.5) | `check-store-lock.py`, in `check-clean.sh` — every handle fetch under the store lock; no result string borrowed past its result set |
 | symbols | `check-symbols.sh` OK — 129 definitions, no duplicates, all prefixed |
 | security | CI `security` job clean |
 | baseline benches | `bench-history.csv` seeded — `noop` 2 ns @ `830216c` |
@@ -402,13 +402,22 @@ a handle per worker — patra's advice for read parallelism — is ADR 0003.
 ⚠ Do not release it with `defer`: cycc 6.6.6 skips a `defer` on `return f(...)`
 (filed upstream 2026-09-26).
 
-⛔ **Two OPEN server crashes, found at 0.1.4 and present since at least 0.1.3** —
-see the 0.1.4 CHANGELOG entry: (1) the first crypto call runs sigil's
-`crypto_tls_main_init()` on a pool worker, replacing that worker's TLS block, and
-the worker's next request dies on a null arena — agnostic never calls it on the
-main thread before `run_pooled`, which sigil's contract requires; (2) listing
-definitions with ~300 stored kills the server in `hash_str_v` under `map_get` on
-the decode cache. Neither is concurrency in the store.
+✅ **The two server crashes found at 0.1.4 are fixed in 0.1.5** (both dated from
+at least 0.1.3):
+
+- mount now runs sigil's `crypto_tls_main_init()` FIRST, on the main thread —
+  left lazy, the first hash ran it on a pool worker, replacing that worker's TLS
+  block and its request arena, and the worker's next request killed the process.
+  The handler also falls back to the global allocator rather than dereference a
+  missing arena. `tests/serve_mount.tcyr` calls the real mount to pin both.
+- strings read out of patra are now COPIED. `str_new` / `str_new_a` borrow, and
+  two sites kept `patra_result_get_str` pointers past `patra_result_free`: the
+  definitions listing (segfault at ~300 rows) and `_agnostic_auth_str_a` (a
+  principal's tenant could turn into another user's mid-request).
+  `check-store-lock.py` rule 3 forbids the pattern.
+
+⚠ Still open: aarch64 binaries under qemu die with SIGBUS in `audit`, `authstore`
+and any multi-threaded run — identical on 0.1.3; needs real hardware.
 
 ⚠ **Only terminal crew outcomes are stored.** A running crew's thread dies with
 the process, so persisting non-terminal state would load a crew that claims to

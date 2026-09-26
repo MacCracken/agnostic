@@ -1,0 +1,113 @@
+# agnostic/server/serve — what mount must do on the MAIN thread, and what the
+# request handler must survive, before any pool worker exists.
+#
+# ⭐ 0.1.5. The first sigil crypto call in the process runs `crypto_tls_main_init()`,
+# which calls `thread_local_init()` — installing a fresh TLS block on the CALLING
+# thread. In the server that caller was a pool worker (hashing on a request path),
+# so its own block was replaced, and sandhi's per-request arena slot with it. Its
+# next request got no arena, `agnostic_serve_handler` passed the null straight to
+# `agnostic_reqctx_new_a`, and `alloc_via(0, …)` killed the process — the 16th
+# request after the first hash, once 16 round-robin workers came back to it.
+#
+# This suite must be its own process, and must do no crypto before it mounts:
+# it asserts that sigil's init has NOT happened yet, and that mount is what does
+# it. Nothing else in mount hashes on a fresh store with auth off — which is the
+# exact configuration the crash was measured in.
+include "src/app.cyr"
+
+var _T_MDB = "/tmp/agnostic-mount-suite.patra";
+var _T_MAUDIT = "/tmp/agnostic-mount-suite-audit.patra";
+
+# A stand-in for sandhi's per-request arena slot: claimed at load, before any
+# thread exists, exactly as sandhi claims its own before spawning workers.
+var _T_SLOT = thread_local_alloc();
+var _t_slot_after = 0 - 1;
+
+fn _t_mount_cfg() {
+    var c = agnostic_config_from_env();
+    store64(c + AGNOSTIC_CFG_ADDR, INADDR_LOOPBACK());
+    store64(c + AGNOSTIC_CFG_AUTH_MODE, AGNOSTIC_AUTH_OFF);
+    store64(c + AGNOSTIC_CFG_DB_PATH, str_from(_T_MDB));
+    store64(c + AGNOSTIC_CFG_AUDIT_PATH, str_from(_T_MAUDIT));
+    return c;
+}
+
+fn test_mount_initialises_crypto_on_the_main_thread() {
+    test_group("serve/mount-crypto-main-thread");
+
+    assert_eq(_crypto_tls_inited, 0,
+      "precondition: nothing before mount has touched sigil's crypto state");
+    sys_unlink(_T_MDB);
+    sys_unlink(_T_MAUDIT);
+    assert_neq(agnostic_serve_mount(_t_mount_cfg()), 0, "mount succeeds");
+    assert_eq(_crypto_tls_inited, 1,
+      "and it initialised sigil's crypto thread state HERE, on the main thread");
+}
+
+# What a pool worker does: sandhi fills its arena slot when the worker starts,
+# then a request hashes something.
+fn _t_crypto_worker(arg): i64 {
+    thread_local_set(_T_SLOT, 4242);
+    agnostic_sha256_hex_a(default_alloc(), str_from("the first hash on this thread"));
+    _t_slot_after = thread_local_get(_T_SLOT);
+    return 0;
+}
+
+fn test_a_workers_first_hash_keeps_its_tls() {
+    test_group("serve/worker-first-hash-keeps-tls");
+
+    var t = thread_create(&_t_crypto_worker, 0);
+    thread_join(t);
+    assert_eq(_t_slot_after, 4242,
+      "a worker's first crypto call leaves its TLS block — and sandhi's arena slot — intact");
+}
+
+# Send one raw request through `agnostic_serve_handler` over a socketpair and
+# return the response's first bytes as a Str.
+fn _t_through_handler(req) {
+    var fds: i64[1];
+    store64(&fds, 0);
+    # AF_UNIX = 1, SOCK_STREAM = 1. The pair is two i32 slots.
+    if (sys_socketpair(1, SOCK_STREAM, 0, &fds) != 0) { return str_from(""); }
+    var server_fd = load32(&fds);
+    var client_fd = load32(&fds + 4);
+    agnostic_serve_handler(0, server_fd, req, strlen(req));
+    var buf[512];
+    var n = sys_read(client_fd, &buf, 511);
+    sys_close(server_fd);
+    sys_close(client_fd);
+    if (n <= 0) { return str_from(""); }
+    return str_from_buf(&buf, n);
+}
+
+fn test_the_handler_survives_a_missing_arena() {
+    test_group("serve/handler-without-arena");
+
+    # No sandhi worker exists on this thread, so `sandhi_server_request_arena()`
+    # answers 0 — exactly what a poisoned worker saw. It must still answer.
+    assert_eq(sandhi_server_request_arena(), 0, "precondition: no per-request arena here");
+
+    var h = _t_through_handler("GET /health HTTP/1.1\r\nHost: t\r\n\r\n");
+    assert_eq(str_starts_with(h, str_from("HTTP/1.1 200")), 1,
+      "GET /health answers 200 without an arena, instead of killing the process");
+
+    var c = _t_through_handler(
+      "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: t\r\nContent-Type: application/json\r\nContent-Length: 40\r\n\r\n{\"key\":\"no-arena\",\"role\":\"r\",\"goal\":\"g\"}");
+    assert_eq(str_starts_with(c, str_from("HTTP/1.1 201")), 1,
+      "and a POST — decode, store, audit, render — works through the fallback too");
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    test_mount_initialises_crypto_on_the_main_thread();
+    test_a_workers_first_hash_keeps_its_tls();
+    test_the_handler_survives_a_missing_arena();
+    agnostic_audit_close();
+    agnostic_store_close();
+    return assert_summary();
+}
+
+var _agnostic_serve_mount_test_exit = main();
+if (_agnostic_serve_mount_test_exit > 0) { _agnostic_serve_mount_test_exit = 1; }
+sys_exit_group(_agnostic_serve_mount_test_exit);

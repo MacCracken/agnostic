@@ -31,8 +31,31 @@
 # to own an arena, and `run_pooled_tls` claims the slot but never allocates one.
 # So every `_a` site needs a bare-form fallback; `a != 0` is not defensive
 # paranoia, it is the documented contract.
+#
+# ⛔ **The handler did not keep it** — until 0.1.5 it passed the arena straight
+# into `agnostic_reqctx_new_a`, the header read and the whole dispatch, so a
+# request without one was a segfault that killed the process. Rather than audit
+# every `_a` function below the router for a null, the handler now substitutes the
+# global allocator when sandhi gives it none (`_agnostic_serve_fallback_alloc`):
+# everything downstream always receives a usable allocator. The cost is the one
+# SPILL already accepts — bytes that are not reclaimed — and it is logged once.
 
 var AGNOSTIC_SERVE_ARENA_BYTES = 65536;
+
+# Set once a request has had to run without a per-request arena.
+var _agnostic_serve_no_arena_seen = 0;
+
+# The allocator for a request that arrived with no per-request arena: the global
+# heap, whose bytes are not reclaimed. Warns the first time, so a deployment that
+# is leaking this way is told rather than left to find it in its memory graph.
+fn _agnostic_serve_fallback_alloc(): i64 {
+    if (atomic_cas(&_agnostic_serve_no_arena_seen, 0, 1) == 1) {
+        sakshi_warn(
+          "request arrived with no per-request arena; allocating from the global heap, which is not reclaimed",
+          98);
+    }
+    return default_alloc();
+}
 
 # SIGINT(2) | SIGTERM(15) as a sigset word: bit (signo - 1).
 var AGNOSTIC_SHUTDOWN_SIGMASK = 0x4002;
@@ -141,6 +164,8 @@ fn _agnostic_serve_send(a, cfd, resp): i64 {
 # or faults. `str_from_a` wraps without copying the bytes — it is not optional.
 fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
     var a = _agnostic_spill_for(sandhi_server_request_arena());
+    # Never 0 past this line — see the module header and 0.1.5.
+    if (a == 0) { a = _agnostic_serve_fallback_alloc(); }
 
     # Establish the trace id first so every log line from this request carries it,
     # including ones emitted while the request is still being parsed.
@@ -249,6 +274,12 @@ fn agnostic_serve_options(cfg): i64 {
 # `run_pooled` spawns those workers, so anything registered after it is a data
 # race. Mount, then run.
 fn agnostic_serve_mount(cfg): i64 {
+    # ⛔ FIRST, before anything else touches thread-local state on this thread:
+    # sigil's crypto thread state, on the MAIN thread. Left lazy, the first hash
+    # ran it on a pool worker and wiped that worker's request arena — see
+    # `agnostic_crypto_main_init`, which also says why it must come first.
+    agnostic_crypto_main_init();
+
     _agnostic_serve_cfg = cfg;
     _agnostic_serve_stop = 0;
 

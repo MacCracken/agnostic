@@ -262,6 +262,38 @@ fn test_apikey_bucket_is_rechecked() {
       "a bucket hit with a non-matching digest authenticates NOBODY");
 }
 
+# ⭐ 0.1.5 — `_agnostic_auth_str_a` said it copied a STR column out of the result
+# row, and it did not: `str_new_a` BORROWS its bytes. So `agnostic_users_tenant_a`
+# and `agnostic_users_email_a` returned pointers into a freed patra result set,
+# and the next query of the same shape recycled that memory — the tenant a
+# principal was built with could turn into another user's tenant before the
+# request that held it finished.
+fn test_row_strings_are_copies() {
+    test_group("authstore/row-strings-are-copies");
+
+    _t_auth_open();
+    var a = arena_allocator(1048576);
+    var ua = agnostic_users_create_a(a, str_from("ada@example.com"), str_from("pw one"),
+      AGNOSTIC_ROLE_VIEWER, str_from("acme"));
+    var ub = agnostic_users_create_a(a, str_from("bob@example.com"), str_from("pw two"),
+      AGNOSTIC_ROLE_VIEWER, str_from("globex"));
+    assert_neq(ua, 0, "the first user exists");
+    assert_neq(ub, 0, "the second user exists");
+
+    # Read A, then B through the same query shape. With borrowed bytes the second
+    # result set lands on the first one's freed block.
+    var ta = agnostic_users_tenant_a(a, ua);
+    var tb = agnostic_users_tenant_a(a, ub);
+    assert_eq(str_eq_cstr(tb, "globex"), 1, "the second tenant reads back");
+    assert_eq(str_eq_cstr(ta, "acme"), 1,
+      "and the FIRST is still acme — not overwritten by the query that came after it");
+
+    var ea = agnostic_users_email_a(a, ua);
+    var eb = agnostic_users_email_a(a, ub);
+    assert_eq(str_eq_cstr(eb, "bob@example.com"), 1, "the second email reads back");
+    assert_eq(str_eq_cstr(ea, "ada@example.com"), 1, "and the first is still its own");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -273,6 +305,7 @@ fn main() {
     test_bucket_hit_is_rechecked();
     test_apikeys();
     test_apikey_bucket_is_rechecked();
+    test_row_strings_are_copies();
     return assert_summary();
 }
 

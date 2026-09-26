@@ -100,10 +100,23 @@ fn agnostic_role_parse(name: Str): i64 {
 #
 # ⚠ The pointer `patra_result_get_str` returns points **into the result set**,
 # which `patra_result_free` releases. Copy before freeing, always.
+#
+# ⛔ **Until 0.1.5 this did not copy.** It returned `str_new_a(a, ptr, n)`, and
+# `str_new_a` BORROWS its bytes — only the 16-byte header lands in `a`. Every
+# value read back after the free pointed into a recycled patra block, and the next
+# query of the same shape overwrote it: `agnostic_users_tenant_a` could hand the
+# principal a tenant that turned into another user's before the request ended.
+# `tests/authstore.tcyr` reads two users back to back to pin it.
 fn _agnostic_auth_str_a(a, rs, row, col): i64 {
     var n = patra_result_get_str_len(rs, row, col);
     if (n <= 0) { return 0; }
-    return str_new_a(a, patra_result_get_str(rs, row, col), n);
+    # +1 for a NUL: the borrowed bytes happened to be terminated (patra zero-pads a
+    # STR slot), so a caller reading `str_data` as a C string worked by accident.
+    var buf = alloc_via(a, n + 1);
+    if (buf == 0) { return 0; }
+    memcpy(buf, patra_result_get_str(rs, row, col), n);
+    store8(buf + n, 0);
+    return str_new_a(a, buf, n);
 }
 
 # Copy a TEXT column out of a result row into arena `a`. 0 when absent or empty.

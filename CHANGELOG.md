@@ -4,6 +4,89 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-09-26
+
+The two server crashes 0.1.4 found and left open. Both were present since at least 0.1.3.
+**26 suites, 1,240 assertions, 0 failed** (1,218 at 0.1.4); every gate green; aarch64 builds.
+
+### Fixed — the first hash in the process killed the server a few requests later
+
+**Mechanism.** sigil initializes its per-thread crypto state lazily: the first `cbank()` — every
+`sha256`, `hmac_sha256`, Argon2 — runs `crypto_tls_main_init()`, which calls `thread_local_init()`,
+which installs a FRESH TLS block on whichever thread got there first. In the server that was a pool
+worker hashing on a request path, so the worker's own block was replaced and sandhi's per-request
+arena slot went with it. On that worker's next request `sandhi_server_request_arena()` answered 0,
+and `agnostic_serve_handler` passed the null straight into `agnostic_reqctx_new_a` → `alloc_via(0, …)`
+→ SIGSEGV, whole process. Measured on 0.1.4: sixty `GET /health` — fine; one definition create, then
+the **16th** `GET /health` died, the moment the 16 round-robin workers brought the poisoned one back.
+
+⚠ **Why it hid.** A server whose audit trail was non-empty hashed on the main thread at mount —
+chain verification — and was safe by accident. A fresh deployment with auth off, or one whose first
+hash came from a request, was not.
+
+**The fix, two halves.**
+
+- `agnostic_crypto_main_init()` — sigil's `crypto_tls_main_init()` — is the **first thing**
+  `agnostic_serve_mount` does, on the main thread, before any worker exists. That is sigil's own
+  documented contract for threaded servers. ⚠ It must come first: `thread_local_init` is not
+  idempotent on Linux (every call installs a new zeroed block), so called after `patra_init` it would
+  wipe patra's main-thread parse state.
+- **Defence in depth:** when sandhi hands the handler no arena, it now substitutes the global
+  allocator (`_agnostic_serve_fallback_alloc`, logged once) instead of dereferencing a null. The
+  module header has always said every `_a` site needs a fallback; the handler did not keep that.
+  Other sandhi run modes (`run`, `run_async`, `run_pooled_tls`) have no arena at all.
+
+**`tests/serve_mount.tcyr` (new, 7 assertions)** — its own process, calling the real
+`agnostic_serve_mount` on fresh stores with auth off, the configuration the crash was measured in.
+It asserts sigil is **uninitialised before mount and initialised by it**; that a worker's TLS slot —
+a stand-in for sandhi's arena slot — **survives the worker's first hash**; and that the handler
+answers `GET /health` and a full `POST` create through a socketpair with no arena. On 0.1.4 it
+fails all three ways, the worker's slot reading 0 — the production mechanism itself. Mutation-verified:
+dropping the mount call or emptying the helper fails the two named assertions; dropping the fallback
+is a SIGSEGV.
+
+### Fixed — strings read out of patra dangled: the definitions listing crashed, and a principal's tenant could change mid-request
+
+**Root cause.** `str_new` / `str_new_a` **borrow** their bytes; they do not copy. Two sites wrapped a
+`patra_result_get_str` pointer — which points into the result set — and kept it past
+`patra_result_free`:
+
+- **`agnostic_definitions_keys()`**, which the listing route iterates. A large result set is unmapped
+  when freed, so with ~300 definitions `GET /api/v1/agents/definitions` segfaulted hashing the first
+  key — one request, one thread. A small one is recycled instead, so a short listing could read
+  another query's bytes and skip entries as "removed".
+- ⛔ **`_agnostic_auth_str_a`**, whose own comment said *"Copy before freeing, always"* — and did not.
+  `agnostic_users_tenant_a`, `agnostic_users_email_a` and `agnostic_tenant_name_a` all returned
+  recycled memory. Measured: read user A's tenant (`acme`), then user B's (`globex`), and A's now reads
+  B's bytes. **The principal built at authentication holds that tenant for the whole request, and
+  tenant scoping keys off it** — so a later query in the same request could silently move the
+  principal into another tenant.
+
+**Fix:** copy — `str_from_buf` for the key snapshot, `alloc_via` + `memcpy` in the arena helper.
+**Tests:** `agentdef` +7 (300 definitions: every key intact after the result set is freed and reused,
+and the listing route answers 200 with `"total":300`), `authstore` +6 and `authz` +2 (two reads back
+to back; the first must still be its own). All three fail on 0.1.4 — the first with a SIGSEGV — and
+restoring either borrow fails them again.
+
+**Gate:** `scripts/check-store-lock.py` gains **rule 3** — no patra result string may be handed to a
+borrowing `Str` constructor, directly or through a variable. Restoring either site fails it by name.
+
+### Verified live, against the running server
+
+| | 0.1.4 | 0.1.5 |
+|---|---|---|
+| one create, then 40 × `GET /health` | died on the 16th | 40 × 200 |
+| 2,000 creates, 32 at a time | died after 6 | 2,000 × 201 |
+| listing 300 stored definitions | died on the first request | 200, `"total":300` |
+| 32 threads × 150 listings and reads | died after 1–3 | 4,800 × 200, 0 wrong rows |
+| `AGNOSTIC_AUTH=required`: 1,500 authenticated reads, 300 creates, 32 at a time | — | all 200 / 201, listing `"total":300` |
+
+The arena fallback never fired in any of those runs — mount's crypto init is what keeps workers
+whole; the fallback is there for what it does not cover.
+
+⚠ **Still open:** the aarch64-under-qemu SIGBUS recorded at 0.1.4 (`audit`, `authstore`, any
+multi-threaded workload, identical on 0.1.3) is untouched and needs real hardware.
+
 ## [0.1.4] — 2026-09-26
 
 ### Fixed — concurrent use of the shared patra handle crashed the server, and concurrent audit appends could fork the chain

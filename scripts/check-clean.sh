@@ -144,6 +144,11 @@ fi
 # Mutation-verified: a wrapper that drops its `agnostic_store_lock()`, a body that
 # fetches the handle without the lock or the `_locked` name, and a direct use of
 # the raw global each fail with the site named; on the 0.1.3 tree it reports 46.
+#
+# Rule 3 (0.1.5): no patra result string is wrapped in a BORROWING Str
+# (`str_new` and friends keep the pointer; the result set is freed under it).
+# Both 0.1.4 instances — the definitions listing and `_agnostic_auth_str_a` — fail
+# it by name when restored.
 if ! out=$(python3 scripts/check-store-lock.py 2>&1); then
     note "store lock: the shared patra handle is reachable without the store lock"
     printf '%s\n' "$out" | sed 's/^/      /'
