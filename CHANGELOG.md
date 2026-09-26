@@ -4,6 +4,128 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-09-26
+
+### Fixed — concurrent use of the shared patra handle crashed the server, and concurrent audit appends could fork the chain
+
+**The defect.** Every pool worker (`AGNOSTIC_WORKERS`, default 16) shares ONE patra handle, and
+patra's read path has taken no lock since 1.12.0. Its 1.14.0 README correction: *"Concurrent SELECTs
+on one handle race the per-handle header buffer and the shared file offset — wrong rows, phantom
+values, hangs."* Writers take patra's process mutex; readers do not, so a read also races a write,
+and patra's per-statement `flock` cannot help — threads sharing a handle share its open file
+description. Nothing here serialized the handle. **Measured on the 0.1.3 code with the new suite:
+eight threads doing nothing but `agnostic_users_find_a` — the lookup behind every authenticated
+request — killed the process with SIGBUS on 3 of 3 runs**, and so did eight threads writing and
+reading crew outcomes. A single-threaded control of the same suite passed; eight threads doing only
+the JSON decode did not crash, which rules the parser out. The audit trail had the same shape one
+level up: libro's `chain_append` reads the head hash and links to it with no lock, so two concurrent
+records could link to one predecessor — measured: the chain then fails verification, which reports
+tampering nobody did.
+
+**The fix — one re-entrant lock per handle, and the handle is unreachable without it.**
+
+- `src/engine/rlock.cyr` (new): a re-entrant lock on top of the stdlib futex mutex. The owner is the
+  kernel tid (`gettid`), so it needs no thread-local setup on any thread that can reach a store.
+- `agnostic_store_lock()` / `agnostic_store_unlock()`. Every store operation — users, API keys,
+  tenants, crew outcomes, definitions — is now a thin wrapper, `lock; var r = _x_locked(...); unlock;
+  return r;`, around its unchanged body, so each runs as ONE critical section.
+- ⛔ **`agnostic_store_db()` refuses the handle to a thread that does not hold the lock** — it returns
+  0, "no persistence", which every caller already handles by failing, and logs at ERROR. A forgotten
+  lock is a deterministic suite failure instead of a race under load. `agnostic_store_is_open()`
+  answers "is persistence available?" and hands out nothing; the ledger, login verify and bootstrap
+  use it.
+- The audit trail has its own lock: link, persist and count are one step, and a re-verify sees a
+  consistent chain.
+- **Nothing slow runs under the store lock.** `agnostic_users_create_a` hashes (Argon2, ~244 ms)
+  OUTSIDE it and re-checks the address under the lock immediately before its insert;
+  `agnostic_users_verify_a` locks only its two lookups. The store and audit locks are never held at
+  the same time.
+
+**The same lock closes check-then-act races that were latent until now:**
+
+- **definitions** — two concurrent creates of one key could both insert: two rows, two 201s. A `get`
+  racing a `replace` could re-cache the superseded record, and one racing a `remove` could re-cache
+  a deleted one — served until restart. The cache's separate mutex, "never held across a patra call"
+  on the premise that "patra does its own flock arbitration", is gone: `flock` arbitrates between
+  processes, not threads. The store lock now covers cache and table together.
+- **users** — concurrent creates of one address each passed the existence check during their Argon2
+  window; measured, with the re-check under the lock removed, **4 of 4** racing creates succeeded.
+  Only the mount-time bootstrap creates users today, so this had no live trigger yet.
+- **tenants** (check, insert), **API keys** (revoke = resolve + delete), **crew outcomes** (written
+  once, however many threads race to write them).
+
+**25 suites, 1,218 assertions, 0 failed** (1,175 at 0.1.3). **`tests/store_concurrency.tcyr` — 43
+assertions**, and the first multi-threaded suite in the tree:
+the lock's ownership rules; the accessor's refusal, including to a second thread while the first
+holds the lock; 8 threads × 100 iterations of mixed definition, user and crew reads and writes;
+8-way same-key races, 20 rounds each; a same-address race across the Argon2 window; 8 × 50
+concurrent audit appends that must still verify. **Mutation-verified**: dropping the accessor's
+owner check fails 3 named assertions; dropping the audit lock fails verification; dropping the
+user re-check creates 4 users for one address; dropping the mutex fails, then SIGBUS; a
+non-re-entrant lock deadlocks. ⚠ **One property is NOT mutation-proven**: splitting definitions'
+check and insert into two critical sections passed all 20 rounds — that window is microseconds. The
+Argon2 test is the deterministic version of the same property, and the suite says so.
+
+⚠ **Three existing suites wrote raw SQL on the handle without the lock** — `authn`, `authstore` and
+`authz` forge collision rows and a demotion directly. They are now refused, exactly as designed
+(`authstore` segfaulted on the null statement), and take the lock like any other caller.
+
+### Added — `scripts/check-store-lock.py`, wired into `check-clean.sh`
+
+The runtime refusal only covers paths a suite exercises; this checks the same rule statically. The
+raw handle global is private to `src/engine/store.cyr`; a function that fetches the handle is named
+`*_locked` or takes `agnostic_store_lock()` first; a call to a store-locked function is made holding
+the lock. It reports **46** violations on the 0.1.3 tree, and a wrapper that drops its lock, a body
+without the lock or the name, and a direct use of the global each fail with the site named.
+`_agnostic_def_row_exists` and `_agnostic_crews_exists` gained the `_locked` suffix their contract
+already had.
+
+### Cost, and why not a handle per worker
+
+An uncontended enter/exit pair costs **~0.7 µs** — two `gettid` syscalls; the raw futex pair is 47 ns
+(`tests/agnostic.bcyr` now benches both) — against **~48 µs** for a full user lookup and **~108 µs**
+for a crew-outcome write. The real cost is that store access is now **serial**, a ceiling on the order
+of 20,000 lookups a second. patra recommends a handle per worker for read parallelism; that
+parallelizes reads only, leaves every check-then-act race open, and needs a handle lifecycle inside
+threads sandhi owns. [ADR 0003](docs/adr/0003-one-store-lock-not-a-handle-per-worker.md) records the
+decision and when to revisit it.
+
+### Filed upstream — cycc skips a `defer` on `return f(...)`
+
+Found while choosing how to release the lock: in cycc 6.6.6 a pending `defer` does not run when the
+function returns through a direct call in tail position — for any callee, not only the value-form
+`Result` pairs an open issue describes. A `defer { unlock(); }` would have left the lock held on
+every such return, so the wrappers return a local instead. Filed with a repro as
+`cyrius/docs/development/issues/2026-09-26-defer-skipped-on-any-tail-call-return.md`. In this tree's
+vendored `lib/`, kavach's `security_apply_landlock` skips its deferred fd close on five exit paths
+this way; nothing in `src/` uses `defer`.
+
+### ⚠ Found while verifying this release — NOT fixed here, both present in 0.1.3 as well
+
+Driving the real server with concurrent traffic, rather than the suites, turned up two more ways
+to kill it. Neither involves the store lock, and both reproduce identically on the 0.1.3 binary, so
+they are left for their own changes rather than bundled into this one. **0.1.4 does not make the
+server crash-free.**
+
+- ⛔ **The first request that does crypto poisons the worker that served it.** sigil initializes its
+  crypto thread state lazily: the first `cbank()` in the process runs `crypto_tls_main_init()`, which
+  calls `thread_local_init()` — installing a fresh TLS block on the CALLING thread. In the server that
+  thread is a pool worker, so its own block is replaced and sandhi's per-request arena slot with it.
+  Its next request gets no arena, `agnostic_serve_handler` hands the null to `agnostic_reqctx_new_a`
+  unguarded, and `alloc_via(0, …)` takes the whole process down. Measured: 60 × `GET /health` —
+  fine; one `POST /api/v1/agents/definitions`, then `GET /health` — the **16th** health check dies,
+  i.e. the moment 16 round-robin workers bring the poisoned one back. sigil documents the contract
+  agnostic misses: a threaded server calls `crypto_tls_main_init()` on the main thread before
+  spawning workers. The login route's Argon2 goes through the same lazy path.
+- ⛔ **`GET /api/v1/agents/definitions` kills the server with 300 definitions stored** — one request,
+  one thread. SIGSEGV in `hash_str_v` ← `map_get` on the decode cache ← `agnostic_definitions_get` ←
+  `agnostic_route_definitions_list_a`. `GET` of a single key works.
+
+Also observed, and not attributable yet: as **aarch64** binaries under qemu-user, `audit`,
+`authstore` and any 8-thread workload (even JSON decoding alone, no store) die with SIGBUS — on the
+0.1.3 tree identically. CI cross-BUILDS aarch64 and never runs it. Whether this is qemu or the
+aarch64 runtime needs real hardware.
+
 ## [0.1.3] — 2026-09-26
 
 ### Changed — Cyrius `6.6.3` → **`6.6.6`**, agnosai `2.0.9` → **`2.1.0`**, every pinned dep to its latest tag

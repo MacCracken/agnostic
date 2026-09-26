@@ -44,6 +44,9 @@ include "src/presets_data.cyr"
 # `request` decodes what `crew` submits, `presets` is self-contained data, and
 # `crew` is the only one that touches the orchestrator.
 include "src/auth/crypto.cyr"
+# The re-entrant lock `engine/store` and `engine/audit` each serialize their
+# patra handle under. It creates its lock at load, so it precedes both.
+include "src/engine/rlock.cyr"
 include "src/engine/store.cyr"
 # Identity storage sits directly on `engine/store`'s handle and on
 # `auth/crypto`'s primitives, so it follows both. It defines the role vocabulary

@@ -59,11 +59,22 @@ enum AgnosticDefResult {
 var AGNOSTIC_DEFINITIONS_MAX = 256;
 
 # key -> decoded AgnosticAgentDef. Never authoritative; see the module header.
+#
+# ⚠ **Guarded by the STORE lock, since 0.1.4 — not by a lock of its own.** It had
+# its own mutex, deliberately never held across a patra call on the premise that
+# "patra does its own flock arbitration". flock arbitrates between PROCESSES; it
+# does nothing for threads sharing one handle. And splitting the cache's lock from
+# the row's let three sequences interleave:
+#
+#   * `get` misses, reads the row, and caches it AFTER a concurrent `replace` has
+#     cached the new record — the stale one wins, and is served until restart;
+#   * `get` re-caches a record a concurrent `remove` has just deleted, so a key
+#     that is gone keeps answering 200;
+#   * two `create`s both see "absent" and both insert — two rows, two 201s.
+#
+# Every function below that touches the cache or the table now runs as one
+# critical section under `agnostic_store_lock()`, which covers both.
 var _agnostic_def_cache = 0;
-
-# Guards the cache. patra does its own flock arbitration, so this protects only
-# the map — and it is never held across a patra call.
-var _agnostic_definitions_mutex = 0;
 
 var AGNOSTIC_DEF_TABLE_SQL = "CREATE TABLE agnostic_definitions (dkey STR, doc TEXT)";
 var AGNOSTIC_DEF_INDEX_SQL = "CREATE INDEX ON agnostic_definitions (dkey)";
@@ -87,16 +98,18 @@ fn agnostic_definitions_open(path: Str): i64 {
     # lookup uses. A second `CREATE INDEX` would silently replace it.
     if (agnostic_store_ensure(AGNOSTIC_DEF_INDEX_SQL) == 0) { return 0; }
 
+    agnostic_store_lock();
     _agnostic_def_cache = map_new_str();
-    if (_agnostic_definitions_mutex == 0) { _agnostic_definitions_mutex = mutex_new(); }
+    agnostic_store_unlock();
     return 1;
 }
 
 # Prepare the cache without a database. Kept so the M3-era call site compiles;
 # real startup goes through `agnostic_definitions_open`.
 fn agnostic_definitions_init(): i64 {
+    agnostic_store_lock();
     if (_agnostic_def_cache == 0) { _agnostic_def_cache = map_new_str(); }
-    if (_agnostic_definitions_mutex == 0) { _agnostic_definitions_mutex = mutex_new(); }
+    agnostic_store_unlock();
     return 1;
 }
 
@@ -106,9 +119,11 @@ fn agnostic_definitions_init(): i64 {
 # cache would leave a suite's rows behind for the next suite, which is the kind
 # of shared state that makes a test pass alone and fail in a run.
 fn agnostic_definitions_reset(): i64 {
-    agnostic_definitions_init();
+    agnostic_store_lock();
     _agnostic_def_cache = map_new_str();
-    if (agnostic_store_db() != 0) { patra_exec(agnostic_store_db(), "DELETE FROM agnostic_definitions"); }
+    var db = agnostic_store_db();
+    if (db != 0) { patra_exec(db, "DELETE FROM agnostic_definitions"); }
+    agnostic_store_unlock();
     return 0;
 }
 
@@ -119,8 +134,17 @@ fn agnostic_definitions_close(): i64 {
 
 # How many definitions the store holds. Answered by patra, not by the cache.
 fn agnostic_definitions_count(): i64 {
-    if (agnostic_store_db() == 0) { return 0; }
-    var rs = patra_query(agnostic_store_db(), "SELECT dkey FROM agnostic_definitions");
+    agnostic_store_lock();
+    var r = _agnostic_definitions_count_locked();
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_definitions_count`'s body. The caller holds the store lock.
+fn _agnostic_definitions_count_locked(): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var rs = patra_query(db, "SELECT dkey FROM agnostic_definitions");
     if (rs == 0) { return 0; }
     var n = patra_result_count(rs);
     patra_result_free(rs);
@@ -128,13 +152,15 @@ fn agnostic_definitions_count(): i64 {
 }
 
 # Whether a key has a row. patra is the authority on existence, never the cache.
-fn _agnostic_def_row_exists(key: Str): i64 {
-    if (agnostic_store_db() == 0) { return 0; }
-    var st = patra_prepare(agnostic_store_db(),
+# The caller holds the store lock.
+fn _agnostic_def_row_exists_locked(key: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db,
       "SELECT dkey FROM agnostic_definitions WHERE dkey = ?");
     if (st == 0) { return 0; }
     patra_bind_text(st, 0, str_data(key), str_len(key));
-    var rs = patra_query_prepared(agnostic_store_db(), st);
+    var rs = patra_query_prepared(db, st);
     patra_finalize(st);
     if (rs == 0) { return 0; }
     var n = patra_result_count(rs);
@@ -156,13 +182,12 @@ fn _agnostic_def_document(d): i64 {
 }
 
 # Put a definition in the cache, if there is room. Never fails a caller.
+# The caller holds the store lock, which is what guards the cache.
 fn _agnostic_def_cache_put(key: Str, d): i64 {
     agnostic_definitions_init();
-    mutex_lock(_agnostic_definitions_mutex);
     if (map_size(_agnostic_def_cache) < AGNOSTIC_DEFINITIONS_MAX) {
         map_set(_agnostic_def_cache, str_clone(key), d);
     }
-    mutex_unlock(_agnostic_definitions_mutex);
     return 0;
 }
 
@@ -171,19 +196,30 @@ fn _agnostic_def_cache_put(key: Str, d): i64 {
 # ⚠ **Never an upsert.** `POST` to an existing key is a 409, because an upsert
 # turns a typo'd key into a second silently-created definition.
 fn agnostic_definitions_create(key: Str, def): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_definitions_create_locked(key, def);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_definitions_create`'s body. The caller holds the store lock, so the
+# existence check and the insert are one step: of two racing creates of one key,
+# exactly one inserts and the other is told EXISTS.
+fn _agnostic_definitions_create_locked(key: Str, def): i64 {
     if (key == 0 || def == 0) { return AGNOSTIC_DEF_MISSING; }
-    if (agnostic_store_db() == 0) { return AGNOSTIC_DEF_MISSING; }
-    if (_agnostic_def_row_exists(key) == 1) { return AGNOSTIC_DEF_EXISTS; }
+    var db = agnostic_store_db();
+    if (db == 0) { return AGNOSTIC_DEF_MISSING; }
+    if (_agnostic_def_row_exists_locked(key) == 1) { return AGNOSTIC_DEF_EXISTS; }
 
     var doc = _agnostic_def_document(def);
     if (doc == 0) { return AGNOSTIC_DEF_MISSING; }
 
-    var st = patra_prepare(agnostic_store_db(),
+    var st = patra_prepare(db,
       "INSERT INTO agnostic_definitions (dkey, doc) VALUES (?, ?)");
     if (st == 0) { return AGNOSTIC_DEF_MISSING; }
     patra_bind_text(st, 0, str_data(key), str_len(key));
     patra_bind_text(st, 1, str_data(doc), str_len(doc));
-    var rc = patra_exec_prepared(agnostic_store_db(), st);
+    var rc = patra_exec_prepared(db, st);
     patra_finalize(st);
 
     # ⚠ A failed write must NOT be reported as success. patra answers a code;
@@ -198,28 +234,35 @@ fn agnostic_definitions_create(key: Str, def): i64 {
 
 # Replace the definition under an existing key. Never creates.
 fn agnostic_definitions_replace(key: Str, def): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_definitions_replace_locked(key, def);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_definitions_replace`'s body. The caller holds the store lock.
+fn _agnostic_definitions_replace_locked(key: Str, def): i64 {
     if (key == 0 || def == 0) { return AGNOSTIC_DEF_MISSING; }
-    if (agnostic_store_db() == 0) { return AGNOSTIC_DEF_MISSING; }
-    if (_agnostic_def_row_exists(key) == 0) { return AGNOSTIC_DEF_MISSING; }
+    var db = agnostic_store_db();
+    if (db == 0) { return AGNOSTIC_DEF_MISSING; }
+    if (_agnostic_def_row_exists_locked(key) == 0) { return AGNOSTIC_DEF_MISSING; }
 
     var doc = _agnostic_def_document(def);
     if (doc == 0) { return AGNOSTIC_DEF_MISSING; }
 
-    var st = patra_prepare(agnostic_store_db(),
+    var st = patra_prepare(db,
       "UPDATE agnostic_definitions SET doc = ? WHERE dkey = ?");
     if (st == 0) { return AGNOSTIC_DEF_MISSING; }
     patra_bind_text(st, 0, str_data(doc), str_len(doc));
     patra_bind_text(st, 1, str_data(key), str_len(key));
-    var rc = patra_exec_prepared(agnostic_store_db(), st);
+    var rc = patra_exec_prepared(db, st);
     patra_finalize(st);
     if (rc != PATRA_OK) { return AGNOSTIC_DEF_MISSING; }
 
     # The cached record is now wrong; replace it rather than evicting, since the
     # caller is about to render exactly this.
     agnostic_definitions_init();
-    mutex_lock(_agnostic_definitions_mutex);
     map_set(_agnostic_def_cache, str_clone(key), def);
-    mutex_unlock(_agnostic_definitions_mutex);
     return AGNOSTIC_DEF_OK;
 }
 
@@ -228,19 +271,31 @@ fn agnostic_definitions_replace(key: Str, def): i64 {
 # Cache first, then patra. A row whose document no longer decodes answers 0 —
 # see the module header for why that is the right failure.
 fn agnostic_definitions_get(key: Str): i64 {
-    if (key == 0 || agnostic_store_db() == 0) { return 0; }
+    agnostic_store_lock();
+    var r = _agnostic_definitions_get_locked(key);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_definitions_get`'s body. The caller holds the store lock.
+#
+# ⚠ **The decode runs under the lock too**, though it touches no handle. Releasing
+# between the read and the cache write is exactly the window in which a `replace`
+# or `remove` lands and this function then caches what they just superseded.
+fn _agnostic_definitions_get_locked(key: Str): i64 {
+    if (key == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
 
     agnostic_definitions_init();
-    mutex_lock(_agnostic_definitions_mutex);
     var hit = map_get(_agnostic_def_cache, key);
-    mutex_unlock(_agnostic_definitions_mutex);
     if (hit != 0) { return hit; }
 
-    var st = patra_prepare(agnostic_store_db(),
+    var st = patra_prepare(db,
       "SELECT doc FROM agnostic_definitions WHERE dkey = ?");
     if (st == 0) { return 0; }
     patra_bind_text(st, 0, str_data(key), str_len(key));
-    var rs = patra_query_prepared(agnostic_store_db(), st);
+    var rs = patra_query_prepared(db, st);
     patra_finalize(st);
     if (rs == 0) { return 0; }
     if (patra_result_count(rs) == 0) { patra_result_free(rs); return 0; }
@@ -249,7 +304,7 @@ fn agnostic_definitions_get(key: Str): i64 {
     if (len <= 0) { patra_result_free(rs); return 0; }
     var buf = alloc(len);
     if (buf == 0) { patra_result_free(rs); return 0; }
-    if (patra_result_read_text(agnostic_store_db(), rs, 0, 0, buf) != PATRA_OK) {
+    if (patra_result_read_text(db, rs, 0, 0, buf) != PATRA_OK) {
         patra_result_free(rs);
         return 0;
     }
@@ -270,28 +325,46 @@ fn agnostic_definitions_get(key: Str): i64 {
 
 # Remove a definition. Returns OK or MISSING.
 fn agnostic_definitions_remove(key: Str): i64 {
-    if (key == 0 || agnostic_store_db() == 0) { return AGNOSTIC_DEF_MISSING; }
-    if (_agnostic_def_row_exists(key) == 0) { return AGNOSTIC_DEF_MISSING; }
+    agnostic_store_lock();
+    var r = _agnostic_definitions_remove_locked(key);
+    agnostic_store_unlock();
+    return r;
+}
 
-    var st = patra_prepare(agnostic_store_db(), "DELETE FROM agnostic_definitions WHERE dkey = ?");
+# `agnostic_definitions_remove`'s body. The caller holds the store lock, so no
+# `get` can re-cache the record between the delete and the eviction.
+fn _agnostic_definitions_remove_locked(key: Str): i64 {
+    if (key == 0) { return AGNOSTIC_DEF_MISSING; }
+    var db = agnostic_store_db();
+    if (db == 0) { return AGNOSTIC_DEF_MISSING; }
+    if (_agnostic_def_row_exists_locked(key) == 0) { return AGNOSTIC_DEF_MISSING; }
+
+    var st = patra_prepare(db, "DELETE FROM agnostic_definitions WHERE dkey = ?");
     if (st == 0) { return AGNOSTIC_DEF_MISSING; }
     patra_bind_text(st, 0, str_data(key), str_len(key));
-    var rc = patra_exec_prepared(agnostic_store_db(), st);
+    var rc = patra_exec_prepared(db, st);
     patra_finalize(st);
     if (rc != PATRA_OK) { return AGNOSTIC_DEF_MISSING; }
 
     agnostic_definitions_init();
-    mutex_lock(_agnostic_definitions_mutex);
     map_delete(_agnostic_def_cache, key);
-    mutex_unlock(_agnostic_definitions_mutex);
     return AGNOSTIC_DEF_OK;
 }
 
 # A snapshot of every key, as a vec of Str. Answered by patra.
 fn agnostic_definitions_keys(): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_definitions_keys_locked();
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_definitions_keys`'s body. The caller holds the store lock.
+fn _agnostic_definitions_keys_locked(): i64 {
     var out = vec_new();
-    if (agnostic_store_db() == 0) { return out; }
-    var rs = patra_query(agnostic_store_db(), "SELECT dkey FROM agnostic_definitions");
+    var db = agnostic_store_db();
+    if (db == 0) { return out; }
+    var rs = patra_query(db, "SELECT dkey FROM agnostic_definitions");
     if (rs == 0) { return out; }
     var n = patra_result_count(rs);
     var i = 0;

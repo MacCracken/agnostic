@@ -78,12 +78,15 @@ fn test_role_comes_from_the_row_not_the_token() {
     assert_eq(agnostic_principal_role(p1), AGNOSTIC_ROLE_SUPER_ADMIN, "as a super_admin");
 
     # ⭐ THE DESIGN. Demote in the store; the token still SAYS super_admin.
+    # (Raw SQL, so this takes the store lock — the handle is refused without it.)
+    agnostic_store_lock();
     var db = agnostic_store_db();
     var st = patra_prepare(db, "UPDATE agnostic_users SET urole = ? WHERE uid = ?");
     patra_bind_int(st, 0, AGNOSTIC_ROLE_VIEWER);
     patra_bind_int(st, 1, uid);
     assert_eq(patra_exec_prepared(db, st), PATRA_OK, "the user is demoted");
     patra_finalize(st);
+    agnostic_store_unlock();
 
     var claims = agnostic_jwt_verify_a(a, tok);
     assert_eq(agnostic_jwt_claim_role(claims), AGNOSTIC_ROLE_SUPER_ADMIN,

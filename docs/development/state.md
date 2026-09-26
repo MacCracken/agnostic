@@ -2,7 +2,8 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-09-26, at **0.1.3** — Cyrius 6.6.6, agnosai 2.1.0.
+> Last refreshed: 2026-09-26, at **0.1.4** — the store and audit locks (Cyrius 6.6.6,
+> agnosai 2.1.0, unchanged from 0.1.3).
 > (Version, Toolchain, Dependencies and the gate counts were refreshed then; the
 > milestone narrative below is as of M6 part 1 and did not move.)
 >
@@ -12,7 +13,7 @@
 
 ## Version
 
-**0.1.3** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.4** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -79,11 +80,11 @@ a process kill with no diagnostic).
 
 ## Source
 
-**M4 complete; M5 complete; M6 started** — 38 files, 10045 lines, 600 top-level
+**M4 complete; M5 complete; M6 started** — 39 files, 10,544 lines, 640 top-level
 definitions, all `agnostic_*`-prefixed. 837 of those lines are the generated
 `src/presets_data.cyr`.
 
-**Tests: 24 suites, 1,175 assertions, 0 failed** (`cyrius test`). Gates green:
+**Tests: 25 suites, 1,218 assertions, 0 failed** (`cyrius test`). Gates green:
 `check-symbols.sh` (**now 4 rules** — Rule 4 is the new `lib/`↔`lib/` constant
 check), `check-clean.sh`, `deps --verify` 118/0.
 
@@ -151,7 +152,8 @@ refactor of any of it.
 | `src/engine/reject.cyr` | how a request says no; the typed-field readers |
 | `src/engine/agentdef.cyr` | **one** agent model — forwarded, retained, or refused |
 | `src/engine/definitions.cyr` | the definition store — **patra-backed** since M4 |
-| `src/engine/store.cyr` | the one patra handle the durable tables share |
+| `src/engine/rlock.cyr` | the re-entrant lock the store and the audit trail serialize under |
+| `src/engine/store.cyr` | the one patra handle the durable tables share — **handed out only under the store lock** |
 | `src/engine/crewstore.cyr` | terminal crew outcomes, durable |
 | `src/engine/audit.cyr` | the tamper-evident trail, libro over patra |
 | `src/engine/presets.cyr` | the canonical preset library, parsed once at mount |
@@ -202,8 +204,8 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**24 suites, 1,175 assertions, 0 failed** (`cyrius test`, under the 6.6.6 pin —
-identical to the 6.6.3 baseline it replaced). The per-suite list below predates
+**25 suites, 1,218 assertions, 0 failed** (`cyrius test`, under the 6.6.6 pin).
+`tests/store_concurrency.tcyr` (43, 0.1.4) is the only multi-threaded suite. The per-suite list below predates
 M5 and M6; its counts are as of then.
 
 ⚠ Counts here are assertion-suite lines only. `cyrius test`'s final
@@ -258,6 +260,7 @@ Agnostic is built to stand on its own, not as a required layer.
 |---|---|
 | audit-clean | [`2026-08-20-audit-m1.md`](../audit/2026-08-20-audit-m1.md) — 0 CRITICAL / 0 HIGH / 1 MEDIUM / 2 LOW; the MEDIUM is accepted with a documented bound |
 | fmt / lint / vet / deny | `check-clean.sh` OK |
+| store lock (0.1.4) | `check-store-lock.py`, in `check-clean.sh` — every handle fetch under the store lock |
 | symbols | `check-symbols.sh` OK — 129 definitions, no duplicates, all prefixed |
 | security | CI `security` job clean |
 | baseline benches | `bench-history.csv` seeded — `noop` 2 ns @ `830216c` |
@@ -377,6 +380,35 @@ if that changes the cache goes rather than gets patched.
 doc)`. patra allows exactly **one index per table** — `SCH_IDX_COL` is a single
 slot in the schema page — so each gets it on the column everything looks up by.
 The audit chain has its own file: `patrastore_open` opens its own handle.
+
+⛔ **Every use of either handle is serialized — since 0.1.4.** All pool workers
+share each handle, and patra's read path takes no lock, so before 0.1.4 eight
+threads doing only the per-request user lookup killed the process (SIGBUS, every
+run) and concurrent audit appends could fork the chain. Now:
+
+- one **re-entrant** store lock (`src/engine/rlock.cyr`); every store operation is
+  a wrapper — `lock; var r = _x_locked(...); unlock; return r;` — so each is one
+  critical section, and check-then-insert cannot be split;
+- **`agnostic_store_db()` refuses the handle** to a thread without the lock (0 and
+  an ERROR line); `agnostic_store_is_open()` answers availability without it;
+- the audit trail has its own lock; the two are never held together;
+- **never under the store lock:** Argon2 (`create` hashes outside it and re-checks
+  under it), engine calls, the audit lock;
+- `scripts/check-store-lock.py` (in `check-clean.sh`) checks the rule statically.
+
+Cost: ~0.7 µs per uncontended enter/exit (two `gettid` syscalls) against ~48 µs
+per user lookup; the ceiling is serial store access, ~20k lookups/s here. Why not
+a handle per worker — patra's advice for read parallelism — is ADR 0003.
+⚠ Do not release it with `defer`: cycc 6.6.6 skips a `defer` on `return f(...)`
+(filed upstream 2026-09-26).
+
+⛔ **Two OPEN server crashes, found at 0.1.4 and present since at least 0.1.3** —
+see the 0.1.4 CHANGELOG entry: (1) the first crypto call runs sigil's
+`crypto_tls_main_init()` on a pool worker, replacing that worker's TLS block, and
+the worker's next request dies on a null arena — agnostic never calls it on the
+main thread before `run_pooled`, which sigil's contract requires; (2) listing
+definitions with ~300 stored kills the server in `hash_str_v` under `map_get` on
+the decode cache. Neither is concurrency in the store.
 
 ⚠ **Only terminal crew outcomes are stored.** A running crew's thread dies with
 the process, so persisting non-terminal state would load a crew that claims to

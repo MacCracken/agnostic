@@ -100,6 +100,32 @@ var _agnostic_audit_intact = 1;
 var _agnostic_audit_bad_index = 0 - 1;
 var _agnostic_audit_at_open = 0;
 
+# ## ⛔ One append at a time — the chain and its handle share one lock
+#
+# An append is three steps: `chain_append` reads the head hash and links the new
+# entry to it, `patrastore_append` persists the entry, and the counters move.
+# libro takes no lock in any of them, and until 0.1.4 neither did this module —
+# with up to `AGNOSTIC_WORKERS` workers recording at once. Two appends that
+# interleave the first step link to the SAME predecessor (a fork); two that
+# interleave the second persist out of chain order. Either way the next
+# verification reports tampering nobody did, and the counters lose increments.
+# The store's patra handle is shared by those workers too, with the same
+# concurrent-SELECT hazard `src/engine/store.cyr` describes.
+#
+# So every function below that touches the chain, the handle or the counters
+# runs under `_agnostic_audit_rl`. It is separate from the store lock and never
+# held at the same time as it — neither module calls the other while holding its
+# own.
+var _agnostic_audit_rl = agnostic_rlock_new();
+
+# Release the audit lock; an unbalanced release is logged and releases nothing.
+fn _agnostic_audit_unlock(): i64 {
+    if (agnostic_rlock_exit(_agnostic_audit_rl) == 1) { return 1; }
+    agnostic_log_kv_int(SK_ERROR, "audit lock released by a thread that does not hold it", 53,
+      "tid", 3, gettid());
+    return 0;
+}
+
 # Open the audit store and start a chain. Mount time only.
 #
 # Returns 1 on success, 0 when the store cannot be opened. The caller decides
@@ -107,6 +133,14 @@ var _agnostic_audit_at_open = 0;
 # product tier that silently stops auditing is worse than one that refuses to
 # start.
 fn agnostic_audit_open(path: Str): i64 {
+    agnostic_rlock_enter(_agnostic_audit_rl);
+    var r = _agnostic_audit_open_locked(path);
+    _agnostic_audit_unlock();
+    return r;
+}
+
+# `agnostic_audit_open`'s body. The caller holds the audit lock.
+fn _agnostic_audit_open_locked(path: Str): i64 {
     if (_agnostic_audit_store != 0) { return 1; }
     var s = patrastore_open(path);
     if (s == 0) { return 0; }
@@ -145,11 +179,17 @@ fn agnostic_audit_open(path: Str): i64 {
 }
 
 # Close the store, flushing anything batched.
+#
+# Takes the audit lock, so a close waits for the append in flight and every later
+# one sees a closed trail rather than a handle torn down under it.
 fn agnostic_audit_close(): i64 {
-    if (_agnostic_audit_store == 0) { return 0; }
-    patrastore_close(_agnostic_audit_store);
-    _agnostic_audit_store = 0;
-    _agnostic_audit_chain = 0;
+    agnostic_rlock_enter(_agnostic_audit_rl);
+    if (_agnostic_audit_store != 0) {
+        patrastore_close(_agnostic_audit_store);
+        _agnostic_audit_store = 0;
+        _agnostic_audit_chain = 0;
+    }
+    _agnostic_audit_unlock();
     return 0;
 }
 
@@ -183,10 +223,15 @@ fn agnostic_audit_appended(): i64 {
 # Falls back to the counters when the store is not open, so a caller still gets
 # this process's own arithmetic rather than 0.
 fn agnostic_audit_count(): i64 {
+    agnostic_rlock_enter(_agnostic_audit_rl);
+    var n = 0;
     if (_agnostic_audit_store == 0) {
-        return _agnostic_audit_at_open + _agnostic_audit_appended;
+        n = _agnostic_audit_at_open + _agnostic_audit_appended;
+    } else {
+        n = patrastore_len(_agnostic_audit_store);
     }
-    return patrastore_len(_agnostic_audit_store);
+    _agnostic_audit_unlock();
+    return n;
 }
 
 # Re-verify the persisted chain now, updating the stored verdict. Returns 1 when
@@ -198,7 +243,18 @@ fn agnostic_audit_count(): i64 {
 #
 # ⚠ **Re-reads and re-hashes the ENTIRE chain.** Cost grows with the trail, so
 # this is a deliberate operator action, not something to put on a health check.
+#
+# Holds the audit lock for the whole pass, so appends wait for it — the chain it
+# verifies is a consistent snapshot, not one with a half-persisted tail.
 fn agnostic_audit_reverify(): i64 {
+    agnostic_rlock_enter(_agnostic_audit_rl);
+    var r = _agnostic_audit_reverify_locked();
+    _agnostic_audit_unlock();
+    return r;
+}
+
+# `agnostic_audit_reverify`'s body. The caller holds the audit lock.
+fn _agnostic_audit_reverify_locked(): i64 {
     if (_agnostic_audit_store == 0) { return 0 - 1; }
     var entries = patrastore_load_all(_agnostic_audit_store);
     var err = 0;
@@ -245,10 +301,20 @@ fn agnostic_audit_fit_detail(details: Str): i64 {
 # either — so this logs at ERROR and increments `agnostic_audit_dropped`, which
 # `/ready` and the verify route both surface.
 fn agnostic_audit_record(severity, source: Str, action: Str, details: Str): i64 {
+    var det = agnostic_audit_fit_detail(details);
+    agnostic_rlock_enter(_agnostic_audit_rl);
+    var r = _agnostic_audit_record_locked(severity, source, action, det);
+    _agnostic_audit_unlock();
+    return r;
+}
+
+# `agnostic_audit_record`'s body. The caller holds the audit lock, which makes
+# link, persist and count one step: no other append can take the head between
+# this entry's link and its write.
+fn _agnostic_audit_record_locked(severity, source: Str, action: Str, det: Str): i64 {
     if (_agnostic_audit_store == 0) { return 0; }
 
-    var e = chain_append(_agnostic_audit_chain, severity, source, action,
-      agnostic_audit_fit_detail(details));
+    var e = chain_append(_agnostic_audit_chain, severity, source, action, det);
     if (e == 0) {
         _agnostic_audit_dropped = _agnostic_audit_dropped + 1;
         return 0;

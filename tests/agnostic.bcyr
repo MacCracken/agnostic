@@ -6,6 +6,9 @@
 # (~240 ns per start/stop pair on x86_64 Linux). See lib/bench.cyr header for
 # the full overhead-vs-batching guidance.
 
+# The store and audit locks (0.1.4). Self-contained — rlock needs only the stdlib.
+include "src/engine/rlock.cyr"
+
 fn bench_noop(): i64 { return 0; }
 
 fn main(): i64 {
@@ -16,6 +19,47 @@ fn main(): i64 {
     while (i < 1000000) { bench_noop(); i = i + 1; }
     bench_batch_stop(b, 1000000);
     bench_report(b);
+
+    # What every store operation now pays before it touches patra: one
+    # uncontended enter/exit pair. Two `gettid` syscalls plus one CAS each way.
+    var l = agnostic_rlock_new();
+    var br = bench_new("rlock_enter_exit");
+    bench_batch_start(br);
+    i = 0;
+    while (i < 100000) {
+        agnostic_rlock_enter(l);
+        agnostic_rlock_exit(l);
+        i = i + 1;
+    }
+    bench_batch_stop(br, 100000);
+    bench_report(br);
+
+    # A composed operation re-entering a lock it already holds.
+    agnostic_rlock_enter(l);
+    var bn = bench_new("rlock_reenter_nested");
+    bench_batch_start(bn);
+    i = 0;
+    while (i < 100000) {
+        agnostic_rlock_enter(l);
+        agnostic_rlock_exit(l);
+        i = i + 1;
+    }
+    bench_batch_stop(bn, 100000);
+    bench_report(bn);
+    agnostic_rlock_exit(l);
+
+    # The stdlib mutex it is built on, for scale.
+    var m = mutex_new();
+    var bm = bench_new("mutex_lock_unlock");
+    bench_batch_start(bm);
+    i = 0;
+    while (i < 100000) {
+        mutex_lock(m);
+        mutex_unlock(m);
+        i = i + 1;
+    }
+    bench_batch_stop(bm, 100000);
+    bench_report(bm);
     return 0;
 }
 

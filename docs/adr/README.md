@@ -19,4 +19,8 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 
 ## Index
 
-_No ADRs yet. Add the first as `0001-kebab-case-title.md`._
+| ADR | Decision |
+|---|---|
+| [0001](0001-health-and-readiness-are-separate.md) | Health and readiness are separate probes |
+| [0002](0002-daimon-tier-1-deferred.md) | Daimon Tier 1 registration is deferred |
+| [0003](0003-one-store-lock-not-a-handle-per-worker.md) | One store lock, not a patra handle per worker |

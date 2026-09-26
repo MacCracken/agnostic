@@ -3,7 +3,8 @@
 > **Start here.** This is the orientation document for picking up the Python → Cyrius port.
 > It is deliberately short and links outward rather than restating.
 > Last refreshed: **2026-08-23**, after M5 and the M6 viability gate. The toolchain
-> and dependency facts in §2 and §6 were refreshed **2026-09-26**, at 0.1.3.
+> and dependency facts in §2 and §6 were refreshed **2026-09-26**, at 0.1.3, and §5
+> gained the store-lock rules at 0.1.4.
 
 Read in this order:
 
@@ -14,7 +15,7 @@ Read in this order:
 | [`roadmap.md`](roadmap.md) | M0–M9 sequencing and per-milestone gates |
 | [`../../CYRIUS-PORT-BRIEF.md`](../../CYRIUS-PORT-BRIEF.md) | Research snapshot (2026-08-19): language notes, dep stack, **§7 decisions — binding** |
 | [`../../ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) | 86 verified defects in the Python oracle. §3 gated M2, §2.2 gated M3; **§3.15 is what M6's gate now measures** |
-| [`../adr/`](../adr/) | Two ADRs: health/readiness split, daimon Tier 1 deferral |
+| [`../adr/`](../adr/) | Three ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker |
 
 ---
 
@@ -45,7 +46,7 @@ an operator has provisioned a user. What keeps that from being fail-open:
 loopback, and refuses to start with auth *required* when no users and no
 bootstrap credential exist.
 
-Version is **0.1.3** — see `CHANGELOG.md`. Per decision #4 the port's milestones
+Version is **0.1.4** — see `CHANGELOG.md`. Per decision #4 the port's milestones
 ship together as **1.0.0** (§4).
 
 ## 2. ⚠ Build it correctly, or you will write a lock CI cannot reproduce
@@ -266,6 +267,15 @@ then, against a real requirement. Out of scope for v1.0.
   the file existed. And a key used by two modules belongs in
   `src/http/status.cyr`, which is included first: a top-level `var` initialiser
   reading a global declared later silently evaluates to 0.
+- **The store handle is only handed out under the store lock** (0.1.4).
+  `agnostic_store_db()` returns 0 to a thread that has not called
+  `agnostic_store_lock()`, so a new store function that forgets the lock fails its
+  suite rather than racing in production. Follow the wrapper shape — `lock; var r =
+  _x_locked(...); unlock; return r;` — and never hold the lock across Argon2 or an
+  engine call. `scripts/check-store-lock.py` enforces the shape; ADR 0003 says why.
+- **Never pair a lock with `defer`.** cycc 6.6.6 skips a pending `defer` when the
+  function returns through `return f(...)` — for any callee. A skipped unlock is a
+  deadlock on the next caller. Filed upstream 2026-09-26 with a repro.
 - **`CYRIUS_PKG_VERSION` resolves only in the entry file**, not in `include`d files — filed upstream
   (`2026-08-20-pkgver-not-visible-in-included-files.md`, open at 6.5.33). Workaround in place: read
   it in `main.cyr` and hand it to the module via a setter.

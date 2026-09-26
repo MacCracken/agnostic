@@ -164,7 +164,6 @@ fn test_bucket_hit_is_rechecked() {
 
     _t_auth_open();
     var a = arena_allocator(1048576);
-    var db = agnostic_store_db();
 
     # Forge exactly what a 63-bit collision would produce: a row sitting in the
     # victim's bucket that belongs to somebody else.
@@ -172,6 +171,9 @@ fn test_bucket_hit_is_rechecked() {
     var uid = agnostic_users_uid_a(a, victim);
     assert_neq(uid, 0, "the victim's bucket key computes");
 
+    # Raw SQL, so this takes the store lock — the handle is refused without it.
+    agnostic_store_lock();
+    var db = agnostic_store_db();
     var st = patra_prepare(db,
       "INSERT INTO agnostic_users (uid, email, pwhash, urole, tenant, created) VALUES (?, ?, ?, ?, ?, ?)");
     assert_neq(st, 0, "raw insert prepares");
@@ -191,6 +193,7 @@ fn test_bucket_hit_is_rechecked() {
     patra_finalize(q);
     assert_eq(patra_result_count(rs), 1, "the index DOES return the colliding row");
     patra_result_free(rs);
+    agnostic_store_unlock();
 
     # ⭐ THE SECURITY BOUNDARY. Without the full-address re-check this returns
     # the attacker's row and the victim's address logs in as a SUPER_ADMIN
@@ -231,7 +234,6 @@ fn test_apikey_bucket_is_rechecked() {
 
     _t_auth_open();
     var a = arena_allocator(1048576);
-    var db = agnostic_store_db();
     var uid = agnostic_users_create_a(a, str_from("kc@example.com"), str_from("pw"),
       AGNOSTIC_ROLE_VIEWER, 0);
 
@@ -241,6 +243,9 @@ fn test_apikey_bucket_is_rechecked() {
     var kid = agnostic_key64(presented);
     var other = agnostic_sha256_hex_a(a, str_from("some other key entirely"));
 
+    # Raw SQL, so this takes the store lock — the handle is refused without it.
+    agnostic_store_lock();
+    var db = agnostic_store_db();
     var st = patra_prepare(db,
       "INSERT INTO agnostic_apikeys (kid, khash, kuid, label, created) VALUES (?, ?, ?, ?, ?)");
     patra_bind_int(st, 0, kid);
@@ -250,6 +255,7 @@ fn test_apikey_bucket_is_rechecked() {
     patra_bind_int(st, 4, 0);
     assert_eq(patra_exec_prepared(db, st), PATRA_OK, "the colliding key row is written");
     patra_finalize(st);
+    agnostic_store_unlock();
 
     # ⭐ The digest compare, not the bucket, is what decides.
     assert_eq(agnostic_apikey_resolve_a(a, presented), 0,

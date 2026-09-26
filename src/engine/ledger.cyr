@@ -273,7 +273,7 @@ fn agnostic_ledger_latch(e, status, error, results): i64 {
 # correctly should not be reported as failed because the disk was full. What it
 # costs is that the outcome 404s after a restart, which is true rather than wrong.
 fn _agnostic_ledger_persist(e): i64 {
-    if (agnostic_store_db() == 0) { return 0; }
+    if (agnostic_store_is_open() == 0) { return 0; }
     var o = agnostic_ledger_outcome_a(default_alloc(), e);
     if (o == 0) { return 0; }
     var doc = bayan_json_v_build(agnostic_outcome_to_value_a(default_alloc(), o));

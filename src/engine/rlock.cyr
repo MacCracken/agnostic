@@ -1,0 +1,97 @@
+# agnostic/engine/rlock — a RE-ENTRANT lock (not a reader lock): one owner
+# thread at a time, and that owner may enter again without deadlocking itself.
+#
+# ## Why re-entrant
+#
+# Store operations compose. `agnostic_apikey_revoke_a` resolves the key before it
+# deletes it; `agnostic_definitions_create` checks for the key before it inserts.
+# Each must run as ONE critical section — that is what makes "check, then write"
+# atomic — and the inner operation is also callable on its own. `lib/sync.cyr`'s
+# mutex is not re-entrant: the inner call would park its own thread on a lock it
+# already holds, forever. So this adds an owner and a depth on top of it.
+#
+# ## Why the owner is a kernel thread id
+#
+# `gettid()` needs nothing installed first. A thread-local slot would, and
+# `thread_local_set` faults on a thread whose table was never initialised (see
+# `src/trace.cyr`). Every thread that can reach a store has a tid: pool workers,
+# crew threads, the main thread at mount, a test.
+#
+# ## Why reading the owner without the mutex is sound
+#
+# The owner word is written only by the thread that holds the mutex — set just
+# after acquiring, cleared just before releasing. A thread that does not hold it
+# can therefore read 0 or ANOTHER thread's id, but never its own. "Is it me?" is
+# the only question asked of that word unlocked, and it cannot be answered wrong.
+#
+# ⚠ **Not `defer`-safe to pair.** A `defer { agnostic_rlock_exit(l); }` is skipped
+# when the fn returns through `return f(...)` — cycc 6.6.6, filed as
+# `cyrius/docs/development/issues/2026-09-26-defer-skipped-on-any-tail-call-return.md`.
+# A skipped exit is a lock held forever. Pair enter and exit in a wrapper that
+# returns a local.
+
+# Layout of a lock: the mutex cell, the owning tid (0 when free), the depth.
+enum AgnosticRlockField {
+    AGNOSTIC_RLOCK_MUTEX = 0;
+    AGNOSTIC_RLOCK_OWNER = 8;
+    AGNOSTIC_RLOCK_DEPTH = 16;
+    AGNOSTIC_RLOCK_SIZE  = 24;
+}
+
+# A new, free lock, or 0 when allocation failed.
+fn agnostic_rlock_new(): i64 {
+    alloc_init();
+    var l = alloc(AGNOSTIC_RLOCK_SIZE);
+    if (l == 0) { return 0; }
+    var m = mutex_new();
+    if (m == 0) { return 0; }
+    store64(l + AGNOSTIC_RLOCK_MUTEX, m);
+    atomic_store(l + AGNOSTIC_RLOCK_OWNER, 0);
+    store64(l + AGNOSTIC_RLOCK_DEPTH, 0);
+    return l;
+}
+
+# Enter. Blocks while another thread holds the lock; nests when this one does.
+#
+# Returns 1 once held, 0 only for a null lock.
+fn agnostic_rlock_enter(l): i64 {
+    if (l == 0) { return 0; }
+    var me = gettid();
+    if (atomic_load(l + AGNOSTIC_RLOCK_OWNER) == me) {
+        store64(l + AGNOSTIC_RLOCK_DEPTH, load64(l + AGNOSTIC_RLOCK_DEPTH) + 1);
+        return 1;
+    }
+    mutex_lock(load64(l + AGNOSTIC_RLOCK_MUTEX));
+    atomic_store(l + AGNOSTIC_RLOCK_OWNER, me);
+    store64(l + AGNOSTIC_RLOCK_DEPTH, 1);
+    return 1;
+}
+
+# Leave. The outermost exit releases the lock.
+#
+# Returns 1 when the calling thread held it, 0 when it did not — in which case
+# NOTHING is released. Releasing another thread's lock on a mismatched exit would
+# turn one bookkeeping bug into a data race, so the caller is told instead.
+fn agnostic_rlock_exit(l): i64 {
+    if (l == 0) { return 0; }
+    if (atomic_load(l + AGNOSTIC_RLOCK_OWNER) != gettid()) { return 0; }
+    var depth = load64(l + AGNOSTIC_RLOCK_DEPTH) - 1;
+    store64(l + AGNOSTIC_RLOCK_DEPTH, depth);
+    if (depth > 0) { return 1; }
+    atomic_store(l + AGNOSTIC_RLOCK_OWNER, 0);
+    mutex_unlock(load64(l + AGNOSTIC_RLOCK_MUTEX));
+    return 1;
+}
+
+# Whether the calling thread holds the lock. 1 or 0.
+fn agnostic_rlock_held(l): i64 {
+    if (l == 0) { return 0; }
+    if (atomic_load(l + AGNOSTIC_RLOCK_OWNER) == gettid()) { return 1; }
+    return 0;
+}
+
+# How deeply the calling thread holds the lock — 0 when it does not.
+fn agnostic_rlock_depth(l): i64 {
+    if (agnostic_rlock_held(l) == 0) { return 0; }
+    return load64(l + AGNOSTIC_RLOCK_DEPTH);
+}

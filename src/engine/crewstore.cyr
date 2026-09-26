@@ -40,8 +40,8 @@ fn agnostic_crews_ensure(): i64 {
     return 1;
 }
 
-# Whether a crew already has a stored row.
-fn _agnostic_crews_exists(crew_id: Str): i64 {
+# Whether a crew already has a stored row. The caller holds the store lock.
+fn _agnostic_crews_exists_locked(crew_id: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
     var st = patra_prepare(db, "SELECT crew_id FROM agnostic_crews WHERE crew_id = ?");
@@ -67,11 +67,21 @@ fn _agnostic_crews_exists(crew_id: Str): i64 {
 # thing the latch permits, and re-writing would mean the second answer wins —
 # which is the ordering `ORACLE-AUDIT.md` §3.4 got wrong. An existing row stands.
 fn agnostic_crews_save(crew_id: Str, name: Str, status, doc: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_save_locked(crew_id, name, status, doc);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_save`'s body. The caller holds the store lock, so
+# "already stored?" and the insert are one step — a row is written once even
+# when two threads race to write it.
+fn _agnostic_crews_save_locked(crew_id: Str, name: Str, status, doc: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
     if (crew_id == 0 || doc == 0) { return 0; }
     if (agnostic_status_is_terminal(status) == 0) { return 0; }
-    if (_agnostic_crews_exists(crew_id) == 1) { return 0; }
+    if (_agnostic_crews_exists_locked(crew_id) == 1) { return 0; }
 
     var nm = name;
     if (nm == 0) { nm = str_from(""); }
@@ -99,6 +109,14 @@ fn agnostic_crews_save(crew_id: Str, name: Str, status, doc: Str): i64 {
 # nothing holds them afterwards, which is the difference from the definition
 # store's decode cache.
 fn agnostic_crews_doc_a(a, crew_id: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_doc_locked_a(a, crew_id);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_doc_a`'s body. The caller holds the store lock.
+fn _agnostic_crews_doc_locked_a(a, crew_id: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0 || crew_id == 0) { return 0; }
 
@@ -124,6 +142,14 @@ fn agnostic_crews_doc_a(a, crew_id: Str): i64 {
 
 # How many terminal outcomes are stored.
 fn agnostic_crews_count(): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_count_locked();
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_count`'s body. The caller holds the store lock.
+fn _agnostic_crews_count_locked(): i64 {
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
     var rs = patra_query(db, "SELECT crew_id FROM agnostic_crews");
@@ -135,8 +161,9 @@ fn agnostic_crews_count(): i64 {
 
 # Drop every stored outcome. For tests.
 fn agnostic_crews_reset(): i64 {
+    agnostic_store_lock();
     var db = agnostic_store_db();
-    if (db == 0) { return 0; }
-    patra_exec(db, "DELETE FROM agnostic_crews");
+    if (db != 0) { patra_exec(db, "DELETE FROM agnostic_crews"); }
+    agnostic_store_unlock();
     return 0;
 }

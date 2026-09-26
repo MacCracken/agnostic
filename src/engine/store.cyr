@@ -24,37 +24,124 @@
 # fold, so the work-around is gone. Recorded rather than deleted outright because
 # the failure was invisible — no error, just missing log lines — and a future
 # reader seeing a bare `patra_init()` should know it was once not safe.
+#
+# ## ⛔ Every use of the handle happens under the store lock
+#
+# The server runs up to `AGNOSTIC_WORKERS` pool workers, and they all share this
+# one handle. patra does NOT make that safe: since 1.12.0 its read path takes no
+# lock, and its 1.14.0 README correction says it plainly — "Concurrent SELECTs on
+# one handle race the per-handle header buffer and the shared file offset —
+# wrong rows, phantom values, hangs." Writers take patra's process mutex, but a
+# reader does not, so a read also races a write. Until 0.1.4 nothing here
+# serialized either, and `tests/store_concurrency.tcyr` measured the result on
+# the old code: eight threads doing nothing but the per-request user lookup
+# killed the process with SIGBUS, every run.
+#
+# The rule, enforced rather than documented:
+#
+#   * `agnostic_store_db()` hands out the handle ONLY to a thread that holds
+#     `agnostic_store_lock()`. Any other caller gets 0 — "no persistence", which
+#     every caller already handles by failing the operation — and an ERROR line.
+#     A forgotten lock is therefore a deterministic failure in the suites, not a
+#     race that shows up under production load.
+#   * A caller that only needs to know whether persistence is AVAILABLE asks
+#     `agnostic_store_is_open()`, which hands out nothing.
+#   * The lock is re-entrant (`src/engine/rlock.cyr`), so a store operation built
+#     from others — check, then insert — is one critical section, and "exists?"
+#     followed by INSERT can no longer be split by another worker's INSERT.
+#
+# ⚠ **Never hold it across anything slow or anything that takes another lock.**
+# Argon2 is ~244 ms by design and holding the store across it would stall every
+# other request's lookups behind one login, so `agnostic_users_verify_a` and
+# `agnostic_users_create_a` hash OUTSIDE it. It is never held across an engine
+# call, and neither this lock nor the audit lock is ever taken while the other is
+# held — each is released before its module returns.
+#
+# Why one lock and not one handle per worker — patra's own recommendation for
+# READ parallelism — is `docs/adr/0003-one-store-lock-not-a-handle-per-worker.md`.
 
 # The shared handle. 0 until mount opens it.
 var _agnostic_store_db = 0;
+
+# The lock every use of `_agnostic_store_db` happens under. Created at load, so
+# it exists before any thread that could race to create it.
+var _agnostic_store_rl = agnostic_rlock_new();
+
+# Take the store lock. Blocks while another thread holds it; nests on this one.
+fn agnostic_store_lock(): i64 {
+    return agnostic_rlock_enter(_agnostic_store_rl);
+}
+
+# Release one level of the store lock.
+#
+# A thread that does not hold it releases nothing and is logged — an unbalanced
+# release is a bug in the caller, and letting it free somebody else's critical
+# section would turn that bug into a race.
+fn agnostic_store_unlock(): i64 {
+    if (agnostic_rlock_exit(_agnostic_store_rl) == 1) { return 1; }
+    agnostic_log_kv_int(SK_ERROR, "store lock released by a thread that does not hold it", 53,
+      "tid", 3, gettid());
+    return 0;
+}
+
+# Whether the calling thread holds the store lock. 1 or 0.
+fn agnostic_store_held(): i64 {
+    return agnostic_rlock_held(_agnostic_store_rl);
+}
+
+# Whether a database is open. Hands out nothing, so it needs no lock.
+fn agnostic_store_is_open(): i64 {
+    if (atomic_load(&_agnostic_store_db) == 0) { return 0; }
+    return 1;
+}
 
 # Open the database. Mount time only, before any worker exists.
 #
 # Returns 1 on success, 0 when the file cannot be opened. Idempotent.
 fn agnostic_store_open(path: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_store_open_locked(path);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_store_open`'s body. The caller holds the store lock.
+fn _agnostic_store_open_locked(path: Str): i64 {
     if (_agnostic_store_db != 0) { return 1; }
 
     patra_init();
 
     var db = patra_open(str_data(path));
     if (db == 0) { return 0; }
-    _agnostic_store_db = db;
+    atomic_store(&_agnostic_store_db, db);
     return 1;
 }
 
-# The handle, or 0 when nothing is open.
+# The handle — to a thread holding the store lock — or 0.
 #
 # ⚠ Every caller must treat 0 as "no persistence" and say so rather than
-# reporting a write that did not happen.
+# reporting a write that did not happen. 0 now also means "you did not take the
+# lock", which is a bug, and is logged at ERROR as one.
 fn agnostic_store_db(): i64 {
-    return _agnostic_store_db;
+    var db = atomic_load(&_agnostic_store_db);
+    if (db == 0) { return 0; }
+    if (agnostic_store_held() == 1) { return db; }
+    agnostic_log_kv_int(SK_ERROR, "store handle requested without the store lock", 45,
+      "tid", 3, gettid());
+    return 0;
 }
 
 # Close the database, flushing anything batched.
+#
+# Takes the lock, so a close waits for the operation in flight and every later
+# one sees "no persistence" rather than a handle being torn down under it.
 fn agnostic_store_close(): i64 {
-    if (_agnostic_store_db == 0) { return 0; }
-    patra_close(_agnostic_store_db);
-    _agnostic_store_db = 0;
+    agnostic_store_lock();
+    if (_agnostic_store_db != 0) {
+        patra_close(_agnostic_store_db);
+        atomic_store(&_agnostic_store_db, 0);
+    }
+    agnostic_store_unlock();
     return 0;
 }
 
@@ -66,8 +153,17 @@ fn agnostic_store_close(): i64 {
 #
 # Returns 1 when the schema is in place, 0 when it is not.
 fn agnostic_store_ensure(sql): i64 {
-    if (_agnostic_store_db == 0) { return 0; }
-    var rc = patra_exec(_agnostic_store_db, sql);
+    agnostic_store_lock();
+    var r = _agnostic_store_ensure_locked(sql);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_store_ensure`'s body. The caller holds the store lock.
+fn _agnostic_store_ensure_locked(sql): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var rc = patra_exec(db, sql);
     if (rc == PATRA_OK) { return 1; }
     if (rc == PATRA_ERR_EXISTS) { return 1; }
     return 0;

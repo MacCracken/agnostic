@@ -73,6 +73,15 @@ fn agnostic_tenant_tid(key: Str): i64 {
 
 # Create a tenant. Returns its `tid`, or 0.
 fn agnostic_tenant_create_a(a, key: Str, name: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_tenant_create_locked_a(a, key, name);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_tenant_create_a`'s body. The caller holds the store lock, so the
+# existence check and the insert are one step.
+fn _agnostic_tenant_create_locked_a(a, key: Str, name: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
     if (agnostic_tenant_key_valid(key) == 0) { return 0; }
@@ -103,6 +112,14 @@ fn agnostic_tenant_create_a(a, key: Str, name: Str): i64 {
 # `agnostic_users_find_a`. A bucket hit alone would let a colliding key address
 # another tenant's rows.
 fn agnostic_tenant_find_a(a, key: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_tenant_find_locked_a(a, key);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_tenant_find_a`'s body. The caller holds the store lock.
+fn _agnostic_tenant_find_locked_a(a, key: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
     if (agnostic_tenant_key_valid(key) == 0) { return 0; }
@@ -136,6 +153,14 @@ fn agnostic_tenant_find_a(a, key: Str): i64 {
 
 # A tenant's display name, or 0.
 fn agnostic_tenant_name_a(a, tid): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_tenant_name_locked_a(a, tid);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_tenant_name_a`'s body. The caller holds the store lock.
+fn _agnostic_tenant_name_locked_a(a, tid): i64 {
     var db = agnostic_store_db();
     if (db == 0 || tid == 0) { return 0; }
     var st = patra_prepare(db, "SELECT tname FROM agnostic_tenants WHERE tid = ?");
@@ -157,6 +182,15 @@ fn agnostic_tenant_name_a(a, tid): i64 {
 # single call, and the audit trail must outlive the tenant it describes. An
 # operator removing a tenant's data does it deliberately, per table.
 fn agnostic_tenant_delete_a(a, key: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_tenant_delete_locked_a(a, key);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_tenant_delete_a`'s body. The caller holds the store lock, so the
+# lookup and the delete are one step.
+fn _agnostic_tenant_delete_locked_a(a, key: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
     var tid = agnostic_tenant_find_a(a, key);
@@ -172,6 +206,14 @@ fn agnostic_tenant_delete_a(a, key: Str): i64 {
 
 # How many tenants exist.
 fn agnostic_tenants_count(): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_tenants_count_locked();
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_tenants_count`'s body. The caller holds the store lock.
+fn _agnostic_tenants_count_locked(): i64 {
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
     var rs = patra_query(db, "SELECT tid FROM agnostic_tenants");
@@ -183,9 +225,10 @@ fn agnostic_tenants_count(): i64 {
 
 # Drop every tenant. For tests.
 fn agnostic_tenants_reset(): i64 {
+    agnostic_store_lock();
     var db = agnostic_store_db();
-    if (db == 0) { return 0; }
-    patra_exec(db, "DELETE FROM agnostic_tenants");
+    if (db != 0) { patra_exec(db, "DELETE FROM agnostic_tenants"); }
+    agnostic_store_unlock();
     return 0;
 }
 

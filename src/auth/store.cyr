@@ -139,24 +139,44 @@ fn agnostic_users_uid_a(a, email: Str): i64 {
 # and when the CSPRNG failed; the caller distinguishes them with
 # `agnostic_argon_shed_count` and answers 429 or 500 accordingly.
 fn agnostic_users_create_a(a, email: Str, password: Str, role, tenant: Str): i64 {
-    var db = agnostic_store_db();
-    if (db == 0 || email == 0 || password == 0) { return 0; }
+    if (agnostic_store_is_open() == 0 || email == 0 || password == 0) { return 0; }
     if (str_len(email) == 0 || str_len(email) > AGNOSTIC_EMAIL_MAX) { return 0; }
     if (agnostic_role_is_valid(role) == 0) { return 0; }
 
     var lower = agnostic_str_lower_a(a, email);
     if (lower == 0) { return 0; }
+    # A cheap early refusal, so a taken address does not cost an Argon2. It
+    # decides nothing on its own — the check that counts is repeated under the
+    # store lock, immediately before the insert.
     if (agnostic_users_find_a(a, lower) != 0) { return 0; }
 
     var uid = agnostic_users_uid_a(a, lower);
     if (uid == 0) { return 0; }
 
+    # ⚠ Hashed OUTSIDE the store lock. Argon2 costs ~244 ms by design; holding
+    # the store across it would queue every other request's lookup behind it.
     var rec = agnostic_password_hash_a(a, password);
     if (rec == 0) { return 0; }
 
     var tn = tenant;
     if (tn == 0) { tn = str_from(""); }
     if (str_len(tn) > AGNOSTIC_EMAIL_MAX) { return 0; }
+
+    agnostic_store_lock();
+    var r = _agnostic_users_insert_locked_a(a, uid, lower, rec, role, tn);
+    agnostic_store_unlock();
+    return r;
+}
+
+# Insert a user row unless the address is taken. The caller holds the store lock.
+#
+# ⚠ **This existence check is the one that counts.** Two concurrent creates of one
+# address can both pass the early check in `agnostic_users_create_a`; only one
+# can pass this one, because the check and the insert are one critical section.
+fn _agnostic_users_insert_locked_a(a, uid, lower: Str, rec: Str, role, tn: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    if (agnostic_users_find_a(a, lower) != 0) { return 0; }
 
     var st = patra_prepare(db,
       "INSERT INTO agnostic_users (uid, email, pwhash, urole, tenant, created) VALUES (?, ?, ?, ?, ?, ?)");
@@ -180,6 +200,14 @@ fn agnostic_users_create_a(a, email: Str, password: Str, role, tenant: Str): i64
 # it unchecked would let anyone who found a colliding address log in as the
 # holder of this one.
 fn agnostic_users_find_a(a, email: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_users_find_locked_a(a, email);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_users_find_a`'s body. The caller holds the store lock.
+fn _agnostic_users_find_locked_a(a, email: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0 || email == 0) { return 0; }
     var lower = agnostic_str_lower_a(a, email);
@@ -214,6 +242,14 @@ fn agnostic_users_find_a(a, email: Str): i64 {
 
 # Read one column of a user row by uid, as a STR/TEXT copy in `a`, or 0.
 fn _agnostic_users_col_a(a, uid, sql, is_text): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_users_col_locked_a(a, uid, sql, is_text);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `_agnostic_users_col_a`'s body. The caller holds the store lock.
+fn _agnostic_users_col_locked_a(a, uid, sql, is_text): i64 {
     var db = agnostic_store_db();
     if (db == 0 || uid == 0) { return 0; }
     var st = patra_prepare(db, sql);
@@ -248,6 +284,14 @@ fn agnostic_users_tenant_a(a, uid): i64 {
 # caller has to handle "no such identity" distinctly or it will authorise a
 # deleted account.
 fn agnostic_users_role(uid): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_users_role_locked(uid);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_users_role`'s body. The caller holds the store lock.
+fn _agnostic_users_role_locked(uid): i64 {
     var db = agnostic_store_db();
     if (db == 0 || uid == 0) { return 0 - 1; }
     var st = patra_prepare(db, "SELECT urole FROM agnostic_users WHERE uid = ?");
@@ -273,10 +317,13 @@ fn agnostic_users_role(uid): i64 {
 # address turns login into a user-enumeration oracle: absent accounts would answer
 # in microseconds and present ones in ~244 ms. The unknown-user path verifies the
 # supplied password against a fixed decoy record so both take the same work.
+#
+# ⚠ **Deliberately NOT one critical section.** The two lookups each take the
+# store lock and release it; the Argon2 between and after them runs without it,
+# so one login never holds every other request's lookups for ~244 ms.
 fn agnostic_users_verify_a(a, email: Str, password: Str, out_shed): i64 {
     if (out_shed != 0) { store64(out_shed, 0); }
-    var db = agnostic_store_db();
-    if (db == 0 || email == 0 || password == 0) { return 0; }
+    if (agnostic_store_is_open() == 0 || email == 0 || password == 0) { return 0; }
 
     var uid = agnostic_users_find_a(a, email);
     var stored = 0;
@@ -313,6 +360,14 @@ fn agnostic_auth_decoy_record_a(a): i64 {
 
 # How many users are stored.
 fn agnostic_users_count(): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_users_count_locked();
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_users_count`'s body. The caller holds the store lock.
+fn _agnostic_users_count_locked(): i64 {
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
     var rs = patra_query(db, "SELECT uid FROM agnostic_users");
@@ -324,9 +379,10 @@ fn agnostic_users_count(): i64 {
 
 # Drop every user. For tests.
 fn agnostic_users_reset(): i64 {
+    agnostic_store_lock();
     var db = agnostic_store_db();
-    if (db == 0) { return 0; }
-    patra_exec(db, "DELETE FROM agnostic_users");
+    if (db != 0) { patra_exec(db, "DELETE FROM agnostic_users"); }
+    agnostic_store_unlock();
     return 0;
 }
 
@@ -347,8 +403,11 @@ fn agnostic_users_reset(): i64 {
 #
 # ⚠ **The password is never logged, and neither is a hash of it.** Only the
 # resulting uid and email appear in the mount log.
+#
+# Mount time only, before any worker exists — so the count-then-create below is
+# not a race, though each step takes the store lock on its own.
 fn agnostic_auth_bootstrap_a(a, email: Str, password: Str): i64 {
-    if (agnostic_store_db() == 0) { return 0; }
+    if (agnostic_store_is_open() == 0) { return 0; }
     if (email == 0 || password == 0) { return 0; }
     if (str_len(email) == 0 || str_len(password) == 0) { return 0; }
 
@@ -367,6 +426,15 @@ fn agnostic_auth_bootstrap_a(a, email: Str, password: Str): i64 {
 # reaches the table. A caller that discards this Str has to mint another; there
 # is no recovery path, by design.
 fn agnostic_apikey_issue_a(a, uid, label: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_apikey_issue_locked_a(a, uid, label);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_apikey_issue_a`'s body. The caller holds the store lock, so the
+# owner's role check and the insert are one step.
+fn _agnostic_apikey_issue_locked_a(a, uid, label: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0 || uid == 0) { return 0; }
     if (agnostic_users_role(uid) < 0) { return 0; }
@@ -404,6 +472,14 @@ fn agnostic_apikey_issue_a(a, uid, label: Str): i64 {
 # candidate row without early exit on the first mismatch, so neither the number
 # of candidates nor the position of the difference is observable.
 fn agnostic_apikey_resolve_a(a, presented: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_apikey_resolve_locked_a(a, presented);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_apikey_resolve_a`'s body. The caller holds the store lock.
+fn _agnostic_apikey_resolve_locked_a(a, presented: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0 || presented == 0) { return 0; }
     if (str_len(presented) == 0) { return 0; }
@@ -436,6 +512,15 @@ fn agnostic_apikey_resolve_a(a, presented: Str): i64 {
 
 # Revoke every key whose digest matches `presented`. Returns how many went.
 fn agnostic_apikey_revoke_a(a, presented: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_apikey_revoke_locked_a(a, presented);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_apikey_revoke_a`'s body. The caller holds the store lock, so the
+# resolve and the delete are one step.
+fn _agnostic_apikey_revoke_locked_a(a, presented: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0 || presented == 0) { return 0; }
     if (agnostic_apikey_resolve_a(a, presented) == 0) { return 0; }
@@ -453,6 +538,14 @@ fn agnostic_apikey_revoke_a(a, presented: Str): i64 {
 
 # How many API keys are stored.
 fn agnostic_apikeys_count(): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_apikeys_count_locked();
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_apikeys_count`'s body. The caller holds the store lock.
+fn _agnostic_apikeys_count_locked(): i64 {
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
     var rs = patra_query(db, "SELECT kid FROM agnostic_apikeys");
@@ -464,8 +557,9 @@ fn agnostic_apikeys_count(): i64 {
 
 # Drop every API key. For tests.
 fn agnostic_apikeys_reset(): i64 {
+    agnostic_store_lock();
     var db = agnostic_store_db();
-    if (db == 0) { return 0; }
-    patra_exec(db, "DELETE FROM agnostic_apikeys");
+    if (db != 0) { patra_exec(db, "DELETE FROM agnostic_apikeys"); }
+    agnostic_store_unlock();
     return 0;
 }

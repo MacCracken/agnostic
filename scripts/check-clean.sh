@@ -133,6 +133,25 @@ else
     printf '%s\n' "$out"
 fi
 
+# --- store lock: the shared patra handle is only reachable under it --------
+# Added at 0.1.4. Every pool worker shares one patra handle, and patra's read
+# path takes no lock, so concurrent statements on it race patra's header buffer
+# and file offset — on the 0.1.3 code, eight threads doing only the per-request
+# user lookup killed the process with SIGBUS on every run. `agnostic_store_db()`
+# refuses the handle to a thread without the store lock at RUN time; this is the
+# same rule checked statically, for the paths no suite reaches.
+#
+# Mutation-verified: a wrapper that drops its `agnostic_store_lock()`, a body that
+# fetches the handle without the lock or the `_locked` name, and a direct use of
+# the raw global each fail with the site named; on the 0.1.3 tree it reports 46.
+if ! out=$(python3 scripts/check-store-lock.py 2>&1); then
+    note "store lock: the shared patra handle is reachable without the store lock"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    fail=1
+else
+    printf '%s\n' "$out"
+fi
+
 # --- vet + deny: the dependency gates ------------------------------------
 if ! cyrius vet src/main.cyr >/dev/null 2>&1; then
     note "vet: src/main.cyr"
@@ -259,4 +278,4 @@ if [ "$fail" -ne 0 ]; then
     echo "cleanliness check FAILED"
     exit 1
 fi
-echo "cleanliness check OK — fmt, lint, doc, vet, deny, deps --verify, lib snapshot, generated sources all clean"
+echo "cleanliness check OK — fmt, lint, doc, log lengths, store lock, vet, deny, deps --verify, lib snapshot, generated sources all clean"

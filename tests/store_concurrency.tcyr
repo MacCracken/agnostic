@@ -1,0 +1,413 @@
+# agnostic/engine/store — the shared patra handle and the audit chain, under
+# concurrency.
+#
+# The server runs up to `AGNOSTIC_WORKERS` (default 16) pool workers against ONE
+# patra handle, and one audit chain. patra's read path has been lock-free since
+# 1.12.0, and patra 1.14.0 says so: "Concurrent SELECTs on one handle race the
+# per-handle header buffer and the shared file offset — wrong rows, phantom
+# values, hangs." libro's chain has no lock at all. Every suite before this one
+# was single-threaded, so none of it could see either.
+#
+# Each stress test below starts its workers behind a barrier so they overlap as
+# much as possible, and every assertion is on a RESULT — a row read back, a count,
+# a verified chain — never on the absence of a crash. On the 0.1.3 code the first
+# of them killed the process with SIGBUS on every run; a single-threaded control
+# of the same suite passed.
+#
+# The first two groups pin the MECHANISM rather than its effect: the re-entrant
+# lock's ownership rules, and `agnostic_store_db()` refusing the handle to any
+# thread that does not hold the store lock — which is what turns a forgotten lock
+# into a failing suite instead of a production race.
+include "src/app.cyr"
+
+var _T_CDB = "/tmp/agnostic-concurrency-suite.patra";
+var _T_CAUDIT = "/tmp/agnostic-concurrency-audit.patra";
+
+var _T_THREADS = 8;
+var _T_ITERS = 100;
+var _T_AUDIT_ITERS = 50;
+
+# Start barrier: workers spin until the main thread has spawned all of them.
+var _t_go = 0;
+
+# One failure counter per worker — 16 slots, 8 bytes each. `var buf[N]` is N
+# BYTES, not N entries.
+var _t_fails[128];
+
+# The user every worker looks up, and its uid.
+var _T_EMAIL = "stress@example.test";
+var _t_uid = 0;
+
+# Same-key contention: the shared key, the shared record, and how many won.
+var _t_shared_key = 0;
+var _t_shared_def = 0;
+var _t_won = 0;
+
+fn _t_open() {
+    agnostic_store_close();
+    sys_unlink(_T_CDB);
+    patra_init();
+    agnostic_definitions_open(str_from(_T_CDB));
+    agnostic_definitions_reset();
+    agnostic_crews_ensure();
+    agnostic_auth_ensure();
+    agnostic_argon_pool_init();
+    return 0;
+}
+
+# A definition decoded from its wire form, on the global allocator — the same
+# one the store's own decoder uses, so the record outlives the worker.
+fn _t_def(key: Str): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"key\":\"");
+    str_builder_add(sb, key);
+    str_builder_add_cstr(sb, "\",\"role\":\"stress\",\"goal\":\"hold the store\"}");
+    var v = agnostic_decode_a(default_alloc(), str_builder_build(sb));
+    if (v == 0) { return 0; }
+    var rj: i64[1];
+    store64(&rj, 0);
+    return agnostic_agent_def_decode_a(default_alloc(), v, 0 - 1, &rj);
+}
+
+# `<prefix><t>-<i>` — lower case, digits and hyphens, so a legal agent key.
+fn _t_name(prefix, t, i): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add(sb, str_from_int(t));
+    str_builder_add_cstr(sb, "-");
+    str_builder_add(sb, str_from_int(i));
+    return str_builder_build(sb);
+}
+
+fn _t_wait_for_go() {
+    while (atomic_load(&_t_go) == 0) { }
+    return 0;
+}
+
+fn _t_sum_fails() {
+    var n = 0;
+    var t = 0;
+    while (t < _T_THREADS) {
+        n = n + load64(&_t_fails + t * 8);
+        t = t + 1;
+    }
+    return n;
+}
+
+fn _t_run_n(fp, n) {
+    var handles: i64[16];
+    atomic_store(&_t_go, 0);
+    var t = 0;
+    while (t < _T_THREADS) {
+        store64(&_t_fails + t * 8, 0);
+        t = t + 1;
+    }
+    t = 0;
+    while (t < n) {
+        store64(&handles + t * 8, thread_create(fp, t));
+        t = t + 1;
+    }
+    atomic_store(&_t_go, 1);
+    t = 0;
+    while (t < n) {
+        thread_join(load64(&handles + t * 8));
+        t = t + 1;
+    }
+    return _t_sum_fails();
+}
+
+fn _t_run(fp) {
+    return _t_run_n(fp, _T_THREADS);
+}
+
+# --- the re-entrant lock itself ---------------------------------------------
+
+var _t_rl = 0;
+var _t_probe_held = 0 - 1;
+var _t_probe_exit = 0 - 1;
+var _t_probe_db = 0 - 1;
+var _t_entered = 0;
+
+# Runs on a second thread while the main thread holds `_t_rl` and the store lock.
+fn _t_foreign_probe(t): i64 {
+    _t_probe_held = agnostic_rlock_held(_t_rl);
+    _t_probe_exit = agnostic_rlock_exit(_t_rl);
+    _t_probe_db = agnostic_store_db();
+    return 0;
+}
+
+# Blocks in `enter` until the main thread lets go, then records that it got in.
+fn _t_blocking_enter(t): i64 {
+    agnostic_rlock_enter(_t_rl);
+    atomic_store(&_t_entered, 1);
+    agnostic_rlock_exit(_t_rl);
+    return 0;
+}
+
+fn test_the_lock_is_reentrant_and_owned() {
+    test_group("rlock/ownership");
+
+    _t_rl = agnostic_rlock_new();
+    assert_neq(_t_rl, 0, "a lock is created");
+    assert_eq(agnostic_rlock_held(_t_rl), 0, "a new lock is not held");
+    assert_eq(agnostic_rlock_exit(_t_rl), 0, "releasing a lock nobody holds is refused");
+
+    assert_eq(agnostic_rlock_enter(_t_rl), 1, "enter");
+    assert_eq(agnostic_rlock_held(_t_rl), 1, "the entering thread holds it");
+    assert_eq(agnostic_rlock_enter(_t_rl), 1,
+      "the owner enters AGAIN without deadlocking itself — the whole point");
+    assert_eq(agnostic_rlock_depth(_t_rl), 2, "at depth 2");
+    assert_eq(agnostic_rlock_exit(_t_rl), 1, "the inner exit");
+    assert_eq(agnostic_rlock_held(_t_rl), 1, "does not release the outer hold");
+
+    # A second thread, while this one holds it.
+    var t = thread_create(&_t_foreign_probe, 0);
+    thread_join(t);
+    assert_eq(_t_probe_held, 0, "another thread does not see itself as the owner");
+    assert_eq(_t_probe_exit, 0, "and cannot release this thread's hold");
+    assert_eq(agnostic_rlock_held(_t_rl), 1, "which is still in place afterwards");
+
+    # And it BLOCKS until the owner lets go.
+    atomic_store(&_t_entered, 0);
+    var w = thread_create(&_t_blocking_enter, 0);
+    sleep_ms(100);
+    assert_eq(atomic_load(&_t_entered), 0, "a second thread waits while the lock is held");
+    assert_eq(agnostic_rlock_exit(_t_rl), 1, "the outer exit");
+    thread_join(w);
+    assert_eq(atomic_load(&_t_entered), 1, "and gets in once it is released");
+    assert_eq(agnostic_rlock_held(_t_rl), 0, "leaving the main thread holding nothing");
+}
+
+# --- the store accessor refuses the handle without the lock ------------------
+
+fn test_the_handle_needs_the_lock() {
+    test_group("store/handle-needs-lock");
+
+    _t_open();
+    assert_eq(agnostic_store_is_open(), 1, "the store reports itself open, lock or not");
+    assert_eq(agnostic_store_held(), 0, "this thread does not hold the store lock");
+    assert_eq(agnostic_store_db(), 0,
+      "so it is REFUSED the handle — a forgotten lock fails here, not under load");
+
+    agnostic_store_lock();
+    assert_neq(agnostic_store_db(), 0, "with the lock, the handle is handed out");
+    agnostic_store_lock();
+    assert_neq(agnostic_store_db(), 0, "and still at depth 2");
+
+    # Ownership is per THREAD, not "someone holds it".
+    _t_rl = _agnostic_store_rl;
+    _t_probe_db = 0 - 1;
+    var t = thread_create(&_t_foreign_probe, 0);
+    thread_join(t);
+    assert_eq(_t_probe_db, 0, "another thread is refused while THIS one holds the lock");
+    assert_eq(_t_probe_exit, 0, "and cannot release it for us");
+
+    agnostic_store_unlock();
+    agnostic_store_unlock();
+    assert_eq(agnostic_store_held(), 0, "two unlocks release two locks");
+    assert_eq(agnostic_store_db(), 0, "and the handle is refused again");
+
+    assert_eq(agnostic_users_count(), 0,
+      "a store operation takes the lock itself — callers never see it");
+    assert_eq(agnostic_store_held(), 0, "and releases it on the way out");
+
+    agnostic_store_close();
+    assert_eq(agnostic_store_is_open(), 0, "closing is visible without the lock");
+}
+
+# --- 1. mixed reads and writes on the shared handle ------------------------
+
+# Every worker creates definitions and crew outcomes under keys only it uses,
+# reads each one straight back, and resolves the one user. A wrong row, a
+# missing row, or a lookup that answers somebody else's uid is a failure.
+fn _t_mixed_worker(t): i64 {
+    _t_wait_for_go();
+    var a = arena_allocator(1048576);
+    var fails = 0;
+    var i = 0;
+    while (i < _T_ITERS) {
+        var key = _t_name("w", t, i);
+        var d = _t_def(key);
+        if (d == 0) { fails = fails + 1; }
+        if (d != 0) {
+            if (agnostic_definitions_create(key, d) != AGNOSTIC_DEF_OK) { fails = fails + 1; }
+            var got = agnostic_definitions_get(key);
+            if (got == 0) { fails = fails + 1; }
+            if (got != 0) {
+                if (str_eq(agnostic_agent_def_key(got), key) == 0) { fails = fails + 1; }
+            }
+        }
+
+        if (agnostic_users_find_a(a, str_from(_T_EMAIL)) != _t_uid) { fails = fails + 1; }
+
+        var id = _t_name("c", t, i);
+        var doc = _t_name("{\"doc\":\"", t, i);
+        if (agnostic_crews_save(id, str_from("stress"), AGNOSTIC_CREW_COMPLETED, doc) != 1) {
+            fails = fails + 1;
+        }
+        var back = agnostic_crews_doc_a(a, id);
+        if (back == 0) { fails = fails + 1; }
+        if (back != 0) {
+            if (str_eq(back, doc) == 0) { fails = fails + 1; }
+        }
+        i = i + 1;
+    }
+    store64(&_t_fails + t * 8, fails);
+    return 0;
+}
+
+fn test_mixed_operations_on_the_shared_handle() {
+    test_group("store/concurrent-mixed");
+
+    _t_open();
+    var a = arena_allocator(262144);
+    _t_uid = agnostic_users_create_a(a, str_from(_T_EMAIL), str_from("correct horse battery"),
+      AGNOSTIC_ROLE_VIEWER, 0);
+    assert_neq(_t_uid, 0, "the lookup target exists");
+
+    var fails = _t_run(&_t_mixed_worker);
+    assert_eq(fails, 0, "no worker read a wrong, missing or foreign row");
+    assert_eq(agnostic_definitions_count(), _T_THREADS * _T_ITERS,
+      "every definition landed, exactly once");
+    assert_eq(agnostic_crews_count(), _T_THREADS * _T_ITERS,
+      "every crew outcome landed, exactly once");
+    assert_eq(agnostic_users_count(), 1, "and the user table was only read");
+}
+
+# --- 2. check-then-act: many creators, one key ----------------------------
+
+# `create` checks for the key, then inserts. Unless the two steps are one
+# critical section, two workers can both see "absent" and both insert — two
+# rows under one key, each caller told 201. No upsert means exactly one wins.
+#
+# ⚠ **A stress test, not a proof.** Between this check and this insert there are
+# only microseconds, and a thread that just released a lock nearly always
+# re-takes it before a woken waiter runs — so a mutant that splits the two into
+# separate critical sections passed all 20 rounds when tried. The Argon2 test
+# below is the same property with a window wide enough to fail every time.
+fn _t_same_key_worker(t): i64 {
+    _t_wait_for_go();
+    if (agnostic_definitions_create(_t_shared_key, _t_shared_def) == AGNOSTIC_DEF_OK) {
+        atomic_fetch_add(&_t_won, 1);
+    }
+    return 0;
+}
+
+fn _t_same_crew_worker(t): i64 {
+    _t_wait_for_go();
+    if (agnostic_crews_save(_t_shared_key, str_from("race"), AGNOSTIC_CREW_COMPLETED,
+        str_from("{\"doc\":1}")) == 1) {
+        atomic_fetch_add(&_t_won, 1);
+    }
+    return 0;
+}
+
+fn test_one_key_has_exactly_one_winner() {
+    test_group("store/concurrent-same-key");
+
+    var round = 0;
+    var extra_defs = 0;
+    var extra_crews = 0;
+    while (round < 20) {
+        _t_open();
+        _t_shared_key = _t_name("same", 0, round);
+        _t_shared_def = _t_def(_t_shared_key);
+        atomic_store(&_t_won, 0);
+        _t_run(&_t_same_key_worker);
+        if (atomic_load(&_t_won) != 1) { extra_defs = extra_defs + 1; }
+        if (agnostic_definitions_count() != 1) { extra_defs = extra_defs + 1; }
+
+        atomic_store(&_t_won, 0);
+        _t_run(&_t_same_crew_worker);
+        if (atomic_load(&_t_won) != 1) { extra_crews = extra_crews + 1; }
+        if (agnostic_crews_count() != 1) { extra_crews = extra_crews + 1; }
+        round = round + 1;
+    }
+    assert_eq(extra_defs, 0, "20 rounds of 8 racing creates: one definition, one 201, every time");
+    assert_eq(extra_crews, 0, "20 rounds of 8 racing saves: one crew row, written once, every time");
+}
+
+# The same property where the window is WIDE. `agnostic_users_create_a` checks
+# for the address, then spends ~244 ms in Argon2 — outside the store lock, on
+# purpose — then inserts. Every racer passes the early check while none has
+# inserted yet, so only the re-check made under the lock with the insert keeps
+# the address unique. One racer per Argon2 slot, so nobody is shed and all of
+# them really do reach the insert.
+var _T_SAME_EMAIL = "race@example.test";
+
+fn _t_same_user_worker(t): i64 {
+    _t_wait_for_go();
+    var a = arena_allocator(1048576);
+    if (agnostic_users_create_a(a, str_from(_T_SAME_EMAIL), str_from("correct horse"),
+        AGNOSTIC_ROLE_VIEWER, 0) != 0) {
+        atomic_fetch_add(&_t_won, 1);
+    }
+    return 0;
+}
+
+fn test_one_address_has_exactly_one_user() {
+    test_group("store/concurrent-same-user");
+
+    _t_open();
+    atomic_store(&_t_won, 0);
+    _t_run_n(&_t_same_user_worker, AGNOSTIC_ARGON_SLOTS);
+    assert_eq(atomic_load(&_t_won), 1,
+      "racing creates of one address across an Argon2 window: exactly one succeeds");
+    assert_eq(agnostic_users_count(), 1, "and exactly one row exists");
+}
+
+# --- 3. the audit chain ----------------------------------------------------
+
+# An append reads the chain head, links the new entry to it, then persists it.
+# Two workers interleaving those steps fork the chain or persist it out of
+# order, and the next verification reports tampering nobody did.
+fn _t_audit_worker(t): i64 {
+    _t_wait_for_go();
+    var i = 0;
+    var fails = 0;
+    while (i < _T_AUDIT_ITERS) {
+        if (agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("stress"),
+            agnostic_audit_detail("at", _t_name("t", t, i))) != 1) {
+            fails = fails + 1;
+        }
+        i = i + 1;
+    }
+    store64(&_t_fails + t * 8, fails);
+    return 0;
+}
+
+fn test_the_audit_chain_survives_concurrent_appends() {
+    test_group("audit/concurrent-append");
+
+    agnostic_audit_close();
+    sys_unlink(_T_CAUDIT);
+    patra_init();
+    assert_eq(agnostic_audit_open(str_from(_T_CAUDIT)), 1, "the trail opens");
+
+    var fails = _t_run(&_t_audit_worker);
+    assert_eq(fails, 0, "every append reported success");
+    assert_eq(agnostic_audit_appended(), _T_THREADS * _T_AUDIT_ITERS,
+      "and the appended counter lost no increment");
+    assert_eq(agnostic_audit_count(), _T_THREADS * _T_AUDIT_ITERS, "the store holds every entry");
+    assert_eq(agnostic_audit_dropped(), 0, "none dropped");
+    assert_eq(agnostic_audit_reverify(), 1,
+      "and the chain VERIFIES — no fork, no out-of-order link, no false tamper alarm");
+    agnostic_audit_close();
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    test_the_lock_is_reentrant_and_owned();
+    test_the_handle_needs_the_lock();
+    test_mixed_operations_on_the_shared_handle();
+    test_one_key_has_exactly_one_winner();
+    test_one_address_has_exactly_one_user();
+    test_the_audit_chain_survives_concurrent_appends();
+    agnostic_store_close();
+    return assert_summary();
+}
+
+var _agnostic_store_concurrency_test_exit = main();
+if (_agnostic_store_concurrency_test_exit > 0) { _agnostic_store_concurrency_test_exit = 1; }
+sys_exit_group(_agnostic_store_concurrency_test_exit);

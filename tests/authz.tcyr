@@ -139,12 +139,14 @@ fn test_tenant_bucket_is_rechecked() {
 
     _t_tenant_open();
     var a = arena_allocator(262144);
-    var db = agnostic_store_db();
 
     var victim = str_from("victim");
     var tid = agnostic_tenant_tid(victim);
     assert_neq(tid, 0, "the bucket key computes");
 
+    # Raw SQL, so this takes the store lock — the handle is refused without it.
+    agnostic_store_lock();
+    var db = agnostic_store_db();
     var st = patra_prepare(db,
       "INSERT INTO agnostic_tenants (tid, tkey, tname, created) VALUES (?, ?, ?, ?)");
     patra_bind_int(st, 0, tid);
@@ -153,6 +155,7 @@ fn test_tenant_bucket_is_rechecked() {
     patra_bind_int(st, 3, 0);
     assert_eq(patra_exec_prepared(db, st), PATRA_OK, "a colliding row is written");
     patra_finalize(st);
+    agnostic_store_unlock();
 
     # ⭐ Same boundary as the user and API-key tables: the bucket narrows, the
     # full compare decides.
