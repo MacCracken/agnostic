@@ -46,18 +46,18 @@ an operator has provisioned a user. What keeps that from being fail-open:
 loopback, and refuses to start with auth *required* when no users and no
 bootstrap credential exist.
 
-Version is **0.1.5** — see `CHANGELOG.md`. Per decision #4 the port's milestones
+Version is **0.1.6** — see `CHANGELOG.md`. Per decision #4 the port's milestones
 ship together as **1.0.0** (§4).
 
 ## 2. ⚠ Build it correctly, or you will write a lock CI cannot reproduce
 
 This has bitten repeatedly and is the single most important operational fact here.
 
-**The pin is `6.6.6`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
+**The pin is `6.6.11`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
 under a toolchain other than the pin rewrites `lib/` and `cyrius.lock` with content
 CI — which installs the pin — cannot reproduce. CI has a fatal drift gate precisely
 for this. Read `cyrius --version` before provisioning: it must print
-`manifest-pin: 6.6.6` with **no** `drift` on the line.
+`manifest-pin: 6.6.11` with **no** `drift` on the line.
 
 ### ✅ The wrapper pins the compiler now — the `CYRIUS_HOME` shim is retired
 
@@ -301,14 +301,14 @@ already filed from this port.
 
 | Repo | Version | How it arrives |
 |---|---|---|
-| `agnosai` | **2.1.0** | direct, `git` + `tag` — **no `path`** |
-| `bote` | **3.3.13** | direct pin, matching agnosai 2.1.0's |
-| `majra` | **2.9.1** | direct pin, matching agnosai 2.1.0's |
-| `ai-hwaccel` / `tyche` | **2.4.0** / **1.1.0** | direct pins, matching agnosai 2.1.0's |
+| `agnosai` | **2.1.1** | direct, `git` + `tag` — **no `path`**; 2.1.0 does not compile on 6.6.11 |
+| `bote` | **3.3.13** | direct pin, matching agnosai 2.1.1's |
+| `majra` | **2.9.1** | direct pin, matching agnosai 2.1.1's |
+| `ai-hwaccel` / `tyche` | **2.4.0** / **1.1.0** | direct pins, matching agnosai 2.1.1's |
 | `libro` | **2.10.3** | transitive via bote — the audit chain |
 | `kavach` | **3.13.1** | transitive via agnosai |
-| `sigil` | **3.12.18** | folded into the 6.6.6 stdlib; also declared by agnosai, kavach, libro |
-| `patra` | **1.14.3** | folded into the 6.6.6 stdlib; also declared by libro |
+| `sigil` | **3.13.4** | folded into the 6.6.11 stdlib; agnosai, kavach and libro declare 3.12.18, which `deps` skips |
+| `patra` | **1.15.1** | folded into the 6.6.11 stdlib; libro declares 1.14.3, which `deps` skips |
 
 ✅ **All nine carry a commit pin in `cyrius.lock`**, and every tag was confirmed on
 the GitHub remote (API, not `gh`) before its pin moved. The agnosai 2.0.6 episode
@@ -325,8 +325,10 @@ Do not add it back.
 
 ### ✅ No `[deps.patra]` hold at this pin
 
-6.6.6 folds patra 1.14.3 (and sigil 3.12.18), which is what libro 2.10.3 declares,
-so `lib/` matches the snapshot with **zero** files differing. The hold that agnosai 2.0.5 needed —
+6.6.11 folds patra 1.15.1 (and sigil 3.13.4). libro 2.10.3 still declares patra
+1.14.3, but `cyrius deps` keeps the folded copy and does not overwrite it with the
+dep's artifact ("refusing to overwrite stdlib leaf"), so `lib/` matches the snapshot
+with **zero** files differing. The hold that agnosai 2.0.5 needed —
 because no published Cyrius folded 1.13.10 at the time — is **not** reintroduced
 here and must not be. The general rule: taking a patra version through a transitive
 `[deps.patra]` obliges a Cyrius pin that folds the same version; the two are one

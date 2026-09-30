@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "agnostic — TODO"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.6.6"
+cyrius = "6.6.11"
 
 [build]
 entry = "src/main.cyr"
@@ -70,11 +70,18 @@ stdlib = [
 # changed: agnostic's own code uses no `Result`/`Option`/`Either` at all.
 # 2.0.8 pins kavach 3.12.5 + libro 2.10.x, which are migrated. Move both.
 #
-# ✅ At 6.6.6 / agnosai 2.1.0 the lockstep holds on both folded modules the chain
-# redeclares: 6.6.6 folds **sigil 3.12.18** and **patra 1.14.3**, and those are
-# exactly the tags agnosai, kavach 3.13.1 and libro 2.10.3 declare. ⚠ sigil 3.13.x
-# and patra 1.15.0 exist but are NOT folded into 6.6.6 — neither may be pinned here
-# until a Cyrius release folds them, or `lib/` stops matching the snapshot.
+# ⚠ At 6.6.11 / agnosai 2.1.1 the folded copies WIN, not the chain's. 6.6.11 folds
+# **sigil 3.13.4** and **patra 1.15.1**; the chain still declares sigil 3.12.18
+# (agnosai, kavach 3.13.1, libro 2.10.3) and patra 1.14.3 (libro). `cyrius deps`
+# refuses to overwrite a folded stdlib leaf with a dep's artifact ("refusing to
+# overwrite stdlib leaf"), so `lib/sigil.cyr` / `lib/patra.cyr` stay the 6.6.11
+# snapshot — byte-identical to `git show 6.6.11:lib/<mod>` — and `check-clean.sh`
+# stays green. The whole suite runs against those folded copies.
+#
+# ⛔ From 6.6.11 on, agnosai must be ≥ 2.1.1. 6.6.11 checks enum qualifiers, and
+# agnosai 2.1.0 still spells kavach's renamed enum `Backend.NOOP` / `.WASM` /
+# `.PROCESS` / `.OCI` (it is `KavachBackend` now), which 6.6.11 refuses with
+# "'Backend' is not an enum". 2.1.1's dist carries the corrected spelling.
 # ⛔ THE FOUR PINS BELOW ARE NOT OPTIONAL, AND THEY MUST PRECEDE [deps.agnosai].
 # agnosai 2.0.8's own published manifest declares bote, majra, ai-hwaccel and tyche
 # with `path = "../<sibling>"` ALONGSIDE their tags. A path override makes the tag
@@ -83,7 +90,7 @@ stdlib = [
 # `lib/` trees, so `cyrius.lock` is written differently on each and the
 # "Lockfile agrees with a clean resolution" gate can never pass. Declaring them here
 # WITHOUT a path removes the override from this repo's resolution entirely, so the
-# lock is a function of the tags alone. Tags match what agnosai 2.1.0 itself pins —
+# lock is a function of the tags alone. Tags match what agnosai 2.1.1 itself pins —
 # changing one here without checking agnosai is how the two silently diverge.
 [deps.bote]
 git = "https://github.com/MacCracken/bote.git"
@@ -103,7 +110,7 @@ tag = "1.1.0"
 
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
-tag = "2.1.0"
+tag = "2.1.1"
 modules = ["dist/agnosai.cyr"]
 
 [release]

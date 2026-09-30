@@ -4,6 +4,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-09-30
+
+Re-pin to **Cyrius 6.6.11** and **agnosai 2.1.1**. No `src/` change and no behaviour change.
+**26 suites, 1,240 assertions, 0 failed**, the same totals as 0.1.5. Every gate is green and
+aarch64 builds.
+
+### Changed — Cyrius 6.6.6 → 6.6.11, agnosai 2.1.0 → 2.1.1
+
+- **Why both move together.** Cyrius 6.6.11 checks the qualifier in `X.NAME`. Before 6.6.11 the
+  compiler resolved only the member name, so the type name did nothing. kavach renamed
+  `enum Backend` to `KavachBackend`, but agnosai 2.1.0's `dist/agnosai.cyr` still spelled
+  `Backend.NOOP` / `.WASM` / `.PROCESS` / `.OCI`. 6.6.11 refuses each of those sites with
+  `'Backend' is not an enum`, so this repo could not re-pin without a new agnosai. agnosai
+  2.1.1 fixes the spelling. Its bote / majra / ai-hwaccel / tyche / kavach pins are unchanged,
+  so the four direct pre-pins in `cyrius.cyml` stay where they were.
+- **`lib/`** is re-synced from the 6.6.11 snapshot. Every snapshot file is byte-identical to
+  `git show 6.6.11:lib/<mod>` in the cyrius repo. `lib/agnosai.cyr` is byte-identical to
+  agnosai 2.1.1's `dist/agnosai.cyr`. **`cyrius.lock`**: 118 files and 9 commit pins, with
+  agnosai at `1c1ea74d` and a trailing `cyrius 6.6.11` line.
+- ⚠ **sigil and patra: the folded copies win.** 6.6.11 folds sigil **3.13.4** and patra
+  **1.15.1**. The chain still declares sigil 3.12.18 and patra 1.14.3. `cyrius deps` refuses to
+  overwrite a folded stdlib leaf and keeps the snapshot, so `lib/` still matches the snapshot
+  exactly and the whole suite runs against the folded 3.13.4 / 1.15.1. The `cyrius.cyml` note
+  that said the lockstep held because 6.6.6 folded the chain's exact tags is corrected.
+
+### Fixed — `tests/deps_symbols.tcyr` asserted a spelling 6.6.11 refuses
+
+`test_enum_members_still_resolve` asserted `Backend.WASM == KavachBackend.WASM`, "an enum qualifier
+is cosmetic". Since 6.6.11 that is a compile error, and it would have broken the whole suite. The
+assertion now compares the **bare** member `WASM` with `KavachBackend.WASM`. That comparison still
+catches a later global named `WASM` colliding silently. The note now records when the qualifier
+became checked. The suite still has 14 assertions. The patch was prepared and verified in the
+cyrius 6.6.11 release (lane F, 14 passed / 0 failed on both compilers) and is applied here verbatim.
+
 ## [0.1.5] — 2026-09-26
 
 The two server crashes 0.1.4 found and left open. Both were present since at least 0.1.3.

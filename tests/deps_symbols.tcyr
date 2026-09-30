@@ -54,10 +54,12 @@ fn test_kavach_bound_matches_its_table() {
 fn test_enum_members_still_resolve() {
     test_group("deps/enum-members");
 
-    # ⚠ In Cyrius an enum QUALIFIER is cosmetic: the type name plays no part in
-    # resolution, only the member name does. So renaming `enum Backend` to
-    # `KavachBackend` protected nothing by itself — these members are still
-    # generic and still unprefixed, and a future library defining `WASM` or
+    # ⚠ Until cyrius 6.6.11 an enum QUALIFIER was cosmetic: the type name played no
+    # part in resolution, only the member name did, so the stale spelling
+    # `Backend.WASM` kept compiling after kavach renamed `enum Backend` to
+    # `KavachBackend`. Since 6.6.11 the qualifier must name the member's own enum
+    # (`Backend.WASM` is refused: 'Backend' is not an enum). The BARE members are
+    # still generic and unprefixed, and a future library defining `WASM` or
     # `PROCESS` would collide with them SILENTLY, exactly as BACKEND_COUNT did.
     # Pinning the values here is what would catch that.
     assert_eq(KavachBackend.PROCESS, 0, "PROCESS is 0");
@@ -65,10 +67,10 @@ fn test_enum_members_still_resolve() {
     assert_eq(KavachBackend.OCI, 4, "OCI is 4");
     assert_eq(KavachBackend.NOOP, 9, "NOOP is 9");
 
-    # The unqualified spelling must agree — this is what proves the qualifier
-    # is cosmetic rather than assumed to be.
-    assert_eq(Backend.WASM, KavachBackend.WASM,
-      "an enum qualifier is cosmetic — both spellings resolve to member WASM");
+    # The bare spelling must agree with the qualified one — a later global
+    # named WASM would make it disagree.
+    assert_eq(WASM, KavachBackend.WASM,
+      "the bare member and KavachBackend.WASM resolve to the same value");
 
     assert_eq(AiHwBackend.BACKEND_CUDA, 0, "ai-hwaccel's CUDA is 0");
 }

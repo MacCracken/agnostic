@@ -1,6 +1,6 @@
 # flags.cyr — getopt-long-shaped CLI flag parser
 # Usage: include "lib/flags.cyr"
-# Requires: alloc.cyr, string.cyr, syscalls.cyr (sys_write/STDERR_FD)
+# Includes its own definers: alloc.cyr, string.cyr, syscalls.cyr (sys_write/STDERR_FD).
 #
 # A parser for PROGRAMS built on `lib/args.cyr`'s bare argc/argv
 # surface, so each one need not hand-roll a `streq("--foo", argv(i))`
@@ -79,6 +79,9 @@ enum FlagErr {
     # v6.6.5 — `--verbose=0` used to SET the flag (the attached value was ignored
     # and BOOL stored 1), i.e. the exact opposite of what was typed.
     FLAG_ERR_UNEXPECTED_VALUE = 5;
+    # 6.6.7 — a list or positional array could not grow. The growth alloc was unchecked,
+    # so a refusal stored the pointer array through 0.
+    FLAG_ERR_NOMEM = 6;
 }
 
 var FLAGS_MAX = 32;
@@ -110,13 +113,16 @@ var FLAGS_ENTRY_SIZE = 48;
 #  +40  help            : i64 (cstr)
 
 # Allocate a fresh flags context. Returns an opaque handle that
-# all other flags_* functions take as their first argument. The
-# context owns its entries + positional arrays; do not free
-# individually.
+# all other flags_* functions take as their first argument, or 0 when an
+# allocation is refused (6.6.7). The context owns its entries + positional
+# arrays; do not free individually.
 fn flags_new(): i64 {
     var h = alloc(FLAGS_CTX_SIZE);
+    if (h == 0) { return 0; }
     var entries = alloc(FLAGS_MAX * FLAGS_ENTRY_SIZE);
+    if (entries == 0) { return 0; }
     var positional = alloc(FLAGS_POS_MAX * 8);
+    if (positional == 0) { return 0; }
     # Zero entries + context so stale slots read as 0
     var i = 0;
     while (i < FLAGS_MAX * FLAGS_ENTRY_SIZE) {
@@ -247,6 +253,7 @@ fn flags_error_str(code): i64 {
     if (code == FLAG_ERR_BAD_INT) { return "option needs an integer"; }
     if (code == FLAG_ERR_BUNDLED) { return "bundled/attached short options are not supported"; }
     if (code == FLAG_ERR_UNEXPECTED_VALUE) { return "option takes no value"; }
+    if (code == FLAG_ERR_NOMEM) { return "out of memory"; }
     return "ok";
 }
 
@@ -321,11 +328,16 @@ fn _flags_parse_int(s): i64 {
 }
 
 # v6.6.5 — a LIST flag's value slot holds a 24-B block: {ptr, cap, count}.
+# 6.6.7 — every allocation is checked: FLAG_ERR_NOMEM, with the list unchanged.
 fn _flags_list_push(ep, value_ptr): i64 {
     var blk = load64(ep + 24);
     if (blk == 0) {
-        blk = alloc(24);
-        store64(blk, alloc(8 * 8));
+        var nblk = alloc(24);
+        if (nblk == 0) { return FLAG_ERR_NOMEM; }
+        var arr = alloc(8 * 8);
+        if (arr == 0) { return FLAG_ERR_NOMEM; }
+        blk = nblk;
+        store64(blk, arr);
         store64(blk + 8, 8);
         store64(blk + 16, 0);
         store64(ep + 24, blk);
@@ -334,6 +346,7 @@ fn _flags_list_push(ep, value_ptr): i64 {
     var cap = load64(blk + 8);
     if (n >= cap) {
         var grown = alloc(cap * 2 * 8);
+        if (grown == 0) { return FLAG_ERR_NOMEM; }
         var i = 0;
         while (i < n) { store64(grown + i * 8, load64(load64(blk) + i * 8)); i = i + 1; }
         store64(blk, grown);
@@ -369,11 +382,14 @@ fn _flags_apply(ep, value_ptr): i64 {
 
 # v6.6.5 — GROW, never drop. This used to `return 0` at the cap, so positional
 # 129 and everything after it vanished while parse still reported success.
+# 6.6.7 — the growth alloc is checked: FLAG_ERR_NOMEM (the caller fails the parse)
+# instead of storing the array through 0.
 fn _flags_push_positional(h, tok): i64 {
     var pc = load64(h + 40);
     var cap = load64(h + 32);
     if (pc >= cap) {
         var grown = alloc(cap * 2 * 8);
+        if (grown == 0) { return FLAG_ERR_NOMEM; }
         var src = load64(h + 24);
         var i = 0;
         while (i < pc) { store64(grown + i * 8, load64(src + i * 8)); i = i + 1; }
@@ -382,7 +398,17 @@ fn _flags_push_positional(h, tok): i64 {
     }
     store64(load64(h + 24) + pc * 8, tok);
     store64(h + 40, pc + 1);
-    return 0;
+    return FLAG_ERR_NONE;
+}
+
+# Push a positional for flags_parse; on a refused grow record FLAG_ERR_NOMEM against `tok`
+# and return -1 so the parse fails instead of reporting success with a token missing.
+fn _flags_pos_or_fail(h, tok): i64 {
+    var r = _flags_push_positional(h, tok);
+    if (r == FLAG_ERR_NONE) { return 0; }
+    store64(h + 56, r);
+    store64(h + 64, tok);
+    return 0 - 1;
 }
 
 # Parse argv[1..] into the flags context. Returns 0 on success,
@@ -399,21 +425,21 @@ fn flags_parse(h, argc, argv): i64 {
         if (tok == 0) { i = i + 1; continue; }
 
         if (in_positional == 1) {
-            _flags_push_positional(h, tok);
+            if (_flags_pos_or_fail(h, tok) < 0) { return 0 - 1; }
             i = i + 1;
             continue;
         }
 
         # "-" alone is positional (stdin convention)
         if (load8(tok) != 45) {
-            _flags_push_positional(h, tok);
+            if (_flags_pos_or_fail(h, tok) < 0) { return 0 - 1; }
             # v6.6.5 — POSIX stop-at-first-positional, when the driver asked for it.
             if (load64(h + 72) == 1) { in_positional = 1; }
             i = i + 1;
             continue;
         }
         if (load8(tok + 1) == 0) {
-            _flags_push_positional(h, tok);
+            if (_flags_pos_or_fail(h, tok) < 0) { return 0 - 1; }
             i = i + 1;
             continue;
         }

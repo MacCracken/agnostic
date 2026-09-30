@@ -2,8 +2,8 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-09-26, at **0.1.5** — the two server crashes 0.1.4 left open
-> are fixed (Cyrius 6.6.6, agnosai 2.1.0, unchanged from 0.1.3).
+> Last refreshed: 2026-09-30, at **0.1.6** — re-pinned to Cyrius 6.6.11 and agnosai
+> 2.1.1 (6.6.11 checks enum qualifiers; 2.1.0's dist spelled kavach's enum wrong).
 > (Version, Toolchain, Dependencies and the gate counts were refreshed then; the
 > milestone narrative below is as of M6 part 1 and did not move.)
 >
@@ -13,20 +13,21 @@
 
 ## Version
 
-**0.1.5** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.6** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
 
-- **Cyrius pin**: `6.6.6` (`cyrius.cyml [package].cyrius`). The GitHub release and
-  its signed `x86_64-linux` tarball were verified, and the tarball's stdlib is
-  byte-identical to `lib/` — so CI's `lib sync --full` reproduces this tree.
+- **Cyrius pin**: `6.6.11` (`cyrius.cyml [package].cyrius`). Every stdlib file in
+  `lib/` is byte-identical to `git show 6.6.11:lib/<mod>` in the cyrius repo, and a
+  clean-copy CI run (fresh dep cache, `lib sync --full` + `deps`) reproduced `lib/`
+  and the lock.
 
-✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.6 folds **sigil
-3.12.18** and **patra 1.14.3**, which are exactly the tags agnosai 2.1.0, kavach
-3.13.1 and libro 2.10.3 declare, so `lib/` matches the snapshot with zero files
-differing. ⚠ sigil 3.13.x and patra 1.15.0 are tagged but folded by no Cyrius
-release yet; taking either means waiting for the release that folds it.
+✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.11 folds **sigil
+3.13.4** and **patra 1.15.1**. The chain still declares sigil 3.12.18 (agnosai 2.1.1,
+kavach 3.13.1, libro 2.10.3) and patra 1.14.3 (libro). `cyrius deps` keeps the folded
+copy and does not overwrite it with the dep's artifact, so `lib/` matches the
+snapshot with zero files differing. The suite runs against 3.13.4 / 1.15.1.
 
 ⚠ **The pin and the dep tags move TOGETHER.** `cyrius deps` resolves a declared
   dep's dist on top of the `lib sync --full` snapshot, and `check-clean.sh` allows
@@ -35,9 +36,10 @@ release yet; taking either means waiting for the release that folds it.
   agnosai's `main` red before its 2.0.5). ⛔ The wrong fixes, both tried and
   rejected: a `[deps.patra]` hold in this manifest, and a `check-clean` allowance.
 - `cyrius deps` prints `refusing to overwrite stdlib leaf 'sigil'` / `'patra'` on
-  every resolve (it did at 6.6.3 too). **Benign here:** the skipped dep artifacts
-  were hashed against both the sigil/patra tags and `git show 6.6.6:lib/<mod>`, and
-  are byte-identical to the folded copies the snapshot keeps.
+  every resolve. At 6.6.6 the skipped artifacts were byte-identical to the folded
+  copies. **At 6.6.11 they are not**: the chain's 3.12.18 / 1.14.3 are skipped and
+  the folded 3.13.4 / 1.15.1 are kept. Every gate and all 26 suites are green on
+  the folded copies.
 - ✅ **The wrapper pins `cycc` now** — fixed upstream at v6.5.42, and the installed
   `cyrius` re-execs the toolchain the manifest pins. The `CYRIUS_HOME` shim this
   section used to prescribe is no longer needed; confirm with `cyrius --version`
@@ -56,16 +58,16 @@ took the lock from **1 commit pin to 9**.
 
 | dep | pin | how it arrives |
 |---|---|---|
-| `agnosai` | **2.1.0** | direct, `git` + `tag` |
-| `bote` / `majra` / `ai-hwaccel` / `tyche` | **3.3.13** / **2.9.1** / **2.4.0** / **1.1.0** | direct pins, matching agnosai 2.1.0's own |
+| `agnosai` | **2.1.1** | direct, `git` + `tag` — 2.1.0 does not compile on 6.6.11 |
+| `bote` / `majra` / `ai-hwaccel` / `tyche` | **3.3.13** / **2.9.1** / **2.4.0** / **1.1.0** | direct pins, matching agnosai 2.1.1's own |
 | `kavach` | **3.13.1** | transitive via agnosai |
 | `libro` | **2.10.3** | transitive via bote — the audit chain |
-| `sigil` | **3.12.18** | folded stdlib (`[deps].stdlib`); also declared by agnosai, kavach, libro |
-| `patra` | **1.14.3** | folded stdlib (`[deps].stdlib`); also declared by libro |
+| `sigil` | **3.13.4** (folded) | folded stdlib (`[deps].stdlib`); agnosai, kavach and libro declare 3.12.18, which `deps` skips |
+| `patra` | **1.15.1** (folded) | folded stdlib (`[deps].stdlib`); libro declares 1.14.3, which `deps` skips |
 
 `cyrius.lock` — **118 files locked, 9 commit pins** (every dep above), plus a
-trailing `cyrius 6.6.6` line recording the toolchain that wrote it. All nine dep
-tags and `cyrius` 6.6.6 were confirmed on the GitHub remote before the pins moved,
+trailing `cyrius 6.6.11` line recording the toolchain that wrote it. All nine dep
+tags and `cyrius` 6.6.11 were confirmed on the GitHub remote before the pins moved,
 and a sibling-free
 resolution from an empty dep cache reproduced `lib/` and the lock byte for byte.
 
@@ -204,7 +206,7 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**26 suites, 1,240 assertions, 0 failed** (`cyrius test`, under the 6.6.6 pin).
+**26 suites, 1,240 assertions, 0 failed** (`cyrius test`, under the 6.6.11 pin).
 `tests/store_concurrency.tcyr` (43, 0.1.4) is the only multi-threaded suite. The per-suite list below predates
 M5 and M6; its counts are as of then.
 
@@ -237,12 +239,12 @@ in this repo (`222`) and in agnosai (`8,038`) double-counted it.
 
 ## Dependency layout
 
-**agnosai 2.1.0** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
+**agnosai 2.1.1** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
 than called over HTTP. Everything crew/task/agent/scheduling-shaped lives there;
 Agnostic owns the product tier. Versions and pins: see the table under
 [Dependencies](#dependencies) above.
 
-`lib/` holds **118** `.cyr`: **111** from the 6.6.6 stdlib snapshot plus 7 dep
+`lib/` holds **118** `.cyr`: **111** from the 6.6.11 stdlib snapshot plus 7 dep
 dists (`agnosai`, `bote-core`, `majra`, `ai-hwaccel`, `tyche`, `kavach`, `libro`).
 `deps --verify` 118/0. The compile set `check-lib-symbols.py` resolves is **53**
 modules — `sys` joined at 0.1.3, because sigil 3.12.18 calls `sys_uname`.
