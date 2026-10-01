@@ -337,7 +337,26 @@ second driver. It is currently P2 / post-v1.0 with no date.
 ### M9 — WebGUI (v1.0.0)
 
 - Static HTML/CSS/JS bundle served through sandhi (**D3**)
-- Needs a static file handler + mime map written from scratch
+- ~~Needs a static file handler + mime map written from scratch~~ — **superseded at 0.1.7 by
+  ADR 0004.** Pages are embedded at build time (`scripts/gen-webgui.sh`), so nothing is read
+  from disk and no request input becomes a path; the "mime map" is one media type.
+
+**Seeded at 0.1.7** — landed with its gates, as the release shape requires:
+
+- [x] The shell at `/ui`: Overview, a tab per switched-on plugin, Settings; sign-in when
+  `AGNOSTIC_AUTH=required`.
+- [x] Native plugins: compiled in, switched on per deployment (`PUT /api/v1/plugins/{id}`,
+  ADMIN, audited, durable), sandboxed in the shell, served under a generated CSP.
+- [x] Swarm Command as the first plugin — on its simulator, disclosed as `data: simulated`.
+
+Still owed for 1.0.0:
+
+- [ ] Views over the real surface: crews (submit, poll, events), agent definitions, presets,
+  the audit trail. They are the reason M9 exists; the shell is only where they will live.
+- [ ] A live event source for Swarm Command: the shell reads the crew event stream with the
+  user's token and hands events into the sandboxed frame by `postMessage`, translated into
+  the view's event schema. Until then its manifest says `simulated`.
+- [ ] M8's reports, once they exist, as views or downloads from the shell.
 
 ## Release shape
 

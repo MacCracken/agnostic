@@ -71,19 +71,35 @@ jobs:
           xxd -l 4 build/agnostic | grep -q "7f45 4c46" \
             || { echo "::error::x86_64 output is not an ELF binary"; exit 1; }
 
-      - name: Build aarch64 (DCE)
-        # first-party-standards.md:963 DON'T — "Release without aarch64 builds
-        # (where the toolchain supports it)". Fatal here, unlike CI's skip:
-        # a tagged release that silently ships one architecture is the failure
-        # the checklist is guarding against.
-        run: |
-          if [ ! -x "$HOME/.cyrius/bin/cycc_aarch64" ] && [ ! -x "$HOME/.cyrius/bin/cycc-native-aarch64" ]; then
-            echo "::error::no aarch64 cross compiler in the pinned bundle — cannot satisfy the release checklist"
-            exit 1
-          fi
-          CYRIUS_DCE=1 cyrius build --aarch64 src/main.cyr build/agnostic-aarch64
-          file build/agnostic-aarch64 | grep -q "ARM aarch64" \
-            || { echo "::error::aarch64 output is not an ARM binary"; exit 1; }
+      # ⛔ Build aarch64 — WITHHELD since 0.1.7, by decision (2026-10-01).
+      #
+      # A deliberate, temporary exception to first-party-standards.md:963 ("Release
+      # without aarch64 builds"). The binary builds, but dies with SIGBUS at startup
+      # on real aarch64 hardware (Raspberry Pi 4): cyrius lays a typed-array global
+      # (`var a: u8[N]`) out at exactly N bytes and does not re-align the next one,
+      # so the globals after sankoch's u8[363]/u8[217]/u8[50] are off by 6, and the
+      # first atomic on one of them — sigil's crypto init flags, which mount touches
+      # first — faults. Shipping it would publish a binary that cannot start.
+      # Upstream: cyrius/docs/development/issues/
+      #           2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md
+      #
+      # CI (the `ci` job this one needs) still cross-builds it, so it keeps compiling.
+      # RESTORE once a cyrius release aligns globals AND every suite passes natively
+      # on the Pi: uncomment the step below, put `build/agnostic-aarch64` back in
+      # SHA256SUMS and in the release files, `cross_bins` in cyrius.cyml, and the
+      # upload line in ci.yml.
+      #
+      # - name: Build aarch64 (DCE)
+      #   # Fatal here, unlike CI's skip: a tagged release that silently ships one
+      #   # architecture is the failure the checklist is guarding against.
+      #   run: |
+      #     if [ ! -x "$HOME/.cyrius/bin/cycc_aarch64" ] && [ ! -x "$HOME/.cyrius/bin/cycc-native-aarch64" ]; then
+      #       echo "::error::no aarch64 cross compiler in the pinned bundle — cannot satisfy the release checklist"
+      #       exit 1
+      #     fi
+      #     CYRIUS_DCE=1 cyrius build --aarch64 src/main.cyr build/agnostic-aarch64
+      #     file build/agnostic-aarch64 | grep -q "ARM aarch64" \
+      #       || { echo "::error::aarch64 output is not an ARM binary"; exit 1; }
 
       - name: Benchmarks
         # first-party-standards.md:419 — "every tagged release runs cyrius bench
@@ -114,7 +130,8 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           NAME="${{ github.event.repository.name }}"
           git archive --format=tar.gz --prefix="$NAME-$TAG/" -o "$NAME-$TAG.tar.gz" HEAD
-          sha256sum "$NAME-$TAG.tar.gz" build/agnostic build/agnostic-aarch64 > SHA256SUMS
+          # x86_64 only while aarch64 is withheld (see "Build aarch64" above).
+          sha256sum "$NAME-$TAG.tar.gz" build/agnostic > SHA256SUMS
 
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (pinned — CVE-21)
@@ -125,5 +142,4 @@ jobs:
             ${{ github.event.repository.name }}-${{ github.ref_name }}.tar.gz
             SHA256SUMS
             build/agnostic
-            build/agnostic-aarch64
             bench-results.txt

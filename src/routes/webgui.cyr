@@ -1,0 +1,58 @@
+# agnostic/routes/webgui — the WebGUI's pages.
+#
+# | Route | Codes |
+# |---|---|
+# | `GET /ui` (and `/ui/`) | 200 — the shell |
+# | `GET /ui/plugins/{id}` | 200 · **404** unknown or switched off · 422 malformed id |
+#
+# ## ⚠ Both are PUBLIC, and that is deliberate
+#
+# A browser cannot attach a bearer token to a navigation, so a page behind the auth
+# rung could never be opened. And a page holds no data: it is a compiled-in static
+# file, the same bytes for every caller. Everything a page SHOWS comes from the API,
+# through calls that carry the caller's credential and are authorised like any other
+# — so making the pages public exposes nothing that was protected.
+#
+# ## A switched-off plugin is a 404
+#
+# Not a 403: nobody is refused a permission — the view is not being served by this
+# deployment. The message says how to change that, because the caller reaching it is
+# usually someone who followed a link from before it was switched off.
+#
+# Each page goes out with the header block `src/webgui/plugins.cyr` built at mount: a
+# Content-Security-Policy that admits the page's own inline scripts by hash and
+# nothing else, `nosniff`, `no-referrer` and `no-cache`.
+
+# The response for page `i`, or a 500 when the WebGUI was never loaded — which mount
+# makes impossible, so reaching it means a suite skipped `agnostic_webgui_init`.
+fn _agnostic_webgui_page_a(a, i): i64 {
+    var body = agnostic_webgui_page(i);
+    if (body == 0) {
+        return agnostic_response_error_a(a, HTTP_INTERNAL,
+          str_from_a(a, "the WebGUI is not loaded"));
+    }
+    return agnostic_response_bytes_a(a, HTTP_OK, AGNOSTIC_WEBGUI_HTML, body,
+      agnostic_webgui_page_headers(i));
+}
+
+# `GET /ui` — the shell.
+fn agnostic_route_ui_shell_a(a): i64 {
+    return _agnostic_webgui_page_a(a, 0);
+}
+
+# `GET /ui/plugins/{id}` — a plugin's page, when it is switched on.
+fn agnostic_route_ui_plugin_a(a, id: Str): i64 {
+    if (agnostic_plugin_id_is_valid(id) == 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "a plugin id matches [a-z0-9][a-z0-9-]* and is at most 32 characters"));
+    }
+    var p = agnostic_plugin_find(id);
+    if (p == 0) {
+        return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "no such plugin"));
+    }
+    if (agnostic_plugin_enabled(p) == 0) {
+        return agnostic_response_error_a(a, HTTP_NOT_FOUND,
+          str_from_a(a, "this plugin is switched off; an administrator can turn it on in Settings"));
+    }
+    return _agnostic_webgui_page_a(a, agnostic_plugin_asset(p));
+}

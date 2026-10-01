@@ -39,6 +39,9 @@ include "src/http/codec.cyr"
 # The compiled-in preset library (M3). Generated from `src/presets/*.json` by
 # `scripts/gen-presets.sh`; pure data with no dependencies, so it goes early.
 include "src/presets_data.cyr"
+# The WebGUI's pages and plugin manifests (0.1.7). Generated from `src/webgui/` by
+# `scripts/gen-webgui.sh`; pure data too, for the same reason.
+include "src/webgui_data.cyr"
 
 # The engine tier. `outcome` defines the status vocabulary `ledger` latches,
 # `request` decodes what `crew` submits, `presets` is self-contained data, and
@@ -68,6 +71,9 @@ include "src/auth/ratelimit.cyr"
 include "src/auth/webhook.cyr"
 include "src/engine/outcome.cyr"
 include "src/engine/crewstore.cyr"
+# Deployment-wide settings on the shared handle (0.1.7). The WebGUI's plugin
+# switches are its first entries.
+include "src/engine/settings.cyr"
 include "src/engine/ledger.cyr"
 # The audit trail sits above `log` and below everything that records to it —
 # `crew.cyr` and the definition routes both do, and a `var` referenced from a
@@ -82,11 +88,16 @@ include "src/engine/presets.cyr"
 include "src/engine/tools.cyr"
 include "src/engine/crew.cyr"
 include "src/engine/definitions.cyr"
+# The WebGUI's page table and plugin registry. Reads the generated data, the
+# settings store and `http/codec`'s field readers, so it follows all three.
+include "src/webgui/plugins.cyr"
 
 include "src/routes/auth.cyr"
 include "src/routes/health.cyr"
 include "src/routes/crews.cyr"
 include "src/routes/definitions.cyr"
 include "src/routes/presets.cyr"
+include "src/routes/plugins.cyr"
+include "src/routes/webgui.cyr"
 include "src/http/router.cyr"
 include "src/server/serve.cyr"

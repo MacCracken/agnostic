@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "agnostic — TODO"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.6.11"
+cyrius = "6.6.12"
 
 [build]
 entry = "src/main.cyr"
@@ -23,8 +23,8 @@ stdlib = [
     "net", "http", "tls", "sakshi", "sandhi",
     # M4 — persistence. `patra` is an embedded single-file store folded into the
     # toolchain stdlib, so it is a stdlib entry rather than a `[deps.*]` block.
-    # ⚠ `libro`, the audit chain, is NOT in the toolchain snapshot: it reaches
-    # `lib/` only transitively through agnosai. See `[deps.libro]` below.
+    # ⚠ `libro`, the audit chain, is NOT in the toolchain snapshot, so it is a
+    # git dep, not a stdlib entry. See `[deps.libro]` below.
     "patra",
     # M5 — identity. `sigil` is the crypto tier: Argon2id, SHA-256, HMAC-SHA256.
     # (Constant-time compare is `ct_eq_bytes`, which lives in `ct` above.)
@@ -39,10 +39,6 @@ stdlib = [
     "sigil",
 ]
 
-# Release artifacts. `bins` is the native build; `cross_bins` is what the
-# release workflow cross-compiles. first-party-standards.md:956 makes both
-# x86_64-linux and aarch64-linux artifacts a release-checklist item, so the
-# aarch64 entry is not optional once a tag is cut.
 # AgnosAI — the engine tier, linked in-process rather than called over HTTP.
 # Agnostic owns the product tier; everything crew/task/agent/scheduling-shaped
 # lives here. See CYRIUS-PORT-BRIEF.md §3.
@@ -70,49 +66,68 @@ stdlib = [
 # changed: agnostic's own code uses no `Result`/`Option`/`Either` at all.
 # 2.0.8 pins kavach 3.12.5 + libro 2.10.x, which are migrated. Move both.
 #
-# ⚠ At 6.6.11 / agnosai 2.1.1 the folded copies WIN, not the chain's. 6.6.11 folds
-# **sigil 3.13.4** and **patra 1.15.1**; the chain still declares sigil 3.12.18
-# (agnosai, kavach 3.13.1, libro 2.10.3) and patra 1.14.3 (libro). `cyrius deps`
+# ⚠ At 6.6.12 the folded copies WIN, not the chain's. 6.6.12 folds **sigil
+# 3.13.5** and **patra 1.15.1**. The chain declares sigil 3.13.5 (agnosai 2.1.2 —
+# the fold), 3.12.18 (kavach 3.13.1) and 3.13.4 (libro 2.10.5), and patra 1.15.1
+# (libro 2.10.5 — the first libro whose patra matches the fold). `cyrius deps`
 # refuses to overwrite a folded stdlib leaf with a dep's artifact ("refusing to
-# overwrite stdlib leaf"), so `lib/sigil.cyr` / `lib/patra.cyr` stay the 6.6.11
-# snapshot — byte-identical to `git show 6.6.11:lib/<mod>` — and `check-clean.sh`
-# stays green. The whole suite runs against those folded copies.
+# overwrite stdlib leaf"), so `lib/sigil.cyr` / `lib/patra.cyr` stay the 6.6.12
+# snapshot — byte-identical to `git show 6.6.12:lib/<mod>` — and `check-clean.sh`
+# stays green. The artifacts it skips are now the same bytes as the ones it keeps.
 #
 # ⛔ From 6.6.11 on, agnosai must be ≥ 2.1.1. 6.6.11 checks enum qualifiers, and
 # agnosai 2.1.0 still spells kavach's renamed enum `Backend.NOOP` / `.WASM` /
 # `.PROCESS` / `.OCI` (it is `KavachBackend` now), which 6.6.11 refuses with
 # "'Backend' is not an enum". 2.1.1's dist carries the corrected spelling.
-# ⛔ THE FOUR PINS BELOW ARE NOT OPTIONAL, AND THEY MUST PRECEDE [deps.agnosai].
-# agnosai 2.0.8's own published manifest declares bote, majra, ai-hwaccel and tyche
-# with `path = "../<sibling>"` ALONGSIDE their tags. A path override makes the tag
-# INERT: on a machine that has those siblings checked out, resolution reads the
-# working tree; on CI, which has none, it reads the tag. Same commit, two different
-# `lib/` trees, so `cyrius.lock` is written differently on each and the
-# "Lockfile agrees with a clean resolution" gate can never pass. Declaring them here
-# WITHOUT a path removes the override from this repo's resolution entirely, so the
-# lock is a function of the tags alone. Tags match what agnosai 2.1.1 itself pins —
-# changing one here without checking agnosai is how the two silently diverge.
-[deps.bote]
-git = "https://github.com/MacCracken/bote.git"
-tag = "3.3.13"
-
-[deps.majra]
-git = "https://github.com/MacCracken/majra.git"
-tag = "2.9.1"
-
-[deps.ai-hwaccel]
-git = "https://github.com/MacCracken/ai-hwaccel.git"
-tag = "2.4.0"
-
-[deps.tyche]
-git = "https://github.com/MacCracken/tyche.git"
-tag = "1.1.0"
-
+#
+# ⚠ **agnosai's own deps are pinned by agnosai — this file carries no pins for them.**
+# Through 0.1.6 it declared bote, majra, ai-hwaccel and tyche here, believing a root
+# declaration without a `path` removed agnosai's `path = "../<sibling>"` overrides.
+# Those four blocks never did anything. `cyrius deps` clones a `[deps.X]` only when it
+# lists `modules` (`need_clone` in cyrius's cbt/deps.cyr), so a block with just `git`
+# and `tag` is never visited, and agnosai's own declaration resolved each one —
+# measured at 0.1.7, when moving their tags changed nothing in the lock. agnosai's
+# `path` lines were never live here either: a dep resolved from the cache reads its
+# `path` relative to the cache directory, where no sibling exists.
+#
+# So a newer bote, majra, kavach, ai-hwaccel or tyche arrives with an agnosai release
+# that pins it — 2.1.2 is exactly that, every one at its latest tag — and a block
+# added here to get ahead of agnosai must list `modules`, or it is decoration.
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
-tag = "2.1.1"
+tag = "2.1.2"
 modules = ["dist/agnosai.cyr"]
 
+# libro — the audit chain `src/engine/audit.cyr` calls directly. Through 0.1.6 it
+# reached `lib/` only transitively (agnosai -> bote -> libro), so a bote that stopped
+# depending on it could take the audit chain away silently, and its version was
+# whatever bote pinned. Declared here since 0.1.7 for both reasons — the same
+# defensive reasoning as the `sigil` stdlib entry above. 2.10.5 is bote 3.3.15's
+# 2.10.4 plus a patra pin of 1.15.1, which matches the fold; no libro source change.
+#
+# ⚠ **`modules` is what makes this block real** — see the note above.
+# ⚠ **It comes AFTER `[deps.agnosai]`, on purpose.** Root deps are resolved first and
+# their own deps breadth-first in manifest order, and the first declaration of a name
+# wins. libro declares sigil 3.13.4; agnosai declares 3.13.5, which is the fold. Listed
+# first, libro's would be the sigil the lock records.
+[deps.libro]
+git = "https://github.com/MacCracken/libro.git"
+tag = "2.10.5"
+modules = ["dist/libro.cyr"]
+
+# Release artifacts. `bins` is the native build; `cross_bins` is what the
+# release workflow cross-compiles. first-party-standards.md:956 makes both
+# x86_64-linux and aarch64-linux artifacts a release-checklist item.
+#
+# ⛔ **aarch64 is WITHHELD since 0.1.7, by decision (2026-10-01)** — a deliberate,
+# temporary exception to that checklist. The binary builds but dies with SIGBUS at
+# startup on real aarch64 hardware: cyrius does not re-align the global after a
+# typed array (`var a: u8[N]`), and the atomics on sigil's crypto init flags fault
+# (cyrius issue 2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus).
+# CI still cross-builds it as a compile gate. RESTORE `cross_bins` together with the
+# commented-out step and the two asset lines in `.github/workflows/release.yml` and
+# the upload line in `ci.yml`, once a cyrius release aligns globals and every suite
+# passes natively on the Pi.
 [release]
 bins = ["agnostic"]
-cross_bins = ["agnostic-aarch64"]
+# cross_bins = ["agnostic-aarch64"]

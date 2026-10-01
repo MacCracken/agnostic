@@ -278,6 +278,19 @@ else
     printf '%s\n' "$out"
 fi
 
+# The same for the WebGUI (0.1.7): `src/webgui_data.cyr` is generated from the pages
+# and plugin manifests under `src/webgui/`. This check also re-runs the generator's
+# page rules — a page that loads an external resource or carries an inline handler
+# its CSP would block fails HERE, not blank in a browser. Mutation-verified: one
+# changed byte in a page makes this fail with the diff.
+if ! out=$(./scripts/gen-webgui.sh --check 2>&1); then
+    note "gen-webgui: src/webgui_data.cyr is stale or a page breaks a rule — run ./scripts/gen-webgui.sh"
+    printf '%s\n' "$out" | head -20 | sed 's/^/      /'
+    fail=1
+else
+    printf '%s\n' "$out"
+fi
+
 
 if [ "$fail" -ne 0 ]; then
     echo "cleanliness check FAILED"

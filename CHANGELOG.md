@@ -4,6 +4,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-10-01
+
+Re-pin to **Cyrius 6.6.12** and **agnosai 2.1.2** (every dependency at its latest tag), and
+the **WebGUI's first slice**: a shell at `/ui` with a Settings tab, and **Swarm Command** —
+the RTS-style swarm view that was `index.html` — as its first native plugin.
+
+**27 suites, 1,376 assertions, 0 failed** (1,240 at 0.1.6, plus `tests/webgui.tcyr`'s 136),
+run the CI way: a clean copy resolved from the tags against an empty dep cache, then
+re-resolved from a second empty cache with the lock check, a clean tree and every gate
+green. `cyrius.lock`: 118 files, 9 commit pins, `cyrius 6.6.12`; the working tree's `lib/`
+and lock are byte-identical to that resolution.
+
+### Added — the WebGUI shell and compiled-in plugins (ADR 0004)
+
+- `/ui`: Overview, a tab per switched-on plugin, Settings (plugin switches, session); signs
+  in through `POST /api/v1/auth/login` when `AGNOSTIC_AUTH=required`.
+- Swarm Command moved unchanged to `src/webgui/plugins/swarm/` with a `plugin.json`. It runs
+  on its built-in simulator; its manifest says `"data": "simulated"` and the shell badges it.
+- `GET /api/v1/plugins` (READ) and `PUT /api/v1/plugins/{id}` `{"enabled": bool}` (**ADMIN** —
+  a deployment setting; an operator's WRITE is not enough). Idempotent, reports `changed`;
+  only real changes are audited. Every plugin starts off; the switch survives a restart.
+- `GET /ui/plugins/{id}`: 404 while switched off. Both page routes are public — a navigation
+  cannot carry a bearer token, and the pages hold no data.
+- `src/engine/settings.cyr` (durable settings on the shared handle), `src/webgui/plugins.cyr`,
+  `src/routes/{plugins,webgui}.cyr`; the response record gains a media type and extra headers.
+- `scripts/gen-webgui.sh` embeds each page verbatim as a raw multi-line literal with its
+  SHA-256 and a generated CSP (`default-src 'none'`, scripts by hash), and refuses pages the
+  CSP would break. `check-clean.sh` runs `--check`. Plugins are framed with
+  `sandbox="allow-scripts allow-downloads"` — an opaque origin with no access to the token.
+- `tests/webgui.tcyr`, 136 assertions; six mutations of the guards each fail a named one.
+  Verified in headless Chromium, with auth off and with auth required.
+
+### Changed — Cyrius 6.6.11 → 6.6.12, agnosai 2.1.1 → 2.1.2, libro declared directly
+
+- agnosai 2.1.2 pins bote 3.3.15, majra 2.9.2 and sigil 3.13.5 (the fold).
+- `[deps.libro]` 2.10.5 is declared directly, with `modules`, after agnosai — so both
+  artifacts `cyrius deps` skips are now byte-identical to the folded copies it keeps.
+- **The four bote/majra/ai-hwaccel/tyche "pre-pins" are removed: they never took effect.**
+  `cyrius deps` clones a dep only when it lists `modules`. Filed upstream as
+  `cyrius/docs/development/issues/2026-10-01-git-dep-without-modules-silently-inert.md`.
+
+### Removed — the aarch64 release artifact, until cyrius aligns globals
+
+`agnostic-aarch64` is no longer built by the release workflow, listed in `SHA256SUMS`, attached to
+the release or uploaded by CI, and `cross_bins` is commented out in `cyrius.cyml` — the binary
+cannot start (below). A deliberate, temporary exception to the first-party release checklist. CI
+still cross-builds aarch64 as a compile gate, so it can return by re-enabling the artifact; the
+restore steps are in `cyrius.cyml` and `release.yml`.
+
+### Known issue — the aarch64 binary dies with SIGBUS at startup (since at least 0.1.3)
+
+Root-caused on real hardware (Raspberry Pi 4) for this release; not a regression — 0.1.6 is
+identical. 15 of 27 suites pass natively (717 assertions); the 12 that reach sigil's crypto init
+crash, and so does the server's mount. A typed-array global (`var a: u8[N]`) occupies exactly `N`
+bytes and cyrius does not re-align the next global; sankoch's `u8[363]` / `u8[217]` / `u8[50]`
+(630 bytes) leave 1,101 of 1,962 globals off by 6, and an atomic on any of them — twelve, eleven of
+them sigil's init flags — faults on aarch64. x86 tolerates it. Filed upstream:
+`cyrius/docs/development/issues/2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md`.
+
+### Fixed — `check-lib-symbols.py` read both arms of every `#ifdef`
+
+- sigil 3.13.5 declares eight errno names under `#ifdef` / `#ifndef CYRIUS_TARGET_MACOS`; the
+  gate failed against kavach on every shipped target. It now evaluates conditionals per
+  `[release]` target (x86_64-linux, aarch64-linux). Mutation-checked in both directions.
+- It ignored `CYRIUS_HOME` for dep sidecars, shrinking the compile set 53 → 49 modules in
+  the empty-cache certification replica.
+
 ## [0.1.6] — 2026-09-30
 
 Re-pin to **Cyrius 6.6.11** and **agnosai 2.1.1**. No `src/` change and no behaviour change.

@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Agnostic</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1l7 7-7 7-7-7z' fill='%2339d0ff'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #060a0f;
+  --panel: #0c131c;
+  --panel-2: #111b27;
+  --line: #1c2a38;
+  --line-2: #2a3d50;
+  --text: #d4e4f1;
+  --dim: #7d93a8;
+  --faint: #4b6075;
+  --accent: #39d0ff;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --err: #ef4444;
+  --sim: #a78bfa;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  --top-h: 48px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans); }
+body { display: flex; flex-direction: column; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+a { color: var(--accent); }
+[hidden] { display: none !important; }
+
+.top { flex: none; height: var(--top-h); display: flex; align-items: stretch; background: linear-gradient(180deg, #0c131c, #080d13); border-bottom: 1px solid var(--line-2); }
+.brand { display: flex; align-items: center; padding: 0 16px; font-weight: 700; letter-spacing: .14em; color: var(--accent); border-right: 1px solid var(--line); white-space: nowrap; }
+.brand b { color: var(--text); margin-left: 6px; }
+.tabs { display: flex; align-items: stretch; overflow-x: auto; min-width: 0; }
+.tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 0 16px; color: var(--dim); white-space: nowrap; font-weight: 600; letter-spacing: .02em; }
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.tab .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--sim); margin-right: 7px; vertical-align: 2px; }
+.spacer { flex: 1; }
+.who { display: flex; align-items: center; gap: 10px; padding: 0 14px; color: var(--dim); font-size: 12px; white-space: nowrap; }
+
+main { flex: 1; min-height: 0; overflow: auto; }
+.view { max-width: 980px; margin: 0 auto; padding: 28px 20px 40px; }
+.view.plugin { max-width: none; height: 100%; padding: 0; display: flex; flex-direction: column; }
+h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: .01em; }
+h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim); text-transform: uppercase; }
+.lede { color: var(--dim); margin: 0 0 24px; max-width: 70ch; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; padding: 18px; }
+.card.stacked { margin-top: 16px; }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: 12.5px; }
+.kv dt { color: var(--dim); }
+.kv dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+.pill { display: inline-block; font: 600 10.5px var(--mono); letter-spacing: .06em; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line-2); color: var(--dim); white-space: nowrap; }
+.pill.ok { color: var(--ok); border-color: rgba(34, 197, 94, .45); }
+.pill.bad { color: var(--err); border-color: rgba(239, 68, 68, .45); }
+.pill.sim { color: var(--sim); border-color: rgba(167, 139, 250, .45); }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.list li:first-child { border-top: 0; }
+.list .name { font-weight: 600; }
+.muted { color: var(--dim); }
+.btn { background: #0f1823; border: 1px solid var(--line-2); border-radius: 5px; padding: 6px 12px; font: 600 12px var(--sans); }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: #0e3346; border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: default; }
+
+.plugin-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 20px; align-items: center; padding: 16px 0; border-top: 1px solid var(--line); }
+.plugin-row:first-of-type { border-top: 0; }
+.plugin-row .title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.plugin-row .desc { grid-column: 1; color: var(--dim); max-width: 64ch; }
+.switch { position: relative; width: 42px; height: 24px; border-radius: 12px; border: 1px solid var(--line-2); background: #142030; padding: 0; transition: background .15s, border-color .15s; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--dim); transition: transform .15s, background .15s; }
+.switch[aria-checked="true"] { background: #0e3346; border-color: var(--accent); }
+.switch[aria-checked="true"]::after { transform: translateX(18px); background: var(--accent); }
+.switch:disabled { opacity: .45; cursor: default; }
+
+.plugin-bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--panel-2); border-bottom: 1px solid var(--line-2); font-size: 12px; }
+.plugin-bar .name { font-weight: 700; }
+.frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #000; display: block; }
+
+.overlay { position: fixed; inset: 0; background: rgba(3, 6, 10, .82); display: flex; align-items: center; justify-content: center; z-index: 20; }
+.dialog { width: min(380px, 92vw); background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 10px; padding: 22px; }
+.dialog label { display: block; color: var(--dim); font-size: 12px; margin: 12px 0 4px; }
+.dialog input { width: 100%; background: #0b131c; color: var(--text); border: 1px solid var(--line-2); border-radius: 5px; padding: 8px 10px; font: inherit; }
+.dialog .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+.dialog .error { color: var(--err); min-height: 1.5em; margin-top: 10px; font-size: 12px; }
+#toast { position: fixed; right: 16px; bottom: 16px; max-width: min(420px, 90vw); background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 6px; padding: 10px 14px; opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s; pointer-events: none; z-index: 30; }
+#toast.show { opacity: 1; transform: none; }
+#toast.bad { border-color: var(--err); }
+@media (max-width: 640px) { .brand { padding: 0 10px; letter-spacing: .08em; } .tab { padding: 0 10px; } .kv { grid-template-columns: 96px 1fr; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">◈<b>AGNOSTIC</b></div>
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Views"></nav>
+  <div class="spacer"></div>
+  <div class="who" id="who"></div>
+</header>
+
+<main id="main">
+  <section class="view" id="view-overview" hidden>
+    <h1>Overview</h1>
+    <p class="lede">This server's state, and the views it can show. Views are plugins built into
+      the binary; an administrator switches them on in Settings.</p>
+    <div class="cards">
+      <div class="card">
+        <h2>Server</h2>
+        <dl class="kv" id="server-kv"></dl>
+      </div>
+      <div class="card">
+        <h2>Views</h2>
+        <ul class="list" id="views-list"></ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="view-settings" hidden>
+    <h1>Settings</h1>
+    <p class="lede">Settings apply to the whole deployment and are kept in its database, so they
+      survive a restart. Changing one needs the administrator role and is recorded in the audit trail.</p>
+    <div class="card">
+      <h2>Plugins</h2>
+      <div id="plugin-rows"></div>
+    </div>
+    <div class="card stacked">
+      <h2>Session</h2>
+      <div id="session-info"></div>
+    </div>
+  </section>
+
+  <section class="view plugin" id="view-plugin" hidden>
+    <div class="plugin-bar">
+      <span class="name" id="plugin-name"></span>
+      <span class="pill" id="plugin-version"></span>
+      <span class="pill sim" id="plugin-sim" hidden>SIMULATED DATA</span>
+      <span class="spacer"></span>
+      <a id="plugin-newtab" target="_blank" rel="noopener noreferrer">Open in a new tab</a>
+      <button class="btn" id="plugin-reload" type="button">Reload</button>
+    </div>
+    <iframe class="frame" id="plugin-frame" title="Plugin view" sandbox="allow-scripts allow-downloads" referrerpolicy="no-referrer"></iframe>
+  </section>
+</main>
+
+<div class="overlay" id="signin" hidden>
+  <form class="dialog" id="signin-form" role="dialog" aria-modal="true" aria-labelledby="signin-title" novalidate>
+    <h1 id="signin-title">Sign in</h1>
+    <p class="muted" id="signin-why">This server requires authentication.</p>
+    <label for="signin-email">Email</label>
+    <input id="signin-email" type="email" autocomplete="username" spellcheck="false">
+    <label for="signin-password">Password</label>
+    <input id="signin-password" type="password" autocomplete="current-password">
+    <div class="error" id="signin-error" role="alert"></div>
+    <div class="row">
+      <button class="btn" id="signin-cancel" type="button">Cancel</button>
+      <button class="btn primary" id="signin-go" type="submit">Sign in</button>
+    </div>
+  </form>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+  'use strict';
+  // Agnostic WebGUI shell. Served at /ui with a CSP that admits exactly this script
+  // (by hash) and connects only to its own origin. Every value that came from the
+  // server is written with textContent, never innerHTML.
+  (() => {
+    const $ = (id) => document.getElementById(id);
+    const TOKEN_KEY = 'agnostic.token';
+    const ROLE_KEY = 'agnostic.role';
+    const state = { plugins: null, pluginsError: null, ready: null, auth: 'unknown', route: 'overview' };
+
+    // --- session: kept per tab, and only if storage is usable ---------------------
+    const store = {
+      get(k) { try { return sessionStorage.getItem(k) || ''; } catch (e) { return ''; } },
+      set(k, v) { try { if (v) sessionStorage.setItem(k, v); else sessionStorage.removeItem(k); } catch (e) { /* storage unavailable */ } },
+    };
+
+    async function api(method, path, body) {
+      const headers = { Accept: 'application/json' };
+      const token = store.get(TOKEN_KEY);
+      if (token) headers.Authorization = 'Bearer ' + token;
+      const init = { method, headers, credentials: 'omit', cache: 'no-store' };
+      if (body !== undefined) { headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
+      let res;
+      try { res = await fetch(path, init); } catch (e) { return { status: 0, data: { error: 'the server is unreachable' } }; }
+      let data = null;
+      try { data = await res.json(); } catch (e) { data = null; }
+      if (res.status === 401) {
+        state.auth = 'required';
+        if (token) { store.set(TOKEN_KEY, ''); store.set(ROLE_KEY, ''); }
+      } else if (res.ok && !token) {
+        state.auth = 'off';
+      } else if (res.ok) {
+        state.auth = 'signed-in';
+      }
+      return { status: res.status, data };
+    }
+    const errText = (r) => (r.data && typeof r.data.error === 'string') ? r.data.error : ('HTTP ' + r.status);
+
+    // --- small DOM helpers ----------------------------------------------------------
+    function el(tag, cls, text) {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text !== undefined && text !== null) n.textContent = String(text);
+      return n;
+    }
+    let toastTimer = 0;
+    function toast(msg, bad) {
+      const t = $('toast');
+      t.textContent = msg;
+      t.className = 'show' + (bad ? ' bad' : '');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { t.className = ''; }, 3600);
+    }
+
+    // --- data -----------------------------------------------------------------------
+    async function loadReady() {
+      const r = await api('GET', '/ready');
+      state.ready = r.data && typeof r.data === 'object' ? r.data : null;
+    }
+    async function loadPlugins() {
+      const r = await api('GET', '/api/v1/plugins');
+      if (r.status === 200 && r.data && Array.isArray(r.data.plugins)) {
+        state.plugins = r.data.plugins;
+        state.pluginsError = null;
+      } else {
+        state.plugins = null;
+        state.pluginsError = r.status === 401 ? 'signin' : errText(r);
+      }
+    }
+    const enabledPlugins = () => (state.plugins || []).filter((p) => p.enabled);
+    const findPlugin = (id) => (state.plugins || []).find((p) => p.id === id) || null;
+
+    // --- routing: #overview, #settings, #plugin/<id> ---------------------------------
+    function parseRoute() {
+      const h = location.hash.replace(/^#/, '');
+      if (h === 'settings') return { view: 'settings' };
+      if (h.startsWith('plugin/')) return { view: 'plugin', id: h.slice(7) };
+      return { view: 'overview' };
+    }
+    function go(hash) { if (location.hash !== '#' + hash) location.hash = hash; else render(); }
+
+    // --- rendering ------------------------------------------------------------------
+    function renderTabs(route) {
+      const nav = $('tabs');
+      nav.replaceChildren();
+      const add = (label, hash, selected, sim) => {
+        const b = el('button', 'tab');
+        b.type = 'button';
+        b.setAttribute('role', 'tab');
+        b.setAttribute('aria-selected', selected ? 'true' : 'false');
+        if (sim) { const d = el('span', 'dot'); d.title = 'Simulated data'; b.append(d); }
+        b.append(document.createTextNode(label));
+        b.addEventListener('click', () => go(hash));
+        nav.append(b);
+      };
+      add('Overview', 'overview', route.view === 'overview');
+      for (const p of enabledPlugins()) add(p.name, 'plugin/' + p.id, route.view === 'plugin' && route.id === p.id, p.data === 'simulated');
+      add('Settings', 'settings', route.view === 'settings');
+    }
+
+    function renderWho() {
+      const who = $('who');
+      who.replaceChildren();
+      const role = store.get(ROLE_KEY);
+      if (store.get(TOKEN_KEY)) {
+        who.append(el('span', null, 'Signed in' + (role ? ' · ' + role : '')));
+        const out = el('button', 'btn', 'Sign out');
+        out.type = 'button';
+        out.addEventListener('click', signOut);
+        who.append(out);
+      } else if (state.auth === 'required') {
+        const b = el('button', 'btn primary', 'Sign in');
+        b.type = 'button';
+        b.addEventListener('click', () => openSignin());
+        who.append(b);
+      } else if (state.auth === 'off') {
+        who.append(el('span', 'pill', 'AUTH OFF · LOOPBACK'));
+      }
+    }
+
+    function renderOverview() {
+      const kv = $('server-kv');
+      kv.replaceChildren();
+      const row = (k, v) => { kv.append(el('dt', null, k)); const d = el('dd'); if (v instanceof Node) d.append(v); else d.textContent = v; kv.append(d); };
+      const r = state.ready;
+      if (!r) {
+        row('status', el('span', 'pill bad', 'UNREACHABLE'));
+      } else {
+        const ok = r.status === 'ready';
+        row('status', el('span', 'pill ' + (ok ? 'ok' : 'bad'), String(r.status || 'unknown').toUpperCase()));
+        if (r.version) row('version', r.version);
+        if (r.checks && typeof r.checks === 'object') {
+          for (const k of Object.keys(r.checks)) row(k, String(r.checks[k]));
+        }
+      }
+      const list = $('views-list');
+      list.replaceChildren();
+      if (state.pluginsError === 'signin') {
+        const li = el('li');
+        li.append(el('span', 'muted', 'Sign in to see the views on this server.'));
+        const b = el('button', 'btn', 'Sign in');
+        b.type = 'button';
+        b.addEventListener('click', () => openSignin());
+        li.append(el('span', 'spacer'), b);
+        list.append(li);
+        return;
+      }
+      if (state.pluginsError) { list.append(el('li', 'muted', 'Could not list views: ' + state.pluginsError)); return; }
+      if (!state.plugins || !state.plugins.length) { list.append(el('li', 'muted', 'This build has no views.')); return; }
+      for (const p of state.plugins) {
+        const li = el('li');
+        li.append(el('span', 'name', p.name));
+        if (p.data === 'simulated') li.append(el('span', 'pill sim', 'SIMULATED'));
+        li.append(el('span', 'spacer'));
+        if (p.enabled) {
+          const b = el('button', 'btn', 'Open');
+          b.type = 'button';
+          b.addEventListener('click', () => go('plugin/' + p.id));
+          li.append(b);
+        } else {
+          li.append(el('span', 'muted', 'Off — switch it on in Settings'));
+        }
+        list.append(li);
+      }
+    }
+
+    function renderSettings() {
+      const rows = $('plugin-rows');
+      rows.replaceChildren();
+      if (state.pluginsError === 'signin') {
+        rows.append(el('p', 'muted', 'Sign in to manage plugins.'));
+      } else if (state.pluginsError) {
+        rows.append(el('p', 'muted', 'Could not list plugins: ' + state.pluginsError));
+      } else {
+        const role = store.get(ROLE_KEY);
+        const mayChange = state.auth === 'off' || role === 'admin' || role === 'super_admin';
+        for (const p of state.plugins || []) {
+          const row = el('div', 'plugin-row');
+          const title = el('div', 'title');
+          title.append(el('span', 'name', p.name), el('span', 'pill', 'v' + p.version));
+          if (p.data === 'simulated') title.append(el('span', 'pill sim', 'SIMULATED DATA'));
+          const sw = el('button', 'switch');
+          sw.type = 'button';
+          sw.setAttribute('role', 'switch');
+          sw.setAttribute('aria-checked', p.enabled ? 'true' : 'false');
+          sw.setAttribute('aria-label', (p.enabled ? 'Turn off ' : 'Turn on ') + p.name);
+          if (!mayChange) { sw.disabled = true; sw.title = 'Changing a plugin needs the administrator role'; }
+          sw.addEventListener('click', () => togglePlugin(p, sw));
+          row.append(title, sw, el('div', 'desc', p.description));
+          rows.append(row);
+        }
+      }
+      const s = $('session-info');
+      s.replaceChildren();
+      if (store.get(TOKEN_KEY)) {
+        const role = store.get(ROLE_KEY);
+        s.append(el('p', null, 'Signed in' + (role ? ' with the ' + role + ' role.' : '.')));
+      } else if (state.auth === 'off') {
+        s.append(el('p', 'muted', 'Authentication is off on this server, which it allows only on a loopback bind. Every route is open to this machine.'));
+      } else if (state.auth === 'required') {
+        s.append(el('p', 'muted', 'Not signed in.'));
+      } else {
+        s.append(el('p', 'muted', 'Session state is not known yet.'));
+      }
+    }
+
+    function renderPlugin(id) {
+      const p = findPlugin(id);
+      const frame = $('plugin-frame');
+      if (!p && state.pluginsError === 'signin') {
+        frame.removeAttribute('src');
+        go('overview');
+        openSignin('Sign in to open this view.');
+        return;
+      }
+      if (!p || !p.enabled) {
+        frame.removeAttribute('src');
+        toast(p ? p.name + ' is switched off.' : 'There is no such view.', true);
+        go('overview');
+        return;
+      }
+      $('plugin-name').textContent = p.name;
+      $('plugin-version').textContent = 'v' + p.version;
+      $('plugin-sim').hidden = p.data !== 'simulated';
+      $('plugin-newtab').href = p.url;
+      frame.title = p.name;
+      if (frame.getAttribute('src') !== p.url) frame.setAttribute('src', p.url);
+    }
+
+    function render() {
+      const route = parseRoute();
+      state.route = route.view;
+      renderTabs(route);
+      renderWho();
+      for (const v of ['overview', 'settings', 'plugin']) $('view-' + v).hidden = v !== route.view;
+      if (route.view !== 'plugin') $('plugin-frame').removeAttribute('src');
+      if (route.view === 'overview') renderOverview();
+      else if (route.view === 'settings') renderSettings();
+      else renderPlugin(route.id);
+    }
+
+    // --- actions --------------------------------------------------------------------
+    async function togglePlugin(p, sw) {
+      const want = !p.enabled;
+      sw.disabled = true;
+      const r = await api('PUT', '/api/v1/plugins/' + encodeURIComponent(p.id), { enabled: want });
+      if (r.status === 200 && r.data && r.data.plugin) {
+        Object.assign(p, r.data.plugin);
+        toast(p.name + (p.enabled ? ' is on.' : ' is off.'));
+      } else if (r.status === 401) {
+        openSignin('Sign in as an administrator to change plugins.');
+      } else if (r.status === 403) {
+        toast('Changing a plugin needs the administrator role.', true);
+      } else {
+        toast('Could not change ' + p.name + ': ' + errText(r), true);
+      }
+      render();
+    }
+
+    function openSignin(why) {
+      $('signin-why').textContent = why || 'This server requires authentication.';
+      $('signin-error').textContent = '';
+      $('signin').hidden = false;
+      $('signin-email').focus();
+    }
+    function closeSignin() { $('signin').hidden = true; $('signin-password').value = ''; }
+    async function signIn() {
+      const email = $('signin-email').value.trim();
+      const password = $('signin-password').value;
+      if (!email || !password) { $('signin-error').textContent = 'Email and password are both required.'; return; }
+      $('signin-go').disabled = true;
+      const r = await api('POST', '/api/v1/auth/login', { email, password });
+      $('signin-go').disabled = false;
+      if (r.status === 200 && r.data && typeof r.data.token === 'string') {
+        store.set(TOKEN_KEY, r.data.token);
+        store.set(ROLE_KEY, typeof r.data.role === 'string' ? r.data.role : '');
+        closeSignin();
+        await refresh();
+        toast('Signed in.');
+      } else {
+        $('signin-error').textContent = errText(r);
+      }
+    }
+    async function signOut() {
+      store.set(TOKEN_KEY, '');
+      store.set(ROLE_KEY, '');
+      state.auth = 'unknown';
+      await refresh();
+    }
+
+    async function refresh() {
+      await Promise.all([loadReady(), loadPlugins()]);
+      render();
+    }
+
+    // A real <form>, so password managers recognise it, whose submit never navigates:
+    // the page's CSP has form-action 'none', and the request goes through fetch.
+    $('signin-form').addEventListener('submit', (e) => { e.preventDefault(); signIn(); });
+    $('signin-cancel').addEventListener('click', closeSignin);
+    $('plugin-reload').addEventListener('click', () => {
+      const f = $('plugin-frame');
+      const src = f.getAttribute('src');
+      if (src) { f.removeAttribute('src'); f.setAttribute('src', src); }
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('signin').hidden) closeSignin(); });
+    window.addEventListener('hashchange', render);
+    refresh();
+  })();
+</script>
+</body>
+</html>

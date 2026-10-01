@@ -1,0 +1,102 @@
+# agnostic/routes/plugins — which WebGUI plugins this deployment shows.
+#
+# | Route | Codes |
+# |---|---|
+# | `GET /api/v1/plugins` | 200 — every compiled-in plugin, switched on or not |
+# | `PUT /api/v1/plugins/{id}` | 200 · 400 · **404** · 422 · 500 |
+#
+# Listing is READ; switching is **ADMIN** (`src/auth/perm.cyr`) — turning a view on
+# changes what every user of the deployment sees.
+#
+# ## `PUT {"enabled": true}` — the body is the whole state, and nothing else
+#
+# One field, a JSON boolean. The string `"true"` is a 422, not a yes: that coercion
+# is how `{"gpu_strict": "false"}` would read as true (`src/http/codec.cyr`). Any other
+# field is a 422 naming it. There is no POST — the set of plugins is fixed by the
+# build, so there is nothing to create — and the path answers 405 to a GET.
+#
+# PUT is idempotent and says whether it changed anything: `"changed": false` for a
+# switch already in the asked-for position, and only a real change is recorded in the
+# audit trail, so the trail reads as the history of the switch rather than of clicks.
+
+# The fields a switch request may carry.
+fn _agnostic_plugin_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_a(a, f, "enabled");
+    return f;
+}
+
+# `GET /api/v1/plugins` — every plugin, in the generator's order.
+fn agnostic_route_plugins_list_a(a): i64 {
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0) { return 0; }
+    var n = agnostic_plugins_count();
+    var i = 0;
+    while (i < n) {
+        var v = agnostic_plugin_to_value_a(a, agnostic_plugin_at(i));
+        if (v == 0) { return 0; }
+        bayan_json_v_arr_push_a(a, arr, v);
+        i = i + 1;
+    }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_PLUGINS, arr);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOTAL, bayan_json_v_int_new_a(a, n));
+    return agnostic_response_json_a(a, HTTP_OK, obj);
+}
+
+# `PUT /api/v1/plugins/{id}` — switch one on or off.
+fn agnostic_route_plugin_set_a(a, id: Str, body: Str): i64 {
+    if (agnostic_plugin_id_is_valid(id) == 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "a plugin id matches [a-z0-9][a-z0-9-]* and is at most 32 characters"));
+    }
+    var p = agnostic_plugin_find(id);
+    if (p == 0) {
+        return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "no such plugin"));
+    }
+
+    var v = agnostic_decode_a(a, body);
+    if (v == 0) {
+        return agnostic_response_error_a(a, HTTP_BAD_REQUEST, str_from_a(a, "malformed JSON body"));
+    }
+    if (bayan_json_v_is_obj(v) != 1) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "the body must be a JSON object: {\"enabled\": true|false}"));
+    }
+    var unknown = agnostic_unknown_field(v, _agnostic_plugin_fields_a(a));
+    if (unknown != 0) {
+        var sb = str_builder_new_a(a);
+        str_builder_add_cstr_a(a, sb, "unknown field in request body: ");
+        str_builder_add_a(a, sb, unknown);
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sb));
+    }
+    var on = agnostic_req_bool(v, AGNOSTIC_JK_ENABLED, 0 - 1);
+    if (on < 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'enabled' is required and must be a JSON boolean"));
+    }
+
+    var rc = agnostic_plugin_set_enabled(p, on);
+    if (rc == AGNOSTIC_PLUGIN_SET_FAILED) {
+        return agnostic_response_error_a(a, HTTP_INTERNAL,
+          str_from_a(a, "could not store the plugin setting; nothing changed"));
+    }
+    if (rc == AGNOSTIC_PLUGIN_SET_CHANGED) {
+        # After the store lock is released — the audit lock is never taken under it.
+        var action = "plugin.disable";
+        if (on == 1) { action = "plugin.enable"; }
+        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from(action),
+          agnostic_audit_detail("id", id));
+    }
+
+    var out = bayan_json_v_obj_new_a(a);
+    if (out == 0) { return 0; }
+    var pv = agnostic_plugin_to_value_a(a, p);
+    if (pv == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_PLUGIN, pv);
+    var changed = 0;
+    if (rc == AGNOSTIC_PLUGIN_SET_CHANGED) { changed = 1; }
+    bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_CHANGED, bayan_json_v_bool_new_a(a, changed));
+    return agnostic_response_json_a(a, HTTP_OK, out);
+}

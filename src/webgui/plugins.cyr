@@ -1,0 +1,327 @@
+# agnostic/webgui/plugins — the WebGUI's pages, and the plugins an operator can turn on.
+#
+# ## A plugin is NATIVE: compiled in, switched at run time
+#
+# Each plugin is a directory under `src/webgui/plugins/<id>/` — a `plugin.json`
+# manifest and one self-contained page — embedded into the binary by
+# `scripts/gen-webgui.sh` (`src/webgui_data.cyr`). Nothing is loaded from disk and
+# nothing is fetched: the set of plugins is fixed by the build, and what an operator
+# changes is only whether each one is ON. That is a deployment-wide setting, kept in
+# `src/engine/settings.cyr` under `plugin.<id>.enabled`, so it survives a restart.
+# Every plugin starts OFF. Why compiled-in rather than loaded is ADR 0004.
+#
+# ## Parsed once, at mount
+#
+# Same shape as the preset library: the manifests are parsed and every page's header
+# block built before any worker exists, and a shortfall REFUSES TO START —
+# `agnostic_webgui_init` returns how many plugins loaded and mount compares it with
+# the generator's count. A page whose embedded length disagrees with the generator's
+# is refused the same way: it means the literal was damaged, and serving a damaged
+# page under a CSP built from the undamaged one would fail in the browser instead.
+#
+# ## ⚠ The enabled flag is read lock-free and written under the store lock
+#
+# Every request to a plugin page reads its flag; that is an `atomic_load`, no lock.
+# A change persists FIRST and publishes the flag second, both under the store lock, so
+# two administrators flipping the same switch at once cannot leave memory saying ON
+# while the database says OFF. A write that fails changes nothing in memory.
+
+enum AgnosticPluginOff {
+    AGNOSTIC_PLUGIN_ID      = 0;
+    AGNOSTIC_PLUGIN_NAME    = 8;
+    AGNOSTIC_PLUGIN_DESC    = 16;
+    AGNOSTIC_PLUGIN_VERSION = 24;
+    AGNOSTIC_PLUGIN_DATA    = 32;
+    AGNOSTIC_PLUGIN_ASSET   = 40;
+    AGNOSTIC_PLUGIN_ENABLED = 48;
+    AGNOSTIC_PLUGIN_URL     = 56;
+    AGNOSTIC_PLUGIN_SKEY    = 64;
+    AGNOSTIC_PLUGIN_SIZE    = 72;
+}
+
+# What `agnostic_plugin_set_enabled` reports.
+enum AgnosticPluginSet {
+    AGNOSTIC_PLUGIN_SET_FAILED    = 0;
+    AGNOSTIC_PLUGIN_SET_CHANGED   = 1;
+    AGNOSTIC_PLUGIN_SET_UNCHANGED = 2;
+}
+
+# The longest plugin id — the generator enforces the same bound on manifests.
+var AGNOSTIC_PLUGIN_ID_MAX = 32;
+
+# Where the shell is served, and the prefix every plugin page hangs off.
+var AGNOSTIC_WEBGUI_PATH = "/ui";
+var AGNOSTIC_WEBGUI_PLUGIN_PREFIX = "/ui/plugins/";
+
+# The media type every page is served as.
+var AGNOSTIC_WEBGUI_HTML = "text/html; charset=utf-8";
+
+# The two values a `plugin.<id>.enabled` setting takes.
+var AGNOSTIC_PLUGIN_ON = str_from("on");
+var AGNOSTIC_PLUGIN_OFF = str_from("off");
+
+var AGNOSTIC_JK_ID      = str_from("id");
+var AGNOSTIC_JK_ENABLED = str_from("enabled");
+var AGNOSTIC_JK_URL     = str_from("url");
+var AGNOSTIC_JK_PLUGIN  = str_from("plugin");
+var AGNOSTIC_JK_PLUGINS = str_from("plugins");
+var AGNOSTIC_JK_CHANGED = str_from("changed");
+var _AGNOSTIC_JK_ASSET  = str_from("asset");
+var _AGNOSTIC_JK_ENTRY  = str_from("entry");
+
+# Built once by `agnostic_webgui_init`; read-only afterwards, so workers read them
+# without a lock.
+var _agnostic_plugins = 0;          # vec of plugin records, in generator order
+var _agnostic_webgui_pages = 0;     # vec of `Str` page bodies, by asset index
+var _agnostic_webgui_headers = 0;   # vec of header blocks (C strings), by asset index
+
+# Whether `id` could name a plugin: `[a-z0-9][a-z0-9-]*`, at most
+# `AGNOSTIC_PLUGIN_ID_MAX` bytes. A malformed id is a 422, not a 404 — the same split
+# the definition routes make between "not a legal key" and "no such key".
+fn agnostic_plugin_id_is_valid(id: Str): i64 {
+    if (id == 0) { return 0; }
+    var n = str_len(id);
+    if (n == 0 || n > AGNOSTIC_PLUGIN_ID_MAX) { return 0; }
+    var d = str_data(id);
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        var ok = 0;
+        if (c >= 97 && c <= 122) { ok = 1; }
+        if (c >= 48 && c <= 57) { ok = 1; }
+        if (c == 45 && i > 0) { ok = 1; }
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# The header block a page is sent with — its CSP plus three that every page shares —
+# as one CRLF-terminated C string, the form sandhi's `extra_headers` takes.
+#
+# `Cache-Control: no-cache` because a plugin page must not outlive its switch: a
+# browser holding a cached copy would keep showing a view an administrator turned off.
+fn _agnostic_webgui_header_block(i): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Content-Security-Policy: ");
+    str_builder_add_cstr(sb, agnostic_webgui_asset_csp(i));
+    str_builder_add_cstr(sb, "\r\nX-Content-Type-Options: nosniff\r\n");
+    str_builder_add_cstr(sb, "Referrer-Policy: no-referrer\r\nCache-Control: no-cache\r\n");
+    return str_data(str_builder_build(sb));
+}
+
+# One plugin record from its embedded manifest, or 0 when the manifest does not parse
+# or names a page that does not exist.
+fn _agnostic_plugin_from_manifest(i): i64 {
+    var raw = agnostic_webgui_plugin_manifest(i);
+    if (raw == 0) { return 0; }
+    var v = bayan_json_v_parse_buf(raw, strlen(raw));
+    if (v == 0) { return 0; }
+
+    var id = agnostic_req_str(v, AGNOSTIC_JK_ID);
+    var name = agnostic_req_str(v, AGNOSTIC_JK_NAME);
+    var desc = agnostic_req_str(v, AGNOSTIC_JK_DESCRIPTION);
+    var ver = agnostic_req_str(v, AGNOSTIC_JK_VERSION);
+    var data = agnostic_req_str(v, AGNOSTIC_JK_DATA);
+    var asset = agnostic_req_int(v, _AGNOSTIC_JK_ASSET, 0 - 1);
+    if (id == 0 || name == 0 || desc == 0 || ver == 0 || data == 0) { return 0; }
+    if (agnostic_plugin_id_is_valid(id) == 0) { return 0; }
+    # Page 0 is the shell, never a plugin's.
+    if (asset < 1 || asset >= AGNOSTIC_WEBGUI_ASSET_COUNT) { return 0; }
+    if (agnostic_req_str(v, _AGNOSTIC_JK_ENTRY) == 0) { return 0; }
+
+    var p = alloc(AGNOSTIC_PLUGIN_SIZE);
+    if (p == 0) { return 0; }
+    store64(p + AGNOSTIC_PLUGIN_ID, id);
+    store64(p + AGNOSTIC_PLUGIN_NAME, name);
+    store64(p + AGNOSTIC_PLUGIN_DESC, desc);
+    store64(p + AGNOSTIC_PLUGIN_VERSION, ver);
+    store64(p + AGNOSTIC_PLUGIN_DATA, data);
+    store64(p + AGNOSTIC_PLUGIN_ASSET, asset);
+    store64(p + AGNOSTIC_PLUGIN_ENABLED, 0);
+
+    var ub = str_builder_new();
+    str_builder_add_cstr(ub, AGNOSTIC_WEBGUI_PLUGIN_PREFIX);
+    str_builder_add(ub, id);
+    store64(p + AGNOSTIC_PLUGIN_URL, str_builder_build(ub));
+
+    var kb = str_builder_new();
+    str_builder_add_cstr(kb, "plugin.");
+    str_builder_add(kb, id);
+    str_builder_add_cstr(kb, ".enabled");
+    store64(p + AGNOSTIC_PLUGIN_SKEY, str_builder_build(kb));
+    return p;
+}
+
+# Load the WebGUI: check every embedded page, build its header block, parse every
+# plugin manifest and read each plugin's switch from the settings store.
+#
+# Mount time only — after the store is open and `agnostic_settings_ensure` has run,
+# and before any worker exists. Returns how many plugins loaded, or -1 when a page is
+# damaged; the caller refuses to start unless that equals
+# `AGNOSTIC_WEBGUI_PLUGIN_COUNT`. Idempotent: a second call answers the first's count
+# and re-reads nothing, so a suite can call it freely.
+fn agnostic_webgui_init(): i64 {
+    if (_agnostic_plugins != 0) { return vec_len(_agnostic_plugins); }
+
+    var pages = vec_new();
+    var headers = vec_new();
+    var i = 0;
+    while (i < AGNOSTIC_WEBGUI_ASSET_COUNT) {
+        var bytes = agnostic_webgui_asset_bytes(i);
+        if (bytes == 0) { return 0 - 1; }
+        if (strlen(bytes) != agnostic_webgui_asset_len(i)) {
+            agnostic_log_kv_int(SK_ERROR, "embedded WebGUI page is damaged", 31,
+              "page", 4, i);
+            return 0 - 1;
+        }
+        vec_push(pages, str_new(bytes, agnostic_webgui_asset_len(i)));
+        vec_push(headers, _agnostic_webgui_header_block(i));
+        i = i + 1;
+    }
+
+    var plugins = vec_new();
+    var a = arena_allocator(4096);
+    var j = 0;
+    while (j < AGNOSTIC_WEBGUI_PLUGIN_COUNT) {
+        var p = _agnostic_plugin_from_manifest(j);
+        if (p != 0) {
+            # A stored value other than "on" or "off" is not a third state: it reads
+            # as OFF, and says so, rather than turning a view on by accident.
+            var sv = 0;
+            if (a != 0) { sv = agnostic_settings_get_a(a, load64(p + AGNOSTIC_PLUGIN_SKEY)); }
+            if (sv != 0) {
+                if (str_eq(sv, AGNOSTIC_PLUGIN_ON) == 1) {
+                    store64(p + AGNOSTIC_PLUGIN_ENABLED, 1);
+                } elif (str_eq(sv, AGNOSTIC_PLUGIN_OFF) == 0) {
+                    agnostic_log_kv_str(SK_WARN, "unrecognised plugin setting; plugin stays off", 45,
+                      "key", 3, load64(p + AGNOSTIC_PLUGIN_SKEY));
+                }
+            }
+            vec_push(plugins, p);
+        }
+        j = j + 1;
+    }
+
+    _agnostic_webgui_pages = pages;
+    _agnostic_webgui_headers = headers;
+    _agnostic_plugins = plugins;
+    return vec_len(plugins);
+}
+
+# Forget the loaded WebGUI so the next `agnostic_webgui_init` re-reads it. For tests:
+# a suite that reopens the store uses this to prove a switch survived the reopen.
+fn agnostic_webgui_reset(): i64 {
+    _agnostic_plugins = 0;
+    _agnostic_webgui_pages = 0;
+    _agnostic_webgui_headers = 0;
+    return 0;
+}
+
+# The `i`th page as a `Str`, or 0 before init or out of range.
+fn agnostic_webgui_page(i): i64 {
+    if (_agnostic_webgui_pages == 0) { return 0; }
+    if (i < 0 || i >= vec_len(_agnostic_webgui_pages)) { return 0; }
+    return vec_get(_agnostic_webgui_pages, i);
+}
+
+# The `i`th page's header block as a C string, or 0 before init or out of range.
+fn agnostic_webgui_page_headers(i): i64 {
+    if (_agnostic_webgui_headers == 0) { return 0; }
+    if (i < 0 || i >= vec_len(_agnostic_webgui_headers)) { return 0; }
+    return vec_get(_agnostic_webgui_headers, i);
+}
+
+# How many plugins loaded. 0 before init.
+fn agnostic_plugins_count(): i64 {
+    if (_agnostic_plugins == 0) { return 0; }
+    return vec_len(_agnostic_plugins);
+}
+
+# The `i`th plugin record, or 0.
+fn agnostic_plugin_at(i): i64 {
+    if (_agnostic_plugins == 0) { return 0; }
+    if (i < 0 || i >= vec_len(_agnostic_plugins)) { return 0; }
+    return vec_get(_agnostic_plugins, i);
+}
+
+# The plugin with this id, or 0.
+fn agnostic_plugin_find(id: Str): i64 {
+    if (id == 0 || _agnostic_plugins == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_agnostic_plugins)) {
+        var p = vec_get(_agnostic_plugins, i);
+        if (str_eq(load64(p + AGNOSTIC_PLUGIN_ID), id) == 1) { return p; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The plugin's id as a `Str`.
+fn agnostic_plugin_id(p): i64 { return load64(p + AGNOSTIC_PLUGIN_ID); }
+
+# The plugin's display name as a `Str`.
+fn agnostic_plugin_name(p): i64 { return load64(p + AGNOSTIC_PLUGIN_NAME); }
+
+# The index of the page the plugin serves.
+fn agnostic_plugin_asset(p): i64 { return load64(p + AGNOSTIC_PLUGIN_ASSET); }
+
+# Whether the plugin is switched on. 1 or 0, read lock-free.
+fn agnostic_plugin_enabled(p): i64 {
+    if (p == 0) { return 0; }
+    return atomic_load(p + AGNOSTIC_PLUGIN_ENABLED);
+}
+
+# Switch a plugin on (`on` = 1) or off (0), persisting the choice. Returns
+# AGNOSTIC_PLUGIN_SET_CHANGED, _UNCHANGED when it already was, or _FAILED when the
+# setting could not be written — in which case nothing changed in memory either.
+#
+# ⚠ Records nothing in the audit trail. The caller does that, AFTER this returns:
+# the audit lock is never taken while the store lock is held (`store.cyr`).
+fn agnostic_plugin_set_enabled(p, on): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_plugin_set_enabled_locked(p, on);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_plugin_set_enabled`'s body. The caller holds the store lock, which is what
+# makes persist-then-publish one step against another writer.
+fn _agnostic_plugin_set_enabled_locked(p, on): i64 {
+    if (p == 0) { return AGNOSTIC_PLUGIN_SET_FAILED; }
+    var want = 0;
+    if (on != 0) { want = 1; }
+    if (atomic_load(p + AGNOSTIC_PLUGIN_ENABLED) == want) { return AGNOSTIC_PLUGIN_SET_UNCHANGED; }
+    var value = AGNOSTIC_PLUGIN_OFF;
+    if (want == 1) { value = AGNOSTIC_PLUGIN_ON; }
+    if (_agnostic_settings_put_locked(load64(p + AGNOSTIC_PLUGIN_SKEY), value) == 0) {
+        return AGNOSTIC_PLUGIN_SET_FAILED;
+    }
+    atomic_store(p + AGNOSTIC_PLUGIN_ENABLED, want);
+    return AGNOSTIC_PLUGIN_SET_CHANGED;
+}
+
+# A plugin as the API shows it: id, name, description, version, data, enabled, url.
+#
+# ⚠ `data` is "simulated" or "live", and it is on the wire for the same reason
+# `engine_mode` is on every crew response: a view driven by a simulator reads exactly
+# like one driven by real crews, so the difference is disclosed rather than inferred.
+fn agnostic_plugin_to_value_a(a, p): i64 {
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ID,
+      bayan_json_v_str_new_a(a, load64(p + AGNOSTIC_PLUGIN_ID)));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_NAME,
+      bayan_json_v_str_new_a(a, load64(p + AGNOSTIC_PLUGIN_NAME)));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_DESCRIPTION,
+      bayan_json_v_str_new_a(a, load64(p + AGNOSTIC_PLUGIN_DESC)));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_VERSION,
+      bayan_json_v_str_new_a(a, load64(p + AGNOSTIC_PLUGIN_VERSION)));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_DATA,
+      bayan_json_v_str_new_a(a, load64(p + AGNOSTIC_PLUGIN_DATA)));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ENABLED,
+      bayan_json_v_bool_new_a(a, agnostic_plugin_enabled(p)));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_URL,
+      bayan_json_v_str_new_a(a, load64(p + AGNOSTIC_PLUGIN_URL)));
+    return obj;
+}

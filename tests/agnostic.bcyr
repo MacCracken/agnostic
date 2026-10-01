@@ -6,10 +6,30 @@
 # (~240 ns per start/stop pair on x86_64 Linux). See lib/bench.cyr header for
 # the full overhead-vs-batching guidance.
 
-# The store and audit locks (0.1.4). Self-contained — rlock needs only the stdlib.
-include "src/engine/rlock.cyr"
+# The whole program (0.1.7), for the route table below. It includes the store and
+# audit locks (0.1.4) the rlock benches use, so they need no include of their own.
+include "src/app.cyr"
 
 fn bench_noop(): i64 { return 0; }
+
+# The route table is a flat scan in table order — `src/http/router.cyr` says why it
+# is not indexed, and asks every change that adds a route to re-measure rather than
+# inherit that sentence. These are the measurement: the first entry, the last, and a
+# miss, which tries every pattern before answering 404.
+fn _agnostic_bench_route(name, path): i64 {
+    var a = arena_allocator(8388608);
+    var p = str_from(path);
+    var b = bench_new(name);
+    bench_batch_start(b);
+    var i = 0;
+    while (i < 100000) {
+        agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, p);
+        i = i + 1;
+    }
+    bench_batch_stop(b, 100000);
+    bench_report(b);
+    return 0;
+}
 
 fn main(): i64 {
     alloc_init();
@@ -60,6 +80,10 @@ fn main(): i64 {
     }
     bench_batch_stop(bm, 100000);
     bench_report(bm);
+
+    _agnostic_bench_route("route_first_health", "/health");
+    _agnostic_bench_route("route_last_ui_plugin", "/ui/plugins/swarm");
+    _agnostic_bench_route("route_miss_404", "/no/such/route");
     return 0;
 }
 

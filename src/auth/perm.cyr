@@ -109,6 +109,12 @@ fn agnostic_perm_for_route(id): i64 {
 
     if (id == AGNOSTIC_ROUTE_AUDIT) { return AGNOSTIC_PERM_ADMIN; }
 
+    # ⚠ Switching a plugin is ADMIN, not WRITE. It is a setting of the DEPLOYMENT —
+    # turning a view on adds its tab for every user, in every tenant — and an
+    # operator's WRITE covers their own work, not what everyone else is shown.
+    if (id == AGNOSTIC_ROUTE_PLUGIN_LIST) { return AGNOSTIC_PERM_READ; }
+    if (id == AGNOSTIC_ROUTE_PLUGIN_SET) { return AGNOSTIC_PERM_ADMIN; }
+
     # Login needs no permission — `agnostic_route_needs_auth` already answered 0
     # for it, so this is unreachable and present only so a reader looking for the
     # route in this table finds it rather than assuming an omission.

@@ -24,3 +24,4 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0001](0001-health-and-readiness-are-separate.md) | Health and readiness are separate probes |
 | [0002](0002-daimon-tier-1-deferred.md) | Daimon Tier 1 registration is deferred |
 | [0003](0003-one-store-lock-not-a-handle-per-worker.md) | One store lock, not a patra handle per worker |
+| [0004](0004-webgui-plugins-compiled-in-switched-at-run-time.md) | WebGUI plugins are compiled in and switched at run time |

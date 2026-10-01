@@ -3,8 +3,9 @@
 > **Start here.** This is the orientation document for picking up the Python → Cyrius port.
 > It is deliberately short and links outward rather than restating.
 > Last refreshed: **2026-08-23**, after M5 and the M6 viability gate. The toolchain
-> and dependency facts in §2 and §6 were refreshed **2026-09-26**, at 0.1.3; §5
-> gained the store-lock rules at 0.1.4 and the borrow/TLS rules at 0.1.5.
+> and dependency facts in §2 and §6 were refreshed **2026-10-01**, at 0.1.7; §5
+> gained the store-lock rules at 0.1.4, the borrow/TLS rules at 0.1.5, and the
+> dependency and embedding rules at 0.1.7. §1 notes the WebGUI's first slice (0.1.7).
 
 Read in this order:
 
@@ -46,18 +47,30 @@ an operator has provisioned a user. What keeps that from being fail-open:
 loopback, and refuses to start with auth *required* when no users and no
 bootstrap credential exist.
 
-Version is **0.1.6** — see `CHANGELOG.md`. Per decision #4 the port's milestones
+**M9 is seeded (0.1.7):** the WebGUI shell at `/ui`, with a Settings tab, and
+compiled-in plugins an administrator switches on there — the first is Swarm Command,
+which still runs on its own simulator and says so. The pages are public, the plugin API
+is READ to list and ADMIN to switch, and each page carries a generated CSP. ADR 0004 is
+the why; `state.md` § WebGUI is the what.
+
+Version is **0.1.7** — see `CHANGELOG.md`. Per decision #4 the port's milestones
 ship together as **1.0.0** (§4).
 
 ## 2. ⚠ Build it correctly, or you will write a lock CI cannot reproduce
 
 This has bitten repeatedly and is the single most important operational fact here.
 
-**The pin is `6.6.11`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
+**The pin is `6.6.12`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
 under a toolchain other than the pin rewrites `lib/` and `cyrius.lock` with content
 CI — which installs the pin — cannot reproduce. CI has a fatal drift gate precisely
 for this. Read `cyrius --version` before provisioning: it must print
-`manifest-pin: 6.6.11` with **no** `drift` on the line.
+`manifest-pin: 6.6.12` with **no** `drift` on the line.
+
+⚠ **Your editor may be building too.** The cyrius language server runs a build on save,
+and a build re-provisions `lib/` and rewrites the lock (below). During 0.1.7 it did so
+from a half-edited manifest. Treat `lib/` and `cyrius.lock` as scratch until a
+deliberate `lib sync --full` + `deps` under the final manifest, then compare them with
+the clean replica's.
 
 ### ✅ The wrapper pins the compiler now — the `CYRIUS_HOME` shim is retired
 
@@ -187,6 +200,36 @@ then, against a real requirement. Out of scope for v1.0.
 
 ## 5. Cyrius footguns that have already cost time
 
+**Added at 0.1.7:**
+
+- **A `[deps.X]` without `modules` does nothing — silently.** `cyrius deps` clones a dep
+  only when it lists `modules`, so a block with `git` + `tag` alone is never visited and
+  a transitive declaration of the same name resolves instead. This repo's four
+  "not optional" pre-pins were inert for their whole life. Filed upstream
+  (`2026-10-01-git-dep-without-modules-silently-inert.md`).
+- **Root deps resolve first, then their own deps breadth-first in MANIFEST ORDER, and the
+  first declaration of a name wins.** That is why `[deps.libro]` sits after
+  `[deps.agnosai]`: libro declares sigil 3.13.4, agnosai the fold's 3.13.5.
+- **Embedding a page: a raw multi-line string literal, never `\`-continuations.** A
+  continuation keeps the newline and `cyrius fmt` indents the next line, putting spaces
+  inside the string — harmless between JSON tokens, a rewrite of an HTML page. Raw
+  newlines inside a literal are legal, and since 6.6.6 a line in a string that starts
+  `#ifdef` is data. `scripts/gen-webgui.sh` does this; `tests/webgui.tcyr` re-hashes it.
+- **A line at column 0 starting `fn ` / `var ` / `enum ` inside an embedded page** would
+  be read as a definition by `check-symbols.sh`, which scans `src/` line by line. The
+  generator refuses such a page.
+- **`check-lib-symbols.py` must evaluate `#ifdef`.** It now does, per shipped target;
+  before 0.1.7 it read both arms as live.
+- ⛔ **The aarch64 binary does not start, and the cause is known** (Pi 4, 0.1.7): a
+  typed-array global (`var a: u8[N]`) is not padded, so the globals after sankoch's
+  `u8[363]`/`u8[217]`/`u8[50]` are off by 6, and sigil's atomic init flags among them
+  SIGBUS. Filed upstream (`2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md`).
+  Re-check on the Pi after any cyrius bump: cross-build the suites, `scp`, run natively.
+  Never size a byte array in agnostic's own globals to a non-multiple of 8.
+  **The artifact is withheld meanwhile** (release, CI upload and `cross_bins`; CI still
+  compiles it). When the Pi run is clean, restore it — the steps are written beside the
+  commented-out lines in `cyrius.cyml` and `.github/workflows/release.yml`.
+
 **Added during M5/M6 — each of these cost a wrong turn:**
 
 - **`secret` is a RESERVED KEYWORD** and cannot be a parameter name. The
@@ -301,20 +344,22 @@ already filed from this port.
 
 | Repo | Version | How it arrives |
 |---|---|---|
-| `agnosai` | **2.1.1** | direct, `git` + `tag` — **no `path`**; 2.1.0 does not compile on 6.6.11 |
-| `bote` | **3.3.13** | direct pin, matching agnosai 2.1.1's |
-| `majra` | **2.9.1** | direct pin, matching agnosai 2.1.1's |
-| `ai-hwaccel` / `tyche` | **2.4.0** / **1.1.0** | direct pins, matching agnosai 2.1.1's |
-| `libro` | **2.10.3** | transitive via bote — the audit chain |
-| `kavach` | **3.13.1** | transitive via agnosai |
-| `sigil` | **3.13.4** | folded into the 6.6.11 stdlib; agnosai, kavach and libro declare 3.12.18, which `deps` skips |
-| `patra` | **1.15.1** | folded into the 6.6.11 stdlib; libro declares 1.14.3, which `deps` skips |
+| `agnosai` | **2.1.2** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below at its latest |
+| `libro` | **2.10.5** | direct since 0.1.7 (`modules`, after agnosai) — the audit chain |
+| `bote` / `majra` | **3.3.15** / **2.9.2** | transitive via agnosai 2.1.2 |
+| `ai-hwaccel` / `tyche` / `kavach` | **2.4.0** / **1.1.0** / **3.13.1** | transitive via agnosai 2.1.2 |
+| `sigil` | **3.13.5** | folded into the 6.6.12 stdlib; agnosai declares the same version |
+| `patra` | **1.15.1** | folded into the 6.6.12 stdlib; libro declares the same version |
 
 ✅ **All nine carry a commit pin in `cyrius.lock`**, and every tag was confirmed on
 the GitHub remote (API, not `gh`) before its pin moved. The agnosai 2.0.6 episode
 this section used to describe — a tag pushed as a commit only, resolved from a
 locally seeded cache — is closed. The check that caught it still applies to every
 bump: a pushed *commit* is not a pushed *tag*.
+
+⚠ **To move a dep agnosai owns, release agnosai** — as 2.1.2 did for bote and majra.
+A root block "ahead of" agnosai works only if it lists `modules` (§5), and it then has
+to be kept in step by hand; the four that existed through 0.1.6 never took effect.
 
 ### `[deps.agnosai]` has no `path`, deliberately
 
@@ -325,10 +370,10 @@ Do not add it back.
 
 ### ✅ No `[deps.patra]` hold at this pin
 
-6.6.11 folds patra 1.15.1 (and sigil 3.13.4). libro 2.10.3 still declares patra
-1.14.3, but `cyrius deps` keeps the folded copy and does not overwrite it with the
-dep's artifact ("refusing to overwrite stdlib leaf"), so `lib/` matches the snapshot
-with **zero** files differing. The hold that agnosai 2.0.5 needed —
+6.6.12 folds patra 1.15.1 (and sigil 3.13.5), and since 0.1.7 the chain declares the
+same versions — libro 2.10.5 patra 1.15.1, agnosai 2.1.2 sigil 3.13.5 — so the artifacts
+`cyrius deps` skips ("refusing to overwrite stdlib leaf") are the very bytes it keeps,
+and `lib/` matches the snapshot with **zero** files differing. The hold that agnosai 2.0.5 needed —
 because no published Cyrius folded 1.13.10 at the time — is **not** reintroduced
 here and must not be. The general rule: taking a patra version through a transitive
 `[deps.patra]` obliges a Cyrius pin that folds the same version; the two are one

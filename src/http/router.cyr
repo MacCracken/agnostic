@@ -23,13 +23,15 @@
 # to amortise sixteen table attempts. A flat scan in table order is correct,
 # simpler, and faster at a small size.
 #
-# ⚠ **The table is now 11 paths — M1 had 2, M2 took it to 6, M3 to 11 — and the
-# threshold at which the index becomes worth copying was always "roughly a
-# dozen".** It is still flat because 11 string compares against an early-exiting
-# segment matcher is nothing next to a crew run, and because the index is only
-# worth its complexity once the table stops fitting in a reader's head. The next
-# milestone that adds a route should re-measure rather than inherit this
-# sentence.
+# ⚠ **The table is 15 paths at 0.1.7 — M1 had 2, M2 took it to 6, M3 to 11, the
+# WebGUI to 15 — and the threshold at which the index becomes worth copying was
+# always "roughly a dozen".** It is still flat, and since 0.1.7 on a measurement
+# rather than an estimate (`tests/agnostic.bcyr`, one run, x86_64): resolving the
+# first entry costs ~0.1 µs, the last ~0.8 µs, and a miss that tries every pattern
+# ~0.65 µs — against ~48 µs for the per-request user lookup alone (ADR 0003). The
+# index earns its complexity when that stops being true, or when the table stops
+# fitting in a reader's head. The next change that adds a route should re-run
+# `cyrius bench` rather than inherit this sentence.
 
 enum AgnosticRouteId {
     AGNOSTIC_ROUTE_NONE         = 0;
@@ -48,6 +50,10 @@ enum AgnosticRouteId {
     AGNOSTIC_ROUTE_DEF_DELETE   = 13;
     AGNOSTIC_ROUTE_AUDIT        = 14;
     AGNOSTIC_ROUTE_AUTH_LOGIN   = 15;
+    AGNOSTIC_ROUTE_PLUGIN_LIST  = 16;
+    AGNOSTIC_ROUTE_PLUGIN_SET   = 17;
+    AGNOSTIC_ROUTE_UI_SHELL     = 18;
+    AGNOSTIC_ROUTE_UI_PLUGIN    = 19;
 }
 
 var AGNOSTIC_METHOD_NONE   = 0;
@@ -321,6 +327,38 @@ fn agnostic_route_resolve_a(a, method, path: Str): i64 {
         }
     }
 
+    # WebGUI plugins (0.1.7). The collection is GET only — the set of plugins is
+    # fixed by the build, so there is nothing to POST — and one plugin is PUT only:
+    # its switch is the whole of its mutable state.
+    if (agnostic_path_matches_a(a, clean, "/api/v1/plugins", &param) == 1) {
+        path_hit = 1;
+        if (method == AGNOSTIC_METHOD_GET) {
+            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_PLUGIN_LIST, param, 0);
+        }
+    }
+    if (agnostic_path_matches_a(a, clean, "/api/v1/plugins/:id", &param) == 1) {
+        path_hit = 1;
+        if (method == AGNOSTIC_METHOD_PUT) {
+            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_PLUGIN_SET, param, 0);
+        }
+    }
+
+    # The WebGUI's pages (0.1.7). `/ui/` is listed beside `/ui` because the matcher
+    # reads a trailing `/` as one more, empty, segment — and a person types either.
+    if (agnostic_path_matches_a(a, clean, "/ui", &param) == 1
+      || agnostic_path_matches_a(a, clean, "/ui/", &param) == 1) {
+        path_hit = 1;
+        if (method == AGNOSTIC_METHOD_GET) {
+            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_UI_SHELL, param, 0);
+        }
+    }
+    if (agnostic_path_matches_a(a, clean, "/ui/plugins/:id", &param) == 1) {
+        path_hit = 1;
+        if (method == AGNOSTIC_METHOD_GET) {
+            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_UI_PLUGIN, param, 0);
+        }
+    }
+
     return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_NONE, 0, path_hit);
 }
 
@@ -341,6 +379,14 @@ fn agnostic_route_needs_auth(id): i64 {
     # pool cap in front of it, which is the protection appropriate to an endpoint
     # that must accept anonymous requests.
     if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return 0; }
+    # ⚠ **The WebGUI's two page routes are public, necessarily** (0.1.7). A browser
+    # cannot attach a bearer token to a navigation, so a page behind this rung could
+    # never be opened — and a page holds no data: it is a compiled-in file, the same
+    # bytes for every caller. Everything a page shows comes from API calls that carry
+    # the caller's credential and are authorised like any other. The plugin API
+    # itself is NOT exempt: listing is READ and switching is ADMIN.
+    if (id == AGNOSTIC_ROUTE_UI_SHELL) { return 0; }
+    if (id == AGNOSTIC_ROUTE_UI_PLUGIN) { return 0; }
     # Every crew route falls through to 1 — submitting work, reading its output
     # and cancelling it are all privileged. They are not listed individually,
     # deliberately: the default is what protects a route someone forgets to
@@ -445,6 +491,15 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     if (id == AGNOSTIC_ROUTE_PRESET_LIST) { return agnostic_route_presets_list_a(a); }
     if (id == AGNOSTIC_ROUTE_PRESET_GET) {
         return agnostic_route_preset_get_a(a, agnostic_route_match_param(m));
+    }
+
+    if (id == AGNOSTIC_ROUTE_PLUGIN_LIST) { return agnostic_route_plugins_list_a(a); }
+    if (id == AGNOSTIC_ROUTE_PLUGIN_SET) {
+        return agnostic_route_plugin_set_a(a, agnostic_route_match_param(m), body);
+    }
+    if (id == AGNOSTIC_ROUTE_UI_SHELL) { return agnostic_route_ui_shell_a(a); }
+    if (id == AGNOSTIC_ROUTE_UI_PLUGIN) {
+        return agnostic_route_ui_plugin_a(a, agnostic_route_match_param(m));
     }
 
     # A resolved id with no dispatch arm is a table/ladder mismatch, not a client

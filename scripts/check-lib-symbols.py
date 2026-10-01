@@ -11,6 +11,10 @@ table -- see CHANGELOG 2.0.4.
 This fails the build on a duplicate whose VALUES DIVERGE, and reports the rest.
 Known-and-filed divergences live in scripts/lib-symbol-allow.txt, one per line, each
 required to carry a `#` comment naming the upstream issue.
+
+Each shipped target is checked on its own, with `#ifdef`-style conditionals evaluated
+for it: a name declared once per platform arm is one definition on every target, not
+two. See TARGETS below.
 """
 import re, sys, os, glob, collections
 
@@ -77,12 +81,19 @@ def parse_manifest(path="cyrius.cyml"):
 def sidecar_leaves(name, info):
     """Stdlib leaves a dep's fold needs, from its dist/<mod>.deps sidecar.
     Looked up in the cyrius dep cache first (present on a CI runner) then the
-    sibling checkout (present locally)."""
+    sibling checkout (present locally).
+
+    ⚠ The cache is `$CYRIUS_HOME/deps` when CYRIUS_HOME is set -- the empty-cache
+    replica that certifies a dep bump runs under exactly that. Reading only
+    `~/.cyrius/deps` there found no sidecar, silently shrank the compile set (53 -> 49
+    modules at 0.1.7) and checked less than it reported."""
     out = set()
+    home = os.environ.get("CYRIUS_HOME", os.path.expanduser("~/.cyrius"))
     for mod in info["modules"]:
         base = mod[:-4] + ".deps" if mod.endswith(".cyr") else mod + ".deps"
         cands = []
         if info["tag"]:
+            cands.append(os.path.join(home, "deps", name, info["tag"], base))
             cands.append(os.path.expanduser(f"~/.cyrius/deps/{name}/{info['tag']}/{base}"))
         if info["path"]:
             cands.append(os.path.join(info["path"], base))
@@ -148,9 +159,93 @@ def compile_set(stdlib, deps):
             files.add(p)
     return {f for f in sorted(files) if not PLAT.search(f)}
 
-def constants(path):
-    """(name, value, kind) for every top-level `var` and every enum member."""
-    out, lines, i = [], open(path, errors="replace").read().split("\n"), 0
+# --- Preprocessor conditionals, evaluated per shipped target ----------------------
+# ⚠ A file is not one set of definitions; it is one set PER TARGET. sigil 3.13.5 (the
+# cyrius 6.6.12 fold) declares eight errno names twice -- the BSD values under
+# `#ifdef CYRIUS_TARGET_MACOS`, the Linux ones under `#ifndef CYRIUS_TARGET_MACOS` --
+# and exactly one arm is ever compiled. Reading every line as live reported both arms
+# as a divergence from kavach, which declares the Linux values: a false positive on
+# every target this repo builds. Allow-listing the eight names would also have hidden
+# a REAL future divergence of any of them, so the conditionals are evaluated instead,
+# once per target, and a divergence on ANY shipped target fails.
+#
+# The targets are what CI builds: the native x86_64 build and the aarch64 cross-build.
+# (aarch64 is withheld from releases since 0.1.7 — see `[release]` in cyrius.cyml — but
+# CI still compiles it so it can come back; it is checked here for the same reason.)
+# The compiler defines exactly one CYRIUS_TARGET_* per build, plus CYRIUS_ARCH_X86 or
+# CYRIUS_ARCH_AARCH64 (cyrius-guide, "Preprocessor").
+TARGETS = {
+    "x86_64-linux":  ({"CYRIUS_TARGET_LINUX", "CYRIUS_ARCH_X86"}, {"x86_64", "linux"}),
+    "aarch64-linux": ({"CYRIUS_TARGET_LINUX", "CYRIUS_ARCH_AARCH64"}, {"aarch64", "linux"}),
+}
+
+_DIRECTIVE = re.compile(
+    r'^\s*#(ifdef|ifndef|ifplat|if|elif|else|endif|endplat|define|undef)\b\s*([A-Za-z_0-9]*)')
+
+def active_lines(path, target):
+    """The file's lines for `target`, with every inactive arm and every directive line
+    blanked -- blanked rather than dropped, so reported line numbers stay true.
+
+    Follows the compiler's own reading: a line inside a multi-line string is string
+    DATA even when it begins `#ifdef` (cyrius 6.6.6, `PP_LEXST`), so string state is
+    carried across lines here too. An `#if` with an expression this does not evaluate
+    keeps BOTH arms live, which is how every line was read before conditionals were
+    understood -- an unknown form can make the gate stricter, never blind.
+    """
+    defs, plats = set(TARGETS[target][0]), TARGETS[target][1]
+    out, stack, active, in_str = [], [], True, False
+    for L in open(path, errors="replace").read().split("\n"):
+        m = None if in_str else _DIRECTIVE.match(L)
+        if m:
+            d, arg = m.group(1), m.group(2)
+            if d in ("ifdef", "ifndef", "ifplat", "if"):
+                cond = {"ifdef": arg in defs, "ifndef": arg not in defs,
+                        "ifplat": arg in plats, "if": True}[d]
+                arm = active and cond
+                # frame: [parent active, an arm already taken, condition unknown]
+                stack.append([active, arm, d == "if"])
+                active = arm
+            elif d in ("elif", "else") and stack:
+                parent, taken, unknown = stack[-1]
+                if unknown:
+                    arm = parent
+                else:
+                    arm = parent and not taken and (d == "else" or arg in defs)
+                stack[-1][1] = taken or arm
+                active = arm
+            elif d in ("endif", "endplat") and stack:
+                active = stack.pop()[0]
+            elif d == "define" and active and arg:
+                defs.add(arg)
+            elif d == "undef" and active and arg:
+                defs.discard(arg)
+            out.append("")
+            continue
+        out.append(L if active else "")
+        i, n = 0, len(L)
+        while i < n:
+            ch = L[i]
+            if in_str:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "'":
+                j = i + 1
+                while j < n and L[j] != "'":
+                    j += 2 if L[j] == "\\" else 1
+                i = j
+            elif ch == "#":
+                break
+            i += 1
+    return out
+
+def constants(path, target):
+    """(name, value, kind) for every top-level `var` and every enum member live on `target`."""
+    out, lines, i = [], active_lines(path, target), 0
     while i < len(lines):
         L = lines[i]
         m = re.match(r'^var\s+([A-Za-z_]\w*)\s*=\s*([^;]+);', L)
@@ -194,41 +289,44 @@ def main():
             nm, _, why = L.partition("#")
             allow[nm.strip()] = why.strip()
 
-    seen = collections.defaultdict(list)
-    for f in sorted(files):
-        for nm, val, kind in constants(f):
-            seen[nm].append((val, os.path.basename(f), kind))
+    rc = 0
+    for target in TARGETS:
+        seen = collections.defaultdict(list)
+        for f in sorted(files):
+            for nm, val, kind in constants(f, target):
+                seen[nm].append((val, os.path.basename(f), kind))
 
-    diverge, same = [], 0
-    for nm, e in seen.items():
-        if len({f for _, f, _ in e}) > 1:
-            if len({v for v, _, _ in e}) > 1:
-                diverge.append((nm, e))
-            else:
-                same += 1
+        diverge, same = [], 0
+        for nm, e in seen.items():
+            if len({f for _, f, _ in e}) > 1:
+                if len({v for v, _, _ in e}) > 1:
+                    diverge.append((nm, e))
+                else:
+                    same += 1
 
-    unflagged = [(n, e) for n, e in sorted(diverge) if n not in allow]
-    flagged   = [(n, e) for n, e in sorted(diverge) if n in allow]
+        unflagged = [(n, e) for n, e in sorted(diverge) if n not in allow]
+        flagged   = [(n, e) for n, e in sorted(diverge) if n in allow]
 
-    print(f"lib-symbol check: {len(files)} modules in the compile set, "
-          f"{len(seen)} constants, {same} benign duplicate(s)")
-    for nm, e in flagged:
-        print(f"  ALLOWED  {nm} — {allow[nm]}")
-        for v, f, k in e:
-            print(f"             {v:<24} {f} ({k})")
-    if unflagged:
-        print()
-        print("error: a constant is defined more than once in the compile set WITH DIFFERENT VALUES.")
-        print("       Cyrius resolves this silently (last definition wins) — no warning is emitted")
-        print("       for `var` or for enum members, so nothing else in the build will catch it.")
-        for nm, e in unflagged:
-            print(f"  {nm}")
+        print(f"lib-symbol check [{target}]: {len(files)} modules in the compile set, "
+              f"{len(seen)} constants, {same} benign duplicate(s)")
+        for nm, e in flagged:
+            print(f"  ALLOWED  {nm} — {allow[nm]}")
             for v, f, k in e:
-                print(f"      {v:<24} {f} ({k})")
-        print()
-        print("       Fix it upstream in the owning library (prefix the name), then add it to")
-        print("       scripts/lib-symbol-allow.txt with the issue reference while the fix lands.")
-        return 1
-    return 0
+                print(f"             {v:<24} {f} ({k})")
+        if unflagged:
+            print()
+            print(f"error: on {target}, a constant is defined more than once in the compile set")
+            print("       WITH DIFFERENT VALUES. Cyrius resolves this silently (last definition")
+            print("       wins) — no warning is emitted for `var` or for enum members, so nothing")
+            print("       else in the build will catch it.")
+            for nm, e in unflagged:
+                print(f"  {nm}")
+                for v, f, k in e:
+                    print(f"      {v:<24} {f} ({k})")
+            print()
+            print("       Fix it upstream in the owning library (prefix the name), then add it to")
+            print("       scripts/lib-symbol-allow.txt with the issue reference while the fix lands.")
+            rc = 1
+    return rc
 
 sys.exit(main())

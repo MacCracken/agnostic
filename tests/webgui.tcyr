@@ -1,0 +1,395 @@
+# agnostic/webgui — the embedded pages, the plugin registry, settings, and their routes.
+#
+# What this suite holds:
+#
+#   1. The embedded pages ARE the source files: their SHA-256 is recomputed here from
+#      the bytes in the binary and compared with the generator's. An escaping slip in
+#      `scripts/gen-webgui.sh` fails here, not in a browser.
+#   2. A plugin is OFF until switched on, the switch survives a store reopen, and an
+#      unrecognised stored value reads as OFF.
+#   3. The pages are public and the API is not: listing is READ, switching is ADMIN —
+#      an operator's WRITE is not enough.
+#   4. Only a real change is audited.
+include "src/app.cyr"
+
+var _T_WEBDB = "/tmp/agnostic-webgui-suite.patra";
+var _T_WEBAUDIT = "/tmp/agnostic-webgui-audit.patra";
+var _T_EMPTY = str_from("");
+var _T_MAXBODY = 1048576;
+
+# Whether `s` (a Str) contains the C string `needle`.
+fn _t_has(s: Str, needle): i64 {
+    var n = str_len(s);
+    var d = str_data(s);
+    var m = strlen(needle);
+    if (m > n) { return 0; }
+    var i = 0;
+    while (i <= n - m) {
+        var j = 0;
+        while (j < m) {
+            if ((load8(d + i + j) & 0xFF) != (load8(needle + j) & 0xFF)) { break; }
+            j = j + 1;
+        }
+        if (j == m) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# A fresh database with every table mount creates, and a WebGUI not yet loaded.
+fn _t_open() {
+    agnostic_webgui_reset();
+    agnostic_store_close();
+    sys_unlink(_T_WEBDB);
+    patra_init();
+    agnostic_store_open(str_from(_T_WEBDB));
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_settings_ensure();
+    return 0;
+}
+
+# Dispatch a request with no credential.
+fn _t_req(a, method, path, body) {
+    return agnostic_route_dispatch_a(a, method, str_from(path), str_from(body), _T_MAXBODY, 0);
+}
+
+# Dispatch a request carrying `Bearer <token>`.
+fn _t_req_as(a, method, path, body, token) {
+    var h = alloc_via(a, 7 + str_len(token));
+    memcpy(h, "Bearer ", 7);
+    memcpy(h + 7, str_data(token), str_len(token));
+    var ctx = agnostic_reqctx_new_a(a, str_new_a(a, h, 7 + str_len(token)), 0);
+    return agnostic_route_dispatch_a(a, method, str_from(path), str_from(body), _T_MAXBODY, ctx);
+}
+
+# A field of a JSON response's body, or 0.
+fn _t_field(r, key) {
+    return bayan_json_v_obj_get_by_str(agnostic_response_body(r), str_from(key));
+}
+
+fn test_pages_are_the_source_files() {
+    test_group("webgui/pages");
+    var a = arena_allocator(262144);
+    assert_eq(AGNOSTIC_WEBGUI_ASSET_COUNT, 2, "two pages: the shell and the swarm plugin");
+    assert_eq(str_eq_cstr(str_from(agnostic_webgui_asset_path(0)), "index.html"), 1,
+      "page 0 is the shell");
+    assert_eq(str_eq_cstr(str_from(agnostic_webgui_asset_path(1)), "plugins/swarm/index.html"), 1,
+      "page 1 is the swarm plugin");
+    var i = 0;
+    while (i < AGNOSTIC_WEBGUI_ASSET_COUNT) {
+        var bytes = agnostic_webgui_asset_bytes(i);
+        assert_neq(bytes, 0, "the page is embedded");
+        assert_eq(strlen(bytes), agnostic_webgui_asset_len(i),
+          "no NUL inside it: its C-string length is the generator's byte count");
+        # ⭐ THE CLAIM. The digest of the bytes in this binary equals the digest of
+        # the source file the generator read, so the literal is the file.
+        var got = agnostic_sha256_hex_a(a, str_new(bytes, agnostic_webgui_asset_len(i)));
+        assert_eq(str_eq_cstr(got, agnostic_webgui_asset_sha256(i)), 1,
+          "the embedded bytes hash to the source file's SHA-256");
+        var csp = str_from(agnostic_webgui_asset_csp(i));
+        assert_eq(_t_has(csp, "default-src 'none'"), 1, "the CSP denies by default");
+        assert_eq(_t_has(csp, "script-src 'sha256-"), 1, "and admits scripts by hash");
+        assert_eq(_t_has(csp, "unsafe-eval"), 0, "never eval");
+        assert_eq(_t_has(csp, "base-uri 'none'"), 1, "no <base> rewriting");
+        i = i + 1;
+    }
+    assert_eq(_t_has(str_from(agnostic_webgui_asset_csp(0)), "frame-ancestors 'none'"), 1,
+      "nothing may frame the shell");
+    assert_eq(_t_has(str_from(agnostic_webgui_asset_csp(1)), "frame-ancestors 'self'"), 1,
+      "a plugin may be framed by its own origin only");
+    assert_eq(agnostic_webgui_asset_bytes(2), 0, "out of range is 0");
+    assert_eq(agnostic_webgui_asset_bytes(0 - 1), 0, "and so is negative");
+}
+
+fn test_init() {
+    test_group("webgui/init");
+    _t_open();
+    assert_eq(agnostic_plugins_count(), 0, "nothing is loaded before init");
+    assert_eq(agnostic_webgui_page(0), 0, "and no page is served");
+    var n = agnostic_webgui_init();
+    assert_eq(n, AGNOSTIC_WEBGUI_PLUGIN_COUNT, "every compiled-in plugin loads");
+    assert_eq(n, 1, "which is one: swarm");
+    var p = agnostic_plugin_find(str_from("swarm"));
+    assert_neq(p, 0, "swarm is found by id");
+    assert_eq(agnostic_plugin_at(0), p, "and is first in the listing");
+    assert_eq(agnostic_plugin_find(str_from("nope")), 0, "an unknown id is not");
+    assert_eq(agnostic_plugin_enabled(p), 0, "⭐ a plugin starts OFF");
+    assert_eq(agnostic_plugin_asset(p), 1, "swarm serves page 1");
+    assert_eq(agnostic_webgui_init(), n, "a second init answers the same count");
+    assert_eq(agnostic_plugin_find(str_from("swarm")), p, "and does not rebuild the registry");
+    var h = str_from(agnostic_webgui_page_headers(1));
+    assert_eq(_t_has(h, "Content-Security-Policy: default-src 'none'"), 1, "the CSP is a header");
+    assert_eq(_t_has(h, "X-Content-Type-Options: nosniff\r\n"), 1, "with nosniff");
+    assert_eq(_t_has(h, "Referrer-Policy: no-referrer\r\n"), 1, "no referrer");
+    assert_eq(_t_has(h, "Cache-Control: no-cache\r\n"), 1, "and no-cache, so a switch-off is not outlived");
+}
+
+fn test_ids() {
+    test_group("webgui/ids");
+    assert_eq(agnostic_plugin_id_is_valid(str_from("swarm")), 1, "swarm");
+    assert_eq(agnostic_plugin_id_is_valid(str_from("a-1")), 1, "digits and a hyphen");
+    assert_eq(agnostic_plugin_id_is_valid(str_from("")), 0, "not empty");
+    assert_eq(agnostic_plugin_id_is_valid(str_from("-a")), 0, "not a leading hyphen");
+    assert_eq(agnostic_plugin_id_is_valid(str_from("Swarm")), 0, "not upper case");
+    assert_eq(agnostic_plugin_id_is_valid(str_from("a/b")), 0, "never a path separator");
+    assert_eq(agnostic_plugin_id_is_valid(str_from("a.b")), 0, "nor a dot");
+    assert_eq(agnostic_plugin_id_is_valid(str_from("abcdefghijklmnopqrstuvwxyz012345")), 1, "32 is the limit");
+    assert_eq(agnostic_plugin_id_is_valid(str_from("abcdefghijklmnopqrstuvwxyz0123456")), 0, "33 is over it");
+}
+
+fn test_settings() {
+    test_group("settings/store");
+    _t_open();
+    var a = arena_allocator(65536);
+    assert_eq(agnostic_settings_key_is_valid(str_from("plugin.swarm.enabled")), 1, "a dotted key");
+    assert_eq(agnostic_settings_key_is_valid(str_from("")), 0, "not empty");
+    assert_eq(agnostic_settings_key_is_valid(str_from(".x")), 0, "not a leading dot");
+    assert_eq(agnostic_settings_key_is_valid(str_from("Plugin")), 0, "not upper case");
+    assert_eq(agnostic_settings_key_is_valid(str_from("a b")), 0, "no space");
+    assert_eq(agnostic_settings_get_a(a, str_from("k.one")), 0, "an absent key reads as 0");
+    assert_eq(agnostic_settings_put(str_from("k.one"), str_from("v1")), 1, "a put lands");
+    assert_eq(str_eq_cstr(agnostic_settings_get_a(a, str_from("k.one")), "v1"), 1, "and reads back");
+    assert_eq(agnostic_settings_put(str_from("k.one"), str_from("v2")), 1, "a second put replaces");
+    assert_eq(str_eq_cstr(agnostic_settings_get_a(a, str_from("k.one")), "v2"), 1, "the new value");
+    assert_eq(agnostic_settings_count(), 1, "⭐ replacing does not add a row");
+    assert_eq(agnostic_settings_put(str_from("k.two"), _T_EMPTY), 1, "an empty value is a value");
+    assert_eq(str_len(agnostic_settings_get_a(a, str_from("k.two"))), 0, "and reads back empty");
+    # ⭐ COL_STR truncates silently at 256 bytes, so an over-long value is refused at
+    # the door rather than stored cut.
+    var big = alloc(300);
+    memset(big, 120, 300);
+    assert_eq(agnostic_settings_put(str_from("k.big"), str_new(big, 256)), 0, "256 bytes is refused");
+    assert_eq(agnostic_settings_put(str_from("k.big"), str_new(big, 255)), 1, "255 is accepted");
+    assert_eq(str_len(agnostic_settings_get_a(a, str_from("k.big"))), 255, "and comes back whole");
+    assert_eq(agnostic_settings_put(str_from("Bad Key"), str_from("x")), 0, "an illegal key is refused");
+    # Values read back are COPIES: a second read must not change the first.
+    var first = agnostic_settings_get_a(a, str_from("k.one"));
+    agnostic_settings_get_a(a, str_from("k.big"));
+    assert_eq(str_eq_cstr(first, "v2"), 1, "a value read earlier is not overwritten by a later read");
+}
+
+fn test_switch_is_durable() {
+    test_group("webgui/switch");
+    _t_open();
+    var a = arena_allocator(65536);
+    agnostic_webgui_init();
+    var p = agnostic_plugin_find(str_from("swarm"));
+    assert_eq(agnostic_plugin_set_enabled(p, 1), AGNOSTIC_PLUGIN_SET_CHANGED, "switching on is a change");
+    assert_eq(agnostic_plugin_enabled(p), 1, "it is on");
+    assert_eq(agnostic_plugin_set_enabled(p, 1), AGNOSTIC_PLUGIN_SET_UNCHANGED, "switching on again is not");
+    assert_eq(str_eq_cstr(agnostic_settings_get_a(a, str_from("plugin.swarm.enabled")), "on"), 1,
+      "the setting says on");
+
+    # ⭐ Durable: close the store, reopen it, load the WebGUI from scratch.
+    agnostic_webgui_reset();
+    agnostic_store_close();
+    agnostic_store_open(str_from(_T_WEBDB));
+    assert_eq(agnostic_webgui_init(), 1, "the WebGUI reloads");
+    p = agnostic_plugin_find(str_from("swarm"));
+    assert_eq(agnostic_plugin_enabled(p), 1, "⭐ and the switch survived the reopen");
+
+    assert_eq(agnostic_plugin_set_enabled(p, 0), AGNOSTIC_PLUGIN_SET_CHANGED, "switching off is a change");
+    assert_eq(agnostic_plugin_enabled(p), 0, "it is off");
+    assert_eq(str_eq_cstr(agnostic_settings_get_a(a, str_from("plugin.swarm.enabled")), "off"), 1,
+      "the setting says off");
+
+    # ⭐ A value that is neither "on" nor "off" is not a third state: it reads as OFF.
+    agnostic_settings_put(str_from("plugin.swarm.enabled"), str_from("yes"));
+    agnostic_webgui_reset();
+    agnostic_webgui_init();
+    assert_eq(agnostic_plugin_enabled(agnostic_plugin_find(str_from("swarm"))), 0,
+      "an unrecognised stored value leaves the plugin OFF");
+    assert_eq(agnostic_plugin_set_enabled(0, 1), AGNOSTIC_PLUGIN_SET_FAILED, "no plugin, no switch");
+}
+
+fn test_page_routes() {
+    test_group("webgui/routes");
+    _t_open();
+    agnostic_webgui_init();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var a = arena_allocator(262144);
+    var r = _t_req(a, AGNOSTIC_METHOD_GET, "/ui", "");
+    assert_eq(agnostic_response_status(r), HTTP_OK, "GET /ui is the shell");
+    assert_eq(agnostic_response_is_text(r), 1, "as a Str body");
+    assert_eq(str_eq_cstr(str_from(agnostic_response_ctype(r)), "text/html; charset=utf-8"), 1,
+      "served as HTML");
+    assert_eq(str_len(agnostic_response_body(r)), agnostic_webgui_asset_len(0), "every byte of it");
+    assert_eq(_t_has(str_from(agnostic_response_headers(r)), "Content-Security-Policy: "), 1,
+      "with its CSP");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/ui/", "")), HTTP_OK,
+      "/ui/ with the slash too");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/ui?tab=settings", "")), HTTP_OK,
+      "and with a query string");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_POST, "/ui", "")),
+      HTTP_METHOD_NOT_ALLOWED, "POST /ui is 405, not 404");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/", "")), HTTP_NOT_FOUND,
+      "/ is still not a route");
+
+    # ⭐ A switched-off plugin is NOT served.
+    r = _t_req(a, AGNOSTIC_METHOD_GET, "/ui/plugins/swarm", "");
+    assert_eq(agnostic_response_status(r), HTTP_NOT_FOUND, "a switched-off plugin is a 404");
+    assert_eq(agnostic_response_is_text(r), 0, "with the JSON error shape");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/ui/plugins/nope", "")),
+      HTTP_NOT_FOUND, "an unknown plugin is a 404");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/ui/plugins/No_Such", "")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a malformed id is a 422");
+
+    agnostic_plugin_set_enabled(agnostic_plugin_find(str_from("swarm")), 1);
+    r = _t_req(a, AGNOSTIC_METHOD_GET, "/ui/plugins/swarm", "");
+    assert_eq(agnostic_response_status(r), HTTP_OK, "switched on, it is served");
+    assert_eq(str_len(agnostic_response_body(r)), agnostic_webgui_asset_len(1), "every byte of page 1");
+    assert_eq(str_data(agnostic_response_body(r)), agnostic_webgui_asset_bytes(1),
+      "straight from the embedded literal, not a copy");
+    assert_eq(_t_has(str_from(agnostic_response_headers(r)), "frame-ancestors 'self'"), 1,
+      "with the plugin's own CSP");
+}
+
+fn test_plugin_api() {
+    test_group("plugins/api");
+    _t_open();
+    agnostic_webgui_init();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var a = arena_allocator(262144);
+    var r = _t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins", "");
+    assert_eq(agnostic_response_status(r), HTTP_OK, "the listing");
+    assert_eq(bayan_json_v_int(_t_field(r, "total")), 1, "counts one plugin");
+    var arr = _t_field(r, "plugins");
+    assert_eq(bayan_json_v_arr_len(arr), 1, "and lists it");
+    var p0 = bayan_json_v_arr_get(arr, 0);
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(p0, str_from("id"))), "swarm"), 1,
+      "by id");
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(p0, str_from("enabled"))), 0, "switched off");
+    # ⭐ The disclosure, on the wire.
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(p0, str_from("data"))), "simulated"), 1,
+      "and says its data is simulated");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(p0, str_from("url"))),
+        "/ui/plugins/swarm"), 1, "with the URL it is served at");
+
+    r = _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":true}");
+    assert_eq(agnostic_response_status(r), HTTP_OK, "PUT switches it on");
+    assert_eq(bayan_json_v_bool(_t_field(r, "changed")), 1, "and says it changed something");
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(_t_field(r, "plugin"), str_from("enabled"))), 1,
+      "answering with the new state");
+    r = _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":true}");
+    assert_eq(agnostic_response_status(r), HTTP_OK, "PUT is idempotent");
+    assert_eq(bayan_json_v_bool(_t_field(r, "changed")), 0, "and a repeat says it changed nothing");
+
+    # ⭐ The body is one JSON boolean and nothing else.
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm",
+          "{\"enabled\":\"false\"}")), AGNOSTIC_HTTP_UNPROCESSABLE, "the string \"false\" is not a boolean");
+    assert_eq(agnostic_plugin_enabled(agnostic_plugin_find(str_from("swarm"))), 1,
+      "and did not switch anything off");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm",
+          "{\"enabled\":false,\"force\":true}")), AGNOSTIC_HTTP_UNPROCESSABLE, "an unknown field is a 422");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{}")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a missing 'enabled' is a 422");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "[true]")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a non-object is a 422");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{nope")),
+      HTTP_BAD_REQUEST, "malformed JSON is a 400");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "")),
+      HTTP_BAD_REQUEST, "and so is no body");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/nope",
+          "{\"enabled\":true}")), HTTP_NOT_FOUND, "an unknown plugin is a 404");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/Bad",
+          "{\"enabled\":true}")), AGNOSTIC_HTTP_UNPROCESSABLE, "a malformed id is a 422");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/swarm", "")),
+      HTTP_METHOD_NOT_ALLOWED, "one plugin has no GET — 405, not 404");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_POST, "/api/v1/plugins", "{}")),
+      HTTP_METHOD_NOT_ALLOWED, "and the collection has no POST");
+
+    r = _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":false}");
+    assert_eq(bayan_json_v_bool(_t_field(r, "changed")), 1, "switching off is a change");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/ui/plugins/swarm", "")),
+      HTTP_NOT_FOUND, "⭐ and the page stops being served at once");
+}
+
+fn test_permissions() {
+    test_group("plugins/permissions");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_PLUGIN_LIST), AGNOSTIC_PERM_READ, "listing is READ");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_PLUGIN_SET), AGNOSTIC_PERM_ADMIN,
+      "⭐ switching is ADMIN, not WRITE");
+    assert_eq(agnostic_route_needs_auth(AGNOSTIC_ROUTE_UI_SHELL), 0, "the shell is public");
+    assert_eq(agnostic_route_needs_auth(AGNOSTIC_ROUTE_UI_PLUGIN), 0, "and so is a plugin page");
+    assert_eq(agnostic_route_needs_auth(AGNOSTIC_ROUTE_PLUGIN_LIST), 1, "but the API is not");
+
+    _t_open();
+    agnostic_webgui_init();
+    agnostic_argon_pool_init();
+    var k = alloc(32);
+    var i = 0;
+    while (i < 32) { store8(k + i, 100 + i); i = i + 1; }
+    agnostic_jwt_set_secret(k, 32);
+    var a = arena_allocator(262144);
+    var viewer = agnostic_users_create_a(a, str_from("v@example.com"), str_from("pw"), AGNOSTIC_ROLE_VIEWER, 0);
+    var oper = agnostic_users_create_a(a, str_from("o@example.com"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, 0);
+    var admin = agnostic_users_create_a(a, str_from("a@example.com"), str_from("pw"), AGNOSTIC_ROLE_ADMIN, 0);
+    var vtok = agnostic_jwt_issue_a(a, viewer, AGNOSTIC_ROLE_VIEWER, 0, 600);
+    var otok = agnostic_jwt_issue_a(a, oper, AGNOSTIC_ROLE_OPERATOR, 0, 600);
+    var atok = agnostic_jwt_issue_a(a, admin, AGNOSTIC_ROLE_ADMIN, 0, 600);
+    var on = "{\"enabled\":true}";
+
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/ui", "")), HTTP_OK,
+      "⭐ the shell needs no credential under enforcement");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins", "")),
+      HTTP_UNAUTHORIZED, "the listing does — 401 without one");
+    assert_eq(agnostic_response_status(_t_req_as(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins", "", vtok)),
+      HTTP_OK, "a viewer may list");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", on)),
+      HTTP_UNAUTHORIZED, "switching without a credential is 401");
+    assert_eq(agnostic_response_status(_t_req_as(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", on, vtok)),
+      HTTP_FORBIDDEN, "a viewer may not switch — 403");
+    assert_eq(agnostic_response_status(_t_req_as(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", on, otok)),
+      HTTP_FORBIDDEN, "⭐ nor may an operator: WRITE is not enough");
+    assert_eq(agnostic_plugin_enabled(agnostic_plugin_find(str_from("swarm"))), 0,
+      "and nothing was switched by either");
+    assert_eq(agnostic_response_status(_t_req_as(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", on, atok)),
+      HTTP_OK, "an admin may");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/ui/plugins/swarm", "")), HTTP_OK,
+      "and the page it switched on needs no credential either");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
+fn test_audit() {
+    test_group("plugins/audit");
+    _t_open();
+    agnostic_webgui_init();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    agnostic_audit_close();
+    sys_unlink(_T_WEBAUDIT);
+    assert_eq(agnostic_audit_open(str_from(_T_WEBAUDIT)), 1, "an audit trail is open");
+    var a = arena_allocator(262144);
+    var before = agnostic_audit_count();
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":true}");
+    assert_eq(agnostic_audit_count(), before + 1, "switching on is recorded");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":true}");
+    assert_eq(agnostic_audit_count(), before + 1, "⭐ a no-op switch is NOT");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":\"no\"}");
+    assert_eq(agnostic_audit_count(), before + 1, "nor is a refused one");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":false}");
+    assert_eq(agnostic_audit_count(), before + 2, "switching off is recorded");
+    assert_eq(agnostic_audit_dropped(), 0, "and nothing was dropped");
+    agnostic_audit_close();
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    test_pages_are_the_source_files();
+    test_init();
+    test_ids();
+    test_settings();
+    test_switch_is_durable();
+    test_page_routes();
+    test_plugin_api();
+    test_permissions();
+    test_audit();
+    agnostic_store_close();
+    return assert_summary();
+}
+
+var _agnostic_webgui_test_exit = main();
+if (_agnostic_webgui_test_exit > 0) { _agnostic_webgui_test_exit = 1; }
+sys_exit_group(_agnostic_webgui_test_exit);

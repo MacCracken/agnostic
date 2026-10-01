@@ -1,0 +1,168 @@
+# agnostic/engine/settings — deployment-wide settings that survive a restart.
+#
+# ## What this is for
+#
+# The WebGUI's Settings tab (0.1.7). Its first entries switch plugins on and off;
+# `src/webgui/plugins.cyr` is the only caller today. A setting is a property of the
+# DEPLOYMENT, not of a tenant or a user: switching a view on adds its tab for everyone,
+# which is why changing one needs ADMIN (see `src/auth/perm.cyr`).
+#
+# ## One table, keyed, on the shared handle
+#
+# `agnostic_settings (skey STR, sval STR)` lives in the same database as definitions,
+# crews and identity — `src/engine/store.cyr` says why one handle and one file. `skey`
+# carries the table's one index, because it is the only column anything looks up by.
+#
+# ⚠ **`COL_STR` is a fixed 256-byte slot that truncates SILENTLY** (`handoff.md` §5).
+# A cut key is a different key and a cut value is a different value, so both are
+# refused at the door rather than discovered on read: keys are `[a-z0-9][a-z0-9._-]*`
+# and at most `AGNOSTIC_SETTINGS_KEY_MAX` bytes, values at most
+# `AGNOSTIC_SETTINGS_VALUE_MAX`.
+#
+# ## ⛔ The store lock, as everywhere else
+#
+# Every function here is a `lock; var r = _x_locked(...); unlock; return r;` wrapper
+# over a `_locked` body, and `scripts/check-store-lock.py` checks the shape. Values
+# read back are COPIED out of the result set before it is freed — a borrowed
+# `patra_result_get_str` pointer is how 0.1.4 handed one user another's tenant.
+
+var AGNOSTIC_SETTINGS_TABLE_SQL = "CREATE TABLE agnostic_settings (skey STR, sval STR)";
+var AGNOSTIC_SETTINGS_INDEX_SQL = "CREATE INDEX ON agnostic_settings (skey)";
+
+# The longest key and value accepted, in bytes. Both sit under the 256-byte slot.
+var AGNOSTIC_SETTINGS_KEY_MAX = 64;
+var AGNOSTIC_SETTINGS_VALUE_MAX = 255;
+
+# Ensure the schema. Mount time only. Returns 1 when it is in place.
+fn agnostic_settings_ensure(): i64 {
+    if (agnostic_store_ensure(AGNOSTIC_SETTINGS_TABLE_SQL) == 0) { return 0; }
+    if (agnostic_store_ensure(AGNOSTIC_SETTINGS_INDEX_SQL) == 0) { return 0; }
+    return 1;
+}
+
+# Whether `key` is a legal settings key: `[a-z0-9][a-z0-9._-]*`, 1 to
+# `AGNOSTIC_SETTINGS_KEY_MAX` bytes. 1 or 0.
+fn agnostic_settings_key_is_valid(key: Str): i64 {
+    if (key == 0) { return 0; }
+    var n = str_len(key);
+    if (n == 0 || n > AGNOSTIC_SETTINGS_KEY_MAX) { return 0; }
+    var d = str_data(key);
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        var ok = 0;
+        if (c >= 97 && c <= 122) { ok = 1; }                 # a-z
+        if (c >= 48 && c <= 57) { ok = 1; }                  # 0-9
+        if (i > 0) {
+            if (c == 46 || c == 95 || c == 45) { ok = 1; }   # . _ -
+        }
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# The value stored under `key`, copied into `a`, or 0 when there is none.
+fn agnostic_settings_get_a(a, key: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_settings_get_locked_a(a, key);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_settings_get_a`'s body. The caller holds the store lock.
+fn _agnostic_settings_get_locked_a(a, key: Str): i64 {
+    if (agnostic_settings_key_is_valid(key) == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db, "SELECT sval FROM agnostic_settings WHERE skey = ?");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(key), str_len(key));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    if (patra_result_count(rs) == 0) { patra_result_free(rs); return 0; }
+    # COPIED, then freed — never a borrowed pointer into the result set.
+    var n = patra_result_get_str_len(rs, 0, 0);
+    if (n < 0) { patra_result_free(rs); return 0; }
+    var buf = alloc_via(a, n + 1);
+    if (buf == 0) { patra_result_free(rs); return 0; }
+    if (n > 0) { memcpy(buf, patra_result_get_str(rs, 0, 0), n); }
+    store8(buf + n, 0);
+    patra_result_free(rs);
+    return str_new_a(a, buf, n);
+}
+
+# Store `value` under `key`, replacing any value already there. Returns 1 when the
+# write landed, 0 when it did not — an illegal key, an over-long value, no database,
+# or a failed write. A 0 must never be reported to a caller as a change.
+fn agnostic_settings_put(key: Str, value: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_settings_put_locked(key, value);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_settings_put`'s body. The caller holds the store lock, so "is there a
+# row?" and the write are one step — two writers cannot both INSERT the same key.
+fn _agnostic_settings_put_locked(key: Str, value: Str): i64 {
+    if (agnostic_settings_key_is_valid(key) == 0) { return 0; }
+    if (value == 0) { return 0; }
+    if (str_len(value) > AGNOSTIC_SETTINGS_VALUE_MAX) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+
+    var probe = patra_prepare(db, "SELECT skey FROM agnostic_settings WHERE skey = ?");
+    if (probe == 0) { return 0; }
+    patra_bind_text(probe, 0, str_data(key), str_len(key));
+    var rs = patra_query_prepared(db, probe);
+    patra_finalize(probe);
+    if (rs == 0) { return 0; }
+    var exists = patra_result_count(rs);
+    patra_result_free(rs);
+
+    var st = 0;
+    if (exists > 0) {
+        st = patra_prepare(db, "UPDATE agnostic_settings SET sval = ? WHERE skey = ?");
+        if (st == 0) { return 0; }
+        patra_bind_text(st, 0, str_data(value), str_len(value));
+        patra_bind_text(st, 1, str_data(key), str_len(key));
+    } else {
+        st = patra_prepare(db, "INSERT INTO agnostic_settings (skey, sval) VALUES (?, ?)");
+        if (st == 0) { return 0; }
+        patra_bind_text(st, 0, str_data(key), str_len(key));
+        patra_bind_text(st, 1, str_data(value), str_len(value));
+    }
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    if (rc != PATRA_OK) { return 0; }
+    return 1;
+}
+
+# How many settings are stored.
+fn agnostic_settings_count(): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_settings_count_locked();
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_settings_count`'s body. The caller holds the store lock.
+fn _agnostic_settings_count_locked(): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var rs = patra_query(db, "SELECT skey FROM agnostic_settings");
+    if (rs == 0) { return 0; }
+    var n = patra_result_count(rs);
+    patra_result_free(rs);
+    return n;
+}
+
+# Drop every setting. For tests.
+fn agnostic_settings_reset(): i64 {
+    agnostic_store_lock();
+    var db = agnostic_store_db();
+    if (db != 0) { patra_exec(db, "DELETE FROM agnostic_settings"); }
+    agnostic_store_unlock();
+    return 0;
+}

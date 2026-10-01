@@ -1,10 +1,15 @@
 # agnostic/http/response — what a route handler returns.
 #
-# A response is `{status, body, is_text}`. `body` is a bayan JSON value when
-# `is_text` is 0, or a `Str` when it is 1. The serve adapter renders it; a
+# A response is `{status, body, is_text, ctype, headers}`. `body` is a bayan JSON
+# value when `is_text` is 0, or a `Str` when it is 1. The serve adapter renders it; a
 # handler never touches a socket, which is what keeps handlers testable without
 # a server and keeps the route table separable from handler logic — the
 # shim-ability the roadmap asks for.
+#
+# `ctype` and `headers` exist for the WebGUI (0.1.7): a page is a `Str` body whose
+# media type is not `text/plain` and which carries its own Content-Security-Policy.
+# Both are NUL-terminated C strings or 0, and 0 means exactly what it meant before
+# they existed — every JSON and plain-text response leaves them 0.
 #
 # ## Every constructor has an `_a` twin
 #
@@ -22,17 +27,24 @@ enum AgnosticRespOff {
     AGNOSTIC_RESP_STATUS  = 0;
     AGNOSTIC_RESP_BODY    = 8;
     AGNOSTIC_RESP_IS_TEXT = 16;
-    AGNOSTIC_RESP_SIZE    = 24;
+    AGNOSTIC_RESP_CTYPE   = 24;
+    AGNOSTIC_RESP_HEADERS = 32;
+    AGNOSTIC_RESP_SIZE    = 40;
 }
 
 # A JSON response carrying an already-built bayan value, allocated in `a`.
 # Returns 0 when the arena is exhausted.
+#
+# ⚠ Every constructor writes every field. An arena block is not zeroed, so a field
+# left unwritten would carry the previous request's bytes into this one's headers.
 fn agnostic_response_json_a(a, status, body): i64 {
     var r = alloc_via(a, AGNOSTIC_RESP_SIZE);
     if (r == 0) { return 0; }
     store64(r + AGNOSTIC_RESP_STATUS, status);
     store64(r + AGNOSTIC_RESP_BODY, body);
     store64(r + AGNOSTIC_RESP_IS_TEXT, 0);
+    store64(r + AGNOSTIC_RESP_CTYPE, 0);
+    store64(r + AGNOSTIC_RESP_HEADERS, 0);
     return r;
 }
 
@@ -48,6 +60,25 @@ fn agnostic_response_text_a(a, status, body: Str): i64 {
     store64(r + AGNOSTIC_RESP_STATUS, status);
     store64(r + AGNOSTIC_RESP_BODY, body);
     store64(r + AGNOSTIC_RESP_IS_TEXT, 1);
+    store64(r + AGNOSTIC_RESP_CTYPE, 0);
+    store64(r + AGNOSTIC_RESP_HEADERS, 0);
+    return r;
+}
+
+# A `Str` body of media type `ctype`, sent with `headers` — each line ending CRLF, as
+# sandhi's `extra_headers` takes them — allocated in `a`. Returns 0 when the arena is
+# exhausted.
+#
+# Both strings are NUL-terminated and must outlive the response; the WebGUI passes
+# generated literals and headers built once at mount, so they outlive everything.
+fn agnostic_response_bytes_a(a, status, ctype, body: Str, headers): i64 {
+    var r = alloc_via(a, AGNOSTIC_RESP_SIZE);
+    if (r == 0) { return 0; }
+    store64(r + AGNOSTIC_RESP_STATUS, status);
+    store64(r + AGNOSTIC_RESP_BODY, body);
+    store64(r + AGNOSTIC_RESP_IS_TEXT, 1);
+    store64(r + AGNOSTIC_RESP_CTYPE, ctype);
+    store64(r + AGNOSTIC_RESP_HEADERS, headers);
     return r;
 }
 
@@ -95,4 +126,16 @@ fn agnostic_response_body(r): i64 {
 fn agnostic_response_is_text(r): i64 {
     if (r == 0) { return 0; }
     return load64(r + AGNOSTIC_RESP_IS_TEXT);
+}
+
+# The media type of a `Str` body as a C string, or 0 for the default (`text/plain`).
+fn agnostic_response_ctype(r): i64 {
+    if (r == 0) { return 0; }
+    return load64(r + AGNOSTIC_RESP_CTYPE);
+}
+
+# The extra header lines (each ending CRLF) as a C string, or 0 for none.
+fn agnostic_response_headers(r): i64 {
+    if (r == 0) { return 0; }
+    return load64(r + AGNOSTIC_RESP_HEADERS);
 }

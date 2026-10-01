@@ -123,10 +123,15 @@ fn _agnostic_serve_send(a, cfd, resp): i64 {
 
     var ctype = "application/json";
     var body = str_from("");
+    # Extra header lines, CRLF-terminated, or 0. Only a `Str` body carries any —
+    # the WebGUI's pages, whose Content-Security-Policy travels with them.
+    var extra = 0;
 
     if (resp != 0) {
         if (agnostic_response_is_text(resp) == 1) {
             ctype = "text/plain; charset=utf-8";
+            if (agnostic_response_ctype(resp) != 0) { ctype = agnostic_response_ctype(resp); }
+            extra = agnostic_response_headers(resp);
             body = agnostic_response_body(resp);
         } else {
             var rendered = 0;
@@ -150,10 +155,10 @@ fn _agnostic_serve_send(a, cfd, resp): i64 {
 
     if (a != 0) {
         return sandhi_server_send_response_a(a, cfd, status, reason, ctype,
-          str_data(body), str_len(body), 0);
+          str_data(body), str_len(body), extra);
     }
     return sandhi_server_send_response(cfd, status, reason, ctype,
-      str_data(body), str_len(body), 0);
+      str_data(body), str_len(body), extra);
 }
 
 # sandhi's handler: `fn(ctx, cfd, buf, blen)`.
@@ -380,6 +385,33 @@ fn agnostic_serve_mount(cfg): i64 {
         sakshi_error("could not create the tenant table; refusing to start", 52);
         return 0;
     }
+    if (agnostic_settings_ensure() == 0) {
+        sakshi_error("could not create the settings table; refusing to start", 54);
+        return 0;
+    }
+
+    # --- the WebGUI (0.1.7) ------------------------------------------------
+    #
+    # ⚠ **A shortfall refuses to start**, for the preset library's reason: the pages
+    # and manifests are compiled in, so one that fails to load is a build fault, and
+    # quietly serving fewer plugins than were built is the "smaller result reported
+    # as success" shape this port refuses. Read here, after the store opens, because
+    # each plugin's switch lives in the settings table.
+    var plugins = agnostic_webgui_init();
+    if (plugins != AGNOSTIC_WEBGUI_PLUGIN_COUNT) {
+        agnostic_log_kv_int(SK_ERROR,
+          "compiled-in WebGUI failed to load; refusing to start", 52,
+          "plugins", 7, plugins);
+        return 0;
+    }
+    var plugins_on = 0;
+    var pi = 0;
+    while (pi < plugins) {
+        if (agnostic_plugin_enabled(agnostic_plugin_at(pi)) == 1) { plugins_on = plugins_on + 1; }
+        pi = pi + 1;
+    }
+    agnostic_log_kv_int(SK_INFO, "webgui at /ui; plugins switched on", 34,
+      "enabled", 7, plugins_on);
 
     # --- first administrator ----------------------------------------------
     #

@@ -8,6 +8,15 @@ cyrius build src/main.cyr build/agnostic    # compile
 cyrius test                              # run [build].test + tests/*.tcyr
 ```
 
+## Run it, and open the WebGUI
+
+```sh
+./build/agnostic        # binds 127.0.0.1:8000; AGNOSTIC_PORT / AGNOSTIC_ADDR change that
+```
+
+Then open `http://127.0.0.1:8000/ui`. Plugins such as Swarm Command start switched off — turn one on
+in Settings; see [`webgui-plugins.md`](webgui-plugins.md).
+
 ## Layout
 
 - `src/main.cyr` — entry point. Top-level `var r = main(); sys_exit_group(r);`.
