@@ -255,9 +255,10 @@ fn agnostic_route_crew_cancel_a(a, id: Str): i64 {
 # lever rather than a feature. M7 owns the streaming surface and can do it on the
 # transport that suits it.
 #
-# What this does instead: `agnostic_ledger_drain` swept the bus into the crew's
-# bounded window during the poll, so a client that polls gets everything
-# published since its last call. **One subscription per crew, taken at submit** —
+# What this does instead: `agnostic_crew_refresh_a` sweeps the bus into the crew's
+# bounded window during the poll and refreshes the crew's status, so a client that
+# polls gets everything published since its last call, under the status the crew
+# has now. **One subscription per crew, taken at submit** —
 # not one per request, which would grow the sender's subscriber list without
 # bound and leak a channel per call, since `lib/alloc.cyr` has no `free()`.
 #
@@ -271,7 +272,9 @@ fn agnostic_route_crew_events_a(a, id: Str): i64 {
 
     var entry = agnostic_ledger_entry(key);
     if (entry == 0) { return _agnostic_crew_not_found_a(a); }
-    agnostic_ledger_drain(entry);
+    # Drains the bus AND refreshes the latched status, so `status` below is the
+    # crew's current one — not whatever the last `GET /crews/{id}` saw.
+    agnostic_crew_refresh_a(a, entry, key);
 
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }

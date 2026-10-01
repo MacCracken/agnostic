@@ -272,7 +272,22 @@ fn agnostic_crew_submit(r, out_entry): i64 {
 fn agnostic_crew_poll_a(a, crew_id: Str): i64 {
     var entry = agnostic_ledger_entry(crew_id);
     if (entry == 0) { return 0; }
+    agnostic_crew_refresh_a(a, entry, crew_id);
+    return agnostic_ledger_outcome_a(a, entry);
+}
 
+# Bring a crew's ledger entry up to date — rungs 2 to 4 above — without building
+# a response. `a` holds the transient outcome the latch is computed from.
+#
+# ⚠ **Every route that reports a crew's status must call this first**, because
+# the status it reads is the ledger's latch. `GET /crews/{id}/events` once only
+# drained the bus, so a client that polled events alone saw `pending` for a crew
+# that had long finished (0.1.8 — the swarm plugin's live view).
+#
+# The second drain is what makes a terminal snapshot whole: the engine publishes
+# `crew_completed` before the orchestrator records the terminal state, so once
+# that state is observed, the closing events are already in the channel.
+fn agnostic_crew_refresh_a(a, entry, crew_id: Str): i64 {
     agnostic_ledger_drain(entry);
 
     if (_agnostic_orchestrator != 0) {
@@ -290,7 +305,10 @@ fn agnostic_crew_poll_a(a, crew_id: Str): i64 {
             }
         }
     }
-    return agnostic_ledger_outcome_a(a, entry);
+    if (agnostic_status_is_terminal(agnostic_ledger_status(entry)) == 1) {
+        agnostic_ledger_drain(entry);
+    }
+    return entry;
 }
 
 # Cancel a submitted crew.

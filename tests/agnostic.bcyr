@@ -16,6 +16,9 @@ fn bench_noop(): i64 { return 0; }
 # is not indexed, and asks every change that adds a route to re-measure rather than
 # inherit that sentence. These are the measurement: the first entry, the last, and a
 # miss, which tries every pattern before answering 404.
+#
+# One 8 MiB arena serves all 100,000 resolutions: a resolution takes at most 64 bytes
+# of it (the two-capture path, measured at 0.1.8), so the run never spills.
 fn _agnostic_bench_route(name, path): i64 {
     var a = arena_allocator(8388608);
     var p = str_from(path);
@@ -29,6 +32,62 @@ fn _agnostic_bench_route(name, path): i64 {
     bench_batch_stop(b, 100000);
     bench_report(b);
     return 0;
+}
+
+# 0.1.8 — what every socket request now pays for the two transport rules (ADR 0006),
+# before any routing: a media-type compare and a loopback-Host compare.
+fn _agnostic_bench_guards(): i64 {
+    var hits = 0;
+    var ct = str_from("application/json; charset=utf-8");
+    var bc = bench_new("guard_content_type_json");
+    bench_batch_start(bc);
+    var i = 0;
+    while (i < 1000000) {
+        hits = hits + agnostic_content_type_is_json(ct);
+        i = i + 1;
+    }
+    bench_batch_stop(bc, 1000000);
+    bench_report(bc);
+
+    var host = str_from("127.0.0.1:8000");
+    var bh = bench_new("guard_host_loopback");
+    bench_batch_start(bh);
+    i = 0;
+    while (i < 1000000) {
+        hits = hits + agnostic_host_is_loopback(host);
+        i = i + 1;
+    }
+    bench_batch_stop(bh, 1000000);
+    bench_report(bh);
+    return hits;
+}
+
+# 0.1.8 — validating the largest plugin document a PUT may carry (~32 KiB of nested
+# objects, numbers, booleans and strings) before it is stored. Allocation-free.
+fn _agnostic_bench_json_kind(): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{");
+    var k = 0;
+    while (k < 600) {
+        if (k > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\"key");
+        str_builder_add_int(sb, k);
+        str_builder_add_cstr(sb, "\":{\"n\":12.5,\"ok\":true,\"s\":\"the quick brown fox\"}");
+        k = k + 1;
+    }
+    str_builder_add_cstr(sb, "}");
+    var doc = str_builder_build(sb);
+    var kinds = 0;
+    var bj = bench_new("json_kind_32k");
+    bench_batch_start(bj);
+    var i = 0;
+    while (i < 1000) {
+        kinds = kinds + agnostic_json_kind(doc);
+        i = i + 1;
+    }
+    bench_batch_stop(bj, 1000);
+    bench_report(bj);
+    return kinds;
 }
 
 fn main(): i64 {
@@ -84,6 +143,10 @@ fn main(): i64 {
     _agnostic_bench_route("route_first_health", "/health");
     _agnostic_bench_route("route_last_ui_plugin", "/ui/plugins/swarm");
     _agnostic_bench_route("route_miss_404", "/no/such/route");
+    # The one two-capture pattern (0.1.8), just before the `/ui` entries at the table's end.
+    _agnostic_bench_route("route_plugindata_doc", "/api/v1/plugins/swarm/data/swarm-abc123");
+    _agnostic_bench_guards();
+    _agnostic_bench_json_kind();
     return 0;
 }
 

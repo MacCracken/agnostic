@@ -36,7 +36,8 @@ enum AgnosticPluginOff {
     AGNOSTIC_PLUGIN_ENABLED = 48;
     AGNOSTIC_PLUGIN_URL     = 56;
     AGNOSTIC_PLUGIN_SKEY    = 64;
-    AGNOSTIC_PLUGIN_SIZE    = 72;
+    AGNOSTIC_PLUGIN_PERMS   = 72;
+    AGNOSTIC_PLUGIN_SIZE    = 80;
 }
 
 # What `agnostic_plugin_set_enabled` reports.
@@ -68,6 +69,7 @@ var AGNOSTIC_JK_PLUGINS = str_from("plugins");
 var AGNOSTIC_JK_CHANGED = str_from("changed");
 var _AGNOSTIC_JK_ASSET  = str_from("asset");
 var _AGNOSTIC_JK_ENTRY  = str_from("entry");
+var AGNOSTIC_JK_PERMISSIONS = str_from("permissions");
 
 # Built once by `agnostic_webgui_init`; read-only afterwards, so workers read them
 # without a lock.
@@ -129,6 +131,12 @@ fn _agnostic_plugin_from_manifest(i): i64 {
     # Page 0 is the shell, never a plugin's.
     if (asset < 1 || asset >= AGNOSTIC_WEBGUI_ASSET_COUNT) { return 0; }
     if (agnostic_req_str(v, _AGNOSTIC_JK_ENTRY) == 0) { return 0; }
+    # What the plugin may ask the shell to do (0.1.8, ADR 0005). The generator has
+    # already refused a name outside the vocabulary; an absent or non-array value here
+    # is a damaged manifest, and refuses the plugin rather than granting nothing quietly.
+    var perms = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_PERMISSIONS);
+    if (perms == 0) { return 0; }
+    if (bayan_json_v_is_arr(perms) != 1) { return 0; }
 
     var p = alloc(AGNOSTIC_PLUGIN_SIZE);
     if (p == 0) { return 0; }
@@ -139,6 +147,7 @@ fn _agnostic_plugin_from_manifest(i): i64 {
     store64(p + AGNOSTIC_PLUGIN_DATA, data);
     store64(p + AGNOSTIC_PLUGIN_ASSET, asset);
     store64(p + AGNOSTIC_PLUGIN_ENABLED, 0);
+    store64(p + AGNOSTIC_PLUGIN_PERMS, perms);
 
     var ub = str_builder_new();
     str_builder_add_cstr(ub, AGNOSTIC_WEBGUI_PLUGIN_PREFIX);
@@ -301,7 +310,8 @@ fn _agnostic_plugin_set_enabled_locked(p, on): i64 {
     return AGNOSTIC_PLUGIN_SET_CHANGED;
 }
 
-# A plugin as the API shows it: id, name, description, version, data, enabled, url.
+# A plugin as the API shows it: id, name, description, version, data, enabled, url,
+# permissions.
 #
 # ⚠ `data` is "simulated" or "live", and it is on the wire for the same reason
 # `engine_mode` is on every crew response: a view driven by a simulator reads exactly
@@ -323,5 +333,7 @@ fn agnostic_plugin_to_value_a(a, p): i64 {
       bayan_json_v_bool_new_a(a, agnostic_plugin_enabled(p)));
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_URL,
       bayan_json_v_str_new_a(a, load64(p + AGNOSTIC_PLUGIN_URL)));
+    # Parsed once at mount and never mutated, so the response may point at it.
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_PERMISSIONS, load64(p + AGNOSTIC_PLUGIN_PERMS));
     return obj;
 }

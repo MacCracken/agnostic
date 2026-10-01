@@ -98,6 +98,11 @@ fn test_pages_are_the_source_files() {
       "nothing may frame the shell");
     assert_eq(_t_has(str_from(agnostic_webgui_asset_csp(1)), "frame-ancestors 'self'"), 1,
       "a plugin may be framed by its own origin only");
+    # ⭐ 0.1.8: a plugin connects to nothing — its only way out is the shell's bridge.
+    assert_eq(_t_has(str_from(agnostic_webgui_asset_csp(1)), "connect-src 'none'"), 1,
+      "a plugin page may open no connection of its own");
+    assert_eq(_t_has(str_from(agnostic_webgui_asset_csp(0)), "connect-src 'self'"), 1,
+      "while the shell, which holds the token, talks to its own origin");
     assert_eq(agnostic_webgui_asset_bytes(2), 0, "out of range is 0");
     assert_eq(agnostic_webgui_asset_bytes(0 - 1), 0, "and so is negative");
 }
@@ -260,9 +265,15 @@ fn test_plugin_api() {
     assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(p0, str_from("id"))), "swarm"), 1,
       "by id");
     assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(p0, str_from("enabled"))), 0, "switched off");
-    # ⭐ The disclosure, on the wire.
-    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(p0, str_from("data"))), "simulated"), 1,
-      "and says its data is simulated");
+    # ⭐ The disclosure, on the wire. Since 0.1.8 Swarm Command shows simulated AND live
+    # missions, and labels each one itself — which is what `mixed` says.
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(p0, str_from("data"))), "mixed"), 1,
+      "and says its data is mixed, labelled per mission");
+    var perms = bayan_json_v_obj_get_by_str(p0, str_from("permissions"));
+    assert_eq(bayan_json_v_is_arr(perms), 1, "the permissions it asks the shell for are listed");
+    assert_eq(bayan_json_v_arr_len(perms), 4, "four of them");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_arr_get(perms, 0)), "storage"), 1,
+      "in manifest order, storage first");
     assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(p0, str_from("url"))),
         "/ui/plugins/swarm"), 1, "with the URL it is served at");
 

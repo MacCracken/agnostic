@@ -1,0 +1,185 @@
+# agnostic/routes/plugindata — a plugin's own documents, per tenant (0.1.8).
+#
+# | Route | Codes |
+# |---|---|
+# | `GET /api/v1/plugins/{id}/data` | 200 — keys, update times, sizes; never the documents |
+# | `GET /api/v1/plugins/{id}/data/{key}` | 200 — the document, verbatim · 404 · 422 |
+# | `PUT /api/v1/plugins/{id}/data/{key}` | **201** created · 200 replaced · 400 · 404 · **413** · 422 · **507** |
+# | `DELETE /api/v1/plugins/{id}/data/{key}` | 200 · 404 · 422 |
+#
+# Reading is READ and writing is WRITE (`src/auth/perm.cyr`). Every document lives in
+# the caller's tenant — `agnostic_plugindata_scope` — so one tenant can neither list
+# nor read another's. The plugin must exist; it need not be switched on, so an
+# administrator who switches one off loses none of its data.
+#
+# ## PUT is an upsert here, and that is deliberate
+#
+# The agent-definition routes refuse upserts because a typo'd key would silently
+# create a second definition. A plugin's documents are keyed by the PLUGIN, which
+# mints its own keys; the store is its key-value space, and create-or-replace is the
+# operation it needs. The response still says which happened: 201 or 200, and
+# `"created"`.
+#
+# ## A GET answers the stored bytes, not a re-encoding
+#
+# No parse, no wrapper: `Content-Type: application/json` and the document exactly as
+# it was PUT. That keeps a 32 KiB document inside the request arena, and a plugin's
+# key order and formatting intact. The update time is in the listing.
+
+var AGNOSTIC_JK_DOCUMENTS = str_from("documents");
+var AGNOSTIC_JK_UPDATED   = str_from("updated");
+var AGNOSTIC_JK_BYTES     = str_from("bytes");
+var AGNOSTIC_JK_CREATED   = str_from("created");
+var AGNOSTIC_JK_SCOPE     = str_from("scope");
+
+# The 422 a malformed plugin id earns.
+fn _agnostic_pdata_bad_plugin_a(a): i64 {
+    return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+      str_from_a(a, "a plugin id matches [a-z0-9][a-z0-9-]* and is at most 32 characters"));
+}
+
+# The 422 a malformed document key earns.
+fn _agnostic_pdata_bad_key_a(a): i64 {
+    return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+      str_from_a(a, "a document key matches [a-z0-9][a-z0-9._-]* and is at most 64 characters"));
+}
+
+# The plugin named by `id`, or 0 with a ready-made error response stored through
+# `out_resp`.
+fn _agnostic_pdata_plugin_a(a, id: Str, out_resp): i64 {
+    store64(out_resp, 0);
+    if (agnostic_plugin_id_is_valid(id) == 0) {
+        store64(out_resp, _agnostic_pdata_bad_plugin_a(a));
+        return 0;
+    }
+    var p = agnostic_plugin_find(id);
+    if (p == 0) {
+        store64(out_resp, agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "no such plugin")));
+        return 0;
+    }
+    return p;
+}
+
+# `GET /api/v1/plugins/{id}/data` — the documents this plugin keeps in the caller's scope.
+fn agnostic_route_plugindata_list_a(a, id: Str, ctx): i64 {
+    var resp: i64[1];
+    if (_agnostic_pdata_plugin_a(a, id, &resp) == 0) { return load64(&resp); }
+    var scope = agnostic_plugindata_scope(agnostic_reqctx_principal(ctx));
+    var entries = agnostic_plugindata_list_a(a, scope, id);
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0) { return 0; }
+    var n = 0;
+    if (entries != 0) { n = vec_len(entries); }
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(entries, i);
+        var eo = bayan_json_v_obj_new_a(a);
+        if (eo == 0) { return 0; }
+        bayan_json_v_obj_set_a(a, eo, AGNOSTIC_JK_KEY,
+          bayan_json_v_str_new_a(a, agnostic_plugindata_entry_key(e)));
+        bayan_json_v_obj_set_a(a, eo, AGNOSTIC_JK_UPDATED,
+          bayan_json_v_int_new_a(a, agnostic_plugindata_entry_updated(e)));
+        bayan_json_v_obj_set_a(a, eo, AGNOSTIC_JK_BYTES,
+          bayan_json_v_int_new_a(a, agnostic_plugindata_entry_bytes(e)));
+        bayan_json_v_arr_push_a(a, arr, eo);
+        i = i + 1;
+    }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_DOCUMENTS, arr);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOTAL, bayan_json_v_int_new_a(a, n));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_SCOPE, bayan_json_v_str_new_a(a, scope));
+    return agnostic_response_json_a(a, HTTP_OK, obj);
+}
+
+# `GET /api/v1/plugins/{id}/data/{key}` — one document, verbatim.
+fn agnostic_route_plugindata_get_a(a, id: Str, key: Str, ctx): i64 {
+    var resp: i64[1];
+    if (_agnostic_pdata_plugin_a(a, id, &resp) == 0) { return load64(&resp); }
+    if (agnostic_plugindata_key_is_valid(key) == 0) { return _agnostic_pdata_bad_key_a(a); }
+    var scope = agnostic_plugindata_scope(agnostic_reqctx_principal(ctx));
+    var doc = agnostic_plugindata_get_a(a, scope, id, key, 0);
+    if (doc == 0) {
+        return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "no such document"));
+    }
+    return agnostic_response_bytes_a(a, HTTP_OK, "application/json", doc, 0);
+}
+
+# `PUT /api/v1/plugins/{id}/data/{key}` — create or replace one document.
+fn agnostic_route_plugindata_put_a(a, id: Str, key: Str, body: Str, ctx): i64 {
+    var resp: i64[1];
+    if (_agnostic_pdata_plugin_a(a, id, &resp) == 0) { return load64(&resp); }
+    if (agnostic_plugindata_key_is_valid(key) == 0) { return _agnostic_pdata_bad_key_a(a); }
+    if (str_len(body) > AGNOSTIC_PLUGINDATA_DOC_MAX) {
+        return agnostic_response_error_a(a, HTTP_PAYLOAD_TOO_LARGE,
+          str_from_a(a, "a plugin document is at most 32768 bytes"));
+    }
+    var kind = agnostic_json_kind(body);
+    if (kind == AGNOSTIC_JSON_MALFORMED) {
+        return agnostic_response_error_a(a, HTTP_BAD_REQUEST, str_from_a(a, "malformed JSON body"));
+    }
+    if (kind != AGNOSTIC_JSON_OBJECT) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "a plugin document must be a JSON object"));
+    }
+
+    var scope = agnostic_plugindata_scope(agnostic_reqctx_principal(ctx));
+    var now = clock_epoch_secs();
+    var rc = agnostic_plugindata_put(a, scope, id, key, body, now);
+    if (rc == AGNOSTIC_PDATA_FULL) {
+        # 507, and the message says what to do — the same reasoning as the
+        # definition store's: a retry without a delete fails identically.
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_INSUFFICIENT_STORAGE,
+          str_from_a(a, "this plugin keeps at most 256 documents per tenant; delete one first"));
+    }
+    if (rc != AGNOSTIC_PDATA_CREATED && rc != AGNOSTIC_PDATA_REPLACED) {
+        return agnostic_response_error_a(a, HTTP_INTERNAL,
+          str_from_a(a, "could not store the document; nothing changed"));
+    }
+
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("plugin.data.put"),
+      _agnostic_pdata_detail(id, scope, key));
+
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_KEY, bayan_json_v_str_new_a(a, key));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_UPDATED, bayan_json_v_int_new_a(a, now));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_BYTES, bayan_json_v_int_new_a(a, str_len(body)));
+    var created = 0;
+    if (rc == AGNOSTIC_PDATA_CREATED) { created = 1; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREATED, bayan_json_v_bool_new_a(a, created));
+    if (created == 1) { return agnostic_response_json_a(a, AGNOSTIC_HTTP_CREATED, obj); }
+    return agnostic_response_json_a(a, HTTP_OK, obj);
+}
+
+# `DELETE /api/v1/plugins/{id}/data/{key}` — remove one document.
+fn agnostic_route_plugindata_delete_a(a, id: Str, key: Str, ctx): i64 {
+    var resp: i64[1];
+    if (_agnostic_pdata_plugin_a(a, id, &resp) == 0) { return load64(&resp); }
+    if (agnostic_plugindata_key_is_valid(key) == 0) { return _agnostic_pdata_bad_key_a(a); }
+    var scope = agnostic_plugindata_scope(agnostic_reqctx_principal(ctx));
+    if (agnostic_plugindata_delete(a, scope, id, key) == 0) {
+        return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "no such document"));
+    }
+    # WARNING, like a definition's delete: it is the entry an operator looks for.
+    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from("plugin.data.delete"),
+      _agnostic_pdata_detail(id, scope, key));
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_KEY, bayan_json_v_str_new_a(a, key));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_STATUS, bayan_json_v_str_new_a(a, AGNOSTIC_JV_DELETED));
+    return agnostic_response_json_a(a, HTTP_OK, obj);
+}
+
+# The audit detail for a document: `plugin=<id> scope=<tenant> key=<key>` — at most
+# 182 bytes, inside the 255-byte column.
+fn _agnostic_pdata_detail(id: Str, scope: Str, key: Str): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "plugin=");
+    str_builder_add(sb, id);
+    str_builder_add_cstr(sb, " scope=");
+    str_builder_add(sb, scope);
+    str_builder_add_cstr(sb, " key=");
+    str_builder_add(sb, key);
+    return str_builder_build(sb);
+}

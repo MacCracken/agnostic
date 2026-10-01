@@ -35,6 +35,9 @@ include "src/log.cyr"
 include "src/http/status.cyr"
 include "src/http/response.cyr"
 include "src/http/codec.cyr"
+# The two transport rules the ladder applies to socket requests (0.1.8). Pure
+# functions over header values; reads `strcase`'s folding only.
+include "src/http/guard.cyr"
 
 # The compiled-in preset library (M3). Generated from `src/presets/*.json` by
 # `scripts/gen-presets.sh`; pure data with no dependencies, so it goes early.
@@ -74,6 +77,9 @@ include "src/engine/crewstore.cyr"
 # Deployment-wide settings on the shared handle (0.1.7). The WebGUI's plugin
 # switches are its first entries.
 include "src/engine/settings.cyr"
+# Each plugin's own documents, per tenant (0.1.8). On the same handle; reads the
+# tenant rules from `auth/tenant`.
+include "src/engine/plugindata.cyr"
 include "src/engine/ledger.cyr"
 # The audit trail sits above `log` and below everything that records to it —
 # `crew.cyr` and the definition routes both do, and a `var` referenced from a
@@ -98,6 +104,7 @@ include "src/routes/crews.cyr"
 include "src/routes/definitions.cyr"
 include "src/routes/presets.cyr"
 include "src/routes/plugins.cyr"
+include "src/routes/plugindata.cyr"
 include "src/routes/webgui.cyr"
 include "src/http/router.cyr"
 include "src/server/serve.cyr"

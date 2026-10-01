@@ -1,8 +1,9 @@
 {
   "id": "swarm",
   "name": "Swarm Command",
-  "description": "An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. It runs on its built-in simulator; the live crew event source is not wired yet.",
-  "version": "0.1.0",
-  "data": "simulated",
-  "entry": "index.html"
+  "description": "An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. Save swarms with their capabilities, simulate them or estimate their cost, and run one as a live crew. Each mission is labelled simulated or live.",
+  "version": "0.2.0",
+  "data": "mixed",
+  "entry": "index.html",
+  "permissions": ["storage", "presets:read", "crews:read", "crews:write"]
 }

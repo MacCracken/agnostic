@@ -1,0 +1,162 @@
+# agnostic/http/guard — two transport rules a browser-facing server needs (0.1.8).
+#
+# The WebGUI (0.1.7) made agnostic something a browser talks to, and on its default
+# configuration — authentication OFF, bound to loopback — two classic attacks reach the
+# API from any web page the operator happens to visit. Both rules below are checked by
+# the dispatch ladder (`src/http/router.cyr`), and only for a request that arrived over
+# a socket: `agnostic_reqctx_is_transport`.
+#
+# ## 1. A POST or PUT must declare a JSON body — else 415
+#
+# A cross-site `<form>` or `fetch(..., {mode: "no-cors"})` may send a POST with
+# `Content-Type: text/plain` and needs no CORS preflight to do it. With authentication
+# off, that is enough to start a crew. A browser will not send
+# `Content-Type: application/json` cross-site without a preflight — which this server
+# never grants — so requiring it closes the hole. It applies to EVERY POST and PUT,
+# including a bodiless `cancel`: an empty body is exactly what a cross-site form sends.
+# agnosai 2.1.0 made the same move for its own routes.
+#
+# ## 2. With authentication OFF, the Host must be a loopback name — else 403
+#
+# DNS rebinding: a page on `evil.example` re-points that name at 127.0.0.1, and its
+# script is then SAME-ORIGIN with this server, so neither CORS nor rule 1 stops it.
+# The tell is the `Host` header, which still says `evil.example`. With authentication
+# off — which mount allows only on a loopback bind — the only legitimate Host values are
+# loopback names, so anything else is refused. With authentication required the token
+# is the defence and the Host is not checked (a reverse proxy may rewrite it).
+
+# Whether `d[0..n)` equals the C string `lit` (of length `ln`), ASCII case-folded.
+# Allocates nothing: this runs on every request, and `str_new` would put a header on
+# the no-`free()` global allocator each time.
+fn _agnostic_guard_eq_ci(d, n, lit, ln): i64 {
+    if (n != ln) { return 0; }
+    var i = 0;
+    while (i < n) {
+        if (_agnostic_fold_ascii(load8(d + i) & 255) != _agnostic_fold_ascii(load8(lit + i) & 255)) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Whether `ct` declares a JSON body: `application/json` or `application/<x>+json`,
+# case-insensitive, parameters (`; charset=utf-8`) and surrounding spaces ignored.
+# 0 for anything else, including an absent header.
+fn agnostic_content_type_is_json(ct: Str): i64 {
+    if (ct == 0) { return 0; }
+    var d = str_data(ct);
+    var n = str_len(ct);
+    # Trim leading spaces, and stop at the parameters.
+    var i = 0;
+    while (i < n && (load8(d + i) & 255) == 32) { i = i + 1; }
+    var e = i;
+    while (e < n && (load8(d + e) & 255) != 59) { e = e + 1; }    # ';'
+    while (e > i && (load8(d + e - 1) & 255) == 32) { e = e - 1; }
+    var len = e - i;
+    var prefix = "application/";
+    var pl = 12;
+    if (len <= pl) { return 0; }
+    var k = 0;
+    while (k < pl) {
+        if (_agnostic_fold_ascii(load8(d + i + k) & 255) != (load8(prefix + k) & 255)) { return 0; }
+        k = k + 1;
+    }
+    var sub = d + i + pl;
+    var sl = len - pl;
+    # `application/json`, exactly.
+    if (sl == 4) {
+        if (_agnostic_guard_eq_ci(sub, 4, "json", 4) == 1) { return 1; }
+        return 0;
+    }
+    # `application/<something>+json` — the suffix, with at least one byte before it.
+    if (sl > 5) {
+        if (_agnostic_guard_eq_ci(sub + sl - 5, 5, "+json", 5) == 1) { return 1; }
+    }
+    return 0;
+}
+
+# Whether `d[0..n)` is a run of ASCII digits, at least one. 1 or 0.
+fn _agnostic_guard_digits(d, n): i64 {
+    if (n <= 0) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        if (c < 48 || c > 57) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Whether `d[0..n)` is an IPv4 literal in 127.0.0.0/8: four dot-separated decimal
+# octets, each 0..255, the first exactly 127.
+fn _agnostic_guard_ipv4_loopback(d, n): i64 {
+    var parts = 0;
+    var start = 0;
+    var i = 0;
+    while (i <= n) {
+        if (i == n || (load8(d + i) & 255) == 46) {
+            var len = i - start;
+            if (len < 1 || len > 3) { return 0; }
+            if (_agnostic_guard_digits(d + start, len) == 0) { return 0; }
+            var v = 0;
+            var j = 0;
+            while (j < len) { v = v * 10 + ((load8(d + start + j) & 255) - 48); j = j + 1; }
+            if (v > 255) { return 0; }
+            if (parts == 0 && v != 127) { return 0; }
+            parts = parts + 1;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    if (parts != 4) { return 0; }
+    return 1;
+}
+
+# Whether a `Host` header names this machine's loopback: `localhost`, an IPv4
+# literal in 127.0.0.0/8, or `[::1]` — each optionally followed by `:<port>`.
+# An ABSENT header (0) passes: DNS rebinding needs a browser, and a browser always
+# sends one. 0 for anything else.
+fn agnostic_host_is_loopback(host: Str): i64 {
+    if (host == 0) { return 1; }
+    var d = str_data(host);
+    var n = str_len(host);
+    while (n > 0 && (load8(d + n - 1) & 255) == 32) { n = n - 1; }
+    while (n > 0 && (load8(d) & 255) == 32) { d = d + 1; n = n - 1; }
+    if (n == 0) { return 0; }
+
+    # Split off a trailing `:<port>`. `[::1]` carries colons of its own, so for a
+    # bracketed name the port can only follow the closing bracket.
+    var name_len = n;
+    if ((load8(d) & 255) == 91) {                     # '['
+        var close = 0 - 1;
+        var i = 1;
+        while (i < n) {
+            if ((load8(d + i) & 255) == 93) { close = i; break; }
+            i = i + 1;
+        }
+        if (close < 0) { return 0; }
+        name_len = close + 1;
+        if (name_len < n) {
+            if ((load8(d + name_len) & 255) != 58) { return 0; }
+            if (_agnostic_guard_digits(d + name_len + 1, n - name_len - 1) == 0) { return 0; }
+        }
+        if (name_len == 5) {
+            if (_agnostic_guard_eq_ci(d, 5, "[::1]", 5) == 1) { return 1; }
+        }
+        return 0;
+    }
+    var c = 0;
+    while (c < n) {
+        if ((load8(d + c) & 255) == 58) { break; }
+        c = c + 1;
+    }
+    if (c < n) {
+        if (_agnostic_guard_digits(d + c + 1, n - c - 1) == 0) { return 0; }
+        name_len = c;
+    }
+    if (name_len == 9) {
+        if (_agnostic_guard_eq_ci(d, 9, "localhost", 9) == 1) { return 1; }
+    }
+    return _agnostic_guard_ipv4_loopback(d, name_len);
+}

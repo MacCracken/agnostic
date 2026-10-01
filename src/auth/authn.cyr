@@ -43,10 +43,21 @@
 # needs per-client buckets behind a proxy has to establish which hop is trusted,
 # which is trusted-proxy configuration this does not carry — see CHANGELOG,
 # M5 (part 3). #skip-lint
+#
+# Since 0.1.8 the context also carries what the ladder LEARNS — the principal the
+# auth rung resolved, which tenant-scoped handlers read — and two more transport
+# facts the ladder checks: the `Content-Type` and `Host` headers. Those two rules bind
+# only a context marked as having arrived over a socket (`TRANSPORT`), which only
+# `agnostic_serve_handler` sets: an in-process caller such as a suite passes a bare
+# context, exactly as it did before the rules existed.
 enum AgnosticReqCtxOff {
-    AGNOSTIC_REQCTX_AUTHZ = 0;
-    AGNOSTIC_REQCTX_PEER  = 8;
-    AGNOSTIC_REQCTX_SIZE = 16;
+    AGNOSTIC_REQCTX_AUTHZ     = 0;
+    AGNOSTIC_REQCTX_PEER      = 8;
+    AGNOSTIC_REQCTX_PRINCIPAL = 16;
+    AGNOSTIC_REQCTX_CTYPE     = 24;
+    AGNOSTIC_REQCTX_HOST      = 32;
+    AGNOSTIC_REQCTX_TRANSPORT = 40;
+    AGNOSTIC_REQCTX_SIZE      = 48;
 }
 
 # Build a request context in `a`. 0 on exhaustion.
@@ -55,7 +66,54 @@ fn agnostic_reqctx_new_a(a, authz, peer_ip): i64 {
     if (c == 0) { return 0; }
     store64(c + AGNOSTIC_REQCTX_AUTHZ, authz);
     store64(c + AGNOSTIC_REQCTX_PEER, peer_ip);
+    store64(c + AGNOSTIC_REQCTX_PRINCIPAL, 0);
+    store64(c + AGNOSTIC_REQCTX_CTYPE, 0);
+    store64(c + AGNOSTIC_REQCTX_HOST, 0);
+    store64(c + AGNOSTIC_REQCTX_TRANSPORT, 0);
     return c;
+}
+
+# Mark a context as a socket request and record its `Content-Type` and `Host`
+# headers (each a `Str`, or 0 when absent). Only the serve adapter calls this.
+fn agnostic_reqctx_set_transport(ctx, ctype, host): i64 {
+    if (ctx == 0) { return 0; }
+    store64(ctx + AGNOSTIC_REQCTX_CTYPE, ctype);
+    store64(ctx + AGNOSTIC_REQCTX_HOST, host);
+    store64(ctx + AGNOSTIC_REQCTX_TRANSPORT, 1);
+    return ctx;
+}
+
+# 1 when the request arrived over a socket, 0 for an in-process caller.
+fn agnostic_reqctx_is_transport(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + AGNOSTIC_REQCTX_TRANSPORT);
+}
+
+# The `Content-Type` header as a Str, or 0.
+fn agnostic_reqctx_ctype(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + AGNOSTIC_REQCTX_CTYPE);
+}
+
+# The `Host` header as a Str, or 0.
+fn agnostic_reqctx_host(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + AGNOSTIC_REQCTX_HOST);
+}
+
+# Record the principal the auth rung resolved. The ladder calls this; a handler
+# only reads it.
+fn agnostic_reqctx_set_principal(ctx, p): i64 {
+    if (ctx == 0) { return 0; }
+    store64(ctx + AGNOSTIC_REQCTX_PRINCIPAL, p);
+    return p;
+}
+
+# The principal the auth rung resolved, or 0 — no context, authentication off, or
+# a route that needs none.
+fn agnostic_reqctx_principal(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + AGNOSTIC_REQCTX_PRINCIPAL);
 }
 
 # The raw Authorization header, or 0. A null context has none.

@@ -4,8 +4,9 @@
 > It is deliberately short and links outward rather than restating.
 > Last refreshed: **2026-08-23**, after M5 and the M6 viability gate. The toolchain
 > and dependency facts in §2 and §6 were refreshed **2026-10-01**, at 0.1.7; §5
-> gained the store-lock rules at 0.1.4, the borrow/TLS rules at 0.1.5, and the
-> dependency and embedding rules at 0.1.7. §1 notes the WebGUI's first slice (0.1.7).
+> gained the store-lock rules at 0.1.4, the borrow/TLS rules at 0.1.5, the
+> dependency and embedding rules at 0.1.7, and the transport and plugin rules at 0.1.8.
+> §1 notes the WebGUI (0.1.7) and its plugin platform (0.1.8).
 
 Read in this order:
 
@@ -16,7 +17,7 @@ Read in this order:
 | [`roadmap.md`](roadmap.md) | M0–M9 sequencing and per-milestone gates |
 | [`../../CYRIUS-PORT-BRIEF.md`](../../CYRIUS-PORT-BRIEF.md) | Research snapshot (2026-08-19): language notes, dep stack, **§7 decisions — binding** |
 | [`../../ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) | 86 verified defects in the Python oracle. §3 gated M2, §2.2 gated M3; **§3.15 is what M6's gate now measures** |
-| [`../adr/`](../adr/) | Three ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker |
+| [`../adr/`](../adr/) | Six ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes |
 
 ---
 
@@ -47,13 +48,16 @@ an operator has provisioned a user. What keeps that from being fail-open:
 loopback, and refuses to start with auth *required* when no users and no
 bootstrap credential exist.
 
-**M9 is seeded (0.1.7):** the WebGUI shell at `/ui`, with a Settings tab, and
-compiled-in plugins an administrator switches on there — the first is Swarm Command,
-which still runs on its own simulator and says so. The pages are public, the plugin API
-is READ to list and ADMIN to switch, and each page carries a generated CSP. ADR 0004 is
-the why; `state.md` § WebGUI is the what.
+**M9 is seeded (0.1.7) and has a plugin platform (0.1.8):** the WebGUI shell at `/ui`,
+with a Settings tab, and compiled-in plugins an administrator switches on there. A plugin
+reaches the API only through the shell's host bridge, within its manifest's permissions,
+and keeps its own documents per tenant (ADR 0005). Swarm Command, the first plugin, saves
+swarms with every capability editable, prices them with headless simulations, and runs one
+live as a real crew — labelling every mission SIM or LIVE. With auth off the server answers
+only loopback Hosts, and every POST/PUT must be JSON (ADR 0006). ADRs 0004–0006 are the
+why; `state.md` § WebGUI is the what.
 
-Version is **0.1.7** — see `CHANGELOG.md`. Per decision #4 the port's milestones
+Version is **0.1.8** — see `CHANGELOG.md`. Per decision #4 the port's milestones
 ship together as **1.0.0** (§4).
 
 ## 2. ⚠ Build it correctly, or you will write a lock CI cannot reproduce
@@ -199,6 +203,28 @@ then, against a real requirement. Out of scope for v1.0.
 ---
 
 ## 5. Cyrius footguns that have already cost time
+
+**Added at 0.1.8:**
+
+- **Every POST and PUT needs `Content-Type: application/json`** — 415 otherwise, even with
+  no body — and with `AGNOSTIC_AUTH=off` the `Host` must be loopback (403 otherwise). A
+  `curl` that worked at 0.1.7 may not now; add the header. (ADR 0006.) The rules apply to
+  socket requests only, so the suites' direct ladder calls never see them —
+  `tests/serve_mount.tcyr` exercises them through `agnostic_serve_handler` over a socketpair.
+- **A route that reports a crew's status must refresh the ledger first**
+  (`agnostic_crew_refresh_a`). The status it reads is the latch, which nothing updates on its
+  own: `GET /crews/{id}/events` used to drain the bus only, and reported `pending` for a crew
+  long finished to any client that polled events alone.
+- **A plugin page has no network** (`connect-src 'none'`) **and no modal dialogs** (the
+  sandbox lacks `allow-modals`, so `confirm()` returns false without asking). It asks the
+  shell (ADR 0005), and draws its own dialogs.
+- **A new plugin permission is four edits**: `PERMISSIONS` in `scripts/gen-webgui.sh`,
+  `permitted()` and `PERMISSION_WORDS` in `src/webgui/index.html`, and the tables in ADR 0005
+  and `guides/webgui-plugins.md`.
+- **Swarm Command's logic runs in Node.** Its page has no top-level DOM access, so its
+  `<script>` evaluates in a `vm` context; the simulator, spec normalizer, estimator and crew
+  request builder were tested that way at 0.1.8, and the whole flow in headless Chromium over
+  CDP (sandboxed frames are out-of-process — attach with `Target.setAutoAttach`, flatten).
 
 **Added at 0.1.7:**
 

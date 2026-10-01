@@ -115,6 +115,13 @@ fn agnostic_perm_for_route(id): i64 {
     if (id == AGNOSTIC_ROUTE_PLUGIN_LIST) { return AGNOSTIC_PERM_READ; }
     if (id == AGNOSTIC_ROUTE_PLUGIN_SET) { return AGNOSTIC_PERM_ADMIN; }
 
+    # A plugin's documents live in the caller's own tenant, so they are ordinary
+    # READ and WRITE — unlike the switch above, which changes everyone's view.
+    if (id == AGNOSTIC_ROUTE_PDATA_LIST) { return AGNOSTIC_PERM_READ; }
+    if (id == AGNOSTIC_ROUTE_PDATA_GET) { return AGNOSTIC_PERM_READ; }
+    if (id == AGNOSTIC_ROUTE_PDATA_PUT) { return AGNOSTIC_PERM_WRITE; }
+    if (id == AGNOSTIC_ROUTE_PDATA_DELETE) { return AGNOSTIC_PERM_WRITE; }
+
     # Login needs no permission — `agnostic_route_needs_auth` already answered 0
     # for it, so this is unreachable and present only so a reader looking for the
     # route in this table finds it rather than assuming an omission.

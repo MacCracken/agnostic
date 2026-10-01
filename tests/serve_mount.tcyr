@@ -87,14 +87,74 @@ fn test_the_handler_survives_a_missing_arena() {
     # answers 0 — exactly what a poisoned worker saw. It must still answer.
     assert_eq(sandhi_server_request_arena(), 0, "precondition: no per-request arena here");
 
-    var h = _t_through_handler("GET /health HTTP/1.1\r\nHost: t\r\n\r\n");
+    var h = _t_through_handler("GET /health HTTP/1.1\r\nHost: 127.0.0.1:8000\r\n\r\n");
     assert_eq(str_starts_with(h, str_from("HTTP/1.1 200")), 1,
       "GET /health answers 200 without an arena, instead of killing the process");
 
     var c = _t_through_handler(
-      "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: t\r\nContent-Type: application/json\r\nContent-Length: 40\r\n\r\n{\"key\":\"no-arena\",\"role\":\"r\",\"goal\":\"g\"}");
+      "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: 127.0.0.1:8000\r\nContent-Type: application/json\r\nContent-Length: 40\r\n\r\n{\"key\":\"no-arena\",\"role\":\"r\",\"goal\":\"g\"}");
     assert_eq(str_starts_with(c, str_from("HTTP/1.1 201")), 1,
       "and a POST — decode, store, audit, render — works through the fallback too");
+}
+
+# The status line of a raw request sent through the real handler.
+fn _t_status(req) {
+    var h = _t_through_handler(req);
+    if (str_len(h) < 12) { return 0; }
+    return str_sub(h, 9, 3);
+}
+
+# ⭐ 0.1.8: the two transport rules, on the REAL socket path. The dispatch ladder
+# applies them only to a context the serve adapter marked as a socket request, so
+# this — not a direct dispatch call — is where they have to be proven.
+fn test_the_transport_rules() {
+    test_group("serve/transport-rules");
+
+    # --- the Host rung: auth is OFF in this mount, so only loopback names pass.
+    assert_eq(str_eq_cstr(_t_status("GET /health HTTP/1.1\r\nHost: evil.example\r\n\r\n"), "403"), 1,
+      "a rebinding page's Host is refused with auth off");
+    assert_eq(str_eq_cstr(_t_status("GET /health HTTP/1.1\r\nHost: 127.0.0.1.evil.example\r\n\r\n"), "403"), 1,
+      "including one that merely starts like a loopback address");
+    assert_eq(str_eq_cstr(_t_status("GET /health HTTP/1.1\r\nHost: localhost:8000\r\n\r\n"), "200"), 1,
+      "localhost with a port passes");
+    assert_eq(str_eq_cstr(_t_status("GET /health HTTP/1.1\r\nHost: LOCALHOST\r\n\r\n"), "200"), 1,
+      "case-insensitively");
+    assert_eq(str_eq_cstr(_t_status("GET /health HTTP/1.1\r\nHost: [::1]:8000\r\n\r\n"), "200"), 1,
+      "and so does the IPv6 loopback");
+    assert_eq(str_eq_cstr(_t_status("GET /health HTTP/1.1\r\nHost: 127.0.0.2\r\n\r\n"), "200"), 1,
+      "and any address in 127.0.0.0/8");
+    assert_eq(str_eq_cstr(_t_status("GET /health HTTP/1.0\r\n\r\n"), "200"), 1,
+      "a request with no Host at all passes — rebinding needs a browser, and browsers send one");
+
+    # --- the media-type rung: every POST and PUT declares JSON.
+    var body = "{\"key\":\"ctype-probe\",\"role\":\"r\",\"goal\":\"g\"}";
+    var b1 = str_builder_new();
+    str_builder_add_cstr(b1, "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\nContent-Length: 43\r\n\r\n");
+    str_builder_add_cstr(b1, body);
+    assert_eq(str_eq_cstr(_t_status(str_data(str_builder_build(b1))), "415"), 1,
+      "a text/plain POST — what a cross-site form sends — is 415");
+    var b2 = str_builder_new();
+    str_builder_add_cstr(b2, "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: localhost\r\nContent-Length: 43\r\n\r\n");
+    str_builder_add_cstr(b2, body);
+    assert_eq(str_eq_cstr(_t_status(str_data(str_builder_build(b2))), "415"), 1,
+      "and so is a POST that declares nothing");
+    assert_eq(str_eq_cstr(_t_status(
+          "POST /api/v1/crews/6ba7b810-9dad-11d1-80b4-00c04fd430c8/cancel HTTP/1.1\r\nHost: localhost\r\n\r\n"), "415"), 1,
+      "even a BODILESS post: an empty body is exactly what a cross-site form sends");
+    var b3 = str_builder_new();
+    str_builder_add_cstr(b3, "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: localhost\r\nContent-Type: Application/JSON; charset=utf-8\r\nContent-Length: 43\r\n\r\n");
+    str_builder_add_cstr(b3, body);
+    assert_eq(str_eq_cstr(_t_status(str_data(str_builder_build(b3))), "201"), 1,
+      "a JSON type passes, case and parameters ignored");
+
+    # --- a plugin document through the handler: PUT, then the verbatim GET.
+    assert_eq(str_eq_cstr(_t_status(
+          "PUT /api/v1/plugins/swarm/data/probe HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/vnd.swarm+json\r\nContent-Length: 15\r\n\r\n{ \"v\" : [1,2] }"), "201"), 1,
+      "a +json type passes too, and the document is created");
+    var g = _t_through_handler("GET /api/v1/plugins/swarm/data/probe HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq(str_starts_with(g, str_from("HTTP/1.1 200")), 1, "and read back");
+    assert_eq(str_ends_with(g, str_from("\r\n\r\n{ \"v\" : [1,2] }")), 1,
+      "byte for byte as it was written — spacing included");
 }
 
 fn main() {
@@ -103,6 +163,7 @@ fn main() {
     test_mount_initialises_crypto_on_the_main_thread();
     test_a_workers_first_hash_keeps_its_tls();
     test_the_handler_survives_a_missing_arena();
+    test_the_transport_rules();
     agnostic_audit_close();
     agnostic_store_close();
     return assert_summary();

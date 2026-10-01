@@ -56,6 +56,7 @@ input, select { font: inherit; color: var(--text); background: #0b131c; border: 
 #r-budget .bar { height: 6px; background: #142030; border-radius: 3px; overflow: hidden; margin: 3px 0 2px; }
 #r-budget .bar i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #22c55e, #84cc16); transition: width .3s; }
 #r-budget.low .bar i { background: linear-gradient(90deg, #ef4444, #f59e0b); }
+#r-budget.none .bar i { opacity: .18; }
 #r-budget.low .v { color: var(--err); }
 #r-agents .split i { font-style: normal; }
 #r-agents .split .l { color: var(--local); }
@@ -223,6 +224,141 @@ canvas.timeline { width: 100%; height: 16px; display: block; border-radius: 3px;
 .help { position: absolute; z-index: 35; top: calc(var(--top-h) + 8px); left: 204px; width: 330px; padding: 10px 12px; font-size: 11px; line-height: 1.75; }
 .help .row { display: flex; justify-content: space-between; gap: 10px; color: var(--dim); }
 .help .row span:last-child { color: var(--text); }
+
+/* ---------- source tag / live controls ---------- */
+.src-tag { display: inline-block; font: 700 8.5px/1.5 var(--mono); letter-spacing: .12em; padding: 0 5px; border-radius: 3px; margin-right: 5px; vertical-align: 1px; }
+.src-tag.sim { color: #c4b5fd; background: #2a1d5c; }
+.src-tag.live { color: #86efac; background: #12351f; }
+.src-tag.replay { color: #fcd34d; background: #3a2c07; }
+.tb-btn.danger { color: #fca5a5; border-color: #7f1d1d; }
+.tb-btn.danger:hover { border-color: var(--err); color: #fff; }
+
+/* ---------- launcher ---------- */
+.overlay.scroll { align-items: flex-start; overflow-y: auto; padding: 26px 0 30px; }
+.overlay.scroll .ov-inner { margin: auto 0; }
+.ov-inner.launcher .ov-sub { margin-bottom: 18px; }
+.lh-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.lh-bar .spacer { flex: 1; }
+.conn { font: 11px var(--mono); color: var(--dim); display: flex; align-items: center; gap: 7px; }
+.conn i { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
+.conn.ok i { background: var(--ok); box-shadow: 0 0 8px rgba(34,197,94,.6); }
+.conn.warn i { background: var(--gold); }
+.lbtn { background: #111c29; border: 1px solid var(--line-2); border-radius: 5px; padding: 6px 12px; font: 700 11px var(--mono); letter-spacing: .04em; color: var(--text); }
+.lbtn:hover:not(:disabled) { border-color: var(--accent); color: #fff; }
+.lbtn.primary { background: #0e3346; border-color: var(--accent); color: var(--accent); }
+.lbtn.danger:hover:not(:disabled) { border-color: var(--err); color: #fecaca; }
+.lbtn:disabled { opacity: .4; cursor: default; }
+.lbtn.sm { padding: 3px 8px; font-size: 10.5px; }
+.lsec { margin-bottom: 22px; }
+.lsec-title { font: 700 10px var(--sans); letter-spacing: .18em; color: var(--dim); margin: 0 0 9px; display: flex; align-items: center; gap: 10px; }
+.lsec-title small { font: 10.5px var(--mono); letter-spacing: 0; color: var(--faint); }
+.swarm-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 12px; }
+.swarm-empty { color: var(--faint); font-size: 12px; line-height: 1.7; padding: 14px 16px; border: 1px dashed var(--line-2); border-radius: 8px; }
+.swarm-empty b { color: var(--dim); }
+.swarm { background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; padding: 13px 14px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.swarm:hover { border-color: #35506a; }
+.sw-head { display: flex; align-items: flex-start; gap: 10px; }
+.sw-head .ico { font-size: 18px; color: var(--accent); width: 24px; text-align: center; flex: none; }
+.sw-name { flex: 1; min-width: 0; font: 700 13.5px var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sw-name small { display: block; font: 11px/1.45 var(--sans); color: var(--dim); white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; margin-top: 2px; }
+.sw-tools { display: flex; gap: 3px; flex: none; }
+.sw-tools button { background: none; border: 1px solid transparent; border-radius: 4px; color: var(--faint); padding: 1px 5px; font-size: 12px; }
+.sw-tools button:hover { border-color: var(--line-2); color: var(--text); }
+.sw-tools button.del:hover { border-color: var(--err); color: #fca5a5; }
+.sw-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.sw-chips span { font: 10px var(--mono); padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line-2); color: var(--dim); }
+.sw-est { font: 11px var(--mono); color: var(--dim); background: #0a121b; border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; min-height: 30px; }
+.sw-est b { color: var(--gold); font-size: 13px; }
+.sw-est .stale { color: #fbbf24; }
+.sw-est .bar { margin-top: 5px; height: 4px; }
+.sw-est .bar i { background: var(--accent); }
+.sw-runs { display: flex; flex-wrap: wrap; gap: 4px; min-height: 18px; }
+.run-chip { font: 10px var(--mono); padding: 1px 7px; border-radius: 3px; border: 1px solid var(--line-2); color: var(--dim); background: #0b141e; white-space: nowrap; }
+.run-chip.live { border-color: #1f5133; color: #a7f3d0; }
+.run-chip.bad { border-color: #6b1f1f; color: #fca5a5; }
+button.run-chip { cursor: pointer; }
+button.run-chip:hover { border-color: var(--accent); color: #fff; }
+.sw-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sw-actions .lbtn { padding: 6px 6px; white-space: nowrap; }
+.cards.templates { grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.cards.templates .card { padding: 14px; gap: 8px; }
+.cards.templates .card p { font-size: 11.5px; }
+.card .go-row { display: flex; gap: 6px; }
+.card .go-row button { flex: 1; }
+.card .go.alt { background: #111c29; border-color: var(--line-2); color: var(--dim); }
+.card .go.alt:hover { border-color: var(--accent); color: #fff; }
+@media (max-width: 1100px) { .cards.templates { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------- editor ---------- */
+.overlay.editor-ov { z-index: 45; }
+.ov-inner.editor { width: min(1180px, 96vw); background: rgba(8,13,20,.97); border: 1px solid var(--line-2); border-radius: 10px; padding: 16px 18px 18px; box-shadow: 0 18px 60px rgba(0,0,0,.6); }
+.ed-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.ed-head .spacer { flex: 1; }
+.ed-kicker { font: 700 9.5px var(--sans); letter-spacing: .18em; color: var(--dim); margin-bottom: 4px; }
+.ed-name { font: 700 17px var(--sans); width: min(520px, 50vw); background: transparent; border: 1px solid transparent; padding: 3px 6px; margin-left: -6px; }
+.ed-name:hover, .ed-name:focus { border-color: var(--line-2); background: #0b131c; outline: none; }
+.ed-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line-2); margin-bottom: 12px; flex-wrap: wrap; }
+.ed-tabs button { background: none; border: 1px solid transparent; border-bottom: none; border-radius: 5px 5px 0 0; padding: 7px 12px; color: var(--dim); font: 600 11.5px var(--sans); margin-bottom: -1px; }
+.ed-tabs button:hover { color: var(--text); }
+.ed-tabs button.on { color: var(--accent); border-color: var(--line-2); background: rgba(8,13,20,1); }
+.ed-tabs button .n { font: 9.5px var(--mono); color: var(--err); margin-left: 4px; }
+.ed-body { display: flex; gap: 14px; align-items: flex-start; }
+.ed-pane { flex: 1; min-width: 0; font-size: 12px; }
+.ed-side { width: 270px; flex: none; display: flex; flex-direction: column; gap: 10px; position: sticky; top: 0; }
+.ed-box { background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 7px; padding: 10px 11px; }
+.ed-box .panel-title { margin-bottom: 8px; }
+.ed-pane h4 { font: 700 9.5px var(--sans); letter-spacing: .16em; color: var(--dim); margin: 16px 0 7px; }
+.ed-pane h4:first-child { margin-top: 2px; }
+.ed-pane p.note { color: var(--faint); font-size: 11px; line-height: 1.55; margin: 6px 0 0; }
+.ed-pane p.note b { color: var(--dim); font-weight: 600; }
+.frm { display: grid; grid-template-columns: 170px 1fr; gap: 7px 12px; align-items: center; }
+.frm > label { color: var(--dim); font-size: 11.5px; }
+.frm .hint { color: var(--faint); font-size: 10.5px; margin-left: 8px; }
+.ed-pane input[type=text], .ed-pane input[type=number], .ed-pane select, .ed-pane textarea { font-size: 11.5px; padding: 3px 6px; }
+.ed-pane input[type=number] { width: 84px; }
+.ed-pane input.w-sm { width: 62px; }
+.ed-pane input.w-lg, .ed-pane textarea { width: 100%; }
+.ed-pane textarea { resize: vertical; min-height: 54px; font-family: var(--sans); color: var(--text); background: #0b131c; border: 1px solid var(--line-2); border-radius: 4px; }
+.ed-pane input.bad, .ed-pane select.bad { border-color: var(--err); }
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
+table.etbl { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+table.etbl th { text-align: left; font: 700 9px var(--sans); letter-spacing: .12em; color: var(--dim); padding: 6px 7px; border-bottom: 1px solid var(--line-2); white-space: nowrap; background: #0b131c; }
+table.etbl td { padding: 4px 7px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: middle; }
+table.etbl tr:last-child td { border-bottom: none; }
+table.etbl td.ro { color: var(--dim); font-family: var(--mono); font-size: 10.5px; }
+table.etbl td.grow { width: 100%; }
+table.etbl td.grow input { width: 100%; min-width: 150px; }
+table.etbl .rl { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+table.etbl .rl i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+table.etbl.tasks td { padding: 3px 4px; }
+table.etbl.tasks th { padding: 6px 4px; }
+table.etbl.tasks input.w-sm { width: 52px; }
+table.etbl.tasks td.grow input { min-width: 130px; }
+table.etbl.tasks select { max-width: 104px; }
+table.etbl button.x { background: none; border: 1px solid transparent; color: var(--faint); border-radius: 3px; padding: 0 5px; }
+table.etbl button.x:hover { color: #fca5a5; border-color: #7f1d1d; }
+.pair { display: inline-flex; align-items: center; gap: 3px; color: var(--faint); }
+.pair input[type=number] { width: 66px; }
+.ed-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.chk-list { font-size: 11px; line-height: 1.55; display: flex; flex-direction: column; gap: 5px; max-height: 220px; overflow-y: auto; }
+.chk-list .e { color: #fca5a5; }
+.chk-list .w { color: #fcd34d; }
+.chk-list .ok { color: #86efac; }
+.est-big { font: 700 22px var(--mono); color: var(--gold); }
+.est-row { display: flex; justify-content: space-between; gap: 8px; font: 11px var(--mono); color: var(--dim); margin-top: 3px; }
+.est-row b { color: var(--text); font-weight: 600; }
+.est-stale { font: 10px var(--mono); color: #fbbf24; margin-top: 4px; }
+pre.req { max-height: 260px; overflow: auto; background: #070c12; border: 1px solid var(--line); border-radius: 5px; padding: 8px; font: 10.5px/1.45 var(--mono); color: var(--dim); white-space: pre; user-select: text; -webkit-user-select: text; }
+.radio-row { display: flex; flex-direction: column; gap: 6px; }
+.radio-row label { display: flex; align-items: center; gap: 7px; color: var(--text); }
+
+/* ---------- modal ---------- */
+.modal { position: absolute; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(2,5,9,.72); }
+.modal-box { width: min(460px, 92vw); background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; padding: 16px 18px; box-shadow: 0 18px 50px rgba(0,0,0,.6); }
+.modal-title { font: 700 14px var(--sans); margin-bottom: 8px; }
+.modal-body { color: var(--dim); font-size: 12px; line-height: 1.6; }
+.modal-body b { color: var(--text); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 </style>
 </head>
 <body>
@@ -230,7 +366,7 @@ canvas.timeline { width: 100%; height: 16px; display: block; border-radius: 3px;
   <canvas id="map"></canvas>
 
   <header id="topbar">
-    <div class="brand"><span>◈ SWARM<b>COMMAND</b></span><span id="mission-title" class="mission"></span></div>
+    <div class="brand"><span>◈ SWARM<b>COMMAND</b></span><span class="mission"><span id="src-tag" class="src-tag sim">SIM</span><span id="mission-title"></span></span></div>
     <div class="res" id="r-tps" title="Token throughput across the swarm"><label>TOKENS / S</label><div class="row"><span class="v">0</span><canvas class="spark" width="128" height="36"></canvas></div></div>
     <div class="res" id="r-tokens" title="Total tokens consumed"><label>TOTAL TOKENS</label><span class="v">0</span></div>
     <div class="res" id="r-cost" title="Estimated spend: model tokens + per-second compute"><label>EST. COST</label><span class="v">$0.00</span><small>+$0.000/s</small></div>
@@ -245,9 +381,10 @@ canvas.timeline { width: 100%; height: 16px; display: block; border-radius: 3px;
       <button data-speed="2">2×</button>
       <button data-speed="4">4×</button>
     </div>
+    <button id="btn-cancel" class="tb-btn danger hidden" title="Ask agnostic to cancel this crew">✕<span class="tb-label"> CANCEL CREW</span></button>
     <button id="btn-replay" class="tb-btn" title="Scrub through the recorded event log">⟲<span class="tb-label"> REPLAY</span></button>
     <button id="btn-help" class="tb-btn" title="Controls (?)">?</button>
-    <button id="btn-menu" class="tb-btn" title="Back to scenario select">☰</button>
+    <button id="btn-menu" class="tb-btn" title="Back to your swarms">☰</button>
   </header>
 
   <div id="replay-bar" class="hidden">
@@ -295,14 +432,27 @@ canvas.timeline { width: 100%; height: 16px; display: block; border-radius: 3px;
   <div id="toast"></div>
   <div id="hint" class="hidden"></div>
 
-  <div id="start-screen" class="overlay">
-    <div class="ov-inner">
+  <div id="start-screen" class="overlay scroll">
+    <div class="ov-inner launcher">
       <div class="ov-title">◈ SWARM<b>COMMAND</b></div>
       <div class="ov-sub">An RTS command view for AI agent swarms — every unit is an agent, every objective a task, every structure a tool.</div>
-      <div class="cards" id="scenario-cards"></div>
+      <div class="lh-bar">
+        <span id="conn" class="conn"><i></i><span>Connecting…</span></span>
+        <span class="spacer"></span>
+        <span class="filebtn" title="Add a swarm from a file exported here">Import a swarm…<input id="opt-import" type="file" accept=".json,application/json"></span>
+        <button id="btn-new" class="lbtn primary" type="button">＋ NEW SWARM</button>
+      </div>
+      <div class="lsec">
+        <div class="lsec-title">YOUR SWARMS <small id="lib-count"></small></div>
+        <div id="lib-list" class="swarm-list"></div>
+      </div>
+      <div class="lsec">
+        <div class="lsec-title">TEMPLATES <small>a quick demo, or the starting point for a swarm of your own</small></div>
+        <div class="cards templates" id="scenario-cards"></div>
+      </div>
       <div class="ov-opts">
-        <label>Seed <input id="opt-seed" type="number" value="1337"></label>
-        <label>Swarm scale
+        <label title="Quick demos only — a saved swarm keeps its own seed">Demo seed <input id="opt-seed" type="number" value="1337"></label>
+        <label>Demo scale
           <select id="opt-scale">
             <option value="1">1× (normal)</option>
             <option value="2">2× (large)</option>
@@ -314,13 +464,40 @@ canvas.timeline { width: 100%; height: 16px; display: block; border-radius: 3px;
       <div class="ov-foot">
         <kbd>Right-drag</kbd>/<kbd>WASD</kbd>/edge-scroll pan · <kbd>Wheel</kbd> zoom · <kbd>Click</kbd>/<kbd>Drag-box</kbd> select · <kbd>Right-click</kbd> order ·
         <kbd>Ctrl+1–9</kbd> set group · <kbd>1–9</kbd> recall · <kbd>Space</kbd> pause<br>
-        Everything you see is driven by a typed event stream — the simulator is just one EventSource.
+        Everything you see is driven by a typed event stream — the simulator and a live agnostic crew are each just one EventSource.
       </div>
     </div>
   </div>
 
   <div id="summary-screen" class="overlay hidden">
     <div class="ov-inner" id="summary-inner"></div>
+  </div>
+
+  <div id="editor" class="overlay scroll editor-ov hidden">
+    <div class="ov-inner editor">
+      <div class="ed-head">
+        <div>
+          <div class="ed-kicker" id="ed-kicker">EDIT SWARM</div>
+          <input id="ed-name" class="ed-name" type="text" maxlength="80" spellcheck="false" aria-label="Swarm name">
+        </div>
+        <span class="spacer"></span>
+        <button id="ed-cancel" class="lbtn" type="button">Cancel</button>
+        <button id="ed-save" class="lbtn primary" type="button">Save</button>
+      </div>
+      <div class="ed-tabs" id="ed-tabs"></div>
+      <div class="ed-body">
+        <div id="ed-pane" class="ed-pane"></div>
+        <aside id="ed-side" class="ed-side"></aside>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-title" id="modal-title"></div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-actions"><button id="modal-no" class="lbtn" type="button">Cancel</button><button id="modal-yes" class="lbtn primary" type="button">OK</button></div>
+    </div>
   </div>
 </div>
 
@@ -341,10 +518,17 @@ canvas.timeline { width: 100%; height: 16px; display: block; border-radius: 3px;
  *
  *  The renderer, HUD and input layers never touch the simulator. They only see the event
  *  stream (through the Store) and talk back through a CommandSink. Swap MockSource for
- *  WebSocketSource and nothing on the view side changes.
+ *  LiveCrewSource (a real agnostic crew) and nothing on the view side changes.
  *
- *  Sections:  0 Utilities · 1 Event schema & interfaces · 2 Sim (scenarios + simulator) ·
- *             3 EventSource implementations · 4 State Store · 5 Renderer · 6 HUD · 7 Input · 8 App
+ *  What runs is a saved swarm — a spec (2b): its tasks, roles, models, tools, regions, caps,
+ *  budget and failure model. The simulator compiles it; the estimator runs it headless over
+ *  several seeds to price it; a live run submits its tasks to agnostic as a crew. Specs are kept
+ *  on the agnostic server, per tenant, through the shell's host bridge (1b): this page cannot
+ *  reach the network itself.
+ *
+ *  Sections:  0 Utilities · 1 Event schema & interfaces · 1b Host bridge · 2 Sim (scenarios +
+ *             simulator) · 2b Swarm specs & the estimator · 3 EventSource implementations ·
+ *             4 State Store · 5 Renderer · 6 HUD · 6b Launcher, editor & library · 7 Input · 8 App
  * ===================================================================================== */
 
 /* =====================================================================================
@@ -403,6 +587,46 @@ function fmtTokens(n) {
 function fmtCost(x, digits = 2) { return '$' + (x || 0).toFixed(digits); }
 function fmtPct(x) { return Math.round(x * 100) + '%'; }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function fmtKB(bytes) { return (bytes / 1024).toFixed(bytes < 10240 ? 1 : 0) + ' KB'; }
+function fmtAgo(at) {
+  const s = Math.max(0, (Date.now() - at) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+/** First line of `s`, squeezed to at most `n` characters. */
+function oneLine(s, n) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n - 1) + '…' : t;
+}
+const deepCopy = (x) => JSON.parse(JSON.stringify(x));
+/** Median / quantile of a numeric array (copied, not sorted in place). */
+function quantile(xs, q) {
+  if (!xs.length) return 0;
+  const s = xs.slice().sort((a, b) => a - b);
+  const i = (s.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i);
+  return s[lo] + (s[hi] - s[lo]) * (i - lo);
+}
+/** Save `text` as a file — the iframe sandbox allows downloads. */
+function downloadText(name, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+/** Read a user-picked file as text. */
+function readFileText(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error('could not read the file'));
+    r.readAsText(file);
+  });
+}
 
 /* =====================================================================================
  *  SECTION 1 · EVENT SCHEMA & INTERFACES
@@ -522,6 +746,84 @@ let _cmdSeq = 0;
 function makeCommand(type, agentIds, target, payload) {
   if (!COMMAND_TYPES.includes(type)) throw new Error('Unknown command type: ' + type);
   return { id: 'c' + (++_cmdSeq), type, issuedAt: Date.now(), agentIds: [...agentIds], target: target || null, payload: payload || {} };
+}
+
+/* =====================================================================================
+ *  SECTION 1b · HOST — the plugin side of agnostic's host bridge (ADR 0005)
+ *
+ *  Framed by the agnostic shell, this page runs in an opaque origin with connect-src 'none': it
+ *  cannot reach the API. It asks the shell by postMessage, and the shell answers only what this
+ *  plugin's manifest permits, with the signed-in user's own credential (which the page never
+ *  sees) — and the server still checks that user's role. Protocol 1:
+ *
+ *     page  → shell   {type:'agnostic:hello', protocol}
+ *     shell → page    {type:'agnostic:init', protocol, plugin:{id,name,version}, permissions[], user:{auth, signedIn, role}}
+ *     page  → shell   {type:'agnostic:request', id, method, path, body?}
+ *     shell → page    {type:'agnostic:response', id, status, data}     status 0 = never reached the server
+ *
+ *  The shell re-sends init after a sign-in or sign-out. Opened on its own (a new tab) there is no
+ *  shell: `mode` is 'standalone', and the page keeps its swarms in this browser instead.
+ * ===================================================================================== */
+class Host {
+  constructor() {
+    this.mode = 'connecting';  // 'connecting' | 'connected' | 'standalone'
+    this.info = null;          // the latest agnostic:init
+    this.pending = new Map();  // request id → {resolve, timer}
+    this.seq = 0;
+    this.listeners = new Set();
+    let framed = false;
+    try { framed = window.parent !== window; } catch (err) { framed = true; }
+    if (!framed) { this.mode = 'standalone'; return; }
+    window.addEventListener('message', (e) => this.onMessage(e));
+    try { window.parent.postMessage({ type: 'agnostic:hello', protocol: 1 }, '*'); } catch (err) { /* detached */ }
+    // A parent that never answers is not the agnostic shell (or is an older one): stand alone.
+    this.timer = setTimeout(() => { if (this.mode === 'connecting') this.setMode('standalone'); }, 3000);
+  }
+  onMessage(e) {
+    if (e.source !== window.parent) return;
+    const m = e.data;
+    if (!m || typeof m !== 'object' || typeof m.type !== 'string') return;
+    if (m.type === 'agnostic:init') {
+      const u = m.user && typeof m.user === 'object' ? m.user : {};
+      this.info = {
+        plugin: m.plugin && typeof m.plugin === 'object' ? m.plugin : {},
+        permissions: Array.isArray(m.permissions) ? m.permissions.filter((x) => typeof x === 'string') : [],
+        user: { auth: typeof u.auth === 'string' ? u.auth : 'unknown', signedIn: !!u.signedIn, role: typeof u.role === 'string' ? u.role : null },
+      };
+      clearTimeout(this.timer);
+      this.setMode('connected');
+    } else if (m.type === 'agnostic:response') {
+      const r = this.pending.get(m.id);
+      if (!r) return;
+      this.pending.delete(m.id);
+      clearTimeout(r.timer);
+      r.resolve({ status: Number.isInteger(m.status) ? m.status : 0, data: m.data === undefined ? null : m.data });
+    }
+  }
+  setMode(mode) { this.mode = mode; for (const fn of this.listeners) fn(this); }
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  can(permission) { return this.mode === 'connected' && this.info.permissions.includes(permission); }
+  pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || 'swarm'; }
+  /** The user's role when the server enforces roles; null when auth is off or unknown. */
+  role() { return this.info && this.info.user.auth === 'required' ? this.info.user.role : null; }
+  /** Whether the user may write at all (start crews, save swarms): any role but viewer. */
+  mayWrite() { return this.mode === 'connected' && this.role() !== 'viewer'; }
+  request(method, path, body) {
+    if (this.mode !== 'connected') return Promise.resolve({ status: 0, data: { error: 'not connected to agnostic' } });
+    const id = 'q' + ++this.seq;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' } }); }, 30000);
+      this.pending.set(id, { resolve, timer });
+      const msg = { type: 'agnostic:request', id, method, path };
+      if (body !== undefined) msg.body = body;
+      try { window.parent.postMessage(msg, '*'); } catch (err) { this.pending.delete(id); clearTimeout(timer); resolve({ status: 0, data: { error: 'the shell is gone' } }); }
+    });
+  }
+}
+/** The error text of a bridge response. */
+function errOf(r) {
+  if (r && r.data && typeof r.data.error === 'string') return r.data.error;
+  return r && r.status ? 'HTTP ' + r.status : 'the server is unreachable';
 }
 
 /* =====================================================================================
@@ -704,15 +1006,20 @@ const SCENARIOS = {
  * Sim — seeded, fixed-timestep simulator of an orchestrated agent swarm.
  * Emits schema events through `this.out(event)`; accepts commands via `command(cmd)`.
  * It has no notion of pixels: travel is expressed as durations derived from a latency matrix.
+ *
+ * `scenario` is {key, name, objective, budget, policy, mission?, build(rng, scale)} and `cfg` is the
+ * rest of a compiled swarm spec (compileSpec): the world, model catalogue, per-role models, speeds,
+ * tool habits, tool latencies/token sizes, and the role and swarm-wide agent caps.
  */
 class Sim {
-  constructor(scenario, { seed = 1337, scale = 1 } = {}) {
+  constructor(scenario, { seed = 1337, scale = 1, cfg = null } = {}) {
     this.sc = scenario;
     this.seed = seed;
     this.scale = scale;
     this.policy = scenario.policy;
+    this.cfg = cfg || compileSpec(defaultSpec(scenario.key, scale)).cfg;
     this.rng = new RNG((seed ^ hashStr(scenario.key)) >>> 0);
-    this.world = buildWorld(scale);
+    this.world = this.cfg.world;
     this.terr = new Map(this.world.territories.map((t) => [t.id, { ...t, active: 0, tokens: 0, cost: 0 }]));
     this.tools = new Map(this.world.tools.map((t) => [t.id, { ...t }]));
     this.t = 0;
@@ -738,6 +1045,10 @@ class Sim {
     this.done = false;
     this.stats = { spawned: 0, retries: 0, errors: 0, crashes: 0, peak: 0, tasksDone: 0, tasksFailed: 0 };
     this.orch = null;
+    this.headless = false;     // the estimator: no one is watching, so a stall must end the run
+    this.stalled = false;
+    this.lastProgressT = 0;
+    this.capWait = null;       // {role|'swarm': tasks waiting} from the last staffing pass
   }
 
   /* ---------------- event emission ---------------- */
@@ -786,7 +1097,7 @@ class Sim {
     const orch = this.spawnAgent('orchestrator', 'local', { kind: 'hq' }, {
       name: 'Orchestrator',
       extra: {
-        mission: { title: this.sc.name, scenario: this.sc.key, objective: this.sc.objective, budget: this.sc.budget * this.scale, seed: this.seed },
+        mission: Object.assign({ title: this.sc.name, scenario: this.sc.key, objective: this.sc.objective, budget: this.sc.budget, seed: this.seed, kind: 'sim' }, this.sc.mission || {}),
         world: this.world,
       },
     });
@@ -804,7 +1115,7 @@ class Sim {
     const dt = this.dt;
     this.t += dt;
     if (this.phase === 'plan') this.tickPlanning();
-    this.spawnBucket = Math.min(4, this.spawnBucket + (this.policy.spawnPerSec * this.scale * dt) / 1000);
+    this.spawnBucket = Math.min(4, this.spawnBucket + (this.policy.spawnPerSec * dt) / 1000);
     this.tickFan();
     for (const a of this.agents.values()) if (a.alive) this.tickAgent(a, dt);
     if (this.t >= this.nextStaff) { this.nextStaff = this.t + 250; this.tickOrchestrator(); }
@@ -812,12 +1123,23 @@ class Sim {
     if (this.t >= this.nextResTick) { this.nextResTick = this.t + 500; this.emitResources(); }
     // sweep dead agents occasionally
     if ((this.t % 2000) < dt) for (const [id, a] of this.agents) if (!a.alive && this.t - a.endedAt > 1000) this.agents.delete(id);
+    // Headless only: a swarm whose caps leave some work unstaffable would otherwise run forever.
+    // On screen the operator can see the queue and act, so nothing is failed for them.
+    if (this.headless && this.phase === 'run' && this.t - this.lastProgressT > SIM_STALL_MS) this.failStalled();
+  }
+
+  /** End a run that has stopped making progress: fail everything unresolved, then wrap up. */
+  failStalled() {
+    this.stalled = true;
+    for (const task of this.tasks.values()) if (!this.resolved(task) && !task.parentId) this.failTask(task, 'Stalled — no agent could be staffed (check the role and region caps)');
+    for (const task of this.tasks.values()) if (!this.resolved(task)) this.failTask(task, 'Stalled');
   }
 
   tickPlanning() {
     while (this.planQueue.length && this.planQueue[0].at <= this.t) this.createTask(this.planQueue.shift().spec);
     if (!this.planQueue.length) {
       this.phase = 'run';
+      this.lastProgressT = this.t;
       this.say(this.orch, 'working', 'Dispatching agents', { expectedMs: 0 });
     }
   }
@@ -894,6 +1216,7 @@ class Sim {
     task.own = task.work;
     task.progress = 1;
     this.stats.tasksDone++;
+    this.lastProgressT = this.t;
     const dur = this.t - (task.startedAt || task.createdAt);
     this.emit('task.completed', task.lead, task.id, task.territory, { result: this.resultText(task), durationMs: Math.round(dur) });
     const parent = task.parentId && this.tasks.get(task.parentId);
@@ -915,6 +1238,7 @@ class Sim {
     if (this.resolved(task)) return;
     task.status = 'failed';
     this.stats.tasksFailed++;
+    this.lastProgressT = this.t;
     this.emit('task.failed', null, task.id, task.territory, { reason, attempts: task.attempts });
     for (const c of task.children) { const ch = this.tasks.get(c); if (!this.resolved(ch)) this.failTask(ch, 'Parent task failed'); }
     for (const id of [...task.assignees]) { const a = this.agents.get(id); if (a && a.alive) { a.taskId = null; this.think(a); } }
@@ -947,7 +1271,7 @@ class Sim {
     const n = (this.roleSeq[role] = (this.roleSeq[role] || 0) + 1);
     const id = role === 'orchestrator' ? 'orch' : 'a' + ++this.agentSeq;
     const name = opts.name || ROLES[role].label + '-' + String(n).padStart(2, '0');
-    const model = territory === 'local' && role === 'runner' ? 'local-8b' : ROLE_MODEL[role];
+    const model = (territory === 'local' && this.cfg.roleLocalModel[role]) || this.cfg.roleModel[role] || 'unknown';
     const a = {
       id, name, role, model, territory, parentId: opts.parentId || null, taskId: null, held: false,
       phase: 'spawning', phaseEnd: this.t + 450, loc: spawnAt.kind === 'agent' ? this.agents.get(spawnAt.id).loc : spawnAt, dest: null,
@@ -955,12 +1279,14 @@ class Sim {
       alive: true, endedAt: 0, paused: null, crashAt: 0, dirty: true, retryOf: opts.retryOf || null,
     };
     this.agents.set(id, a);
-    const T = this.terr.get(territory);
-    T.active++;
-    if (role !== 'orchestrator') this.stats.spawned++;
-    let active = 0;
-    for (const t of this.terr.values()) active += t.active;
-    this.stats.peak = Math.max(this.stats.peak, active - 1);
+    // The orchestrator holds no agent slot: a region's cap counts the agents doing the work.
+    if (role !== 'orchestrator') {
+      this.terr.get(territory).active++;
+      this.stats.spawned++;
+      let active = 0;
+      for (const t of this.terr.values()) active += t.active;
+      this.stats.peak = Math.max(this.stats.peak, active);
+    }
     this.emit('agent.spawned', id, null, territory, Object.assign({
       name, role, model, parentId: a.parentId, spawnAt, retryOf: a.retryOf, health: 100,
     }, opts.extra || {}));
@@ -976,7 +1302,7 @@ class Sim {
     if (a.taskId) this.unassign(a, false);
     a.alive = false;
     a.endedAt = this.t;
-    this.terr.get(a.territory).active--;
+    if (a.role !== 'orchestrator') this.terr.get(a.territory).active--;
   }
   message(from, to, kind, text) {
     if (!from || !to || !from.alive) return;
@@ -987,12 +1313,15 @@ class Sim {
   tickOrchestrator() {
     const orch = this.orch;
     if (this.phase === 'run' || this.phase === 'plan') {
-      // Retries respawn at HQ.
+      const hc = this.headcount();
+      // Retries respawn at HQ — when the caps allow; otherwise the task is staffed like any other later.
       while (this.retryQueue.length && this.retryQueue[0].at <= this.t) {
         const r = this.retryQueue.shift();
         const task = this.tasks.get(r.taskId);
         if (!task || this.resolved(task) || this.liveAssignees(task) > 0) { if (task) task.retryPending = false; continue; }
+        if (this.capFull(hc, task.role, task.territory)) { task.retryPending = false; continue; }
         const a = this.spawnAgent(task.role, task.territory, { kind: 'hq' }, { retryOf: r.retryOf, parentId: r.parentId });
+        this.took(hc, task.role, task.territory);
         this.stats.retries++;
         this.assign(a, task, 'retry');
         this.message(orch, a, 'request', 'Retry #' + task.attempts + ': ' + task.title);
@@ -1003,25 +1332,30 @@ class Sim {
         if (task.status === 'pending' && !task.retryPending && this.liveAssignees(task) === 0) open.push(task);
       }
       open.sort((x, y) => y.priority - x.priority || x.createdAt - y.createdAt);
+      const wait = {};
       for (const task of open) {
         const idle = this.findIdle(task.role, task.territory);
         if (idle) { this.assign(idle, task, 'auto'); this.message(orch, idle, 'request', 'Assigned: ' + task.title); this.think(idle); continue; }
+        const full = this.capFull(hc, task.role, task.territory);
+        if (full === 'region') continue; // waits for capacity there, as it always has
+        if (full) { wait[full] = (wait[full] || 0) + 1; continue; }
         if (this.spawnBucket < 1) break;
-        const T = this.terr.get(task.territory);
-        if (T.active >= T.cap) continue;
         this.spawnBucket -= 1;
         const parent = task.parentId && this.tasks.get(task.parentId);
         const lead = parent && this.agents.get(parent.lead);
         const at = lead && lead.alive && lead.territory === task.territory ? { kind: 'agent', id: lead.id } : task.territory === 'local' ? { kind: 'hq' } : { kind: 'gateway', id: task.territory };
         const a = this.spawnAgent(task.role, task.territory, at, { parentId: lead && lead.alive ? lead.id : null });
+        this.took(hc, task.role, task.territory);
         this.assign(a, task, parent ? 'fanout' : 'auto');
       }
+      this.capWait = wait;
       if (this.phase === 'run' && this.t >= this.nextOrchNote) {
         this.nextOrchNote = this.t + 3000;
         let live = 0, done = 0;
         for (const a of this.agents.values()) if (a.alive && a.role !== 'orchestrator') live++;
         for (const t of this.tasks.values()) if (this.resolved(t)) done++;
-        this.say(orch, 'working', 'Monitoring ' + live + ' agents · ' + done + '/' + this.tasks.size + ' tasks resolved');
+        const capped = Object.keys(wait).map((k) => wait[k] + ' waiting on the ' + (k === 'swarm' ? 'swarm-wide cap' : ROLES[k].label + ' cap'));
+        this.say(orch, 'working', 'Monitoring ' + live + ' agents · ' + done + '/' + this.tasks.size + ' tasks resolved' + (capped.length ? ' · ' + capped.join(', ') : ''));
       }
       if (this.phase === 'run' && [...this.tasks.values()].every((t) => this.resolved(t))) {
         this.phase = 'wrap';
@@ -1050,6 +1384,36 @@ class Sim {
     }
     return null;
   }
+  /**
+   * Agents holding a slot under the caps — per role, per region and swarm-wide. A lead coordinating
+   * its sub-agents holds none: otherwise a role or region capped at N would deadlock the moment N
+   * leads fanned out and sat waiting for sub-agents that need those very slots.
+   */
+  headcount() {
+    const byRole = {}, byTerr = {};
+    let total = 0;
+    for (const a of this.agents.values()) {
+      if (!a.alive || a.role === 'orchestrator' || a.phase === 'coord') continue;
+      byRole[a.role] = (byRole[a.role] || 0) + 1;
+      byTerr[a.territory] = (byTerr[a.territory] || 0) + 1;
+      total++;
+    }
+    return { byRole, byTerr, total };
+  }
+  /** Which cap stops one more `role` agent in `territory`: the role's key, 'swarm', 'region', or null. */
+  capFull(hc, role, territory) {
+    const max = this.cfg.roleCaps[role];
+    if (max != null && (hc.byRole[role] || 0) >= max) return role;
+    if (this.cfg.maxActive != null && hc.total >= this.cfg.maxActive) return 'swarm';
+    const T = territory && this.terr.get(territory);
+    if (T && (hc.byTerr[territory] || 0) >= T.cap) return 'region';
+    return null;
+  }
+  took(hc, role, territory) {
+    hc.byRole[role] = (hc.byRole[role] || 0) + 1;
+    hc.byTerr[territory] = (hc.byTerr[territory] || 0) + 1;
+    hc.total++;
+  }
   scheduleRetry(task, deadAgent) {
     task.attempts++;
     if (task.attempts > this.policy.maxRetries) { this.failTask(task, 'Exceeded ' + this.policy.maxRetries + ' retries'); return; }
@@ -1064,10 +1428,9 @@ class Sim {
     let active = 0, cap = 0;
     const byTerritory = {};
     for (const T of this.terr.values()) {
-      const live = T.id === 'local' && this.orch && this.orch.alive ? T.active - 1 : T.active;
-      active += live;
+      active += T.active;
       cap += T.cap;
-      byTerritory[T.id] = { active: live, cap: T.cap, tokens: Math.round(T.tokens), cost: +T.cost.toFixed(4), costPerSec: 0 };
+      byTerritory[T.id] = { active: T.active, cap: T.cap, tokens: Math.round(T.tokens), cost: +T.cost.toFixed(4), costPerSec: 0 };
     }
     this.rateHist.push({ t: this.t, tokens: this.totals.tokens, cost: this.totals.cost, terr: Object.fromEntries([...this.terr.values()].map((T) => [T.id, T.cost])) });
     while (this.rateHist.length > 5) this.rateHist.shift();
@@ -1079,10 +1442,12 @@ class Sim {
     this.emit('resource.tick', null, null, 'global', {
       tokens: Math.round(this.totals.tokens), tokensPerSec: Math.round((this.totals.tokens - h0.tokens) / span),
       cost: +this.totals.cost.toFixed(4), costPerSec: +((this.totals.cost - h0.cost) / span).toFixed(5),
-      budget: this.sc.budget * this.scale, active, cap, byTerritory, agents,
+      budget: this.sc.budget, active, cap, byTerritory, agents,
     });
   }
 }
+/** Sim time without a task resolving or advancing after which a headless run is called stalled. */
+const SIM_STALL_MS = 120000;
 
 /* ---- Sim · agent behaviour (step machine) ---- */
 const TOOL_TOKENS = { llm: [3000, 14000], search: [1500, 6000], db: [300, 2000], exec: [400, 2500], fs: [300, 1800] };
@@ -1104,7 +1469,8 @@ const WORK_VERBS = {
 
 Object.assign(Sim.prototype, {
   accrue(a, tokens, compute) {
-    const cost = compute + (tokens / 1000) * SIM_MODELS[a.model].price;
+    const m = this.cfg.models[a.model];
+    const cost = compute + (m ? (tokens / 1000) * m.price : 0);
     a.tokens += tokens;
     a.cost += cost;
     a.dirty = true;
@@ -1117,11 +1483,12 @@ Object.assign(Sim.prototype, {
 
   tickAgent(a, dt) {
     const T = this.terr.get(a.territory);
+    const C = this.cfg;
     let tps = 0, f = 0.5;
     switch (a.phase) {
-      case 'working': tps = ROLE_TPS[a.role] * SIM_MODELS[a.model].tps; f = 1; break;
-      case 'coord': tps = ROLE_TPS[a.role] * 0.2; f = 1; break;
-      case 'orch': tps = ROLE_TPS.orchestrator * (this.phase === 'plan' ? 2 : 0.6); f = 1; break;
+      case 'working': tps = C.roleTps[a.role] * (C.models[a.model] ? C.models[a.model].tps : 1); f = 1; break;
+      case 'coord': tps = C.roleTps[a.role] * 0.2; f = 1; break;
+      case 'orch': tps = C.roleTps.orchestrator * (this.phase === 'plan' ? 2 : 0.6); f = 1; break;
       case 'tool': f = 1; break;
       case 'moving': f = 0.8; break;
       case 'paused': f = 0.25; break;
@@ -1134,6 +1501,7 @@ Object.assign(Sim.prototype, {
         const eff = a.role === task.role ? 1 : 0.6;
         const cap = this.workCap(task);
         task.own = Math.min(cap, task.own + (dt / 1000) * T.speed * eff);
+        this.lastProgressT = this.t;
         if (task.own >= cap - 1e-6) { a.phaseEnd = 0; this.reachedThreshold(a, task); return; }
       }
     }
@@ -1183,8 +1551,12 @@ Object.assign(Sim.prototype, {
     }
     if (task.status === 'pending') { task.status = 'active'; if (!task.startedAt) task.startedAt = this.t; }
     if ((task.split || task.reworked) && !this.kidsResolved(task)) return this.coordinate(a, task);
+    // A lead done coordinating takes a slot again — or waits for one while its role (or the swarm) is
+    // at its cap. Whoever holds a slot only ever waits on its own work, so one always frees up.
+    if (a.phase === 'coord' && this.capFull(this.headcount(), a.role, a.territory)) return this.awaitSlot(a);
     if (task.own >= this.workCap(task) - 1e-6) return this.reachedThreshold(a, task);
-    if (a.sinceTool >= 1 && this.rng.chance(ROLE_TOOL_P[a.role] || 0.4)) return this.goUseTool(a, this.rng.weighted(ROLE_TOOLS[a.role]));
+    const mix = this.cfg.roleTools[a.role]; // null when the role uses no tool this world has
+    if (mix && a.sinceTool >= 1 && this.rng.chance(this.cfg.toolP[a.role] || 0)) return this.goUseTool(a, this.rng.weighted(mix));
     return this.work(a, task);
   },
 
@@ -1214,6 +1586,13 @@ Object.assign(Sim.prototype, {
     this.say(a, 'working', this.rng.pick(WORK_VERBS[a.role] || ['Working on']) + ' ' + title, { expectedMs: Math.round(dur) });
   },
 
+  awaitSlot(a) {
+    a.phase = 'coord'; // holds no slot while it waits
+    a.phaseEnd = this.t + 500;
+    const label = 'Waiting for a free slot to finish its own part';
+    if (a.lastStep !== label) { a.lastStep = label; this.say(a, 'idle', label, { expectedMs: 0 }); }
+  },
+
   coordinate(a, task) {
     const done = task.children.filter((c) => this.resolved(this.tasks.get(c))).length;
     a.phase = 'coord';
@@ -1227,8 +1606,9 @@ Object.assign(Sim.prototype, {
     const spec = task.fanout;
     const n = spec.titles.length;
     this.say(a, 'working', 'Fanning out ' + n + ' sub-agents', { expectedMs: n * 110 });
+    const hc = this.headcount();
     for (let i = 0; i < n; i++) {
-      const terr = this.pickSubTerritory(task.territory);
+      const terr = this.pickSubTerritory(task.territory, hc);
       const child = this.createTask({ key: task.id + '.' + (i + 1), title: spec.titles[i], role: spec.role, territory: terr, deps: [],
         work: this.rng.range(spec.work[0], spec.work[1]), kind: task.kind, priority: task.priority, difficulty: task.difficulty, index: i, of: n }, task);
       child.retryPending = true; // reserved for the fan-out spawn below
@@ -1237,16 +1617,17 @@ Object.assign(Sim.prototype, {
     this.coordinate(a, task);
   },
 
-  pickSubTerritory(home) {
+  pickSubTerritory(home, hc) {
     const others = [...this.terr.values()].filter((T) => T.id !== home && T.kind === 'cloud').sort((x, y) => this.latency(home, x.id) - this.latency(home, y.id));
     for (const T of [this.terr.get(home), ...others]) {
       const r = this.resv[T.id] || 0;
-      if (T.active + r < T.cap) { this.resv[T.id] = r + 1; return T.id; }
+      if ((hc.byTerr[T.id] || 0) + r < T.cap) { this.resv[T.id] = r + 1; return T.id; }
     }
     return home;
   },
 
   tickFan() {
+    let hc = null;
     while (this.fanQueue.length && this.fanQueue[0].at <= this.t) {
       const f = this.fanQueue.shift();
       const task = this.tasks.get(f.taskId);
@@ -1254,8 +1635,9 @@ Object.assign(Sim.prototype, {
       this.resv[task.territory] = Math.max(0, (this.resv[task.territory] || 0) - 1);
       task.retryPending = false;
       if (this.resolved(task)) continue;
-      const T = this.terr.get(task.territory);
-      if (T.active >= T.cap) continue; // the orchestrator will staff it when capacity frees up
+      if (!hc) hc = this.headcount();
+      if (this.capFull(hc, task.role, task.territory)) continue; // the orchestrator staffs it when a slot frees up
+      this.took(hc, task.role, task.territory);
       const lead = this.agents.get(f.leadId);
       const at = lead && lead.alive ? { kind: 'agent', id: lead.id } : task.territory === 'local' ? { kind: 'hq' } : { kind: 'gateway', id: task.territory };
       const sub = this.spawnAgent(task.role, task.territory, at, { parentId: lead && lead.alive ? lead.id : null });
@@ -1337,7 +1719,7 @@ Object.assign(Sim.prototype, {
   callTool(a) {
     const tool = this.tools.get(a.pendingTool);
     a.pendingTool = null;
-    const [lo, hi] = TOOL_MS[tool.kind];
+    const [lo, hi] = this.cfg.toolMs[tool.kind];
     let dur = this.rng.range(lo, hi) * (tool.territory === 'local' && tool.kind === 'llm' ? 1.6 : 1);
     const slow = this.terr.get(tool.territory).kind === 'cloud' && this.rng.chance(this.policy.slow);
     if (slow) dur *= this.rng.range(3, 5);
@@ -1359,10 +1741,13 @@ Object.assign(Sim.prototype, {
       this.emit('tool.returned', a.id, a.taskId, tool.territory, { toolId: tool.id, kind: tool.kind, ok: false, latencyMs, result: msg });
       return this.hurt(a, code, msg);
     }
-    const [lo, hi] = TOOL_TOKENS[c.kind];
+    const [lo, hi] = this.cfg.toolTokens[c.kind];
     this.accrue(a, this.rng.range(lo, hi), 0);
     const task = a.taskId && this.tasks.get(a.taskId);
-    if (task && !this.resolved(task) && task.status !== 'locked') task.own = Math.min(this.workCap(task), task.own + 0.8 * this.terr.get(a.territory).speed);
+    if (task && !this.resolved(task) && task.status !== 'locked') {
+      task.own = Math.min(this.workCap(task), task.own + 0.8 * this.terr.get(a.territory).speed);
+      this.lastProgressT = this.t;
+    }
     const r = this.rng;
     const result = { llm: r.int(300, 2400) + ' tokens out', search: r.int(6, 20) + ' results', exec: 'exit 0 · ' + r.int(12, 240) + ' passed',
       db: r.int(1, 900) + ' rows', fs: 'ok · ' + r.range(0.4, 24).toFixed(1) + ' KB' }[c.kind];
@@ -1512,9 +1897,13 @@ Object.assign(Sim.prototype, {
           ok++;
         }
         return { ok: true, message: ok + ' terminated' };
-      case 'duplicate':
+      case 'duplicate': {
+        const hc = this.headcount();
         for (const a of agents) {
           if (!capOk(a.territory)) continue;
+          const full = this.capFull(hc, a.role, null);
+          if (full) { why = full === 'swarm' ? 'The swarm-wide cap (' + this.cfg.maxActive + ') is reached' : ROLES[a.role].label + 's are capped at ' + this.cfg.roleCaps[a.role]; continue; }
+          this.took(hc, a.role, a.territory);
           const c = this.spawnAgent(a.role, a.territory, { kind: 'agent', id: a.id }, { parentId: a.parentId });
           c.at = a.at;
           const task = a.taskId && this.tasks.get(a.taskId);
@@ -1523,6 +1912,7 @@ Object.assign(Sim.prototype, {
           ok++;
         }
         return { ok: ok > 0, message: ok ? ok + ' clone(s) spawned' : why };
+      }
       case 'migrate':
         for (const a of agents) {
           const dest = tgt.id && this.terr.get(tgt.id) ? tgt.id : a.territory === 'local' ? this.bestCloud() : 'local';
@@ -1541,6 +1931,506 @@ Object.assign(Sim.prototype, {
     }
   },
 });
+
+/* =====================================================================================
+ *  SECTION 2b · SWARM SPECS — a saved swarm, its defaults, and what it compiles to
+ *
+ *  A spec is the one input to every run. The launcher keeps one per swarm (a plugin document in
+ *  the user's tenant), the editor edits it, the simulator runs what compileSpec makes of it, the
+ *  estimator runs that headless over several seeds to price it, and a live run submits its tasks
+ *  to agnostic as a crew (specToCrewRequest).
+ *
+ *  Every field has a default, and every value read back is clamped (normalizeSpec): a stored
+ *  document is untrusted input — an older version, a hand edit, an import, another tab's write.
+ *  Values are absolute (the budget is dollars, a cap is agents); the workload scale only decides
+ *  how much work a template generates, and the editor rescales caps and budget alongside it.
+ * ===================================================================================== */
+const SPEC_VERSION = 1;
+const SPEC_PREFIX = 'swarm-';      // document keys: swarm-<id>
+const SPEC_MAX_BYTES = 32768;      // the server keeps a plugin document of up to 32 KiB
+const SPEC_MAX_TASKS = 300;
+const SPEC_MAX_RUNS = 20;
+const SPEC_MAX_MODELS = 12;
+const REGION_IDS = ['local', 'us-east', 'eu-west', 'ap-south'];
+const TOOL_KEYS = ['llm', 'search', 'exec', 'db', 'fs'];
+const TASK_KIND_LIST = ['plan', 'analysis', 'research', 'synthesis', 'code', 'review', 'test', 'data', 'ops', 'diagnose', 'triage', 'verify', 'comms', 'report', 'work'];
+const PRIORITY_LABELS = ['', 'Low', 'Normal', 'High', 'Critical'];
+const RE_SPEC_ID = /^[a-z0-9]{6,24}$/;
+const RE_MODEL = /^[a-z0-9][a-z0-9._-]{0,39}$/;
+const RE_TASK_KEY = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const RE_PRESET = /^[a-z0-9][a-z0-9-]{0,99}$/;
+const RE_LIVE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,99}$/;
+const RE_CREW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const ROLE_GOALS = {
+  planner: 'Break the objective into a plan, sequence the work, and write up the result',
+  researcher: 'Find and read the sources the plan needs, and summarize what they say',
+  coder: 'Make the code changes the plan calls for, with tests',
+  reviewer: 'Review each change for correctness and send back what must be fixed',
+  runner: 'Run the commands, jobs and queries the work needs, and report their output',
+};
+const TEMPLATES = Object.assign({}, ...Object.values(SCENARIOS).map(({ key, icon, name, desc, tags }) => ({ [key]: { key, icon, name, desc, tags } })), {
+  custom: {
+    key: 'custom', icon: '✦', name: 'Custom swarm',
+    desc: 'A small plan → build → review → test pipeline to make your own. Every task, role, model, tool, region, cap and failure rate is yours to set.',
+    tags: ['Your tasks', 'Every setting'],
+  },
+});
+function customTasks() {
+  return [
+    { key: 'plan', title: 'Plan the work', role: 'planner', region: 'local', deps: [], work: 5, kind: 'plan', priority: 3, difficulty: 1, fanout: null, rework: null },
+    { key: 'research', title: 'Gather background', role: 'researcher', region: 'us-east', deps: ['plan'], work: 3, kind: 'research', priority: 2, difficulty: 1, fanout: { count: 4, work: [8, 12] }, rework: null },
+    { key: 'build', title: 'Implement the change', role: 'coder', region: 'local', deps: ['plan'], work: 4, kind: 'code', priority: 2, difficulty: 1, fanout: { count: 5, work: [9, 14] }, rework: null },
+    { key: 'review', title: 'Review the change', role: 'reviewer', region: 'local', deps: ['build'], work: 8, kind: 'review', priority: 2, difficulty: 1, fanout: null, rework: { chance: 0.3 } },
+    { key: 'test', title: 'Run the test suite', role: 'runner', region: 'us-east', deps: ['review'], work: 4, kind: 'test', priority: 2, difficulty: 1, fanout: { count: 3, work: [6, 10] }, rework: null },
+    { key: 'report', title: 'Write up the results', role: 'planner', region: 'local', deps: ['research', 'test'], work: 6, kind: 'report', priority: 3, difficulty: 1, fanout: null, rework: null },
+  ];
+}
+
+/* ---- readers: an untrusted value → a value of the right type, in range, or the default ---- */
+function rdNum(v, lo, hi, d) {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isFinite(n) ? clamp(n, lo, hi) : d;
+}
+function rdInt(v, lo, hi, d) { const n = rdNum(v, lo, hi, NaN); return Number.isFinite(n) ? Math.round(n) : d; }
+function rdOptInt(v, lo, hi) { return v == null || v === '' ? null : rdInt(v, lo, hi, null); }
+function rdStr(v, max, d) { return typeof v === 'string' ? v.trim().slice(0, max) : d; }
+function rdBool(v, d) { return typeof v === 'boolean' ? v : d; }
+function rdPair(v, lo, hi, d) {
+  if (!Array.isArray(v) || v.length !== 2) return d.slice();
+  const a = rdNum(v[0], lo, hi, d[0]), b = rdNum(v[1], lo, hi, d[1]);
+  return [Math.min(a, b), Math.max(a, b)];
+}
+function newSpecId() {
+  const b = new Uint8Array(8);
+  try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < b.length; i++) b[i] = Math.floor(Math.random() * 256); }
+  let s = '';
+  for (const x of b) s += (x % 36).toString(36);
+  return s + Date.now().toString(36).slice(-4);
+}
+
+/** A complete spec for `template` ('refactor' | 'research' | 'incident' | 'custom') at a workload scale. */
+function defaultSpec(template, scale) {
+  const sc = SCENARIOS[template] || null;
+  const k = clamp(Math.round(scale) || 1, 1, 3);
+  const now = Date.now();
+  const roles = {};
+  for (const r of ROLE_KEYS) {
+    const tools = {};
+    for (const t of TOOL_KEYS) tools[t] = ROLE_TOOLS[r][t] || 0;
+    roles[r] = { max: null, model: ROLE_MODEL[r], localModel: r === 'runner' ? 'local-8b' : '', tps: ROLE_TPS[r], toolP: ROLE_TOOL_P[r], tools, goal: ROLE_GOALS[r] };
+  }
+  const models = {};
+  for (const m in SIM_MODELS) models[m] = { price: SIM_MODELS[m].price, tps: SIM_MODELS[m].tps };
+  const tools = {};
+  for (const t of TOOL_KEYS) tools[t] = { on: true, ms: TOOL_MS[t].slice(), tokens: TOOL_TOKENS[t].slice() };
+  const regions = {};
+  for (const t of buildWorld(1).territories) regions[t.id] = { on: true, cap: t.cap * k, costPerSec: t.costPerSec, speed: t.speed };
+  const policy = Object.assign({ spawnPerSec: 5, toolErr: 0.035, crash: 0.012, slow: 0.04, maxRetries: 2, idleReleaseMs: 3500, computeMult: 1 }, sc ? sc.policy : {});
+  policy.spawnPerSec = +(policy.spawnPerSec * k).toFixed(2);
+  return {
+    v: SPEC_VERSION, id: newSpecId(), name: sc ? sc.name : TEMPLATES.custom.name,
+    objective: sc ? sc.objective : 'Plan, build, review and test a change end to end',
+    template: sc ? sc.key : 'custom', created: now, updated: now,
+    seed: 1337, scale: k, budget: (sc ? sc.budget : 4) * k, maxActive: null,
+    orchestrator: { model: ROLE_MODEL.orchestrator, tps: ROLE_TPS.orchestrator },
+    roles, models, tools, regions, policy,
+    tasks: sc ? null : customTasks(),
+    live: { roster: 'roles', preset: '', process: 'auto', maxConcurrency: 4, models: {} },
+    estimate: null, runs: [],
+  };
+}
+
+/** An untrusted document → a complete, in-range spec; null when it is not a spec at all. */
+function normalizeSpec(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const template = SCENARIOS[raw.template] ? raw.template : 'custom';
+  const s = defaultSpec(template, rdInt(raw.scale, 1, 3, 1));
+  if (typeof raw.id === 'string' && RE_SPEC_ID.test(raw.id)) s.id = raw.id;
+  s.name = rdStr(raw.name, 80, '') || s.name;
+  s.objective = rdStr(raw.objective, 400, s.objective);
+  s.created = rdNum(raw.created, 0, 1e15, s.created);
+  s.updated = rdNum(raw.updated, 0, 1e15, s.updated);
+  s.seed = rdInt(raw.seed, 1, 2147483647, s.seed);
+  s.budget = rdNum(raw.budget, 0.01, 1e6, s.budget);
+  s.maxActive = raw.maxActive === undefined ? null : rdOptInt(raw.maxActive, 1, 5000);
+  if (raw.models && typeof raw.models === 'object' && !Array.isArray(raw.models)) {
+    const m = {};
+    for (const name of Object.keys(raw.models).slice(0, SPEC_MAX_MODELS)) {
+      const v = raw.models[name];
+      if (!RE_MODEL.test(name) || !v || typeof v !== 'object') continue;
+      m[name] = { price: rdNum(v.price, 0, 10, 0), tps: rdNum(v.tps, 0.05, 10, 1) };
+    }
+    if (Object.keys(m).length) s.models = m;
+  }
+  const first = Object.keys(s.models)[0];
+  const model = (v, d) => (typeof v === 'string' && s.models[v] ? v : s.models[d] ? d : first);
+  const o = raw.orchestrator || {};
+  s.orchestrator = { model: model(o.model, s.orchestrator.model), tps: rdNum(o.tps, 1, 20000, s.orchestrator.tps) };
+  for (const r of ROLE_KEYS) {
+    const d = s.roles[r], v = (raw.roles && raw.roles[r]) || {};
+    const tools = {};
+    for (const t of TOOL_KEYS) tools[t] = rdNum(v.tools && v.tools[t], 0, 10, d.tools[t]);
+    const lm = v.localModel === undefined ? d.localModel : v.localModel;
+    s.roles[r] = {
+      max: v.max === undefined ? d.max : rdOptInt(v.max, 1, 5000),
+      model: model(v.model, d.model),
+      localModel: typeof lm === 'string' && s.models[lm] ? lm : '',
+      tps: rdNum(v.tps, 1, 20000, d.tps),
+      toolP: rdNum(v.toolP, 0, 1, d.toolP),
+      tools,
+      goal: rdStr(v.goal, 300, '') || d.goal,
+    };
+  }
+  for (const t of TOOL_KEYS) {
+    const d = s.tools[t], v = (raw.tools && raw.tools[t]) || {};
+    s.tools[t] = { on: rdBool(v.on, d.on), ms: rdPair(v.ms, 10, 600000, d.ms), tokens: rdPair(v.tokens, 0, 1000000, d.tokens) };
+  }
+  for (const id of REGION_IDS) {
+    const d = s.regions[id], v = (raw.regions && raw.regions[id]) || {};
+    s.regions[id] = {
+      on: id === 'local' ? true : rdBool(v.on, d.on), cap: rdInt(v.cap, id === 'local' ? 1 : 0, 5000, d.cap),
+      costPerSec: rdNum(v.costPerSec, 0, 10, d.costPerSec), speed: rdNum(v.speed, 0.05, 10, d.speed),
+    };
+  }
+  const p = raw.policy || {}, dp = s.policy;
+  s.policy = {
+    spawnPerSec: rdNum(p.spawnPerSec, 0.1, 200, dp.spawnPerSec), toolErr: rdNum(p.toolErr, 0, 0.95, dp.toolErr), crash: rdNum(p.crash, 0, 0.9, dp.crash),
+    slow: rdNum(p.slow, 0, 0.95, dp.slow), maxRetries: rdInt(p.maxRetries, 0, 10, dp.maxRetries), idleReleaseMs: rdInt(p.idleReleaseMs, 200, 600000, dp.idleReleaseMs),
+    computeMult: rdNum(p.computeMult, 0, 100, dp.computeMult),
+  };
+  if (Array.isArray(raw.tasks)) s.tasks = normalizeTasks(raw.tasks);
+  const l = raw.live || {}, dl = s.live;
+  s.live = {
+    roster: l.roster === 'preset' ? 'preset' : 'roles', preset: typeof l.preset === 'string' && RE_PRESET.test(l.preset) ? l.preset : '',
+    process: ['auto', 'sequential', 'parallel', 'dag'].includes(l.process) ? l.process : dl.process,
+    maxConcurrency: rdInt(l.maxConcurrency, 1, 64, dl.maxConcurrency), models: {},
+  };
+  if (l.models && typeof l.models === 'object') for (const r of ROLE_KEYS) if (typeof l.models[r] === 'string' && RE_LIVE_MODEL.test(l.models[r])) s.live.models[r] = l.models[r];
+  s.estimate = normalizeEstimate(raw.estimate);
+  s.runs = Array.isArray(raw.runs) ? raw.runs.map(normalizeRun).filter(Boolean).slice(-SPEC_MAX_RUNS) : [];
+  return s;
+}
+function normalizeTasks(list) {
+  const out = [], seen = new Set();
+  for (const v of list.slice(0, SPEC_MAX_TASKS)) {
+    if (!v || typeof v !== 'object' || typeof v.key !== 'string' || !RE_TASK_KEY.test(v.key) || seen.has(v.key)) continue;
+    seen.add(v.key);
+    const t = {
+      key: v.key, title: rdStr(v.title, 160, '') || v.key, role: ROLE_KEYS.includes(v.role) ? v.role : 'coder',
+      region: REGION_IDS.includes(v.region) ? v.region : 'local', deps: [], work: rdNum(v.work, 0.5, 3600, 5),
+      kind: TASK_KIND_LIST.includes(v.kind) ? v.kind : 'work', priority: rdInt(v.priority, 1, 4, 2), difficulty: rdNum(v.difficulty, 0.1, 100, 1),
+      fanout: null, rework: null,
+    };
+    if (Array.isArray(v.deps)) t.deps = [...new Set(v.deps.filter((d) => typeof d === 'string' && RE_TASK_KEY.test(d)))].slice(0, 64);
+    if (v.fanout && typeof v.fanout === 'object') {
+      const count = rdInt(v.fanout.count, 0, 40, 0);
+      if (count) {
+        t.fanout = { count, work: rdPair(v.fanout.work, 0.5, 3600, [8, 12]) };
+        if (Array.isArray(v.fanout.titles)) {
+          const ti = v.fanout.titles.filter((x) => typeof x === 'string').map((x) => x.trim().slice(0, 120)).filter(Boolean);
+          if (ti.length === count) t.fanout.titles = ti;
+        }
+      }
+    }
+    if (v.rework && typeof v.rework === 'object') { const c = rdNum(v.rework.chance, 0, 1, 0); if (c > 0) t.rework = { chance: c }; }
+    out.push(t);
+  }
+  const keys = new Set(out.map((t) => t.key));
+  for (const t of out) t.deps = t.deps.filter((d) => keys.has(d) && d !== t.key);
+  return out;
+}
+function normalizeEstimate(e) {
+  if (!e || typeof e !== 'object' || typeof e.sig !== 'string') return null;
+  const runs = rdInt(e.runs, 1, 1000, 0);
+  if (!runs) return null;
+  const n = (v) => rdNum(v, 0, 1e12, 0);
+  const g = (o, k) => n(o && typeof o === 'object' ? o[k] : 0);
+  return {
+    sig: e.sig.slice(0, 16), at: n(e.at), runs, cost: { min: g(e.cost, 'min'), p50: g(e.cost, 'p50'), max: g(e.cost, 'max') },
+    durationMs: { p50: g(e.durationMs, 'p50'), max: g(e.durationMs, 'max') }, tokens: { p50: g(e.tokens, 'p50') }, peak: { p50: g(e.peak, 'p50') },
+    failed: n(e.failed), over: rdInt(e.over, 0, runs, 0), stalled: rdInt(e.stalled, 0, runs, 0),
+  };
+}
+function normalizeRun(r) {
+  if (!r || typeof r !== 'object' || (r.kind !== 'sim' && r.kind !== 'live')) return null;
+  const o = { kind: r.kind, at: rdNum(r.at, 0, 1e15, 0), status: rdStr(r.status, 24, '') };
+  if (r.kind === 'live') {
+    if (typeof r.crew !== 'string' || !RE_CREW_ID.test(r.crew)) return null;
+    o.crew = r.crew.toLowerCase();
+    o.engine = rdStr(r.engine, 24, '');
+  }
+  for (const k of ['seed', 'cost', 'durationMs', 'done', 'failed', 'total']) if (typeof r[k] === 'number' && Number.isFinite(r[k])) o[k] = rdNum(r[k], 0, 1e12, 0);
+  return o;
+}
+
+/** A spec's own document bytes, as the server will count them. */
+function specBytes(s) { return new TextEncoder().encode(JSON.stringify(s)).length; }
+/** Fingerprint of everything the simulator reads — an estimate is current while this matches. */
+function specSig(s) {
+  const sim = { template: s.template, seed: s.seed, scale: s.scale, budget: s.budget, maxActive: s.maxActive, orchestrator: s.orchestrator,
+    roles: s.roles, models: s.models, tools: s.tools, regions: s.regions, policy: s.policy, tasks: s.tasks };
+  return hashStr(JSON.stringify(sim, (k, v) => (k === 'goal' ? undefined : v))).toString(36);
+}
+const regionOn = (s, id) => id === 'local' || (!!s.regions[id] && s.regions[id].on && s.regions[id].cap > 0);
+
+/** A custom task → the simulator's task spec. */
+function customToSim(t) {
+  const o = { key: t.key, title: t.title, role: t.role, territory: t.region, deps: t.deps.slice(), work: t.work, kind: t.kind, priority: t.priority };
+  if (t.difficulty !== 1) o.difficulty = t.difficulty;
+  if (t.fanout) {
+    const n = t.fanout.count;
+    o.fanout = { role: t.role, work: t.fanout.work.slice(),
+      titles: t.fanout.titles && t.fanout.titles.length === n ? t.fanout.titles.slice() : Array.from({ length: n }, (_, i) => t.title + ' · part ' + (i + 1) + '/' + n) };
+  }
+  if (t.rework) o.rework = { chance: t.rework.chance, role: 'coder', work: [5, 8], title: 'Address review: ' + t.title.replace(/^Review /, '') };
+  return o;
+}
+/** A simulator task spec → an editable custom task (the editor's "Customize tasks"). */
+function simToCustom(t) {
+  return {
+    key: t.key, title: t.title, role: t.role, region: t.territory, deps: (t.deps || []).slice(), work: t.work,
+    kind: TASK_KIND_LIST.includes(t.kind) ? t.kind : 'work', priority: clamp(t.priority || 1, 1, 4), difficulty: t.difficulty || 1,
+    fanout: t.fanout ? { count: t.fanout.titles.length, work: t.fanout.work.slice(), titles: t.fanout.titles.slice() } : null,
+    rework: t.rework ? { chance: t.rework.chance } : null,
+  };
+}
+/** The primary tasks a spec runs, as simulator task specs — generated exactly as the Sim will. */
+function specTasks(s) {
+  if (s.tasks) return s.tasks.map(customToSim);
+  const sc = SCENARIOS[s.template];
+  return sc.build(new RNG((s.seed ^ hashStr(sc.key)) >>> 0), s.scale);
+}
+/** Task keys in dependency order (stable: list order breaks ties); null when the deps form a cycle. */
+function topoOrder(tasks) {
+  const idx = new Map(tasks.map((t, i) => [t.key, i]));
+  const indeg = tasks.map(() => 0), out = tasks.map(() => []);
+  tasks.forEach((t, i) => { for (const d of t.deps || []) { const j = idx.get(d); if (j !== undefined && j !== i) { indeg[i]++; out[j].push(i); } } });
+  const ready = [], order = [];
+  indeg.forEach((n, i) => { if (!n) ready.push(i); });
+  while (ready.length) {
+    ready.sort((a, b) => a - b);
+    const i = ready.shift();
+    order.push(tasks[i]);
+    for (const j of out[i]) if (--indeg[j] === 0) ready.push(j);
+  }
+  return order.length === tasks.length ? order : null;
+}
+
+/**
+ * What stands between a spec and a run. `errors` block running and saving, `tooBig` blocks only
+ * saving (a draft that will not fit can still be simulated), `warnings` are worth knowing.
+ */
+function validateSpec(s) {
+  const errors = [], warnings = [], tabs = {};
+  const err = (tab, msg) => { errors.push(msg); tabs[tab] = (tabs[tab] || 0) + 1; };
+  if (!s.name.trim()) err('mission', 'Give the swarm a name.');
+  if (!(s.budget > 0)) err('compute', 'The budget must be more than $0.');
+  if (!(s.regions.local.cap >= 1)) err('compute', 'Local needs room for at least one agent.');
+  for (const r of ['orchestrator', ...ROLE_KEYS]) {
+    const m = r === 'orchestrator' ? s.orchestrator.model : s.roles[r].model;
+    if (!s.models[m]) err('models', (ROLES[r] || { label: r }).label + ' uses a model that is not in the catalogue.');
+  }
+  let tasks = [];
+  if (s.tasks) {
+    const keys = new Set(), all = new Set(s.tasks.map((t) => t.key));
+    for (const t of s.tasks) {
+      if (!RE_TASK_KEY.test(t.key)) err('tasks', 'Task key "' + t.key + '" must be lower-case letters, digits, - or _ (up to 32).');
+      else if (keys.has(t.key)) err('tasks', 'Two tasks share the key "' + t.key + '".');
+      keys.add(t.key);
+      if (!t.title.trim()) err('tasks', 'Task "' + t.key + '" needs a title.');
+      for (const d of t.deps) {
+        if (d === t.key) err('tasks', 'Task "' + t.key + '" depends on itself.');
+        else if (!all.has(d)) err('tasks', 'Task "' + t.key + '" depends on "' + d + '", which is not a task.');
+      }
+    }
+    if (!s.tasks.length) err('tasks', 'A swarm needs at least one task.');
+    else if (!topoOrder(s.tasks)) err('tasks', 'The task dependencies form a cycle.');
+    tasks = s.tasks.map(customToSim);
+  } else {
+    try { tasks = specTasks(s); } catch (e) { err('tasks', 'The template could not generate its tasks.'); }
+  }
+  const off = {};
+  for (const t of tasks) if (!regionOn(s, t.territory)) off[t.territory] = (off[t.territory] || 0) + 1;
+  for (const id in off) warnings.push(off[id] + ' task' + (off[id] === 1 ? ' is' : 's are') + ' placed in ' + id + ', which is off — ' + (off[id] === 1 ? 'it runs' : 'they run') + ' on Local.');
+  for (const r of ROLE_KEYS) {
+    const max = s.roles[r].max;
+    if (max == null) continue;
+    const fan = tasks.filter((t) => t.role === r && t.fanout).length;
+    if (fan && max < 3) warnings.push(ROLES[r].label + ' is capped at ' + max + ' — its fan-out sub-agents will queue a few at a time.');
+  }
+  let cap = 0;
+  for (const id of REGION_IDS) if (regionOn(s, id)) cap += s.regions[id].cap;
+  if (s.maxActive != null && s.maxActive < 3) warnings.push('A swarm-wide cap under 3 agents serializes nearly all of the work.');
+  else if (s.maxActive != null && s.maxActive > cap) warnings.push('The swarm-wide cap (' + s.maxActive + ') is above the regions’ total (' + cap + '), so the regions bind first.');
+  if (TOOL_KEYS.every((k) => !s.tools[k].on)) warnings.push('Every tool is off — agents only think, and no tool tokens or latency are simulated.');
+  const bytes = specBytes(s);
+  return { errors, warnings, tabs, bytes, tooBig: bytes > SPEC_MAX_BYTES, taskCount: tasks.length, fanout: tasks.reduce((n, t) => n + (t.fanout ? t.fanout.titles.length : 0), 0) };
+}
+
+/** A spec → {sc, cfg} for `new Sim(sc, {seed, scale, cfg})`. Regions that are off drop out of the world. */
+function compileSpec(s) {
+  const on = (id) => regionOn(s, id);
+  const base = buildWorld(1);
+  const territories = base.territories.filter((t) => on(t.id)).map((t) => {
+    const r = s.regions[t.id], latencyMs = {};
+    for (const k in t.latencyMs) if (on(k)) latencyMs[k] = t.latencyMs[k];
+    return Object.assign({}, t, { cap: r.cap, costPerSec: r.costPerSec, speed: r.speed, latencyMs });
+  });
+  const tools = base.tools.filter((x) => on(x.territory) && s.tools[x.kind].on);
+  const kinds = new Set(tools.map((x) => x.kind));
+  const cfg = {
+    world: { territories, tools }, models: s.models, maxActive: s.maxActive,
+    roleModel: { orchestrator: s.orchestrator.model }, roleLocalModel: {}, roleTps: { orchestrator: s.orchestrator.tps },
+    toolP: {}, roleTools: {}, roleCaps: {}, toolMs: {}, toolTokens: {},
+  };
+  for (const r of ROLE_KEYS) {
+    const R = s.roles[r];
+    cfg.roleModel[r] = R.model;
+    cfg.roleLocalModel[r] = R.localModel || '';
+    cfg.roleTps[r] = R.tps;
+    cfg.toolP[r] = R.toolP;
+    cfg.roleCaps[r] = R.max;
+    const mix = {};
+    let any = false;
+    for (const k of TOOL_KEYS) if (kinds.has(k) && R.tools[k] > 0) { mix[k] = R.tools[k]; any = true; }
+    cfg.roleTools[r] = any ? mix : null;
+  }
+  for (const k of TOOL_KEYS) { cfg.toolMs[k] = s.tools[k].ms.slice(); cfg.toolTokens[k] = s.tools[k].tokens.slice(); }
+  const remap = (t) => Object.assign(t, { territory: on(t.territory) ? t.territory : 'local' });
+  const sc = {
+    key: s.template, name: s.name, objective: s.objective, budget: s.budget, policy: Object.assign({}, s.policy),
+    mission: { kind: 'sim', specId: s.id, template: s.template },
+    build: s.tasks ? () => s.tasks.map((t) => remap(customToSim(t))) : (rng, scale) => SCENARIOS[s.template].build(rng, scale).map(remap),
+  };
+  return { sc, cfg };
+}
+
+/**
+ * Price a spec: run it headless over `runs` seeds (seed, seed + 7919, …) and summarize each run's
+ * final orchestrator summary. Yields to the page every few milliseconds, so the UI stays live;
+ * resolves null when `signal.cancelled` turns true.
+ */
+async function estimateSpec(spec, { runs = 8, onProgress = null, signal = null } = {}) {
+  const s = deepCopy(spec);
+  const rows = [];
+  for (let i = 0; i < runs; i++) {
+    const { sc, cfg } = compileSpec(s);
+    const seed = ((s.seed - 1 + i * 7919) % 2147483647) + 1;
+    const sim = new Sim(sc, { seed, scale: s.scale, cfg });
+    sim.headless = true;
+    let sum = null;
+    sim.out = (e) => { if (e.type === 'agent.completed' && e.agentId === 'orch') sum = e.payload.summary; };
+    sim.start();
+    const LIMIT = 6 * 3600 * 1000; // a guard on sim time, never reached by a sane spec
+    while (!sim.done && sim.t < LIMIT) {
+      const t0 = performance.now();
+      while (!sim.done && sim.t < LIMIT && performance.now() - t0 < 12) for (let k = 0; k < 40 && !sim.done; k++) sim.step();
+      if (signal && signal.cancelled) return null;
+      if (onProgress) {
+        let res = 0;
+        for (const t of sim.tasks.values()) if (sim.resolved(t)) res++;
+        onProgress((i + (sim.tasks.size ? res / sim.tasks.size : 0) * 0.98) / runs);
+      }
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    rows.push(sum ? { cost: sum.cost, ms: sum.durationMs, tokens: sum.tokens, peak: sum.peak, failed: sum.tasksFailed, stalled: sim.stalled }
+      : { cost: sim.totals.cost, ms: sim.t, tokens: sim.totals.tokens, peak: sim.stats.peak, failed: sim.stats.tasksFailed, stalled: true });
+  }
+  if (onProgress) onProgress(1);
+  const col = (k) => rows.map((r) => r[k]);
+  return {
+    sig: specSig(s), at: Date.now(), runs,
+    cost: { min: Math.min(...col('cost')), p50: quantile(col('cost'), 0.5), max: Math.max(...col('cost')) },
+    durationMs: { p50: quantile(col('ms'), 0.5), max: Math.max(...col('ms')) },
+    tokens: { p50: quantile(col('tokens'), 0.5) }, peak: { p50: quantile(col('peak'), 0.5) },
+    failed: col('failed').reduce((a, b) => a + b, 0) / runs,
+    over: rows.filter((r) => r.cost > s.budget).length, stalled: rows.filter((r) => r.stalled).length,
+  };
+}
+
+/* ---- live: a spec → an agnostic crew request ---- */
+const PRIORITY_WIRE = ['normal', 'low', 'normal', 'high', 'critical'];
+const EXPECTED_OUTPUT = {
+  code: 'The change as a patch, with a one-paragraph summary', review: 'Approval, or a numbered list of the changes required',
+  test: 'Pass and fail counts, and the names of any failing tests', research: 'The key findings as bullet points, each with its source',
+  synthesis: 'A short synthesis of the findings', plan: 'A numbered plan', analysis: 'A numbered analysis with a conclusion',
+  report: 'The finished document, in Markdown', comms: 'The finished message, ready to send', data: 'What was stored, and where',
+  ops: 'What was done and the system state afterwards', diagnose: 'The anomalies found, most likely cause first', triage: 'Severity, impact and next steps',
+  verify: 'Pass or fail for each check', work: 'A concise result',
+};
+/** Map a free-text agent role onto the view's five unit roles (a preset agent's sprite). */
+function guessRole(text) {
+  const t = String(text || '').toLowerCase();
+  if (/review|audit|qa\b|quality|secur|complian|verif|test/.test(t)) return 'reviewer';
+  if (/research|analy|investigat|scien|insight|search/.test(t)) return 'researcher';
+  if (/deploy|ops|monitor|infra|release|pipeline|runner|sre|operat/.test(t)) return 'runner';
+  if (/plan|manag|lead|architect|strateg|coordinat|product|owner/.test(t)) return 'planner';
+  return 'coder';
+}
+/** A preset document's agent → a crew agent definition (allow-listed fields only), or null. */
+function presetAgent(p, i) {
+  if (!p || typeof p !== 'object') return null;
+  const key = typeof p.agent_key === 'string' ? p.agent_key : typeof p.key === 'string' ? p.key : 'agent-' + (i + 1);
+  if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(key) || typeof p.role !== 'string' || !p.role || typeof p.goal !== 'string' || !p.goal) return null;
+  const def = { key, role: p.role, goal: p.goal };
+  for (const f of ['name', 'backstory', 'domain', 'complexity']) if (typeof p[f] === 'string' && p[f]) def[f] = p[f];
+  if (typeof p.allow_delegation === 'boolean') def.allow_delegation = p.allow_delegation;
+  return { def, view: guessRole(p.role + ' ' + (p.name || '') + ' ' + key) };
+}
+/**
+ * The crew a spec submits, and the plan the live view binds the crew's events to.
+ *
+ * Only the primary tasks travel: fan-out, rework, regions, caps, tools and the failure model are
+ * simulator settings. The roster is one agent per role the tasks use (with the spec's goals and
+ * live models), or a preset's agents. `process` 'auto' is a DAG when any task has dependencies.
+ */
+function specToCrewRequest(s, preset) {
+  const order = topoOrder(specTasks(s)) || [];
+  const pos = new Map(order.map((t, i) => [t.key, i]));
+  const process = s.live.process === 'auto' ? (order.some((t) => (t.deps || []).length) ? 'dag' : 'parallel') : s.live.process;
+  let roster = [];
+  if (s.live.roster === 'preset' && preset && Array.isArray(preset.agents)) {
+    const seen = new Set();
+    for (const [i, p] of preset.agents.slice(0, 100).entries()) {
+      const a = presetAgent(p, i);
+      if (a && !seen.has(a.def.key)) { seen.add(a.def.key); roster.push(a); }
+    }
+  }
+  if (!roster.length) {
+    const used = new Set(order.map((t) => t.role));
+    roster = ROLE_KEYS.filter((r) => used.has(r)).map((r) => {
+      const def = { key: r, name: ROLES[r].label, role: ROLES[r].label, goal: s.roles[r].goal };
+      if (s.live.models[r]) def.llm_model = s.live.models[r];
+      return { def, view: r };
+    });
+  }
+  const objective = s.objective.trim();
+  const tasks = order.map((t) => {
+    const o = {
+      description: (objective ? 'Mission: ' + objective + '\nTask: ' : '') + t.title,
+      expected_output: EXPECTED_OUTPUT[t.kind] || EXPECTED_OUTPUT.work, priority: PRIORITY_WIRE[clamp(t.priority || 2, 1, 4)],
+    };
+    const d = t.difficulty || 1;
+    if (d >= 10) o.risk = 'high'; else if (d > 1.2) o.risk = 'medium';
+    if (process === 'dag') {
+      const deps = (t.deps || []).map((k) => pos.get(k)).filter((x) => x !== undefined);
+      if (deps.length) o.dependencies = deps;
+    }
+    return o;
+  });
+  const request = { name: s.name, process, agents: roster.map((a) => a.def), tasks };
+  if (process === 'parallel') request.max_concurrency = s.live.maxConcurrency;
+  return {
+    request,
+    plan: {
+      process,
+      tasks: order.map((t, i) => ({ idx: i, key: t.key, title: t.title, role: t.role, kind: t.kind || 'work', priority: t.priority || 1,
+        deps: process === 'parallel' ? [] : (t.deps || []).filter((k) => pos.has(k)), description: tasks[i].description })),
+      agents: roster.map((a) => ({ key: a.def.key, name: a.def.name || a.def.key, role: a.view, model: a.def.llm_model || '' })),
+    },
+  };
+}
 
 /* =====================================================================================
  *  SECTION 3 · EVENTSOURCE IMPLEMENTATIONS (+ matching CommandSinks)
@@ -1685,6 +2575,331 @@ class WebSocketCommandSink extends CommandSink {
       setTimeout(() => { if (this.source.acks.delete(cmd.id)) resolve({ ok: false, message: 'Timed out waiting for ack' }); }, 5000);
     });
   }
+}
+
+/**
+ * LiveCrewSource — drives the view from a real agnostic crew, through the host bridge.
+ *
+ * agnostic reports a crew as a polled snapshot, not a stream: GET /crews/{id}/events answers the
+ * crew's retained event window (its newest 256 events), so each poll is matched against the last
+ * one and only what is new gets mapped (fresh()). The roster, the tasks and one tool structure
+ * are known up front from the request; engine events then move them:
+ *
+ *     crew_started   → the orchestrator reports the run
+ *     task_started   → a unit of the chosen agent walks to the task and works it (a clone when the
+ *                      agent is already busy — a parallel crew runs one agent on several tasks)
+ *     token          → the task's output (the engine sends the whole text as one token event)
+ *     task_completed → task done or failed; the unit returns to HQ (a clone retires)
+ *     crew_completed → the outcome (GET /crews/{id}) fills in what the window missed; mission over
+ *
+ * Nothing on the wire counts tokens or dollars, so tokens are estimated from the output length
+ * (≈ 4 characters each) and the cost is reported as unknown — never as a simulated number.
+ */
+const CREW_TERMINAL = new Set(['completed', 'failed', 'cancelled', 'unknown']);
+class LiveCrewSource extends EventSource {
+  constructor(host, spec, built, opts = {}) {
+    super();
+    this.capabilities = { pause: false, speed: false, seek: false, commands: false };
+    this.host = host;
+    this.spec = spec;
+    this.request = built.request;
+    this.plan = built.plan;
+    this.crewId = opts.crewId || null;
+    this.onSubmitted = opts.onSubmitted || null; // (crewId, engineMode) — the run is real from here on
+    this.onFinished = opts.onFinished || null;   // (status, summary)
+    this.t0 = 0;
+    this.seq = 0;
+    this.timer = 0;
+    this.stopped = false;
+    this.finished = false;
+    this.misses = 0;
+    this.status = this.crewId ? 'pending' : 'submitting';
+    this.engineMode = '';
+    this.dropped = 0;
+    this.prevSigs = [];
+    this.byEngine = new Map();     // engine task id → plan task
+    this.outputs = new Map();      // engine task id → output seen before its task was bound
+    this.unitTokens = {};
+    this.tokens = 0;
+    this.peak = 0;
+    this.wallMs = 0;
+    this.sawEnd = false;
+    this.tasks = this.plan.tasks.map((t) => Object.assign({}, t, { id: 't' + t.idx, engineId: null, status: 'pending', output: '', startedAt: 0, agentKey: null, unit: null }));
+    this.byKey = new Map(this.tasks.map((t) => [t.key, t]));
+    this.agents = new Map(this.plan.agents.map((a) => [a.key, Object.assign({}, a, { id: 'ag-' + a.key, busyMain: false, clones: 0 })]));
+  }
+  now() { return this.t0 ? performance.now() - this.t0 : 0; }
+  ts() { return Math.round(this.now()); }
+  emit(type, agentId, taskId, payload) {
+    const e = { id: 'L' + ++this.seq, type, timestamp: this.ts(), territory: type === 'resource.tick' ? 'global' : 'local', payload: payload || {} };
+    if (agentId) e.agentId = agentId;
+    if (taskId) e.taskId = taskId;
+    this._emit(e);
+  }
+  say(step) { this.emit('agent.state_changed', 'orch', null, { state: this.finished ? 'done' : 'working', step }); }
+  start() {
+    this.t0 = performance.now();
+    this.boot();
+    if (this.crewId) this.poll(); else this.submit();
+  }
+  stop() { this.stopped = true; clearTimeout(this.timer); }
+  boot() {
+    this.emit('agent.spawned', 'orch', null, {
+      name: 'agnostic', role: 'orchestrator', model: 'crew · ' + this.plan.process, health: 100, spawnAt: { kind: 'hq' },
+      mission: { title: this.spec.name, scenario: 'live', objective: this.spec.objective, budget: 0, seed: 0, kind: 'live', specId: this.spec.id, crewId: this.crewId || '' },
+      world: {
+        territories: [{ id: 'local', name: 'agnostic', region: 'this server', kind: 'local', cap: this.agents.size, costPerSec: 0, speed: 1, latencyMs: {} }],
+        tools: [{ id: 'local.llm', kind: 'llm', name: 'LLM gateway', territory: 'local' }],
+      },
+    });
+    for (const t of this.tasks) {
+      this.emit('task.created', null, t.id, { title: t.title, role: t.role, deps: t.deps.map((k) => this.byKey.get(k).id), work: 1, kind: t.kind, priority: t.priority });
+    }
+    for (const a of this.agents.values()) this.emit('agent.spawned', a.id, null, { name: a.name, role: a.role, model: a.model || 'server default', health: 100, spawnAt: { kind: 'hq' } });
+    this.say(this.crewId ? 'Reattaching to crew ' + this.crewId.slice(0, 8) : 'Submitting the crew to agnostic');
+  }
+  async submit() {
+    const r = await this.host.request('POST', '/api/v1/crews', this.request);
+    if (this.stopped) return;
+    const d = r.data && typeof r.data === 'object' ? r.data : {};
+    if (r.status !== 202 || typeof d.crew_id !== 'string' || !RE_CREW_ID.test(d.crew_id)) {
+      this.fail(r.status ? 'agnostic refused the crew (' + r.status + '): ' + errOf(r) : 'Could not reach agnostic: ' + errOf(r));
+      return;
+    }
+    this.crewId = d.crew_id.toLowerCase();
+    this.engineMode = typeof d.engine_mode === 'string' ? d.engine_mode : '';
+    this.status = typeof d.status === 'string' ? d.status : 'pending';
+    if (this.onSubmitted) this.onSubmitted(this.crewId, this.engineMode);
+    this.say('Crew ' + this.crewId.slice(0, 8) + ' accepted' + (this.engineMode === 'placeholder' ? ' — placeholder engine: no LLM gateway is configured, outputs are echoes' : ''));
+    this.schedule(400);
+  }
+  schedule(ms) { if (!this.stopped && !this.finished) { clearTimeout(this.timer); this.timer = setTimeout(() => this.poll(), ms); } }
+  async poll() {
+    if (this.stopped || this.finished) return;
+    const r = await this.host.request('GET', '/api/v1/crews/' + this.crewId + '/events');
+    if (this.stopped || this.finished) return;
+    if (r.status === 404) { this.finalize(); return; } // gone from the ledger; the outcome store may still have it
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.events)) {
+      if (++this.misses >= 6) { this.fail('Lost contact with crew ' + this.crewId.slice(0, 8) + ': ' + errOf(r)); return; }
+      this.schedule(Math.min(10000, 1000 * 2 ** this.misses));
+      return;
+    }
+    this.misses = 0;
+    for (const ev of this.fresh(r.data.events)) this.map(ev);
+    this.dropped = Number.isInteger(r.data.dropped_events) ? r.data.dropped_events : this.dropped;
+    if (typeof r.data.status === 'string') this.status = r.data.status;
+    this.tick();
+    // crew_completed is final even if a status were to lag behind it
+    if (CREW_TERMINAL.has(this.status) || this.sawEnd) { this.finalize(); return; }
+    this.schedule(1000);
+  }
+  /** The events in `events` not seen by the last poll. The window only ever loses its oldest events. */
+  fresh(events) {
+    const sigs = events.map((e) => { try { return JSON.stringify(e); } catch (err) { return '?'; } });
+    const prev = this.prevSigs;
+    let start = 0;
+    if (prev.length) {
+      start = -1;
+      for (let e = 0; e < prev.length && start < 0; e++) {
+        const n = prev.length - e;
+        if (n > sigs.length) continue;
+        let ok = true;
+        for (let i = 0; ok && i < n; i++) if (prev[e + i] !== sigs[i]) ok = false;
+        if (ok) start = n;
+      }
+      if (start < 0) start = 0; // nothing overlaps: more than a window's worth arrived since the last poll
+    }
+    this.prevSigs = sigs;
+    return events.slice(start);
+  }
+  map(ev) {
+    if (!ev || typeof ev !== 'object' || typeof ev.type !== 'string') return;
+    const d = ev.data && typeof ev.data === 'object' && !Array.isArray(ev.data) ? ev.data : {};
+    const tid = typeof d.task_id === 'string' ? d.task_id : null;
+    switch (ev.type) {
+      case 'crew_started': this.status = 'running'; this.say('Crew running · ' + (Number.isInteger(d.task_count) ? d.task_count : this.tasks.length) + ' tasks · ' + this.plan.process); break;
+      case 'task_started': this.taskStarted(tid, typeof d.description === 'string' ? d.description : '', d.agent); break;
+      case 'token': this.token(tid, typeof d.token === 'string' ? d.token : ''); break;
+      case 'task_completed': {
+        const t = tid && this.byEngine.get(tid);
+        if (t) this.resolve(t, typeof d.status === 'string' ? d.status : 'completed');
+        break;
+      }
+      case 'crew_completed':
+        this.sawEnd = true;
+        if (Number.isInteger(d.wall_ms) && d.wall_ms >= 0) this.wallMs = d.wall_ms;
+        this.say('Crew ' + (typeof d.status === 'string' ? d.status : 'finished') + ' — collecting the results');
+        break;
+      default:
+        if (/error|fail/i.test(ev.type)) {
+          this.emit('agent.error', 'orch', null, { code: 'ENGINE', message: oneLine(d.message || d.error || ev.type, 200), damage: 0, health: 100, fatal: false });
+        }
+    }
+  }
+  /** The plan task an engine task is: by id once bound, else by description, else a new one. */
+  bind(engineId, description) {
+    let t = engineId ? this.byEngine.get(engineId) : null;
+    if (t) return t;
+    t = this.tasks.find((x) => !x.engineId && x.description === description) || null;
+    if (!t) {
+      // The engine is running a task the plan does not know: the swarm changed since this crew started.
+      const idx = this.tasks.length;
+      t = { idx, key: 'x' + idx, title: oneLine(description.replace(/^Mission:[^\n]*\n(Task: )?/, ''), 90) || 'Task ' + (idx + 1), role: 'coder', kind: 'work', priority: 2, deps: [],
+        description, id: 't' + idx, engineId: null, status: 'pending', output: '', startedAt: 0, agentKey: null, unit: null };
+      this.tasks.push(t);
+      this.emit('task.created', null, t.id, { title: t.title, role: t.role, deps: [], work: 1, kind: 'work', priority: 2 });
+    }
+    if (engineId) { t.engineId = engineId; this.byEngine.set(engineId, t); }
+    return t;
+  }
+  agentFor(key) {
+    if (typeof key !== 'string' || !key) return null;
+    let a = this.agents.get(key);
+    if (!a) {
+      a = { key, name: key, role: guessRole(key), model: '', id: 'ag-' + (key.replace(/[^A-Za-z0-9-]/g, '').slice(0, 40) || 'agent'), busyMain: false, clones: 0 };
+      this.agents.set(key, a);
+      this.emit('agent.spawned', a.id, null, { name: a.name, role: a.role, model: 'server default', health: 100, spawnAt: { kind: 'hq' } });
+    }
+    return a;
+  }
+  taskStarted(engineId, description, agentKey) {
+    const t = this.bind(engineId, description);
+    if (t.status !== 'pending') return;
+    t.status = 'active';
+    t.startedAt = this.ts();
+    const a = this.agentFor(agentKey);
+    if (!a) return; // no agent could take it — the engine fails it
+    t.agentKey = a.key;
+    if (!a.busyMain) { a.busyMain = true; t.unit = { id: a.id, clone: false }; }
+    else {
+      const id = a.id + '-' + ++a.clones;
+      this.emit('agent.spawned', id, null, { name: a.name + ' #' + (a.clones + 1), role: a.role, model: a.model || 'server default', parentId: a.id, health: 100, spawnAt: { kind: 'agent', id: a.id } });
+      t.unit = { id, clone: true };
+    }
+    this.emit('agent.moved', t.unit.id, t.id, { to: { kind: 'task', id: t.id }, durationMs: 900, reason: 'task' });
+    this.emit('task.assigned', t.unit.id, t.id, { mode: 'auto' });
+    this.emit('agent.state_changed', t.unit.id, null, { state: 'working', step: t.title, taskId: t.id, expectedMs: 0 });
+    let active = 0;
+    for (const x of this.tasks) if (x.status === 'active') active++;
+    this.peak = Math.max(this.peak, active);
+  }
+  token(engineId, text) {
+    const t = engineId && this.byEngine.get(engineId);
+    if (!t) { if (engineId) this.outputs.set(engineId, (this.outputs.get(engineId) || '') + text); return; }
+    t.output += text;
+    const n = Math.ceil(text.length / 4);
+    this.tokens += n;
+    if (t.unit) {
+      this.unitTokens[t.unit.id] = (this.unitTokens[t.unit.id] || 0) + n;
+      this.emit('agent.message', t.unit.id, t.id, { to: 'orch', kind: 'result', text: oneLine(text, 80) || '(empty output)', durationMs: 900 });
+    }
+  }
+  resolve(t, status, output) {
+    if (t.status === 'done' || t.status === 'failed') return;
+    if (output && !t.output) { t.output = output; this.tokens += Math.ceil(output.length / 4); }
+    const ok = status === 'completed';
+    t.status = ok ? 'done' : 'failed';
+    const who = t.unit ? t.unit.id : null;
+    if (ok) this.emit('task.completed', who, t.id, { result: oneLine(t.output, 140) || 'completed', durationMs: t.startedAt ? this.ts() - t.startedAt : 0 });
+    else this.emit('task.failed', null, t.id, { reason: status === 'cancelled' ? 'Cancelled' : status === 'not run' ? 'Never ran' : 'The engine reported ' + status, attempts: 1 });
+    const u = t.unit;
+    t.unit = null;
+    if (!u) return;
+    if (u.clone) this.emit('agent.completed', u.id, null, { result: ok ? 'Task done' : 'Task ' + status, tokens: this.unitTokens[u.id] || 0, cost: 0 });
+    else {
+      const a = this.agents.get(t.agentKey);
+      if (a) a.busyMain = false;
+      this.emit('agent.moved', u.id, null, { to: { kind: 'hq' }, durationMs: 900, reason: 'recall' });
+      this.emit('agent.state_changed', u.id, null, { state: 'idle', step: 'Awaiting the next task', taskId: null });
+    }
+  }
+  tick() {
+    let active = 0;
+    for (const t of this.tasks) if (t.status === 'active') active++;
+    const agents = {};
+    for (const id in this.unitTokens) agents[id] = [this.unitTokens[id], 0];
+    const cap = Math.max(active, this.agents.size);
+    this.emit('resource.tick', null, null, {
+      tokens: this.tokens, tokensPerSec: Math.round(this.tokens / Math.max(1, this.now() / 1000)), cost: 0, costPerSec: 0, budget: 0, active, cap,
+      byTerritory: { local: { active, cap, tokens: this.tokens, cost: 0, costPerSec: 0 } }, agents,
+    });
+  }
+  /** The crew is over (or its events are gone): read the outcome, settle every task, end the mission. */
+  async finalize() {
+    if (this.finished || this.stopped) return;
+    const r = await this.host.request('GET', '/api/v1/crews/' + this.crewId);
+    if (this.stopped || this.finished) return;
+    const d = r.data && typeof r.data === 'object' ? r.data : null;
+    if (r.status === 200 && d) {
+      const st = typeof d.status === 'string' ? d.status : 'unknown';
+      if (typeof d.engine_mode === 'string') this.engineMode = d.engine_mode;
+      if (!CREW_TERMINAL.has(st)) {
+        // Still running, but its event window is gone: follow the status alone.
+        this.status = st;
+        this.say('Crew ' + st + ' · progress events are no longer available');
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => this.finalize(), 2000);
+        return;
+      }
+      for (const res of Array.isArray(d.results) ? d.results : []) {
+        if (!res || typeof res !== 'object') continue;
+        const id = typeof res.task_id === 'string' ? res.task_id : null;
+        let t = id ? this.byEngine.get(id) : null;
+        if (!t) {
+          // Its task_started fell out of the window: bind in plan order.
+          t = this.tasks.find((x) => !x.engineId && x.status === 'pending') || null;
+          if (t && id) { t.engineId = id; this.byEngine.set(id, t); }
+        }
+        if (!t) continue;
+        const out = typeof res.output === 'string' ? res.output : (id && this.outputs.get(id)) || '';
+        // Parallel and DAG crews publish no token events: their outputs arrive only here,
+        // often for tasks a task_completed event already settled.
+        if (out && !t.output && (t.status === 'done' || t.status === 'failed')) { t.output = out; this.tokens += Math.ceil(out.length / 4); }
+        this.resolve(t, typeof res.status === 'string' ? res.status : st === 'completed' ? 'completed' : 'failed', out);
+      }
+      for (const t of this.tasks) if (t.status === 'pending' || t.status === 'active') this.resolve(t, st === 'cancelled' ? 'cancelled' : 'not run');
+      this.finish(st, typeof d.error === 'string' ? d.error : '');
+      return;
+    }
+    if (r.status === 404) { this.fail('agnostic no longer holds crew ' + this.crewId.slice(0, 8) + ', and kept no outcome for it'); return; }
+    if (++this.misses >= 6) { this.fail('Could not read the outcome of crew ' + this.crewId.slice(0, 8) + ': ' + errOf(r)); return; }
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.finalize(), 2000);
+  }
+  finish(status, error) {
+    if (this.finished) return;
+    this.status = status;
+    this.tick();
+    this.finished = true;
+    clearTimeout(this.timer);
+    for (const a of this.agents.values()) this.emit('agent.completed', a.id, null, { result: 'Crew ' + status, tokens: this.unitTokens[a.id] || 0, cost: 0 });
+    let done = 0, failed = 0;
+    for (const t of this.tasks) { if (t.status === 'done') done++; else failed++; }
+    // The crew's own wall time when the engine reported it; otherwise how long this view watched.
+    const summary = { live: true, status, error: error || '', engineMode: this.engineMode, crewId: this.crewId || '', process: this.plan.process,
+      durationMs: this.wallMs || this.ts(), wallMs: this.wallMs || 0, tokens: this.tokens, cost: 0, tasksDone: done, tasksFailed: failed,
+      spawned: this.agents.size, peak: this.peak, dropped: this.dropped };
+    this.emit('agent.completed', 'orch', null, { result: 'Crew ' + status, tokens: this.tokens, cost: 0, summary });
+    this.ended = true;
+    if (this.onFinished) this.onFinished(status, summary);
+  }
+  fail(message) {
+    if (this.finished) return;
+    this.emit('agent.error', 'orch', null, { code: 'CREW', message, damage: 0, health: 100, fatal: false });
+    for (const t of this.tasks) if (t.status === 'pending' || t.status === 'active') this.resolve(t, 'not run');
+    this.finish(this.crewId ? 'lost' : 'refused', message);
+  }
+  async cancel() {
+    if (!this.crewId || this.finished) return { ok: false, message: 'There is no running crew to cancel' };
+    const r = await this.host.request('POST', '/api/v1/crews/' + this.crewId + '/cancel');
+    if (r.status === 200) { this.say('Cancelling the crew'); this.schedule(300); return { ok: true, message: 'Crew cancelled' }; }
+    if (r.status === 409) return { ok: false, message: 'The crew has already finished' };
+    return { ok: false, message: 'Could not cancel: ' + errOf(r) };
+  }
+}
+/** A live crew takes no unit orders: agnostic has no per-agent controls. */
+class LiveCommandSink extends CommandSink {
+  send() { return Promise.resolve({ ok: false, message: 'A live crew takes no unit orders — Cancel crew is the one control agnostic has' }); }
 }
 
 /* =====================================================================================
@@ -3456,7 +4671,7 @@ const COMMANDS = [
 const STATE_LABEL = { idle: 'idle', moving: 'moving', working: 'working', error: 'error', paused: 'paused', done: 'done', dead: 'terminated' };
 
 class HUD {
-  constructor(app, catalog) {
+  constructor(app) {
     this.app = app;
     this.store = app.store;
     this.ui = app.ui;
@@ -3464,7 +4679,7 @@ class HUD {
       tps: $('r-tps'), tokens: $('r-tokens'), cost: $('r-cost'), budget: $('r-budget'), agents: $('r-agents'), tasks: $('r-tasks'), time: $('r-time'),
       speed: $('speed'), fps: $('fps'), mission: $('mission-title'), sel: $('selection'), cmds: $('commands'), feed: $('feed'), feedList: $('feed-list'),
       feedCount: $('feed-count'), tooltip: $('tooltip'), toast: $('toast'), hint: $('hint'), replay: $('replay-bar'), scrub: $('rp-scrub'),
-      rpTime: $('rp-time'), rpPlay: $('rp-play'), help: $('help'), legend: $('legend'),
+      rpTime: $('rp-time'), rpPlay: $('rp-play'), help: $('help'), legend: $('legend'), srcTag: $('src-tag'), cancel: $('btn-cancel'),
     };
     this.spark = this.el.tps.querySelector('canvas');
     this.feedCats = new Set(['agent', 'task', 'tool', 'msg', 'error']);
@@ -3474,7 +4689,6 @@ class HUD {
     this.selKey = null;
     this.cmdKey = null;
     this.next = { top: 0, sel: 0, feed: 0, tip: 0 };
-    this.buildScenarioCards(catalog);
     this.buildLegend();
     this.buildHelp();
     this.bindTopbar();
@@ -3506,6 +4720,7 @@ class HUD {
     $('btn-replay').onclick = () => (this.app.mode === 'replay' ? this.app.exitReplay() : this.app.enterReplay(false));
     $('btn-help').onclick = () => this.toggleHelp();
     $('btn-menu').onclick = () => this.app.showMenu();
+    this.el.cancel.onclick = () => this.app.cancelCrew();
   }
   updateTop(now) {
     const s = this.store, r = s.resources, el = this.el;
@@ -3518,6 +4733,7 @@ class HUD {
     el.budget.querySelector('i').style.width = (frac * 100).toFixed(1) + '%';
     el.budget.querySelector('.v2').textContent = r.budget ? fmtCost(left) + ' of ' + fmtCost(r.budget, 0) : '—';
     el.budget.classList.toggle('low', frac < 0.25);
+    el.budget.classList.toggle('none', !r.budget);
     let la = 0, lc = 0, ca = 0, cc = 0;
     for (const t of s.territories.values()) {
       if (t.kind === 'local') { la += t.active || 0; lc += t.cap || 0; } else { ca += t.active || 0; cc += t.cap || 0; }
@@ -3530,6 +4746,17 @@ class HUD {
     const end = s.mission.status === 'complete' ? s.mission.endedAt : now;
     el.time.querySelector('.v').textContent = s.mission.status === 'idle' ? '00:00' : fmtTime(end - (s.mission.startedAt || 0));
     el.mission.textContent = s.mission.title || '';
+    // Every mission says what it is: a simulation, a real crew, or a replay of either.
+    const live = s.mission.kind === 'live';
+    const tag = this.app.mode === 'replay' ? 'replay' : live ? 'live' : 'sim';
+    el.srcTag.className = 'src-tag ' + tag;
+    el.srcTag.textContent = tag === 'replay' ? (live ? 'REPLAY · LIVE' : 'REPLAY · SIM') : live ? 'LIVE' : 'SIM';
+    el.srcTag.title = tag === 'replay' ? 'A replay of the recorded event log' : live ? 'A real crew on this agnostic server' : 'Simulated — no agent ran';
+    el.cost.querySelector('.v').textContent = live ? 'n/a' : fmtCost(r.cost);
+    if (live) el.cost.querySelector('small').textContent = 'not reported';
+    el.cost.title = live ? 'agnostic does not report token cost for a crew' : 'Estimated spend: model tokens + per-second compute';
+    const lsrc = this.app.live && this.app.live.source;
+    el.cancel.classList.toggle('hidden', !(this.app.mode === 'live' && lsrc instanceof LiveCrewSource && !lsrc.finished && lsrc.crewId));
     const src = this.app.source;
     el.speed.classList.toggle('disabled', !src || !src.capabilities.speed || this.app.mode === 'menu');
     for (const b of el.speed.querySelectorAll('button')) {
@@ -3599,8 +4826,8 @@ class HUD {
     const ui = this.ui, app = this.app, s = this.store;
     const ids = app.controllable();
     const live = app.mode === 'live' && s.mission.status !== 'complete';
-    const enabled = live && ids.length > 0;
-    const why = app.mode === 'replay' ? 'Replay is read-only' : !live ? 'Mission is not running' : 'Select agents first';
+    const enabled = live && app.canCommand() && ids.length > 0;
+    const why = app.mode === 'replay' ? 'Replay is read-only' : !live ? 'Mission is not running' : !app.canCommand() ? 'A live crew takes no unit orders' : 'Select agents first';
     let key, html = '';
     if (ui.migrateMenu && enabled) {
       const here = new Set(ids.map((id) => s.agents.get(id).territory));
@@ -3711,22 +4938,18 @@ class HUD {
   setHint(text) { const h = this.el.hint; h.classList.toggle('hidden', !text); if (text) h.textContent = text; }
 
   /* ---------- start / summary screens ---------- */
-  buildScenarioCards(catalog) {
-    const wrap = $('scenario-cards');
-    wrap.innerHTML = catalog.map((sc) => '<div class="card"><h3><span class="ico">' + sc.icon + '</span>' + escapeHtml(sc.name) + '</h3><p>' + escapeHtml(sc.desc) + '</p>'
-      + '<div class="tags">' + sc.tags.map((t) => '<span>' + escapeHtml(t) + '</span>').join('') + '</div><button class="go" data-key="' + sc.key + '">DEPLOY ▸</button></div>').join('');
-    wrap.addEventListener('click', (e) => {
-      const b = e.target.closest('button.go');
-      if (b) this.app.startScenario(b.dataset.key, Math.floor(+$('opt-seed').value) || 1, +$('opt-scale').value || 1);
-    });
-    $('opt-load').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) this.app.loadLogFile(f); e.target.value = ''; });
+  showStart(v) {
+    $('start-screen').classList.toggle('hidden', !v);
+    if (v) this.app.launcher.render();
   }
-  showStart(v) { $('start-screen').classList.toggle('hidden', !v); }
   showSummary(sum) {
     const box = $('summary-screen');
     if (!sum) { box.classList.add('hidden'); return; }
     const m = this.store.mission;
     const stat = (label, v, sub) => '<div class="stat"><label>' + label + '</label><div class="v">' + v + '</div><small>' + sub + '</small></div>';
+    if (m.kind === 'live') { this.showLiveSummary(sum, m, stat, box); return; }
+    const run = this.app.live || {};
+    const saved = !!(run.spec && this.app.library.get(run.spec.id));
     const split = (label, l, c, fmt) => {
       const t = l + c || 1;
       return '<div class="split-row"><span>' + label + '</span><div class="bar" style="display:flex"><i style="width:' + ((l / t) * 100).toFixed(1) + '%;background:#2dd4bf"></i><i style="width:'
@@ -3735,7 +4958,7 @@ class HUD {
     const secs = Math.max(1, sum.durationMs / 1000);
     const roles = ROLE_KEYS.filter((k) => sum.roleCounts[k]).map((k) => '<span style="color:' + ROLES[k].color + '">' + ROLES[k].label + ' ' + sum.roleCounts[k] + '</span>').join(' · ');
     $('summary-inner').innerHTML = '<div class="ov-title">MISSION <b>COMPLETE</b></div>'
-      + '<div class="ov-sub">' + escapeHtml(m.title) + ' — ' + escapeHtml(m.objective) + (m.seed ? ' · seed ' + m.seed : '') + '</div>'
+      + '<div class="ov-sub"><span class="src-tag sim">SIMULATED</span>' + escapeHtml(m.title) + ' — ' + escapeHtml(m.objective) + (m.seed ? ' · seed ' + m.seed : '') + '</div>'
       + '<div class="sum-grid">'
       + stat('DURATION', fmtTime(sum.durationMs), 'simulated time')
       + stat('TOKENS', fmtTokens(sum.tokens), fmtTokens(sum.tokens / secs) + '/s average')
@@ -3748,18 +4971,54 @@ class HUD {
       + '</div><div class="split-box"><div class="panel-title">LOCAL VS CLOUD</div>'
       + split('Agents', sum.localAgents, sum.cloudAgents, String) + split('Tokens', sum.localTok, sum.cloudTok, fmtTokens) + split('Cost', sum.localCost, sum.cloudCost, (x) => fmtCost(x))
       + '<div class="split-row" style="grid-template-columns:90px 1fr"><span>Roles</span><span>' + roles + '</span></div></div>'
-      + '<div class="sum-actions"><button class="primary" data-act="replay">⟲ Watch replay</button><button data-act="again">↻ Run again</button>'
-      + '<button data-act="menu">☰ New mission</button><button data-act="export">⤓ Export log</button><button data-act="close">Close</button></div>';
+      + '<div class="sum-actions"><button class="primary" data-act="replay">⟲ Watch replay</button><button data-act="again" title="Same swarm, same seed">↻ Run again</button>'
+      + '<button data-act="reseed" title="Same swarm, a new seed">⚄ New seed</button>'
+      + (run.spec ? (saved ? '<button data-act="edit">✎ Edit swarm</button>' : '<button data-act="save">＋ Save as swarm</button>') : '')
+      + '<button data-act="menu">☰ Swarms</button><button data-act="export">⤓ Export log</button><button data-act="close">Close</button></div>';
+    this.bindSummary(box);
+    box.classList.remove('hidden');
+  }
+  bindSummary(box) {
     box.onclick = (e) => {
       const b = e.target.closest('button[data-act]');
       if (!b) return;
       const act = b.dataset.act;
       if (act === 'replay') this.app.enterReplay(true);
-      else if (act === 'again') this.app.runAgain();
+      else if (act === 'again') this.app.runAgain(false);
+      else if (act === 'reseed') this.app.runAgain(true);
+      else if (act === 'edit' || act === 'save') this.app.editRunSpec();
       else if (act === 'menu') this.app.showMenu();
       else if (act === 'export') this.app.exportLog();
       else box.classList.add('hidden');
     };
+  }
+  /** A real crew's summary: what agnostic reported, with nothing simulated mixed in. */
+  showLiveSummary(sum, m, stat, box) {
+    const ls = m.summary || {};
+    const run = this.app.live || {};
+    const spec = run.spec && (this.app.library.get(run.spec.id) || run.spec);
+    const est = spec && spec.estimate;
+    const status = String(ls.status || 'finished');
+    const good = status === 'completed';
+    const head = { completed: 'CREW <b>COMPLETED</b>', failed: 'CREW <b>FAILED</b>', cancelled: 'CREW <b>CANCELLED</b>', refused: 'CREW <b>REFUSED</b>', lost: 'CREW <b>LOST</b>' }[status] || 'CREW <b>' + escapeHtml(status.toUpperCase()) + '</b>';
+    const total = (ls.tasksDone || 0) + (ls.tasksFailed || 0);
+    $('summary-inner').innerHTML = '<div class="ov-title"' + (good ? '' : ' style="color:#fca5a5"') + '>' + head + '</div>'
+      + '<div class="ov-sub"><span class="src-tag live">LIVE</span>' + escapeHtml(m.title) + (ls.crewId ? ' · crew <span class="mono">' + escapeHtml(ls.crewId) + '</span>' : '') + '</div>'
+      + (ls.error ? '<div class="ov-sub" style="color:#fca5a5;margin-top:-14px">' + escapeHtml(ls.error) + '</div>' : '')
+      + '<div class="sum-grid">'
+      + stat('DURATION', fmtTime(ls.durationMs || sum.durationMs), 'wall-clock time')
+      + stat('TASKS', (ls.tasksDone || 0) + ' / ' + total, (ls.tasksFailed || 0) + ' not completed')
+      + stat('AGENTS', ls.spawned || 0, 'peak ' + (ls.peak || 0) + ' tasks at once · ' + escapeHtml(ls.process || ''))
+      + stat('ENGINE', escapeHtml(ls.engineMode || '?'), ls.engineMode === 'placeholder' ? 'no LLM gateway — outputs are echoes' : 'as reported by agnostic')
+      + stat('OUTPUT', '≈ ' + fmtTokens(ls.tokens || 0), 'tokens, estimated from output length')
+      + stat('COST', 'n/a', 'agnostic does not report token cost')
+      + stat('SIMULATED EST.', est ? fmtCost(est.cost.p50) : '—', est ? 'p50 of ' + est.runs + ' simulated runs' : 'estimate the swarm to compare')
+      + stat('EVENTS LOST', ls.dropped || 0, ls.dropped ? 'the crew’s event window overflowed' : 'every progress event arrived')
+      + '</div>'
+      + '<div class="sum-actions"><button class="primary" data-act="replay">⟲ Watch replay</button>'
+      + (spec ? '<button data-act="again" title="Submit this swarm to agnostic again">⚡ Run live again</button>' : '')
+      + '<button data-act="menu">☰ Swarms</button><button data-act="export">⤓ Export log</button><button data-act="close">Close</button></div>';
+    this.bindSummary(box);
     box.classList.remove('hidden');
   }
 }
@@ -4051,6 +5310,869 @@ Object.assign(HUD.prototype, {
 });
 
 /* =====================================================================================
+ *  SECTION 6b · LAUNCHER, EDITOR & LIBRARY — the swarms you keep, and the page that edits them
+ * ===================================================================================== */
+const ESTIMATE_RUNS = 8;
+
+/** A confirm dialog. The iframe sandbox has no allow-modals, so window.confirm() is not available. */
+class Modal {
+  constructor() {
+    this.el = $('modal');
+    this.resolve = null;
+    $('modal-yes').addEventListener('click', () => this.close(true));
+    $('modal-no').addEventListener('click', () => this.close(false));
+    this.el.addEventListener('mousedown', (e) => { if (e.target === this.el) this.close(false); });
+    window.addEventListener('keydown', (e) => {
+      if (!this.isOpen()) return;
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.close(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); this.close(true); }
+    }, true);
+  }
+  isOpen() { return !this.el.classList.contains('hidden'); }
+  /** Resolves true for yes. `html` is trusted markup: callers escape what they interpolate. */
+  confirm(title, html, { yes = 'OK', no = 'Cancel', danger = false } = {}) {
+    if (this.resolve) this.close(false);
+    $('modal-title').textContent = title;
+    $('modal-body').innerHTML = html;
+    const y = $('modal-yes'), n = $('modal-no');
+    y.textContent = yes;
+    y.className = 'lbtn ' + (danger ? 'danger' : 'primary');
+    n.textContent = no || '';
+    n.classList.toggle('hidden', !no);
+    this.el.classList.remove('hidden');
+    y.focus();
+    return new Promise((r) => { this.resolve = r; });
+  }
+  close(v) {
+    this.el.classList.add('hidden');
+    const r = this.resolve;
+    this.resolve = null;
+    if (r) r(v);
+  }
+}
+
+/** localStorage for a page opened on its own; null where storage is unavailable (a sandboxed frame). */
+function browserStore() {
+  try {
+    const ls = window.localStorage, K = 'swarm-command.specs';
+    ls.getItem(K);
+    return {
+      read() { try { const v = JSON.parse(ls.getItem(K) || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch (err) { return {}; } },
+      write(v) { try { ls.setItem(K, JSON.stringify(v)); return true; } catch (err) { return false; } },
+    };
+  } catch (err) { return null; }
+}
+
+/**
+ * SwarmLibrary — the saved swarms. Inside agnostic they are this plugin's documents on the
+ * server, in the caller's tenant (key swarm-<id>, one spec each); opened on its own the page keeps
+ * them in this browser; with neither, they last for the session.
+ */
+class SwarmLibrary {
+  constructor(host) {
+    this.host = host;
+    this.specs = new Map();
+    this.state = 'idle'; // 'idle' | 'loading' | 'ready' | 'error'
+    this.error = '';
+    this.scope = '';
+    this.skipped = 0;
+    this.seq = 0;
+    this.listeners = new Set();
+  }
+  onChange(fn) { this.listeners.add(fn); }
+  changed() { for (const fn of this.listeners) fn(); }
+  /** 'server' | 'browser' | 'none' (this session only) | 'pending' (the shell has not answered yet). */
+  backend() {
+    if (this.host.mode === 'connected') return this.host.can('storage') ? 'server' : 'none';
+    if (this.host.mode === 'standalone') return browserStore() ? 'browser' : 'none';
+    return 'pending';
+  }
+  get(id) { return this.specs.get(id) || null; }
+  list() { return [...this.specs.values()].sort((a, b) => b.updated - a.updated); }
+  docPath(key) { return '/api/v1/plugins/' + this.host.pluginId() + '/data' + (key ? '/' + key : ''); }
+  async load() {
+    const seq = ++this.seq, be = this.backend();
+    this.error = '';
+    this.skipped = 0;
+    if (be === 'pending') { this.state = 'loading'; this.changed(); return; }
+    if (be === 'none') { this.state = 'ready'; this.changed(); return; }
+    if (be === 'browser') {
+      this.specs.clear();
+      for (const raw of Object.values(browserStore().read())) { const s = normalizeSpec(raw); if (s) this.specs.set(s.id, s); else this.skipped++; }
+      this.state = 'ready';
+      this.changed();
+      return;
+    }
+    this.state = 'loading';
+    this.changed();
+    const r = await this.host.request('GET', this.docPath());
+    if (seq !== this.seq) return;
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.documents)) {
+      this.state = 'error';
+      this.error = r.status === 401 ? 'Sign in to see your swarms.' : r.status === 403 ? 'Your role cannot read this plugin’s documents.' : 'Could not list your swarms: ' + errOf(r);
+      this.changed();
+      return;
+    }
+    this.scope = typeof r.data.scope === 'string' ? r.data.scope : '';
+    const keys = r.data.documents.map((d) => d && d.key).filter((k) => typeof k === 'string' && k.startsWith(SPEC_PREFIX) && RE_SPEC_ID.test(k.slice(SPEC_PREFIX.length)));
+    const got = new Map();
+    let next = 0;
+    const worker = async () => {
+      while (next < keys.length) {
+        const key = keys[next++];
+        const g = await this.host.request('GET', this.docPath(key));
+        const s = g.status === 200 ? normalizeSpec(g.data) : null;
+        if (s) { s.id = key.slice(SPEC_PREFIX.length); got.set(s.id, s); } else this.skipped++;
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    if (seq !== this.seq) return;
+    this.specs = got;
+    this.state = 'ready';
+    this.changed();
+  }
+  /** Save a whole spec (create or replace). Resolves {ok, message, spec}. */
+  async save(spec) {
+    const s = deepCopy(spec);
+    s.updated = Date.now();
+    const bytes = specBytes(s);
+    if (bytes > SPEC_MAX_BYTES) return { ok: false, message: 'This swarm is ' + fmtKB(bytes) + ' — the server keeps up to 32 KB per swarm' };
+    const be = this.backend();
+    if (be === 'server') {
+      const r = await this.host.request('PUT', this.docPath(SPEC_PREFIX + s.id), s);
+      if (r.status !== 200 && r.status !== 201) {
+        const why = { 401: 'Sign in to save swarms', 403: 'Your role cannot save swarms — it needs write access', 413: 'Too big for the server (32 KB per swarm)',
+          507: 'The server already holds the most swarms it keeps for this plugin (256) — delete some first' }[r.status];
+        return { ok: false, message: why || 'Could not save: ' + errOf(r) };
+      }
+    } else if (be === 'browser') {
+      const st = browserStore(), all = st.read();
+      all[s.id] = s;
+      if (!st.write(all)) return { ok: false, message: 'This browser refused to store the swarm' };
+    } else if (be === 'pending') {
+      return { ok: false, message: 'Still connecting to agnostic — try again in a moment' };
+    }
+    this.specs.set(s.id, s);
+    this.changed();
+    return { ok: true, message: be === 'none' ? 'kept for this session only' : '', spec: s };
+  }
+  async remove(id) {
+    const be = this.backend();
+    if (be === 'server') {
+      const r = await this.host.request('DELETE', this.docPath(SPEC_PREFIX + id));
+      if (r.status !== 200 && r.status !== 404) return { ok: false, message: r.status === 403 ? 'Your role cannot delete swarms' : 'Could not delete: ' + errOf(r) };
+    } else if (be === 'browser') {
+      const st = browserStore(), all = st.read();
+      delete all[id];
+      st.write(all);
+    }
+    this.specs.delete(id);
+    this.changed();
+    return { ok: true };
+  }
+  /** Change a saved spec in place — run records, estimates. Resolves the saved spec, or null. */
+  async patch(id, fn) {
+    const cur = this.specs.get(id);
+    if (!cur) return null;
+    const next = deepCopy(cur);
+    fn(next);
+    const r = await this.save(next);
+    if (!r.ok) {
+      console.warn('[swarm] could not update ' + id + ': ' + r.message);
+      fn(cur); // keep it for this session at least
+      this.changed();
+    }
+    return r.ok ? r.spec : null;
+  }
+}
+
+/** The kickoff page: your swarms, the templates, and where they are kept. */
+class Launcher {
+  constructor(app) {
+    this.app = app;
+    this.lib = app.library;
+    this.host = app.host;
+    this.busy = new Map(); // spec id → {progress, signal}
+    this.estPaint = 0;
+    this.buildTemplates();
+    $('lib-list').addEventListener('click', (e) => this.onClick(e));
+    $('btn-new').addEventListener('click', () => this.app.editor.open(defaultSpec('custom', 1), { isNew: true }));
+    $('opt-import').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) this.importFile(f); });
+    $('opt-load').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) this.app.loadLogFile(f); });
+    this.lib.onChange(() => { this.render(); if (this.lib.state === 'ready') this.refreshRuns(); });
+    this.host.onChange(() => { this.lib.load(); this.render(); });
+    this.runsCheckedAt = 0;
+  }
+  /**
+   * A crew left running when its view closed is still "running" on its card. Ask agnostic how the
+   * recent ones ended — a few at most, and not more often than every 20 seconds.
+   */
+  async refreshRuns() {
+    if (!this.host.can('crews:read') || Date.now() - this.runsCheckedAt < 20000) return;
+    this.runsCheckedAt = Date.now();
+    const open = [];
+    for (const s of this.lib.list()) {
+      for (const r of s.runs) if (r.kind === 'live' && !CREW_TERMINAL.has(r.status) && !/lost|refused/.test(r.status) && Date.now() - r.at < 7 * 86400000) open.push([s.id, r.crew]);
+    }
+    for (const [id, crew] of open.slice(-6)) {
+      const g = await this.host.request('GET', '/api/v1/crews/' + crew);
+      let status = null;
+      if (g.status === 200 && g.data && typeof g.data.status === 'string') status = g.data.status;
+      else if (g.status === 404) status = 'lost';
+      if (!status || status === 'pending' || status === 'running') continue;
+      const total = g.data && Array.isArray(g.data.results) ? g.data.results.length : 0;
+      const done = total ? g.data.results.filter((x) => x && x.status === 'completed').length : 0;
+      await this.lib.patch(id, (x) => {
+        const r = x.runs.find((q) => q.kind === 'live' && q.crew === crew);
+        if (r) Object.assign(r, { status }, total ? { done, failed: total - done, total } : {});
+      });
+    }
+  }
+  visible() { return !$('start-screen').classList.contains('hidden'); }
+  buildTemplates() {
+    const wrap = $('scenario-cards');
+    wrap.innerHTML = Object.values(TEMPLATES).map((t) => '<div class="card"><h3><span class="ico">' + t.icon + '</span>' + escapeHtml(t.name) + '</h3><p>' + escapeHtml(t.desc) + '</p>'
+      + '<div class="tags">' + t.tags.map((x) => '<span>' + escapeHtml(x) + '</span>').join('') + '</div>'
+      + '<div class="go-row"><button class="go" type="button" data-act="demo" data-key="' + t.key + '" title="Simulate it now — nothing is saved">▶ DEMO</button>'
+      + '<button class="go alt" type="button" data-act="customize" data-key="' + t.key + '" title="Open it in the editor as a new swarm">＋ CUSTOMIZE</button></div></div>').join('');
+    wrap.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-act]');
+      if (!b) return;
+      const spec = defaultSpec(b.dataset.key, +$('opt-scale').value || 1);
+      spec.seed = clamp(Math.floor(+$('opt-seed').value) || 1, 1, 2147483647);
+      if (b.dataset.act === 'demo') this.app.simulate(spec, { saved: false });
+      else this.app.editor.open(spec, { isNew: true });
+    });
+  }
+  renderConn() {
+    const c = $('conn'), h = this.host, be = this.lib.backend();
+    let cls = '', text;
+    if (h.mode === 'connecting') text = 'Connecting to agnostic…';
+    else if (h.mode === 'standalone') {
+      cls = 'warn';
+      text = 'Standalone — open this view inside agnostic to keep swarms on the server and run live crews. ' + (be === 'browser' ? 'Swarms are kept in this browser.' : 'Swarms last for this session.');
+    } else {
+      cls = 'ok';
+      const u = h.info.user;
+      text = 'Connected to agnostic · ' + (u.auth === 'off' ? 'auth off (loopback)' : u.signedIn ? 'signed in' + (u.role ? ' as ' + u.role : '') : 'not signed in')
+        + (be === 'server' ? ' · swarms are kept on the server' + (this.lib.scope && this.lib.scope !== '_' ? ' for tenant ' + this.lib.scope : '') : ' · no storage permission — swarms last for this session');
+    }
+    c.className = 'conn ' + cls;
+    c.querySelector('span').textContent = text;
+  }
+  render() {
+    if (!this.visible()) return;
+    this.renderConn();
+    const list = $('lib-list'), lib = this.lib, specs = lib.list();
+    $('lib-count').textContent = specs.length ? specs.length + (specs.length === 1 ? ' swarm' : ' swarms') + (lib.skipped ? ' · ' + lib.skipped + ' unreadable document(s) skipped' : '') : '';
+    if (lib.state === 'error') { list.innerHTML = '<div class="swarm-empty">' + escapeHtml(lib.error) + '</div>'; return; }
+    if (!specs.length) {
+      list.innerHTML = lib.state === 'loading' ? '<div class="swarm-empty">Loading your swarms…</div>'
+        : '<div class="swarm-empty"><b>No swarms yet.</b> Customize a template below or start a <b>new swarm</b>: set its agents, models, tools, regions, caps and budget — then simulate it, estimate what it costs over several seeds, or run it live as a crew on this agnostic server.</div>';
+      return;
+    }
+    list.innerHTML = specs.map((s) => this.card(s)).join('');
+  }
+  card(s) {
+    const T = TEMPLATES[s.template] || TEMPLATES.custom, v = validateSpec(s), h = this.host;
+    const roles = new Set(specTasks(s).map((t) => t.role));
+    const regions = REGION_IDS.filter((id) => regionOn(s, id)).length;
+    const capped = ROLE_KEYS.filter((r) => s.roles[r].max != null).length + (s.maxActive != null ? 1 : 0);
+    const chips = [v.taskCount + ' tasks' + (v.fanout ? ' + ' + v.fanout + ' sub' : ''), roles.size + (roles.size === 1 ? ' role' : ' roles'), regions + (regions === 1 ? ' region' : ' regions'),
+      fmtCost(s.budget, s.budget < 10 ? 2 : 0) + ' budget', s.scale + '×'];
+    if (capped) chips.push(capped + (capped === 1 ? ' cap' : ' caps'));
+    if (s.tasks && s.template !== 'custom') chips.push('custom tasks');
+    const why = !h.can('crews:write') ? (h.mode === 'standalone' ? 'Open this view inside agnostic to run a live crew' : 'This plugin may not start crews here')
+      : h.role() === 'viewer' ? 'Your role (viewer) cannot start crews' : v.errors.length ? v.errors[0] : '';
+    const runs = s.runs.slice(-4).reverse().map((r) => this.runChip(r)).join('');
+    const id = escapeHtml(s.id);
+    return '<div class="swarm" data-id="' + id + '">'
+      + '<div class="sw-head"><span class="ico">' + T.icon + '</span><div class="sw-name">' + escapeHtml(s.name) + '<small>' + escapeHtml(s.objective || T.desc) + '</small></div>'
+      + '<div class="sw-tools"><button type="button" data-act="dup" title="Duplicate">⧉</button><button type="button" data-act="export" title="Export as a file">⤓</button><button type="button" class="del" data-act="del" title="Delete">✕</button></div></div>'
+      + '<div class="sw-chips">' + chips.map((c) => '<span>' + escapeHtml(c) + '</span>').join('') + '</div>'
+      + '<div class="sw-est">' + this.estHtml(s) + '</div>'
+      + '<div class="sw-runs">' + (runs || '<span class="run-chip" style="opacity:.6">never run</span>') + '</div>'
+      + '<div class="sw-actions"><button class="lbtn primary" type="button" data-act="sim"' + (v.errors.length ? ' disabled title="' + escapeHtml(v.errors[0]) + '"' : ' title="Watch it play out in the simulator"') + '>▶ SIMULATE</button>'
+      + '<button class="lbtn" type="button" data-act="estimate"' + (v.errors.length ? ' disabled' : '') + ' title="Simulate it ' + ESTIMATE_RUNS + ' times, headless, and price it">' + (this.busy.has(s.id) ? '■ STOP' : 'Σ ESTIMATE') + '</button>'
+      + '<button class="lbtn" type="button" data-act="live"' + (why ? ' disabled title="' + escapeHtml(why) + '"' : ' title="Submit its tasks to agnostic as a real crew"') + '>⚡ RUN LIVE</button>'
+      + '<button class="lbtn" type="button" data-act="edit" title="Edit every setting">✎ EDIT</button></div></div>';
+  }
+  estHtml(s) {
+    const b = this.busy.get(s.id);
+    if (b) return 'Simulating ' + ESTIMATE_RUNS + ' runs… ' + Math.round(b.progress * 100) + '%<div class="bar"><i style="width:' + (b.progress * 100).toFixed(1) + '%"></i></div>';
+    const e = s.estimate;
+    if (!e) return 'No cost estimate yet';
+    return '<b>≈ ' + fmtCost(e.cost.p50) + '</b> p50 · ' + fmtCost(e.cost.min) + '–' + fmtCost(e.cost.max) + ' · ' + fmtTime(e.durationMs.p50) + ' · ' + e.runs + ' runs'
+      + (e.over ? ' · <span style="color:#fca5a5">over budget in ' + e.over + '</span>' : '') + (e.stalled ? ' · <span style="color:#fca5a5">stalled in ' + e.stalled + '</span>' : '')
+      + (e.sig !== specSig(s) ? ' · <span class="stale" title="Settings changed since this estimate">stale</span>' : '');
+  }
+  runChip(r) {
+    if (r.kind === 'sim') {
+      return '<span class="run-chip" title="Simulated ' + escapeHtml(new Date(r.at).toLocaleString()) + (r.seed ? ' · seed ' + r.seed : '') + '">SIM ' + fmtCost(r.cost || 0) + ' · ' + (r.done || 0) + '/' + (r.total || 0) + ' · ' + fmtAgo(r.at) + '</span>';
+    }
+    const st = r.status || 'submitted', bad = /failed|cancelled|lost|refused|unknown/.test(st);
+    const tip = 'Crew ' + r.crew + ' · ' + st + (r.engine ? ' · ' + r.engine + ' engine' : '') + (r.total ? ' · ' + (r.done || 0) + '/' + r.total + ' tasks' : '');
+    const label = 'LIVE ' + st + ' · ' + fmtAgo(r.at);
+    if (!this.host.can('crews:read')) return '<span class="run-chip live' + (bad ? ' bad' : '') + '" title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
+    return '<button type="button" class="run-chip live' + (bad ? ' bad' : '') + '" data-act="watch" data-crew="' + escapeHtml(r.crew) + '" title="' + escapeHtml(tip + ' — watch it') + '">' + escapeHtml(label) + ' ▸</button>';
+  }
+  paintEstimate(id) {
+    const card = $('lib-list').querySelector('.swarm[data-id="' + id + '"]');
+    const s = this.lib.get(id);
+    if (card && s) card.querySelector('.sw-est').innerHTML = this.estHtml(s);
+  }
+  async onClick(e) {
+    const b = e.target.closest('button[data-act]');
+    const card = b && b.closest('.swarm');
+    const s = card && this.lib.get(card.dataset.id);
+    if (!s || b.disabled) return;
+    switch (b.dataset.act) {
+      case 'sim': this.app.simulate(s, { saved: true }); break;
+      case 'estimate': this.estimate(s); break;
+      case 'live': this.app.runLive(s); break;
+      case 'edit': this.app.editor.open(s); break;
+      case 'watch': this.app.watchRun(s, b.dataset.crew); break;
+      case 'export': downloadText('swarm-' + s.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) + '.json',
+        JSON.stringify({ format: 'swarm-command/spec', version: SPEC_VERSION, spec: s }, null, 2)); break;
+      case 'dup': {
+        const c = deepCopy(s);
+        Object.assign(c, { id: newSpecId(), name: (s.name + ' (copy)').slice(0, 80), created: Date.now(), runs: [] });
+        const r = await this.lib.save(c);
+        this.app.hud.toast(r.ok ? 'Duplicated ' + s.name : r.message, r.ok ? 'good' : 'bad');
+        break;
+      }
+      case 'del': {
+        const ok = await this.app.modal.confirm('Delete ' + s.name + '?', 'The swarm and its run history are removed' + (this.lib.backend() === 'server' ? ' from the server' : '') + '. Crews it started are not affected.', { yes: 'Delete', danger: true });
+        if (!ok) return;
+        const r = await this.lib.remove(s.id);
+        if (!r.ok) this.app.hud.toast(r.message, 'bad');
+        break;
+      }
+    }
+  }
+  async estimate(spec) {
+    const cur = this.busy.get(spec.id);
+    if (cur) { cur.signal.cancelled = true; return; }
+    const job = { progress: 0, signal: { cancelled: false } };
+    this.busy.set(spec.id, job);
+    this.render();
+    const est = await estimateSpec(spec, {
+      runs: ESTIMATE_RUNS, signal: job.signal,
+      onProgress: (p) => { job.progress = p; const now = performance.now(); if (now - this.estPaint > 120) { this.estPaint = now; this.paintEstimate(spec.id); } },
+    });
+    this.busy.delete(spec.id);
+    if (!est) { this.render(); return; }
+    await this.lib.patch(spec.id, (s) => { s.estimate = est; });
+    this.render();
+    this.app.hud.toast(spec.name + ': ≈ ' + fmtCost(est.cost.p50) + ' (p50 of ' + est.runs + ' simulated runs)', 'good');
+  }
+  async importFile(f) {
+    try {
+      if (f.size > 1048576) throw new Error('the file is over 1 MB');
+      const data = JSON.parse(await readFileText(f));
+      const s = normalizeSpec(data && data.format === 'swarm-command/spec' ? data.spec : data);
+      if (!s) throw new Error('it does not hold a swarm');
+      if (this.lib.get(s.id)) s.id = newSpecId();
+      s.runs = []; // its crews ran on some other server
+      const r = await this.lib.save(s);
+      this.app.hud.toast(r.ok ? 'Imported ' + s.name : r.message, r.ok ? 'good' : 'bad');
+    } catch (err) {
+      this.app.hud.toast('Could not import: ' + err.message, 'bad');
+    }
+  }
+}
+
+/* ---- the editor ---- */
+const ED_TABS = [['mission', 'Mission'], ['agents', 'Agents'], ['models', 'Models & tools'], ['compute', 'Compute & budget'], ['tasks', 'Tasks'], ['failure', 'Failure model'], ['live', 'Live run']];
+const pctShow = (x) => +(x * 100).toFixed(2);
+const attrNum = (o) => (o.min != null ? ' data-min="' + o.min + '" min="' + o.min + '"' : '') + (o.max != null ? ' data-max="' + o.max + '" max="' + o.max + '"' : '');
+const attrCommon = (o) => (o.cls ? ' class="' + o.cls + '"' : '') + (o.ph ? ' placeholder="' + escapeHtml(o.ph) + '"' : '') + (o.dis ? ' disabled' : '') + (o.rr ? ' data-rr="1"' : '');
+function edNum(k, v, o = {}) {
+  const shown = v == null || v === '' ? '' : String(o.show ? o.show(v) : v);
+  return '<input type="number" data-k="' + k + '" data-t="' + (o.t || 'num') + '" step="' + (o.step || 'any') + '"' + attrNum(o) + attrCommon(o) + ' value="' + escapeHtml(shown) + '">';
+}
+function edText(k, v, o = {}) {
+  return '<input type="text" spellcheck="false" data-k="' + k + '" data-t="' + (o.t || 'str') + '"' + (o.max ? ' maxlength="' + o.max + '"' : '') + attrCommon(o) + ' value="' + escapeHtml(v == null ? '' : String(v)) + '">';
+}
+function edSel(k, v, opts, o = {}) {
+  return '<select data-k="' + k + '" data-t="' + (o.t || 'sel') + '"' + attrCommon(o) + '>'
+    + opts.map(([val, label]) => '<option value="' + escapeHtml(String(val)) + '"' + (String(val) === String(v) ? ' selected' : '') + '>' + escapeHtml(label) + '</option>').join('') + '</select>';
+}
+function edChk(k, v, o = {}) { return '<input type="checkbox" data-k="' + k + '" data-t="bool"' + (v ? ' checked' : '') + attrCommon(o) + '>'; }
+const roleCell = (r) => '<span class="rl"><i style="background:' + ROLES[r].color + '"></i>' + ROLES[r].label + '</span>';
+const pathKey = (p) => (/^\d+$/.test(p) ? +p : p);
+function setPath(o, path, v) {
+  for (let i = 0; i < path.length - 1; i++) {
+    const k = pathKey(path[i]);
+    if (o[k] == null || typeof o[k] !== 'object') o[k] = {};
+    o = o[k];
+  }
+  o[pathKey(path[path.length - 1])] = v;
+}
+function getPath(o, path) {
+  for (const p of path) { if (o == null) return undefined; o = o[pathKey(p)]; }
+  return o;
+}
+
+/**
+ * Editor — every capability of a swarm, with a default for each. Inputs carry their place in the
+ * draft (data-k, '|'-separated) and how to read them (data-t), so one listener edits them all.
+ */
+class Editor {
+  constructor(app) {
+    this.app = app;
+    this.draft = null;
+    this.orig = '';
+    this.isNew = false;
+    this.tab = 'mission';
+    this.estJob = null;
+    this.showReq = false;
+    this.presets = null;
+    this.check = null;
+    $('ed-tabs').innerHTML = ED_TABS.map(([k, l]) => '<button type="button" data-tab="' + k + '">' + l + '<span class="n"></span></button>').join('');
+    $('ed-tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) this.show(b.dataset.tab); });
+    $('ed-pane').addEventListener('input', (e) => this.onInput(e, false));
+    $('ed-pane').addEventListener('change', (e) => this.onInput(e, true));
+    $('ed-pane').addEventListener('click', (e) => this.onAction(e));
+    $('ed-side').addEventListener('click', (e) => this.onAction(e));
+    $('ed-name').addEventListener('input', (e) => { if (this.draft) { this.draft.name = e.target.value; this.renderSide(); } });
+    $('ed-cancel').addEventListener('click', () => this.close());
+    $('ed-save').addEventListener('click', () => this.save(false));
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !this.isOpen() || this.app.modal.isOpen()) return;
+      const tag = e.target && e.target.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      this.close();
+    });
+  }
+  isOpen() { return !$('editor').classList.contains('hidden'); }
+  open(spec, { isNew = false } = {}) {
+    this.draft = deepCopy(spec);
+    this.orig = JSON.stringify(this.draft);
+    this.isNew = isNew;
+    this.showReq = false;
+    $('ed-kicker').textContent = (isNew ? 'NEW SWARM · ' : 'EDIT SWARM · ') + (TEMPLATES[spec.template] || TEMPLATES.custom).name.toUpperCase();
+    $('ed-name').value = this.draft.name;
+    $('editor').classList.remove('hidden');
+    this.show('mission');
+    if (!this.presets && this.app.host.can('presets:read')) this.loadPresets();
+  }
+  dirty() { return !!this.draft && JSON.stringify(this.draft) !== this.orig; }
+  async close(force) {
+    if (!this.isOpen()) return;
+    if (!force && this.dirty()) {
+      const ok = await this.app.modal.confirm('Discard your changes?', 'The changes to <b>' + escapeHtml(this.draft.name) + '</b> have not been saved.', { yes: 'Discard', no: 'Keep editing', danger: true });
+      if (!ok) return;
+    }
+    if (this.estJob) this.estJob.signal.cancelled = true;
+    this.estJob = null;
+    $('editor').classList.add('hidden');
+    this.draft = null;
+  }
+  show(tab) {
+    this.tab = tab;
+    for (const b of $('ed-tabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.tab === tab);
+    this.renderSide();
+    this.renderPane();
+  }
+  renderPane() {
+    const d = this.draft;
+    const body = { mission: this.paneMission, agents: this.paneAgents, models: this.paneModels, compute: this.paneCompute, tasks: this.paneTasks, failure: this.paneFailure, live: this.paneLive }[this.tab].call(this, d);
+    $('ed-pane').innerHTML = body + '<div class="ed-actions" style="margin-top:16px"><button class="lbtn sm" type="button" data-act="reset-tab" title="Put this tab’s settings back to the ' + escapeHtml((TEMPLATES[d.template] || TEMPLATES.custom).name) + ' defaults">↺ Reset this tab to defaults</button></div>';
+  }
+
+  /* ---- input → draft ---- */
+  parse(el, t) {
+    const raw = el.value, s = raw.trim();
+    const lo = el.dataset.min != null ? +el.dataset.min : -Infinity, hi = el.dataset.max != null ? +el.dataset.max : Infinity;
+    const n = s === '' ? NaN : Number(s), inRange = Number.isFinite(n) && n >= lo && n <= hi;
+    switch (t) {
+      case 'bool': return { ok: true, v: el.checked };
+      case 'sel': case 'roster': return { ok: true, v: el.value };
+      case 'selnum': case 'scale': return { ok: true, v: +el.value };
+      case 'str': return { ok: true, v: raw };
+      case 'livemodel': return s === '' || RE_LIVE_MODEL.test(s) ? { ok: true, v: s } : { ok: false };
+      case 'key': return { ok: RE_TASK_KEY.test(s), v: s };
+      case 'model-name': return { ok: RE_MODEL.test(s), v: s };
+      case 'deps': return { ok: true, v: [...new Set(s.split(/[\s,]+/).filter(Boolean))] };
+      case 'optint': return s === '' ? { ok: true, v: null } : inRange && Number.isInteger(n) ? { ok: true, v: n } : { ok: false };
+      case 'int': case 'fan': return inRange && Number.isInteger(n) ? { ok: true, v: n } : { ok: false };
+      case 'pct': case 'rework': return inRange ? { ok: true, v: n / 100 } : { ok: false };
+      case 'sec': return inRange ? { ok: true, v: Math.round(n * 1000) } : { ok: false };
+      default: return inRange ? { ok: true, v: n } : { ok: false };
+    }
+  }
+  onInput(e, commit) {
+    const el = e.target, k = el.dataset && el.dataset.k;
+    if (!k || !this.draft) return;
+    const t = el.dataset.t || 'str';
+    const discrete = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio';
+    if (discrete && !commit) return;
+    const res = this.parse(el, t);
+    el.classList.toggle('bad', !res.ok);
+    if (!res.ok) return;
+    const d = this.draft, path = k.split('|');
+    switch (t) {
+      case 'scale': this.rescale(res.v); return;
+      case 'key': if (commit) this.renameTask(+path[1], res.v, el); return;
+      case 'model-name': if (commit) this.renameModel(path[1], res.v, el); return;
+      case 'fan': {
+        const cur = getPath(d, path);
+        setPath(d, path, res.v > 0 ? Object.assign({ count: res.v, work: cur ? cur.work : [8, 12] }, cur && cur.titles && cur.count === res.v ? { titles: cur.titles } : {}) : null);
+        break;
+      }
+      case 'rework': setPath(d, path, res.v > 0 ? { chance: res.v } : null); break;
+      case 'livemodel': if (res.v) setPath(d, path, res.v); else delete d.live.models[path[2]]; break;
+      default: setPath(d, path, res.v);
+    }
+    this.renderSide();
+    if (commit && el.dataset.rr) this.renderPane();
+  }
+  rescale(k) {
+    const d = this.draft, f = k / d.scale;
+    if (!(f > 0) || f === 1) return;
+    for (const id of REGION_IDS) d.regions[id].cap = Math.max(id === 'local' ? 1 : 0, Math.round(d.regions[id].cap * f));
+    d.budget = +(d.budget * f).toFixed(2);
+    d.policy.spawnPerSec = +(d.policy.spawnPerSec * f).toFixed(2);
+    if (d.maxActive != null) d.maxActive = Math.max(1, Math.round(d.maxActive * f));
+    d.scale = k;
+    this.app.hud.toast('Region caps, budget and spawn rate scaled ×' + +f.toFixed(2) + ' with the workload', 'good');
+    this.renderSide();
+    this.renderPane();
+  }
+  renameTask(i, key, el) {
+    const tasks = this.draft.tasks, t = tasks && tasks[i];
+    if (!t || t.key === key) return;
+    if (tasks.some((x, j) => j !== i && x.key === key)) { el.classList.add('bad'); this.app.hud.toast('Another task already has the key ' + key, 'bad'); return; }
+    const old = t.key;
+    t.key = key;
+    for (const x of tasks) x.deps = x.deps.map((dk) => (dk === old ? key : dk));
+    this.renderSide();
+    this.renderPane();
+  }
+  renameModel(old, name, el) {
+    const d = this.draft;
+    if (name === old || !d.models[old]) return;
+    if (d.models[name]) { el.classList.add('bad'); this.app.hud.toast('There is already a model called ' + name, 'bad'); return; }
+    const m = {};
+    for (const k of Object.keys(d.models)) m[k === old ? name : k] = d.models[k];
+    d.models = m;
+    if (d.orchestrator.model === old) d.orchestrator.model = name;
+    for (const r of ROLE_KEYS) {
+      if (d.roles[r].model === old) d.roles[r].model = name;
+      if (d.roles[r].localModel === old) d.roles[r].localModel = name;
+    }
+    this.renderSide();
+    this.renderPane();
+  }
+  async onAction(e) {
+    const b = e.target.closest('button[data-act]');
+    if (!b || b.disabled || !this.draft) return;
+    const d = this.draft;
+    switch (b.dataset.act) {
+      case 'reseed': d.seed = 1 + Math.floor(Math.random() * 999999); break;
+      case 'add-model': {
+        let n = Object.keys(d.models).length + 1;
+        while (d.models['model-' + n]) n++;
+        d.models['model-' + n] = { price: 0.003, tps: 1 };
+        break;
+      }
+      case 'del-model': {
+        const m = b.dataset.m;
+        const users = ['orchestrator', ...ROLE_KEYS].filter((r) => (r === 'orchestrator' ? d.orchestrator.model === m : d.roles[r].model === m || d.roles[r].localModel === m));
+        if (users.length) { this.app.hud.toast(m + ' is in use by ' + users.map((r) => ROLES[r].label).join(', '), 'bad'); return; }
+        if (Object.keys(d.models).length <= 1) { this.app.hud.toast('Keep at least one model', 'bad'); return; }
+        delete d.models[m];
+        break;
+      }
+      case 'customize': {
+        d.tasks = specTasks(d).map(simToCustom);
+        if (specBytes(d) > SPEC_MAX_BYTES) {
+          for (const t of d.tasks) if (t.fanout) delete t.fanout.titles; // keep the counts, drop the generated sub-task names
+        }
+        break;
+      }
+      case 'revert-tasks': {
+        const ok = await this.app.modal.confirm('Go back to generated tasks?', 'Your task edits are dropped and the template generates the tasks again.', { yes: 'Revert', danger: true });
+        if (!ok) return;
+        d.tasks = null;
+        break;
+      }
+      case 'add-task': {
+        let n = d.tasks.length + 1;
+        while (d.tasks.some((t) => t.key === 'task-' + n)) n++;
+        d.tasks.push({ key: 'task-' + n, title: 'New task', role: 'coder', region: 'local', deps: [], work: 5, kind: 'work', priority: 2, difficulty: 1, fanout: null, rework: null });
+        break;
+      }
+      case 'del-task': {
+        const i = +b.dataset.i, gone = d.tasks[i] && d.tasks[i].key;
+        d.tasks.splice(i, 1);
+        for (const t of d.tasks) t.deps = t.deps.filter((k) => k !== gone);
+        break;
+      }
+      case 'reset-tab': this.resetTab(); break;
+      case 'toggle-req': this.showReq = !this.showReq; break;
+      case 'estimate': this.estimate(); return;
+      case 'save-sim': this.save(true); return;
+      default: return;
+    }
+    this.renderSide();
+    this.renderPane();
+  }
+  /** Put the current tab's settings back to the template's defaults (at the draft's scale). */
+  resetTab() {
+    const d = this.draft, z = defaultSpec(d.template, d.scale);
+    switch (this.tab) {
+      case 'mission': d.objective = z.objective; d.seed = z.seed; break;
+      case 'agents':
+        for (const r of ROLE_KEYS) Object.assign(d.roles[r], { max: null, tps: z.roles[r].tps, toolP: z.roles[r].toolP, goal: z.roles[r].goal });
+        d.orchestrator.tps = z.orchestrator.tps;
+        d.maxActive = null;
+        d.policy.spawnPerSec = z.policy.spawnPerSec;
+        d.policy.idleReleaseMs = z.policy.idleReleaseMs;
+        break;
+      case 'models':
+        d.models = z.models;
+        d.tools = z.tools;
+        d.orchestrator.model = z.orchestrator.model;
+        for (const r of ROLE_KEYS) Object.assign(d.roles[r], { model: z.roles[r].model, localModel: z.roles[r].localModel, tools: z.roles[r].tools });
+        break;
+      case 'compute': d.regions = z.regions; d.budget = z.budget; d.policy.computeMult = z.policy.computeMult; break;
+      case 'tasks': d.tasks = z.tasks; break;
+      case 'failure': for (const k of ['toolErr', 'slow', 'crash', 'maxRetries']) d.policy[k] = z.policy[k]; break;
+      case 'live': d.live = z.live; break;
+    }
+  }
+  async save(thenSimulate) {
+    const v = validateSpec(this.draft);
+    if (v.errors.length) { this.app.hud.toast(v.errors[0], 'bad'); return; }
+    if (v.tooBig) { this.app.hud.toast('This swarm is ' + fmtKB(v.bytes) + ' — the server keeps up to 32 KB per swarm', 'bad'); return; }
+    const d = this.draft;
+    d.name = d.name.trim();
+    d.objective = d.objective.trim();
+    if (d.tasks) for (const t of d.tasks) t.title = t.title.trim() || t.key;
+    for (const r of ROLE_KEYS) d.roles[r].goal = d.roles[r].goal.trim() || ROLE_GOALS[r];
+    $('ed-save').disabled = true;
+    const r = await this.app.library.save(d);
+    $('ed-save').disabled = false;
+    if (!r.ok) { this.app.hud.toast(r.message, 'bad'); return; }
+    this.orig = JSON.stringify(this.draft);
+    this.app.hud.toast((this.isNew ? 'Created ' : 'Saved ') + d.name + (r.message ? ' — ' + r.message : ''), 'good');
+    await this.close(true);
+    if (thenSimulate) this.app.simulate(r.spec, { saved: true });
+  }
+  async estimate() {
+    if (this.estJob) { this.estJob.signal.cancelled = true; return; }
+    const job = (this.estJob = { progress: 0, signal: { cancelled: false } });
+    let paint = 0;
+    this.renderSide();
+    const est = await estimateSpec(this.draft, {
+      runs: ESTIMATE_RUNS, signal: job.signal,
+      onProgress: (p) => { job.progress = p; const now = performance.now(); if (now - paint > 120) { paint = now; if (this.estJob === job) this.renderSide(); } },
+    });
+    if (this.estJob !== job) return; // closed, or another estimate replaced it
+    this.estJob = null;
+    if (est && this.draft) this.draft.estimate = est;
+    if (this.draft) this.renderSide();
+  }
+  async loadPresets() {
+    const r = await this.app.host.request('GET', '/api/v1/presets');
+    this.presets = r.status === 200 && r.data && Array.isArray(r.data.presets) ? r.data.presets.filter((p) => p && typeof p.name === 'string' && RE_PRESET.test(p.name)) : [];
+    if (this.isOpen() && this.tab === 'live') this.renderPane();
+  }
+  liveBuilt(d) {
+    const name = d.live.roster === 'preset' ? d.live.preset : '';
+    const doc = name ? this.app.presetCache.get(name) || null : null;
+    if (name && !doc) this.app.presetDoc(name).then((x) => { if (x && this.isOpen() && this.tab === 'live') this.renderPane(); });
+    return specToCrewRequest(d, doc);
+  }
+
+  /* ---- the side panel: estimate, checks, run ---- */
+  renderSide() {
+    const d = this.draft;
+    if (!d) return;
+    const v = (this.check = validateSpec(d));
+    for (const b of $('ed-tabs').querySelectorAll('button')) b.querySelector('.n').textContent = v.tabs[b.dataset.tab] ? '●' : '';
+    const e = d.estimate, row = (k, x) => '<div class="est-row"><span>' + k + '</span><b>' + x + '</b></div>';
+    let html = '<div class="ed-box"><div class="panel-title">COST ESTIMATE</div>';
+    if (this.estJob) {
+      html += row('Simulating ' + ESTIMATE_RUNS + ' runs…', Math.round(this.estJob.progress * 100) + '%')
+        + '<div class="bar" style="margin-top:6px"><i style="width:' + (this.estJob.progress * 100).toFixed(1) + '%;background:var(--accent)"></i></div>'
+        + '<div class="ed-actions"><button class="lbtn sm" type="button" data-act="estimate">■ Stop</button></div>';
+    } else if (e) {
+      html += '<div class="est-big">≈ ' + fmtCost(e.cost.p50) + '</div>'
+        + row('range', fmtCost(e.cost.min) + ' – ' + fmtCost(e.cost.max)) + row('duration (p50)', fmtTime(e.durationMs.p50) + ' sim') + row('tokens (p50)', fmtTokens(e.tokens.p50))
+        + row('peak agents', Math.round(e.peak.p50)) + row('failed tasks', e.failed.toFixed(1) + ' / run') + row('over budget', e.over + ' of ' + e.runs) + (e.stalled ? row('stalled', e.stalled + ' of ' + e.runs) : '')
+        + (e.sig !== specSig(d) ? '<div class="est-stale">Settings changed since this estimate.</div>' : '')
+        + '<div class="ed-actions"><button class="lbtn sm" type="button" data-act="estimate"' + (v.errors.length ? ' disabled' : '') + '>Σ Estimate again</button></div>';
+    } else {
+      html += '<p class="note" style="margin-top:0">Runs the swarm headless ' + ESTIMATE_RUNS + ' times, on different seeds, and reports the spread of cost and duration. Nothing runs for real.</p>'
+        + '<div class="ed-actions"><button class="lbtn sm primary" type="button" data-act="estimate"' + (v.errors.length ? ' disabled' : '') + '>Σ Estimate cost</button></div>';
+    }
+    html += '</div><div class="ed-box"><div class="panel-title">CHECKS</div><div class="chk-list">'
+      + v.errors.map((x) => '<div class="e">✕ ' + escapeHtml(x) + '</div>').join('')
+      + (v.tooBig ? '<div class="e">✕ ' + fmtKB(v.bytes) + ' is over the server’s 32 KB per swarm.</div>' : '')
+      + v.warnings.map((x) => '<div class="w">⚠ ' + escapeHtml(x) + '</div>').join('')
+      + (!v.errors.length && !v.tooBig && !v.warnings.length ? '<div class="ok">✓ Ready to run</div>' : '') + '</div>'
+      + row('tasks', v.taskCount + (v.fanout ? ' + ' + v.fanout + ' sub-tasks' : '')) + row('size', fmtKB(v.bytes) + ' of 32 KB') + '</div>';
+    const be = this.app.library.backend();
+    html += '<div class="ed-box"><div class="ed-actions" style="margin-top:0"><button class="lbtn primary" type="button" data-act="save-sim"' + (v.errors.length || v.tooBig ? ' disabled' : '') + '>▶ Save &amp; simulate</button></div>'
+      + '<p class="note">Saved swarms are kept ' + (be === 'server' ? 'on this agnostic server, in your tenant.' : be === 'browser' ? 'in this browser.' : 'for this session only.') + '</p></div>';
+    $('ed-side').innerHTML = html;
+    $('ed-save').disabled = v.errors.length > 0 || v.tooBig;
+  }
+
+  /* ---- the tabs ---- */
+  paneMission(d) {
+    const T = TEMPLATES[d.template] || TEMPLATES.custom, v = this.check || validateSpec(d);
+    const roles = [...new Set(specTasks(d).map((t) => t.role))].map((r) => ROLES[r].label).join(', ');
+    return '<h4>MISSION</h4><div class="frm">'
+      + '<label>Objective</label><textarea data-k="objective" data-t="str" maxlength="400" rows="3" spellcheck="false">' + escapeHtml(d.objective) + '</textarea>'
+      + '<label>Template</label><div><b>' + T.icon + ' ' + escapeHtml(T.name) + '</b><span class="hint">' + (d.tasks ? 'tasks customized' : 'tasks generated by the template') + '</span></div>'
+      + '<label>Seed</label><div>' + edNum('seed', d.seed, { t: 'int', min: 1, max: 2147483647, step: 1 }) + ' <button class="lbtn sm" type="button" data-act="reseed">⚄ New seed</button><span class="hint">the same seed plays out the same way</span></div>'
+      + '<label>Workload scale</label><div>' + edSel('scale', d.scale, [[1, '1× — normal'], [2, '2× — large'], [3, '3× — stress']], { t: 'scale' })
+      + '<span class="hint">' + (d.tasks ? 'custom tasks keep their size; caps, budget and spawn rate still scale' : 'more generated work; caps, budget and spawn rate scale with it') + '</span></div>'
+      + '</div><p class="note">' + v.taskCount + ' tasks' + (v.fanout ? ', fanning out into ' + v.fanout + ' sub-tasks' : '') + ' · ' + escapeHtml(roles) + '. ' + escapeHtml(T.desc) + '</p>';
+  }
+  paneAgents(d) {
+    const used = new Set(specTasks(d).map((t) => t.role));
+    let rows = '<tr><td>' + roleCell('orchestrator') + '</td><td class="ro">1 · at HQ</td><td>' + edNum('orchestrator|tps', d.orchestrator.tps, { min: 1, max: 20000, cls: 'w-sm' }) + '</td><td class="ro">—</td><td class="ro">plans, staffs and monitors</td></tr>';
+    for (const r of ROLE_KEYS) {
+      const R = d.roles[r];
+      rows += '<tr><td>' + roleCell(r) + (used.has(r) ? '' : '<span class="hint">no tasks</span>') + '</td>'
+        + '<td>' + edNum('roles|' + r + '|max', R.max, { t: 'optint', min: 1, max: 5000, step: 1, cls: 'w-sm', ph: 'no cap' }) + '</td>'
+        + '<td>' + edNum('roles|' + r + '|tps', R.tps, { min: 1, max: 20000, cls: 'w-sm' }) + '</td>'
+        + '<td>' + edNum('roles|' + r + '|toolP', R.toolP, { t: 'pct', min: 0, max: 100, step: 1, cls: 'w-sm', show: pctShow }) + ' %</td>'
+        + '<td class="grow">' + edText('roles|' + r + '|goal', R.goal, { max: 300 }) + '</td></tr>';
+    }
+    return '<h4>ROLES</h4><div class="tbl-wrap"><table class="etbl"><tr><th>ROLE</th><th>MAX AT ONCE</th><th>TOKENS / S</th><th>TOOL USE</th><th>GOAL — SENT TO A LIVE CREW</th></tr>' + rows + '</table></div>'
+      + '<p class="note"><b>Max at once</b> caps how many agents of a role work at the same time — a lead waiting on its own sub-agents does not count against it; empty means no cap beyond the regions. '
+      + '<b>Tokens/s</b> is thinking speed before the model’s speed factor. <b>Tool use</b> is the chance an agent reaches for a tool at each step.</p>'
+      + '<h4>SWARM</h4><div class="frm">'
+      + '<label>Max agents at once</label><div>' + edNum('maxActive', d.maxActive, { t: 'optint', min: 1, max: 5000, step: 1, ph: 'no cap' }) + '<span class="hint">across every role and region</span></div>'
+      + '<label>Spawn rate</label><div>' + edNum('policy|spawnPerSec', d.policy.spawnPerSec, { min: 0.1, max: 200, step: 0.5 }) + '<span class="hint">new agents per second, at most</span></div>'
+      + '<label>Release idle agents after</label><div>' + edNum('policy|idleReleaseMs', d.policy.idleReleaseMs, { t: 'sec', min: 0.2, max: 600, step: 0.5, show: (x) => x / 1000 }) + '<span class="hint">seconds without work</span></div>'
+      + '</div>';
+  }
+  paneModels(d) {
+    const names = Object.keys(d.models), opts = names.map((m) => [m, m]);
+    const usedBy = (m) => ['orchestrator', ...ROLE_KEYS].filter((r) => (r === 'orchestrator' ? d.orchestrator.model === m : d.roles[r].model === m || d.roles[r].localModel === m)).map((r) => ROLES[r].abbr);
+    const cat = names.map((m) => '<tr><td>' + edText('models|' + m, m, { t: 'model-name', max: 40 }) + '</td>'
+      + '<td>$ ' + edNum('models|' + m + '|price', d.models[m].price, { min: 0, max: 10, step: 0.0001 }) + '</td>'
+      + '<td>' + edNum('models|' + m + '|tps', d.models[m].tps, { min: 0.05, max: 10, step: 0.05, cls: 'w-sm' }) + ' ×</td>'
+      + '<td class="ro">' + (usedBy(m).join(' ') || '—') + '</td><td><button class="x" type="button" data-act="del-model" data-m="' + escapeHtml(m) + '" title="Remove">✕</button></td></tr>').join('');
+    let who = '<tr><td>' + roleCell('orchestrator') + '</td><td>' + edSel('orchestrator|model', d.orchestrator.model, opts, { rr: true }) + '</td><td class="ro">—</td></tr>';
+    for (const r of ROLE_KEYS) {
+      who += '<tr><td>' + roleCell(r) + '</td><td>' + edSel('roles|' + r + '|model', d.roles[r].model, opts, { rr: true }) + '</td><td>'
+        + edSel('roles|' + r + '|localModel', d.roles[r].localModel, [['', '(same)'], ...opts], { rr: true }) + '</td></tr>';
+    }
+    let tools = '';
+    for (const k of TOOL_KEYS) {
+      const T = d.tools[k];
+      tools += '<tr><td><span class="rl"><i style="background:' + TOOL_KINDS[k].color + '"></i>' + TOOL_KINDS[k].label + '</span></td><td>' + edChk('tools|' + k + '|on', T.on, { rr: true }) + '</td>'
+        + '<td><span class="pair">' + edNum('tools|' + k + '|ms|0', T.ms[0], { min: 10, max: 600000, step: 10, dis: !T.on }) + '–' + edNum('tools|' + k + '|ms|1', T.ms[1], { min: 10, max: 600000, step: 10, dis: !T.on }) + '</span></td>'
+        + '<td><span class="pair">' + edNum('tools|' + k + '|tokens|0', T.tokens[0], { min: 0, max: 1000000, step: 100, dis: !T.on }) + '–' + edNum('tools|' + k + '|tokens|1', T.tokens[1], { min: 0, max: 1000000, step: 100, dis: !T.on }) + '</span></td></tr>';
+    }
+    let mix = '';
+    for (const r of ROLE_KEYS) {
+      mix += '<tr><td>' + roleCell(r) + '</td>';
+      for (const k of TOOL_KEYS) mix += '<td>' + edNum('roles|' + r + '|tools|' + k, d.roles[r].tools[k], { min: 0, max: 10, step: 1, cls: 'w-sm', dis: !d.tools[k].on }) + '</td>';
+      mix += '</tr>';
+    }
+    return '<h4>MODEL CATALOGUE</h4><div class="tbl-wrap"><table class="etbl"><tr><th>MODEL</th><th>$ PER 1K TOKENS</th><th>SPEED</th><th>USED BY</th><th></th></tr>' + cat + '</table></div>'
+      + '<div class="ed-actions"><button class="lbtn sm" type="button" data-act="add-model"' + (names.length >= SPEC_MAX_MODELS ? ' disabled' : '') + '>＋ Add model</button></div>'
+      + '<p class="note">Illustrative numbers: set them to your providers’ blended prices. <b>Speed</b> multiplies a role’s tokens per second.</p>'
+      + '<h4>WHO USES WHICH MODEL</h4><div class="tbl-wrap"><table class="etbl"><tr><th>ROLE</th><th>MODEL</th><th>ON LOCAL</th></tr>' + who + '</table></div>'
+      + '<p class="note"><b>On Local</b> swaps in another model for agents running on your machine — by default the runners use local-8b there.</p>'
+      + '<h4>TOOLS</h4><div class="tbl-wrap"><table class="etbl"><tr><th>TOOL</th><th>ON</th><th>LATENCY (MS)</th><th>TOKENS PER CALL</th></tr>' + tools + '</table></div>'
+      + '<h4>TOOL MIX PER ROLE</h4><div class="tbl-wrap"><table class="etbl"><tr><th>ROLE</th>' + TOOL_KEYS.map((k) => '<th>' + TOOL_KINDS[k].label.toUpperCase() + '</th>').join('') + '</tr>' + mix + '</table></div>'
+      + '<p class="note">Relative weights: an agent reaching for a tool picks one in proportion; 0 means never.</p>';
+  }
+  paneCompute(d) {
+    const base = new Map(buildWorld(1).territories.map((t) => [t.id, t]));
+    let rows = '', cap = 0, burn = 0;
+    for (const id of REGION_IDS) {
+      const R = d.regions[id], B = base.get(id), on = regionOn(d, id), off = id !== 'local' && !R.on;
+      if (on) { cap += R.cap; burn += R.cap * R.costPerSec; }
+      rows += '<tr><td><span class="rl"><i style="background:' + (B.kind === 'local' ? 'var(--local)' : 'var(--cloud)') + '"></i>' + escapeHtml(B.name) + '</span><span class="hint">' + escapeHtml(B.region) + '</span></td>'
+        + '<td>' + (id === 'local' ? '<span class="ro">always</span>' : edChk('regions|' + id + '|on', R.on, { rr: true })) + '</td>'
+        + '<td>' + edNum('regions|' + id + '|cap', R.cap, { t: 'int', min: id === 'local' ? 1 : 0, max: 5000, step: 1, cls: 'w-sm', dis: off }) + '</td>'
+        + '<td>$ ' + edNum('regions|' + id + '|costPerSec', R.costPerSec, { min: 0, max: 10, step: 0.00001, dis: off }) + '</td>'
+        + '<td>' + edNum('regions|' + id + '|speed', R.speed, { min: 0.05, max: 10, step: 0.05, cls: 'w-sm', dis: off }) + ' ×</td>'
+        + '<td class="ro">' + (id === 'local' ? '—' : (B.latencyMs.local || '?') + ' ms') + '</td></tr>';
+    }
+    return '<h4>BUDGET</h4><div class="frm">'
+      + '<label>Mission budget</label><div>$ ' + edNum('budget', d.budget, { min: 0.01, max: 1000000, step: 0.5 }) + '<span class="hint">the top bar drains it; the estimate counts runs that overspend</span></div>'
+      + '<label>Compute price ×</label><div>' + edNum('policy|computeMult', d.policy.computeMult, { min: 0, max: 100, step: 0.1, cls: 'w-sm' }) + '<span class="hint">multiplies every region’s per-second price</span></div>'
+      + '</div><h4>REGIONS</h4><div class="tbl-wrap"><table class="etbl"><tr><th>REGION</th><th>ON</th><th>AGENT CAP</th><th>$ PER AGENT-SECOND</th><th>SPEED</th><th>LATENCY</th></tr>' + rows + '</table></div>'
+      + '<p class="note">Capacity <b>' + cap + ' agents</b> across the regions that are on · compute at full use costs <b>' + fmtCost(burn * d.policy.computeMult * 60) + '/min</b> before tokens. '
+      + 'Tasks placed in a region that is off run on Local. <b>Speed</b> scales how fast agents there get through work.</p>';
+  }
+  paneTasks(d) {
+    const T = TEMPLATES[d.template] || TEMPLATES.custom;
+    if (!d.tasks) {
+      const list = specTasks(d);
+      const rows = list.map((t) => '<tr><td class="ro">' + escapeHtml(t.key) + '</td><td>' + escapeHtml(t.title) + '</td><td class="ro">' + ROLES[t.role].label + '</td><td class="ro">' + escapeHtml(t.territory)
+        + '</td><td class="ro">' + escapeHtml((t.deps || []).join(', ') || '—') + '</td><td class="ro">' + t.work + '</td><td class="ro">' + (t.fanout ? t.fanout.titles.length : '—') + '</td></tr>').join('');
+      return '<h4>TASKS — GENERATED</h4><p class="note" style="margin:0 0 8px">The ' + escapeHtml(T.name) + ' template generates these ' + list.length + ' tasks for seed ' + d.seed + ' at ' + d.scale + '×; another seed or scale generates another set. Customize them to edit, add or remove tasks.</p>'
+        + '<div class="ed-actions" style="margin:0 0 10px"><button class="lbtn sm primary" type="button" data-act="customize">✎ Customize tasks</button></div>'
+        + '<div class="tbl-wrap"><table class="etbl"><tr><th>KEY</th><th>TITLE</th><th>ROLE</th><th>REGION</th><th>AFTER</th><th>WORK</th><th>FAN-OUT</th></tr>' + rows + '</table></div>';
+    }
+    const roleOpts = ROLE_KEYS.map((r) => [r, ROLES[r].label]), regionOpts = REGION_IDS.map((id) => [id, id === 'local' ? 'Local' : id]);
+    const kindOpts = TASK_KIND_LIST.map((k) => [k, k]), priOpts = [1, 2, 3, 4].map((p) => [p, PRIORITY_LABELS[p]]);
+    const rows = d.tasks.map((t, i) => '<tr>'
+      + '<td>' + edText('tasks|' + i + '|key', t.key, { t: 'key', cls: 'w-sm', max: 32 }) + '</td>'
+      + '<td class="grow">' + edText('tasks|' + i + '|title', t.title, { max: 160 }) + '</td>'
+      + '<td>' + edSel('tasks|' + i + '|role', t.role, roleOpts) + '</td>'
+      + '<td>' + edSel('tasks|' + i + '|region', t.region, regionOpts) + '</td>'
+      + '<td>' + edText('tasks|' + i + '|deps', t.deps.join(', '), { t: 'deps', cls: 'w-sm', ph: '—' }) + '</td>'
+      + '<td>' + edNum('tasks|' + i + '|work', t.work, { min: 0.5, max: 3600, step: 0.5, cls: 'w-sm' }) + '</td>'
+      + '<td>' + edSel('tasks|' + i + '|kind', t.kind, kindOpts) + '</td>'
+      + '<td>' + edSel('tasks|' + i + '|priority', t.priority, priOpts, { t: 'selnum' }) + '</td>'
+      + '<td>' + edNum('tasks|' + i + '|fanout', t.fanout ? t.fanout.count : 0, { t: 'fan', min: 0, max: 40, step: 1, cls: 'w-sm' }) + '</td>'
+      + '<td>' + edNum('tasks|' + i + '|rework', t.rework ? t.rework.chance : 0, { t: 'rework', min: 0, max: 100, step: 1, cls: 'w-sm', show: pctShow }) + '</td>'
+      + '<td><button class="x" type="button" data-act="del-task" data-i="' + i + '" title="Remove">✕</button></td></tr>').join('');
+    return '<h4>TASKS</h4><div class="tbl-wrap"><table class="etbl tasks"><tr><th>KEY</th><th>TITLE</th><th>ROLE</th><th>REGION</th><th>AFTER</th><th>WORK S</th><th>KIND</th><th>PRIORITY</th><th>FAN-OUT</th><th>REWORK %</th><th></th></tr>' + rows + '</table></div>'
+      + '<div class="ed-actions"><button class="lbtn sm" type="button" data-act="add-task"' + (d.tasks.length >= SPEC_MAX_TASKS ? ' disabled' : '') + '>＋ Add task</button>'
+      + (d.template !== 'custom' ? '<button class="lbtn sm" type="button" data-act="revert-tasks">↺ Back to generated tasks</button>' : '') + '</div>'
+      + '<p class="note"><b>After</b> lists the keys a task waits for. <b>Work</b> is agent-seconds at speed 1×. <b>Fan-out</b> splits a task across that many sub-agents of its role once its lead is halfway through; '
+      + '<b>rework</b> is the chance a review sends the work back to a coder.</p>';
+  }
+  paneFailure(d) {
+    const P = d.policy;
+    return '<h4>FAILURE MODEL</h4><div class="frm">'
+      + '<label>Tool errors</label><div>' + edNum('policy|toolErr', P.toolErr, { t: 'pct', min: 0, max: 95, step: 0.5, show: pctShow }) + ' %<span class="hint">of tool calls fail — rate limits, timeouts, red tests; slow calls fail twice as often</span></div>'
+      + '<label>Slow cloud calls</label><div>' + edNum('policy|slow', P.slow, { t: 'pct', min: 0, max: 95, step: 0.5, show: pctShow }) + ' %<span class="hint">of cloud tool calls take 3–5× longer</span></div>'
+      + '<label>Crashes</label><div>' + edNum('policy|crash', P.crash, { t: 'pct', min: 0, max: 90, step: 0.1, show: pctShow }) + ' %<span class="hint">chance per ~3 s of work that an agent dies, × the task’s difficulty</span></div>'
+      + '<label>Retries per task</label><div>' + edNum('policy|maxRetries', P.maxRetries, { t: 'int', min: 0, max: 10, step: 1, cls: 'w-sm' }) + '<span class="hint">respawns after a crash before the task fails</span></div>'
+      + '</div><p class="note">An error costs the agent health and a crash at zero. A crash loses part of the task’s progress — most of it on fragile tasks (difficulty over 3).</p>';
+  }
+  paneLive(d) {
+    const h = this.app.host, built = this.liveBuilt(d), R = built.request;
+    const presetOpts = (this.presets || []).map((p) => [p.name, p.name + (Number.isInteger(p.agent_count) ? ' · ' + p.agent_count + ' agents' : '')]);
+    let html = '<h4>ROSTER</h4><div class="radio-row">'
+      + '<label><input type="radio" name="ed-roster" value="roles" data-k="live|roster" data-t="roster" data-rr="1"' + (d.live.roster === 'roles' ? ' checked' : '') + '> One agent per role the tasks use, with the goals from the Agents tab</label>'
+      + '<label><input type="radio" name="ed-roster" value="preset" data-k="live|roster" data-t="roster" data-rr="1"' + (d.live.roster === 'preset' ? ' checked' : '') + (h.can('presets:read') ? '' : ' disabled') + '> A preset’s agents '
+      + (this.presets ? edSel('live|preset', d.live.preset, [['', '— choose a preset —'], ...presetOpts], { rr: true, dis: d.live.roster !== 'preset' }) : '<span class="hint">' + (h.can('presets:read') ? 'loading presets…' : 'needs agnostic') + '</span>')
+      + '</label></div>';
+    html += '<h4>PROCESS</h4><div class="frm"><label>Process</label><div>'
+      + edSel('live|process', d.live.process, [['auto', 'Auto — a DAG when tasks have dependencies'], ['sequential', 'Sequential — one task at a time, in order'], ['parallel', 'Parallel — every task at once, ignoring dependencies'], ['dag', 'DAG — follows the dependencies']], { rr: true })
+      + '</div><label>Max concurrency</label><div>' + edNum('live|maxConcurrency', d.live.maxConcurrency, { t: 'int', min: 1, max: 64, step: 1, cls: 'w-sm', dis: R.process !== 'parallel' }) + '<span class="hint">parallel only</span></div></div>';
+    if (d.live.roster === 'roles') {
+      html += '<h4>LLM MODELS</h4><div class="tbl-wrap"><table class="etbl"><tr><th>ROLE</th><th>MODEL ID — OPTIONAL</th></tr>'
+        + ROLE_KEYS.map((r) => '<tr><td>' + roleCell(r) + '</td><td class="grow">' + edText('live|models|' + r, d.live.models[r] || '', { t: 'livemodel', ph: 'the server’s default model', max: 100 }) + '</td></tr>').join('')
+        + '</table></div><p class="note">Model ids your LLM gateway knows. The simulator’s catalogue is not sent.</p>';
+    }
+    html += '<h4>WHAT GETS SUBMITTED</h4><p class="note" style="margin-top:0">' + R.agents.length + ' agent' + (R.agents.length === 1 ? '' : 's') + ' and ' + R.tasks.length + ' tasks, process <b>' + R.process + '</b>'
+      + (R.max_concurrency ? ' (' + R.max_concurrency + ' at a time)' : '') + '. Fan-out, rework, regions, caps, tools and the failure model shape only the simulator: a live crew runs these tasks with these agents on this agnostic server, which does not report token cost.</p>'
+      + (d.live.roster === 'preset' && !d.live.preset ? '<p class="note" style="color:#fcd34d">Choose a preset — until then the roster is one agent per role.</p>' : '')
+      + '<div class="ed-actions"><button class="lbtn sm" type="button" data-act="toggle-req">' + (this.showReq ? 'Hide' : 'Show') + ' the request</button></div>'
+      + (this.showReq ? '<pre class="req">' + escapeHtml(JSON.stringify(R, null, 2)) + '</pre>' : '');
+    return html;
+  }
+}
+
+/* =====================================================================================
  *  SECTION 7 · INPUT — mouse & keyboard → camera, selection, orders
  * ===================================================================================== */
 class Input {
@@ -4078,7 +6200,7 @@ class Input {
     m.addEventListener('mousedown', (e) => this.onMiniDown(e));
     m.addEventListener('contextmenu', (e) => e.preventDefault());
   }
-  active() { return this.app.mode !== 'menu'; }
+  active() { return this.app.mode !== 'menu' && !this.app.overlayOpen(); }
 
   /** Per frame: keyboard + edge-of-screen panning. */
   update(dt) {
@@ -4234,47 +6356,60 @@ class Input {
 
 /* =====================================================================================
  *  SECTION 8 · APP — wiring, main loop, live ⇄ replay switching
- *  The only place that knows concrete EventSource / CommandSink classes. To drive the view from a real
- *  orchestrator, replace the two lines marked SOURCE in startScenario() with:
- *      const source = new WebSocketSource('wss://your-orchestrator/events');
- *      const sink = new WebSocketCommandSink(source);
- *  Store, Layout, Visual, Renderer, HUD and Input are untouched by that swap.
+ *  The only place that knows concrete EventSource / CommandSink classes: simulate() pairs a
+ *  MockSource with a MockCommandSink, startCrew() a LiveCrewSource with a LiveCommandSink, and
+ *  enterReplay() a ReplaySource with a ReadOnlySink. Store, Layout, Visual, Renderer, HUD and Input
+ *  never know which one they are looking at — the mission's `kind` only labels it.
  * ===================================================================================== */
-const SCENARIO_CATALOG = Object.values(SCENARIOS).map(({ key, icon, name, desc, tags }) => ({ key, icon, name, desc, tags }));
-
 class App {
   constructor() {
     this.ui = { selection: new Set(), hover: null, box: null, orders: [], fog: true, targeting: null, migrateMenu: false, inspect: null };
     this.groups = {};
-    this.mode = 'menu';      // 'menu' | 'live' | 'replay'
+    this.mode = 'menu';      // 'menu' | 'live' | 'replay' ('live' = a running mission, simulated or real)
     this.source = null;
     this.sink = new CommandSink();
-    this.live = null;        // {source, sink, key, seed, scale}
+    this.live = null;        // {source, sink, spec, kind: 'sim' | 'live', saved}
     this.recording = [];
     this.attract = false;
+    this.host = new Host();
+    this.library = new SwarmLibrary(this.host);
+    this.presetCache = new Map();
     this.store = new Store();
     this.layout = new Layout();
     this.visual = new Visual(this.layout, () => (this.source ? this.source.now() : 0));
     this.store.onEvent((e, s) => this.visual.onEvent(e, s));
     this.renderer = new Renderer($('map'), $('minimap'), this.store, this.layout, this.visual, this.ui);
     this.store.onReset(() => { this.layout.reset(); this.visual.reset(); this.renderer.fogForce = true; });
-    this.hud = new HUD(this, SCENARIO_CATALOG);
+    this.modal = new Modal();
+    this.hud = new HUD(this);
     this.input = new Input(this);
+    this.editor = new Editor(this);
+    this.launcher = new Launcher(this);
+    this.library.load();
     this.fps = { frames: 0, t: 0 };
     window.addEventListener('resize', () => this.renderer.resize());
     this.loop = this.loop.bind(this);
     requestAnimationFrame(this.loop);
   }
+  overlayOpen() { return this.modal.isOpen() || this.editor.isOpen(); }
+  /** Unit orders need a running mission whose source takes them — a live crew does not. */
+  canCommand() { return this.mode === 'live' && !!this.source && this.source.capabilities.commands !== false; }
 
   /* ---------- sources ---------- */
-  attach(source, sink, record) {
+  attach(source, sink) {
     if (this.unsub) this.unsub();
     this.source = source;
     this.sink = sink;
-    this.unsub = source.subscribe(record ? (e) => { this.recording.push(e); this.store.apply(e); } : (e) => this.store.apply(e));
+    this.unsub = source.subscribe((e) => this.store.apply(e));
+  }
+  /** Record everything `source` emits — kept apart from attach() so a live crew is still recorded while a replay is on screen. */
+  record(source) {
+    if (this.recUnsub) this.recUnsub();
+    this.recUnsub = source.subscribe((e) => this.recording.push(e));
   }
   teardown() {
     if (this.unsub) { this.unsub(); this.unsub = null; }
+    if (this.recUnsub) { this.recUnsub(); this.recUnsub = null; }
     if (this.source) this.source.stop();
     if (this.live && this.live.source !== this.source) this.live.source.stop();
     this.source = null;
@@ -4290,17 +6425,27 @@ class App {
     this.hud.hideTooltip();
     this.hud.selectionChanged();
   }
-  startScenario(key, seed, scale, attract = false) {
+  /**
+   * Simulate a swarm spec. `saved`: it is in the library, so the finished run is recorded on it.
+   * `attract`: the demo that plays behind the launcher.
+   */
+  simulate(spec, { saved = false, seed = null, attract = false } = {}) {
+    const s = deepCopy(spec);
+    if (seed != null) s.seed = seed;
+    const v = validateSpec(s);
+    if (v.errors.length) { this.hud.toast(v.errors[0], 'bad'); return; }
     this.teardown();
     this.recording = [];
     this.store.reset();
     this.resetUI();
-    const sim = new Sim(SCENARIOS[key], { seed, scale });
-    const source = new MockSource(sim);          // SOURCE
-    const sink = new MockCommandSink(sim);        // SOURCE
-    this.live = { source, sink, key, seed, scale };
+    const { sc, cfg } = compileSpec(s);
+    const sim = new Sim(sc, { seed: s.seed, scale: s.scale, cfg });
+    const source = new MockSource(sim);
+    const sink = new MockCommandSink(sim);
+    this.live = { source, sink, spec: s, kind: 'sim', saved: saved && !attract };
     this.attract = attract;
-    this.attach(source, sink, !attract);
+    this.attach(source, sink);
+    if (!attract) this.record(source);
     this.mode = attract ? 'menu' : 'live';
     source.start();
     if (attract) source.setSpeed(2);
@@ -4308,13 +6453,126 @@ class App {
     this.hud.showSummary(null);
     this.hud.showReplayBar(false);
     this.renderer.fitAll(true, true);
-    if (!attract) this.hud.toast('Mission deployed — ' + SCENARIOS[key].name + ' · seed ' + seed, 'good');
+    if (!attract) this.hud.toast('Simulating ' + s.name + ' · seed ' + s.seed, 'good');
   }
-  runAgain() { const l = this.live; if (l) this.startScenario(l.key, l.seed, l.scale); else this.showMenu(); }
-  showMenu() {
+  /** Run the same swarm again: a simulation with the same seed (or a new one), or a crew submitted afresh. */
+  runAgain(newSeed) {
+    const l = this.live;
+    if (!l) { this.showMenu(); return; }
+    const spec = (l.saved && this.library.get(l.spec.id)) || l.spec;
+    if (l.kind === 'live') { this.runLive(spec); return; }
+    this.simulate(spec, { saved: l.saved, seed: newSeed ? 1 + Math.floor(Math.random() * 999999) : l.spec.seed });
+  }
+  /** Open the finished run's swarm in the editor — or, for a quick demo, as a new swarm to save. */
+  editRunSpec() {
+    const l = this.live;
+    if (!l || !l.spec) return;
+    const saved = this.library.get(l.spec.id);
+    if (saved) this.editor.open(saved);
+    else this.editor.open(l.spec, { isNew: true });
+  }
+  async showMenu() {
+    const src = this.live && this.live.source;
+    if (src instanceof LiveCrewSource && !src.finished && src.crewId && this.mode !== 'menu') {
+      const ok = await this.modal.confirm('Leave this crew?', 'It keeps running on agnostic — leaving only stops watching it. Its swarm’s card can watch it again.', { yes: 'Leave', no: 'Stay' });
+      if (!ok) return;
+    }
     this.hud.showReplayBar(false);
     this.hud.showSummary(null);
-    this.startScenario('research', 7 + Math.floor(Math.random() * 1000), 1, true); // attract mode behind the menu
+    const demo = defaultSpec('research', 1);
+    demo.seed = 7 + Math.floor(Math.random() * 1000);
+    this.simulate(demo, { attract: true }); // attract mode behind the launcher
+  }
+
+  /* ---------- live crews ---------- */
+  async presetDoc(name) {
+    if (this.presetCache.has(name)) return this.presetCache.get(name);
+    if (!this.host.can('presets:read') || !RE_PRESET.test(name)) return null;
+    const r = await this.host.request('GET', '/api/v1/presets/' + name);
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.agents)) return null;
+    this.presetCache.set(name, r.data);
+    return r.data;
+  }
+  /** Submit a swarm to agnostic as a real crew — after saying plainly what that means. */
+  async runLive(spec) {
+    const h = this.host;
+    if (!h.can('crews:write')) { this.hud.toast(h.mode === 'standalone' ? 'Open this view inside agnostic to run a live crew' : 'This plugin may not start crews here', 'bad'); return; }
+    if (h.role() === 'viewer') { this.hud.toast('Your role (viewer) cannot start crews', 'bad'); return; }
+    const v = validateSpec(spec);
+    if (v.errors.length) { this.hud.toast(v.errors[0], 'bad'); return; }
+    let preset = null;
+    if (spec.live.roster === 'preset' && spec.live.preset) {
+      preset = await this.presetDoc(spec.live.preset);
+      if (!preset) { this.hud.toast('Could not load the preset ' + spec.live.preset, 'bad'); return; }
+    }
+    const built = specToCrewRequest(spec, preset), R = built.request;
+    if (!R.tasks.length || !R.agents.length) { this.hud.toast('This swarm has nothing to submit', 'bad'); return; }
+    if (R.tasks.length > 1000 || R.agents.length > 100) { this.hud.toast('agnostic takes at most 1000 tasks and 100 agents in a crew', 'bad'); return; }
+    const ok = await this.modal.confirm('Run ' + spec.name + ' live?',
+      'This submits a real crew to agnostic: <b>' + R.agents.length + ' agent' + (R.agents.length === 1 ? '' : 's') + '</b> and <b>' + R.tasks.length + ' tasks</b>, process <b>' + escapeHtml(R.process) + '</b>. '
+      + 'With an LLM gateway configured every task is a real model call, and can cost money.'
+      + (spec.estimate ? ' The simulator estimated ≈ ' + fmtCost(spec.estimate.cost.p50) + ' for this swarm — a simulation, not a quote.' : ''), { yes: '⚡ Submit crew' });
+    if (!ok) return;
+    this.startCrew(spec, built, null);
+  }
+  /** Watch a crew a swarm started earlier — still running, or finished. */
+  async watchRun(spec, crewId) {
+    if (!this.host.can('crews:read') || !RE_CREW_ID.test(crewId || '')) { this.hud.toast('Open this view inside agnostic to watch a crew', 'bad'); return; }
+    const preset = spec.live.roster === 'preset' && spec.live.preset ? await this.presetDoc(spec.live.preset) : null;
+    this.startCrew(spec, specToCrewRequest(spec, preset), crewId.toLowerCase());
+  }
+  startCrew(spec, built, crewId) {
+    const s = deepCopy(spec);
+    const saved = !!this.library.get(s.id);
+    this.teardown();
+    this.recording = [];
+    this.store.reset();
+    this.resetUI();
+    const source = new LiveCrewSource(this.host, s, built, {
+      crewId,
+      onSubmitted: (id, engine) => {
+        if (!saved) return;
+        this.library.patch(s.id, (x) => { x.runs.push({ kind: 'live', at: Date.now(), crew: id, status: 'running', engine }); x.runs = x.runs.slice(-SPEC_MAX_RUNS); });
+      },
+      onFinished: (status, sum) => { if (saved && sum.crewId) this.recordLive(s.id, sum); },
+    });
+    const sink = new LiveCommandSink();
+    this.live = { source, sink, spec: s, kind: 'live', saved };
+    this.attract = false;
+    this.attach(source, sink);
+    this.record(source);
+    this.mode = 'live';
+    source.start();
+    this.hud.showStart(false);
+    this.hud.showSummary(null);
+    this.hud.showReplayBar(false);
+    this.renderer.fitAll(true, true);
+    this.hud.toast(crewId ? 'Watching crew ' + crewId.slice(0, 8) : 'Submitting ' + s.name + ' to agnostic…', 'good');
+  }
+  recordLive(id, sum) {
+    this.library.patch(id, (x) => {
+      let r = x.runs.find((q) => q.kind === 'live' && q.crew === sum.crewId);
+      if (!r) { r = { kind: 'live', at: Date.now(), crew: sum.crewId }; x.runs.push(r); }
+      Object.assign(r, { status: sum.status, engine: sum.engineMode || r.engine || '', done: sum.tasksDone, failed: sum.tasksFailed, total: sum.tasksDone + sum.tasksFailed });
+      if (sum.wallMs) r.durationMs = sum.wallMs;
+      x.runs = x.runs.slice(-SPEC_MAX_RUNS);
+    });
+  }
+  recordSim(sum) {
+    const l = this.live;
+    if (!l || l.kind !== 'sim' || !l.saved) return;
+    this.library.patch(l.spec.id, (x) => {
+      x.runs.push({ kind: 'sim', at: Date.now(), status: 'complete', seed: l.spec.seed, cost: +sum.cost.toFixed(4), durationMs: Math.round(sum.durationMs), done: sum.tasksDone, failed: sum.tasksFailed, total: sum.tasksTotal });
+      x.runs = x.runs.slice(-SPEC_MAX_RUNS);
+    });
+  }
+  async cancelCrew() {
+    const src = this.live && this.live.source;
+    if (!(src instanceof LiveCrewSource) || src.finished) return;
+    const ok = await this.modal.confirm('Cancel this crew?', 'agnostic stops it: tasks that have not finished will not run.', { yes: 'Cancel crew', no: 'Keep it running', danger: true });
+    if (!ok) return;
+    const r = await src.cancel();
+    this.hud.toast(r.message, r.ok ? 'good' : 'bad');
   }
 
   /* ---------- replay ---------- */
@@ -4327,7 +6585,7 @@ class App {
     const rs = new ReplaySource(this.recording.slice());
     rs.onRewind = () => this.store.reset();
     this.store.reset();
-    this.attach(rs, new ReadOnlySink(), false);
+    this.attach(rs, new ReadOnlySink());
     this.mode = 'replay';
     this.cancelTargeting();
     rs.start();
@@ -4346,7 +6604,7 @@ class App {
     this.source = src; // the visual clock must read live time while history is re-applied
     this.store.reset();
     for (const e of this.recording) this.store.apply(e);
-    this.attach(src, this.live.sink, true);
+    this.attach(src, this.live.sink); // the recorder never stopped
     this.mode = 'live';
     src.setPaused(this.replayReturn ? this.replayReturn.wasPaused : false);
     if (this.store.mission.status === 'complete') this.summaryShown = true;
@@ -4355,15 +6613,10 @@ class App {
   exportLog() {
     if (!this.recording.length) { this.hud.toast('Nothing to export', 'bad'); return; }
     const m = this.store.mission;
-    const blob = new Blob([JSON.stringify({ format: 'swarm-command/event-log', version: 1, exportedAt: new Date().toISOString(),
-      mission: { title: m.title, scenario: m.scenario, seed: m.seed }, events: this.recording })], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'swarm-' + (m.scenario || 'log') + '-' + (m.seed || 0) + '.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+    const crew = m.kind === 'live' && this.live && this.live.source.crewId;
+    downloadText('swarm-' + (crew ? 'live-' + crew.slice(0, 8) : (m.scenario || 'log') + '-' + (m.seed || 0)) + '.json', JSON.stringify({
+      format: 'swarm-command/event-log', version: 1, exportedAt: new Date().toISOString(),
+      mission: { title: m.title, scenario: m.scenario, seed: m.seed, kind: m.kind || 'sim', crewId: crew || undefined }, events: this.recording }));
   }
   loadLogFile(file) {
     const reader = new FileReader();
@@ -4507,6 +6760,7 @@ class App {
     const ui = this.ui;
     if (id === 'focus') return this.focusSelection();
     if (this.mode !== 'live') { if (this.mode === 'replay') this.hud.toast('Replay is read-only — exit replay to issue orders', 'bad'); return; }
+    if (!this.canCommand()) { this.hud.toast('A live crew takes no unit orders — Cancel crew is the one control agnostic has', 'bad'); return; }
     if (id === 'back') { this.cancelTargeting(); return; }
     const ids = this.controllable();
     if (!ids.length) { this.hud.toast('Select one or more agents first', 'bad'); return; }
@@ -4569,11 +6823,11 @@ class App {
     this.cancelTargeting();
   }
   orderAt(sx, sy) {
-    if (!this.controllable().length || this.mode !== 'live') return;
+    if (!this.controllable().length || !this.canCommand()) return;
     this.orderTarget(this.renderer.pickAt(sx, sy), this.renderer.toWorld(sx, sy));
   }
   orderAtWorld(x, y) {
-    if (!this.controllable().length || this.mode !== 'live') return;
+    if (!this.controllable().length || !this.canCommand()) return;
     this.issue('move', { kind: 'point', x: Math.round(x), y: Math.round(y), territory: this.layout.territoryAt(x, y) }, { x, y });
   }
   /** Right-click semantics: task → assign · structure → use · HQ → rally home · gateway → migrate · ground → move & hold. */
@@ -4591,6 +6845,7 @@ class App {
     const ids = this.controllable();
     if (!ids.length) { this.hud.toast('Select one or more agents first', 'bad'); return; }
     if (this.mode !== 'live') { this.hud.toast('Replay is read-only — exit replay to issue orders', 'bad'); return; }
+    if (!this.canCommand()) { this.hud.toast('A live crew takes no unit orders', 'bad'); return; }
     if (at) this.ui.orders.push({ x: at.x, y: at.y, t0: performance.now(), color: ORDER_COLORS[type] || '#4ade80' });
     this.sink.send(makeCommand(type, ids, target)).then((res) => {
       this.hud.toast((res.ok ? '✓ ' : '✕ ') + (res.message || type), res.ok ? 'good' : 'bad');
@@ -4622,8 +6877,10 @@ class App {
     if (!this.summaryAt) this.summaryAt = ts + (this.attract ? 4000 : 2200);
     if (ts < this.summaryAt) return;
     this.summaryShown = true;
-    if (this.attract) this.showMenu();
-    else this.hud.showSummary(this.store.summary());
+    if (this.attract) { this.showMenu(); return; }
+    const sum = this.store.summary();
+    this.hud.showSummary(sum);
+    this.recordSim(sum);
   }
   tickFps(ts) {
     const f = this.fps;

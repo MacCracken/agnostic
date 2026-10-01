@@ -164,3 +164,246 @@ fn agnostic_req_bool(v, key: Str, sentinel): i64 {
     if (bayan_json_v_is_bool(f) != 1) { return sentinel; }
     return bayan_json_v_bool(f);
 }
+
+# ---------------------------------------------------------------------------
+# Validating a JSON document without parsing it (0.1.8)
+#
+# The plugin data store keeps a client's document VERBATIM — the bytes it was sent
+# are the bytes it serves back — so a PUT needs only to know the body is one
+# well-formed JSON object. `bayan_json_v_parse_buf_a` would answer that by building
+# the whole tree in the request arena, and a document near its size cap does not fit
+# there: the overflow spills to the no-`free()` global allocator on every PUT. This
+# scanner allocates nothing.
+#
+# Strict RFC 8259: no comments, no trailing commas, no leading zeros, no raw control
+# bytes in strings, every escape legal, every string well-formed UTF-8 (no overlongs,
+# no surrogates). Nesting is bounded by `AGNOSTIC_JSON_MAX_DEPTH`, so a hostile body
+# cannot recurse the stack away.
+
+var AGNOSTIC_JSON_MAX_DEPTH = 64;
+
+# The index after any JSON whitespace at `i`.
+fn _agnostic_jv_ws(d, n, i): i64 {
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        if (c != 32 && c != 9 && c != 10 && c != 13) { break; }
+        i = i + 1;
+    }
+    return i;
+}
+
+# Whether `c` is a hex digit. 1 or 0.
+fn _agnostic_jv_hex(c): i64 {
+    if (c >= 48 && c <= 57) { return 1; }
+    if (c >= 97 && c <= 102) { return 1; }
+    if (c >= 65 && c <= 70) { return 1; }
+    return 0;
+}
+
+# The index after the string starting at `i` (which is its opening quote), or -1.
+fn _agnostic_jv_string(d, n, i): i64 {
+    i = i + 1;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        if (c == 34) { return i + 1; }
+        if (c < 32) { return 0 - 1; }
+        if (c == 92) {
+            if (i + 1 >= n) { return 0 - 1; }
+            var e = load8(d + i + 1) & 255;
+            if (e == 117) {                                   # \u, then four hex digits
+                if (i + 5 >= n) { return 0 - 1; }
+                var k = 2;
+                while (k < 6) {
+                    if (_agnostic_jv_hex(load8(d + i + k) & 255) == 0) { return 0 - 1; }
+                    k = k + 1;
+                }
+                i = i + 6;
+                continue;
+            }
+            # " \ / b f n r t
+            if (e != 34 && e != 92 && e != 47 && e != 98 && e != 102 && e != 110 && e != 114 && e != 116) {
+                return 0 - 1;
+            }
+            i = i + 2;
+            continue;
+        }
+        if (c < 128) { i = i + 1; continue; }
+        # A UTF-8 sequence: its length from the lead byte, then the continuation
+        # bytes, with the second byte's range narrowed where RFC 3629 requires.
+        var len = 0;
+        var lo = 128;
+        var hi = 191;
+        # 0xE0 forbids overlongs, 0xED surrogates, 0xF0 overlongs, 0xF4 > U+10FFFF.
+        if (c >= 194 && c <= 223) {
+            len = 2;
+        } elif (c >= 224 && c <= 239) {
+            len = 3;
+            if (c == 224) { lo = 160; }
+            if (c == 237) { hi = 159; }
+        } elif (c >= 240 && c <= 244) {
+            len = 4;
+            if (c == 240) { lo = 144; }
+            if (c == 244) { hi = 143; }
+        } else {
+            return 0 - 1;
+        }
+        if (i + len > n) { return 0 - 1; }
+        var b1 = load8(d + i + 1) & 255;
+        if (b1 < lo || b1 > hi) { return 0 - 1; }
+        var j = 2;
+        while (j < len) {
+            var b = load8(d + i + j) & 255;
+            if (b < 128 || b > 191) { return 0 - 1; }
+            j = j + 1;
+        }
+        i = i + len;
+    }
+    return 0 - 1;
+}
+
+# The index after the number starting at `i`, or -1.
+fn _agnostic_jv_number(d, n, i): i64 {
+    if (i < n && (load8(d + i) & 255) == 45) { i = i + 1; }              # '-'
+    if (i >= n) { return 0 - 1; }
+    var c = load8(d + i) & 255;
+    # A lone 0, or a run of digits that does not start with one.
+    if (c == 48) {
+        i = i + 1;
+    } elif (c >= 49 && c <= 57) {
+        while (i < n) {
+            c = load8(d + i) & 255;
+            if (c < 48 || c > 57) { break; }
+            i = i + 1;
+        }
+    } else {
+        return 0 - 1;
+    }
+    if (i < n && (load8(d + i) & 255) == 46) {                            # '.'
+        i = i + 1;
+        var f = i;
+        while (i < n) {
+            c = load8(d + i) & 255;
+            if (c < 48 || c > 57) { break; }
+            i = i + 1;
+        }
+        if (i == f) { return 0 - 1; }
+    }
+    if (i < n) {
+        c = load8(d + i) & 255;
+        if (c == 101 || c == 69) {                                        # e E
+            i = i + 1;
+            if (i < n) {
+                c = load8(d + i) & 255;
+                if (c == 43 || c == 45) { i = i + 1; }
+            }
+            var x = i;
+            while (i < n) {
+                c = load8(d + i) & 255;
+                if (c < 48 || c > 57) { break; }
+                i = i + 1;
+            }
+            if (i == x) { return 0 - 1; }
+        }
+    }
+    return i;
+}
+
+# The index after `lit` (a C string of length `ln`) at `i`, or -1.
+fn _agnostic_jv_literal(d, n, i, lit, ln): i64 {
+    if (i + ln > n) { return 0 - 1; }
+    var k = 0;
+    while (k < ln) {
+        if ((load8(d + i + k) & 255) != (load8(lit + k) & 255)) { return 0 - 1; }
+        k = k + 1;
+    }
+    return i + ln;
+}
+
+# The index after the value starting at or after `i`, or -1.
+fn _agnostic_jv_value(d, n, i, depth): i64 {
+    i = _agnostic_jv_ws(d, n, i);
+    if (i >= n) { return 0 - 1; }
+    var c = load8(d + i) & 255;
+    if (c == 123) { return _agnostic_jv_object(d, n, i, depth + 1); }
+    if (c == 91) { return _agnostic_jv_array(d, n, i, depth + 1); }
+    if (c == 34) { return _agnostic_jv_string(d, n, i); }
+    if (c == 116) { return _agnostic_jv_literal(d, n, i, "true", 4); }
+    if (c == 102) { return _agnostic_jv_literal(d, n, i, "false", 5); }
+    if (c == 110) { return _agnostic_jv_literal(d, n, i, "null", 4); }
+    if (c == 45 || (c >= 48 && c <= 57)) { return _agnostic_jv_number(d, n, i); }
+    return 0 - 1;
+}
+
+# The index after the object at `i` (its `{`), or -1.
+fn _agnostic_jv_object(d, n, i, depth): i64 {
+    if (depth > AGNOSTIC_JSON_MAX_DEPTH) { return 0 - 1; }
+    i = _agnostic_jv_ws(d, n, i + 1);
+    if (i < n && (load8(d + i) & 255) == 125) { return i + 1; }          # {}
+    while (i < n) {
+        if ((load8(d + i) & 255) != 34) { return 0 - 1; }                # a key
+        i = _agnostic_jv_string(d, n, i);
+        if (i < 0) { return 0 - 1; }
+        i = _agnostic_jv_ws(d, n, i);
+        if (i >= n || (load8(d + i) & 255) != 58) { return 0 - 1; }      # ':'
+        i = _agnostic_jv_value(d, n, i + 1, depth);
+        if (i < 0) { return 0 - 1; }
+        i = _agnostic_jv_ws(d, n, i);
+        if (i >= n) { return 0 - 1; }
+        var c = load8(d + i) & 255;
+        if (c == 125) { return i + 1; }                                   # '}'
+        if (c != 44) { return 0 - 1; }                                    # ','
+        i = _agnostic_jv_ws(d, n, i + 1);
+    }
+    return 0 - 1;
+}
+
+# The index after the array at `i` (its `[`), or -1.
+fn _agnostic_jv_array(d, n, i, depth): i64 {
+    if (depth > AGNOSTIC_JSON_MAX_DEPTH) { return 0 - 1; }
+    i = _agnostic_jv_ws(d, n, i + 1);
+    if (i < n && (load8(d + i) & 255) == 93) { return i + 1; }           # []
+    while (i < n) {
+        i = _agnostic_jv_value(d, n, i, depth);
+        if (i < 0) { return 0 - 1; }
+        i = _agnostic_jv_ws(d, n, i);
+        if (i >= n) { return 0 - 1; }
+        var c = load8(d + i) & 255;
+        if (c == 93) { return i + 1; }                                    # ']'
+        if (c != 44) { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# What `agnostic_json_kind` found.
+enum AgnosticJsonKind {
+    AGNOSTIC_JSON_MALFORMED = 0;
+    AGNOSTIC_JSON_OBJECT    = 1;
+    AGNOSTIC_JSON_OTHER     = 2;
+}
+
+# Whether `body` is exactly one well-formed JSON value, optionally surrounded by
+# whitespace, and whether that value is an object: AGNOSTIC_JSON_OBJECT,
+# AGNOSTIC_JSON_OTHER (well-formed, but an array or a scalar), or
+# AGNOSTIC_JSON_MALFORMED. The split is the API's 400-versus-422 split. Allocates
+# nothing.
+fn agnostic_json_kind(body: Str): i64 {
+    if (body == 0) { return AGNOSTIC_JSON_MALFORMED; }
+    var d = str_data(body);
+    var n = str_len(body);
+    var i = _agnostic_jv_ws(d, n, 0);
+    if (i >= n) { return AGNOSTIC_JSON_MALFORMED; }
+    var is_obj = 0;
+    if ((load8(d + i) & 255) == 123) { is_obj = 1; }
+    i = _agnostic_jv_value(d, n, i, 0);
+    if (i < 0) { return AGNOSTIC_JSON_MALFORMED; }
+    if (_agnostic_jv_ws(d, n, i) != n) { return AGNOSTIC_JSON_MALFORMED; }
+    if (is_obj == 1) { return AGNOSTIC_JSON_OBJECT; }
+    return AGNOSTIC_JSON_OTHER;
+}
+
+# Whether `body` is exactly one well-formed JSON object. 1 or 0. Allocates nothing.
+fn agnostic_json_is_object(body: Str): i64 {
+    if (agnostic_json_kind(body) == AGNOSTIC_JSON_OBJECT) { return 1; }
+    return 0;
+}

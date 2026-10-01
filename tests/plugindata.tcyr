@@ -1,0 +1,390 @@
+# agnostic/engine/plugindata + routes/plugindata + http/guard — the plugin platform's
+# server half (0.1.8).
+#
+# What this suite holds:
+#
+#   1. A document is validated WITHOUT being parsed, strictly: one JSON object, nothing
+#      malformed, nothing nested past the depth bound, every string well-formed UTF-8.
+#   2. It is stored and served back VERBATIM — the bytes PUT are the bytes GET returns.
+#   3. Documents are scoped by TENANT. One tenant can neither list, read, overwrite nor
+#      delete another's — and the default scope `_` is a third, separate space.
+#   4. The limits hold: size (413), count (507), key shape (422).
+#   5. The two transport predicates the ladder uses answer correctly at their edges.
+include "src/app.cyr"
+
+var _T_PDB = "/tmp/agnostic-plugindata-suite.patra";
+var _T_PAUDIT = "/tmp/agnostic-plugindata-audit.patra";
+var _T_MAXB = 1048576;
+
+fn _t_open() {
+    agnostic_webgui_reset();
+    agnostic_store_close();
+    sys_unlink(_T_PDB);
+    patra_init();
+    agnostic_store_open(str_from(_T_PDB));
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_settings_ensure();
+    agnostic_plugindata_ensure();
+    agnostic_webgui_init();
+    return 0;
+}
+
+fn _t_kind(text) { return agnostic_json_kind(str_from(text)); }
+
+# A request context carrying `Bearer <token>`, like the authn suite builds.
+fn _t_ctx_as(a, token) {
+    var h = alloc_via(a, 7 + str_len(token));
+    memcpy(h, "Bearer ", 7);
+    memcpy(h + 7, str_data(token), str_len(token));
+    return agnostic_reqctx_new_a(a, str_new_a(a, h, 7 + str_len(token)), 0);
+}
+
+fn _t_req(a, method, path, body, ctx) {
+    return agnostic_route_dispatch_a(a, method, str_from(path), str_from(body), _T_MAXB, ctx);
+}
+
+fn _t_status(r) { return agnostic_response_status(r); }
+
+fn test_validator() {
+    test_group("codec/json-kind");
+    assert_eq(_t_kind("{}"), AGNOSTIC_JSON_OBJECT, "an empty object");
+    assert_eq(_t_kind("  {\"a\": [1, -2.5e3, true, false, null, \"x\"]}\n"), AGNOSTIC_JSON_OBJECT,
+      "every value kind, with surrounding whitespace");
+    assert_eq(_t_kind("{\"s\":\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u00e9\"}"), AGNOSTIC_JSON_OBJECT, "every escape");
+    assert_eq(_t_kind("{\"s\":\"Qualité · ✓ 🚀\"}"), AGNOSTIC_JSON_OBJECT, "2-, 3- and 4-byte UTF-8");
+    assert_eq(_t_kind("[1,2]"), AGNOSTIC_JSON_OTHER, "an array is well-formed but not an object");
+    assert_eq(_t_kind("42"), AGNOSTIC_JSON_OTHER, "and so is a scalar");
+    assert_eq(_t_kind(""), AGNOSTIC_JSON_MALFORMED, "nothing at all is malformed");
+    assert_eq(_t_kind("{\"a\":1,}"), AGNOSTIC_JSON_MALFORMED, "a trailing comma");
+    assert_eq(_t_kind("[1,]"), AGNOSTIC_JSON_MALFORMED, "a trailing comma in an array");
+    assert_eq(_t_kind("{\"a\":01}"), AGNOSTIC_JSON_MALFORMED, "a leading zero");
+    assert_eq(_t_kind("{\"a\":1.}"), AGNOSTIC_JSON_MALFORMED, "a bare decimal point");
+    assert_eq(_t_kind("{\"a\":1e}"), AGNOSTIC_JSON_MALFORMED, "a bare exponent");
+    assert_eq(_t_kind("{\"a\":\"\\q\"}"), AGNOSTIC_JSON_MALFORMED, "an unknown escape");
+    assert_eq(_t_kind("{\"a\":\"\\u12g4\"}"), AGNOSTIC_JSON_MALFORMED, "a bad \\u escape");
+    assert_eq(_t_kind("{\"a\":\"line\nbreak\"}"), AGNOSTIC_JSON_MALFORMED, "a raw control byte in a string");
+    assert_eq(_t_kind("{\"a\":tru}"), AGNOSTIC_JSON_MALFORMED, "a truncated literal");
+    assert_eq(_t_kind("{\"a\":1} x"), AGNOSTIC_JSON_MALFORMED, "trailing junk");
+    assert_eq(_t_kind("{\"a\":1}{}"), AGNOSTIC_JSON_MALFORMED, "two documents");
+    assert_eq(_t_kind("{a:1}"), AGNOSTIC_JSON_MALFORMED, "an unquoted key");
+    assert_eq(_t_kind("{\"a\":1 /* c */}"), AGNOSTIC_JSON_MALFORMED, "a comment");
+    # Invalid UTF-8, built byte by byte.
+    var bad = alloc(16);
+    memcpy(bad, "{\"s\":\"", 6);
+    store8(bad + 6, 192); store8(bad + 7, 175);        # overlong '/'
+    memcpy(bad + 8, "\"}", 2);
+    assert_eq(agnostic_json_kind(str_new(bad, 10)), AGNOSTIC_JSON_MALFORMED, "an overlong UTF-8 sequence");
+    store8(bad + 6, 237); store8(bad + 7, 160); store8(bad + 8, 128);   # a surrogate
+    memcpy(bad + 9, "\"}", 2);
+    assert_eq(agnostic_json_kind(str_new(bad, 11)), AGNOSTIC_JSON_MALFORMED, "a UTF-16 surrogate");
+    store8(bad + 6, 226); store8(bad + 7, 130);         # a truncated 3-byte sequence
+    memcpy(bad + 8, "\"}", 2);
+    assert_eq(agnostic_json_kind(str_new(bad, 10)), AGNOSTIC_JSON_MALFORMED, "a truncated sequence");
+    # The depth bound: 64 nested arrays inside the object pass; 65 do not.
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"d\":");
+    var i = 0;
+    while (i < 63) { str_builder_add_cstr(sb, "["); i = i + 1; }
+    i = 0;
+    while (i < 63) { str_builder_add_cstr(sb, "]"); i = i + 1; }
+    str_builder_add_cstr(sb, "}");
+    assert_eq(agnostic_json_kind(str_builder_build(sb)), AGNOSTIC_JSON_OBJECT, "64 levels deep is allowed");
+    var sb2 = str_builder_new();
+    str_builder_add_cstr(sb2, "{\"d\":");
+    i = 0;
+    while (i < 64) { str_builder_add_cstr(sb2, "["); i = i + 1; }
+    i = 0;
+    while (i < 64) { str_builder_add_cstr(sb2, "]"); i = i + 1; }
+    str_builder_add_cstr(sb2, "}");
+    assert_eq(agnostic_json_kind(str_builder_build(sb2)), AGNOSTIC_JSON_MALFORMED,
+      "⭐ 65 is refused — a hostile body cannot recurse the stack away");
+}
+
+fn test_guards() {
+    test_group("http/guard");
+    assert_eq(agnostic_content_type_is_json(str_from("application/json")), 1, "application/json");
+    assert_eq(agnostic_content_type_is_json(str_from(" Application/JSON ; charset=UTF-8")), 1,
+      "case, spaces and parameters ignored");
+    assert_eq(agnostic_content_type_is_json(str_from("application/merge-patch+json")), 1, "a +json suffix");
+    assert_eq(agnostic_content_type_is_json(str_from("application/+json")), 0, "but not a bare suffix");
+    assert_eq(agnostic_content_type_is_json(str_from("text/plain")), 0, "text/plain is not JSON");
+    assert_eq(agnostic_content_type_is_json(str_from("application/jsonp")), 0, "nor is jsonp");
+    assert_eq(agnostic_content_type_is_json(str_from("text/json")), 0, "nor text/json");
+    assert_eq(agnostic_content_type_is_json(0), 0, "and an absent header is not JSON");
+
+    assert_eq(agnostic_host_is_loopback(0), 1, "no Host header passes");
+    assert_eq(agnostic_host_is_loopback(str_from("localhost")), 1, "localhost");
+    assert_eq(agnostic_host_is_loopback(str_from("LocalHost:8000")), 1, "any case, with a port");
+    assert_eq(agnostic_host_is_loopback(str_from("127.0.0.1:8000")), 1, "127.0.0.1 with a port");
+    assert_eq(agnostic_host_is_loopback(str_from("127.255.0.9")), 1, "anywhere in 127/8");
+    assert_eq(agnostic_host_is_loopback(str_from("[::1]")), 1, "[::1]");
+    assert_eq(agnostic_host_is_loopback(str_from("[::1]:9000")), 1, "[::1] with a port");
+    assert_eq(agnostic_host_is_loopback(str_from("evil.example")), 0, "⭐ a foreign name is refused");
+    assert_eq(agnostic_host_is_loopback(str_from("localhost.evil.example")), 0, "even one that starts with localhost");
+    assert_eq(agnostic_host_is_loopback(str_from("127.0.0.1.evil.example")), 0, "or with a loopback address");
+    assert_eq(agnostic_host_is_loopback(str_from("128.0.0.1")), 0, "128/8 is not loopback");
+    assert_eq(agnostic_host_is_loopback(str_from("127.0.0.256")), 0, "an octet over 255 is not an address");
+    assert_eq(agnostic_host_is_loopback(str_from("127.0.0")), 0, "nor are three octets");
+    assert_eq(agnostic_host_is_loopback(str_from("localhost:80x")), 0, "a port must be digits");
+    assert_eq(agnostic_host_is_loopback(str_from("[::2]")), 0, "another IPv6 address is not loopback");
+    assert_eq(agnostic_host_is_loopback(str_from("[::1")), 0, "an unclosed bracket is refused");
+    assert_eq(agnostic_host_is_loopback(str_from("")), 0, "an empty Host is refused");
+}
+
+fn test_routes_match() {
+    test_group("router/two-captures");
+    var a = arena_allocator(65536);
+    var p1 = 0;
+    var p2 = 0;
+    assert_eq(agnostic_path_matches2_a(a, str_from("/api/v1/plugins/swarm/data/s-1"),
+        "/api/v1/plugins/:id/data/:key", &p1, &p2), 1, "both segments match");
+    assert_eq(str_eq_cstr(p1, "swarm"), 1, "the first is the plugin");
+    assert_eq(str_eq_cstr(p2, "s-1"), 1, "the second is the key");
+    var m = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_PUT, str_from("/api/v1/plugins/swarm/data/s-1"));
+    assert_eq(agnostic_route_match_id(m), AGNOSTIC_ROUTE_PDATA_PUT, "PUT resolves to the document write");
+    assert_eq(str_eq_cstr(agnostic_route_match_param2(m), "s-1"), 1, "carrying the key");
+    assert_eq(agnostic_route_match_id(agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET,
+          str_from("/api/v1/plugins/swarm/data"))), AGNOSTIC_ROUTE_PDATA_LIST, "GET on the collection lists");
+    var post = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/plugins/swarm/data/s-1"));
+    assert_eq(agnostic_route_match_method_mismatch(post), 1, "POST to a document is 405, not 404");
+    assert_eq(agnostic_route_match_id(agnostic_route_resolve_a(a, AGNOSTIC_METHOD_PUT,
+          str_from("/api/v1/plugins/swarm"))), AGNOSTIC_ROUTE_PLUGIN_SET, "the switch route is unchanged");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_PDATA_GET), AGNOSTIC_PERM_READ, "reading is READ");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_PDATA_PUT), AGNOSTIC_PERM_WRITE, "writing is WRITE");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_PDATA_DELETE), AGNOSTIC_PERM_WRITE, "and so is deleting");
+}
+
+fn test_store() {
+    test_group("plugindata/store");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var acme = str_from("acme");
+    var swarm = str_from("swarm");
+    var doc = str_from("{ \"name\" : \"alpha\" ,\"n\":1}");
+    assert_eq(agnostic_plugindata_put(a, acme, swarm, str_from("s-1"), doc, 1000), AGNOSTIC_PDATA_CREATED,
+      "a new key is created");
+    var upd: i64[1];
+    var got = agnostic_plugindata_get_a(a, acme, swarm, str_from("s-1"), &upd);
+    assert_eq(str_eq(got, doc), 1, "⭐ and read back byte for byte, spacing included");
+    assert_eq(load64(&upd), 1000, "with its update time");
+    assert_eq(agnostic_plugindata_put(a, acme, swarm, str_from("s-1"), str_from("{\"n\":2}"), 2000),
+      AGNOSTIC_PDATA_REPLACED, "the same key again replaces");
+    assert_eq(str_eq_cstr(agnostic_plugindata_get_a(a, acme, swarm, str_from("s-1"), &upd), "{\"n\":2}"), 1,
+      "with the new bytes");
+    assert_eq(load64(&upd), 2000, "and the new time");
+
+    # ⭐ Scopes are separate spaces.
+    assert_eq(agnostic_plugindata_get_a(a, str_from("globex"), swarm, str_from("s-1"), 0), 0,
+      "another tenant cannot read it");
+    assert_eq(agnostic_plugindata_get_a(a, AGNOSTIC_PLUGINDATA_DEFAULT_SCOPE, swarm, str_from("s-1"), 0), 0,
+      "nor can the default scope");
+    assert_eq(agnostic_plugindata_put(a, str_from("globex"), swarm, str_from("s-1"), str_from("{\"g\":1}"), 3000),
+      AGNOSTIC_PDATA_CREATED, "globex's s-1 is a different document");
+    assert_eq(str_eq_cstr(agnostic_plugindata_get_a(a, acme, swarm, str_from("s-1"), 0), "{\"n\":2}"), 1,
+      "and acme's is untouched by it");
+    assert_eq(agnostic_plugindata_delete(a, str_from("globex"), swarm, str_from("s-1")), 1, "globex deletes its own");
+    assert_eq(agnostic_plugindata_get_a(a, acme, swarm, str_from("s-1"), 0) != 0, 1, "and acme's survives that");
+
+    # Listing: keys only, this scope only.
+    agnostic_plugindata_put(a, acme, swarm, str_from("s-2"), str_from("{}"), 4000);
+    var list = agnostic_plugindata_list_a(a, acme, swarm);
+    assert_eq(vec_len(list), 2, "acme lists its two");
+    assert_eq(vec_len(agnostic_plugindata_list_a(a, str_from("globex"), swarm)), 0, "globex lists none");
+    var seen = 0;
+    var i = 0;
+    while (i < vec_len(list)) {
+        var e = vec_get(list, i);
+        if (str_eq_cstr(agnostic_plugindata_entry_key(e), "s-2") == 1) {
+            seen = 1;
+            assert_eq(agnostic_plugindata_entry_bytes(e), 2, "an entry carries its size");
+            assert_eq(agnostic_plugindata_entry_updated(e), 4000, "and its update time");
+        }
+        i = i + 1;
+    }
+    assert_eq(seen, 1, "the listing names s-2");
+
+    # Refusals at the door.
+    assert_eq(agnostic_plugindata_put(a, str_from("Acme"), swarm, str_from("k"), str_from("{}"), 1),
+      AGNOSTIC_PDATA_FAILED, "an illegal tenant key is refused, not normalised");
+    assert_eq(agnostic_plugindata_put(a, str_from("a:b"), swarm, str_from("k"), str_from("{}"), 1),
+      AGNOSTIC_PDATA_FAILED, "⭐ a scope with the separator can never be formed");
+    assert_eq(agnostic_plugindata_put(a, acme, str_from("Swarm"), str_from("k"), str_from("{}"), 1),
+      AGNOSTIC_PDATA_FAILED, "nor an illegal plugin id");
+    assert_eq(agnostic_plugindata_put(a, acme, swarm, str_from("a:b"), str_from("{}"), 1),
+      AGNOSTIC_PDATA_FAILED, "nor a key with the separator");
+    assert_eq(agnostic_plugindata_key_is_valid(str_from("a/b")), 0, "nor one with a slash");
+    assert_eq(agnostic_plugindata_key_is_valid(str_from(".hidden")), 0, "nor a leading dot");
+    var big = alloc(32769);
+    memset(big, 32, 32769);
+    store8(big, 123); store8(big + 32768, 125);
+    assert_eq(agnostic_plugindata_put(a, acme, swarm, str_from("big"), str_new(big, 32769), 1),
+      AGNOSTIC_PDATA_FAILED, "a document over 32768 bytes is refused");
+    store8(big + 32767, 125);
+    assert_eq(agnostic_plugindata_put(a, acme, swarm, str_from("big"), str_new(big, 32768), 1),
+      AGNOSTIC_PDATA_CREATED, "32768 is accepted");
+    assert_eq(agnostic_plugindata_delete(a, acme, swarm, str_from("nope")), 0, "deleting an absent key says so");
+}
+
+fn test_count_limit() {
+    test_group("plugindata/limit");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var scope = str_from("acme");
+    var swarm = str_from("swarm");
+    var i = 0;
+    var ok = 0;
+    while (i < AGNOSTIC_PLUGINDATA_MAX_DOCS) {
+        if (agnostic_plugindata_put(a, scope, swarm, str_from_int_a(a, i), str_from("{}"), 1) == AGNOSTIC_PDATA_CREATED) {
+            ok = ok + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(ok, AGNOSTIC_PLUGINDATA_MAX_DOCS, "256 documents are kept");
+    assert_eq(agnostic_plugindata_put(a, scope, swarm, str_from("one-more"), str_from("{}"), 1),
+      AGNOSTIC_PDATA_FULL, "⭐ the 257th is refused as FULL, not stored");
+    assert_eq(agnostic_plugindata_put(a, scope, swarm, str_from("7"), str_from("{\"r\":1}"), 1),
+      AGNOSTIC_PDATA_REPLACED, "but replacing one at the limit still works");
+    assert_eq(agnostic_plugindata_put(a, str_from("globex"), swarm, str_from("one-more"), str_from("{}"), 1),
+      AGNOSTIC_PDATA_CREATED, "and the limit is per tenant");
+}
+
+fn test_routes() {
+    test_group("plugindata/routes");
+    _t_open();
+    agnostic_plugindata_reset();
+    agnostic_audit_close();
+    sys_unlink(_T_PAUDIT);
+    agnostic_audit_open(str_from(_T_PAUDIT));
+    var a = arena_allocator(4194304);
+
+    # --- authentication OFF: everything lands in the default scope `_`.
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var r = _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/s-1", "{\"name\":\"alpha\"}", 0);
+    assert_eq(_t_status(r), AGNOSTIC_HTTP_CREATED, "PUT creates — 201");
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(agnostic_response_body(r), str_from("created"))), 1,
+      "and says so");
+    r = _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/s-1", "{\"name\":\"beta\"}", 0);
+    assert_eq(_t_status(r), HTTP_OK, "PUT again replaces — 200");
+    r = _t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/swarm/data/s-1", "", 0);
+    assert_eq(_t_status(r), HTTP_OK, "GET reads it");
+    assert_eq(agnostic_response_is_text(r), 1, "as bytes, not a re-encoded tree");
+    assert_eq(str_eq_cstr(agnostic_response_body(r), "{\"name\":\"beta\"}"), 1, "the bytes last PUT");
+    assert_eq(str_eq_cstr(str_from(agnostic_response_ctype(r)), "application/json"), 1, "served as JSON");
+    r = _t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/swarm/data", "", 0);
+    assert_eq(_t_status(r), HTTP_OK, "the listing");
+    var body = agnostic_response_body(r);
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(body, str_from("total"))), 1, "holds one document");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(body, str_from("scope"))), "_"), 1,
+      "⭐ in the default scope, with authentication off");
+
+    # --- the refusals, each with its own status.
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/s-1", "{nope", 0)),
+      HTTP_BAD_REQUEST, "malformed JSON is 400");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/s-1", "[1]", 0)),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a non-object is 422");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/Bad.Key", "{}", 0)),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a malformed key is 422");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/nope/data/k", "{}", 0)),
+      HTTP_NOT_FOUND, "an unknown plugin is 404");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/swarm/data/absent", "", 0)),
+      HTTP_NOT_FOUND, "an absent document is 404");
+    var big = alloc(33000);
+    memset(big, 32, 33000);
+    store8(big, 123); store8(big + 32999, 125);
+    var rb = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_PUT, str_from("/api/v1/plugins/swarm/data/big"),
+      str_new(big, 33000), _T_MAXB, 0);
+    assert_eq(_t_status(rb), HTTP_PAYLOAD_TOO_LARGE, "a document over the cap is 413");
+
+    # --- authentication REQUIRED: tenants are separate spaces, and roles still bind.
+    agnostic_argon_pool_init();
+    var k = alloc(32);
+    var i = 0;
+    while (i < 32) { store8(k + i, 50 + i); i = i + 1; }
+    agnostic_jwt_set_secret(k, 32);
+    var ua = agnostic_users_create_a(a, str_from("op@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("acme"));
+    var ug = agnostic_users_create_a(a, str_from("op@globex.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("globex"));
+    var uv = agnostic_users_create_a(a, str_from("v@acme.example"), str_from("pw"), AGNOSTIC_ROLE_VIEWER, str_from("acme"));
+    var ta = agnostic_jwt_issue_a(a, ua, AGNOSTIC_ROLE_OPERATOR, str_from("acme"), 600);
+    var tg = agnostic_jwt_issue_a(a, ug, AGNOSTIC_ROLE_OPERATOR, str_from("globex"), 600);
+    var tv = agnostic_jwt_issue_a(a, uv, AGNOSTIC_ROLE_VIEWER, str_from("acme"), 600);
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+
+    var ca = _t_ctx_as(a, ta);
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/plan", "{\"t\":\"acme\"}", ca)),
+      AGNOSTIC_HTTP_CREATED, "an acme operator writes");
+    assert_eq(agnostic_principal_tenant(agnostic_reqctx_principal(ca)) != 0, 1,
+      "⭐ and the ladder recorded who they are on the context");
+    var cg = _t_ctx_as(a, tg);
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/swarm/data/plan", "", cg)),
+      HTTP_NOT_FOUND, "⭐ globex cannot read acme's document");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_DELETE, "/api/v1/plugins/swarm/data/plan", "", _t_ctx_as(a, tg))),
+      HTTP_NOT_FOUND, "nor delete it");
+    var gl = _t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/swarm/data", "", _t_ctx_as(a, tg));
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(agnostic_response_body(gl), str_from("total"))), 0,
+      "nor even see it listed");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/swarm/data/s-1", "", _t_ctx_as(a, ta))),
+      HTTP_NOT_FOUND, "and the default scope's documents are not acme's either");
+    var cv = _t_ctx_as(a, tv);
+    var rv = _t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/swarm/data/plan", "", cv);
+    assert_eq(_t_status(rv), HTTP_OK, "an acme viewer reads acme's document");
+    assert_eq(str_eq_cstr(agnostic_response_body(rv), "{\"t\":\"acme\"}"), 1, "the right one");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/plan", "{}", _t_ctx_as(a, tv))),
+      HTTP_FORBIDDEN, "but may not write — 403");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/swarm/data", "", 0)),
+      HTTP_UNAUTHORIZED, "and without a credential it is 401");
+    var before = agnostic_audit_count();
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_DELETE, "/api/v1/plugins/swarm/data/plan", "", _t_ctx_as(a, ta))),
+      HTTP_OK, "acme deletes its own");
+    assert_eq(agnostic_audit_count(), before + 1, "and the delete is audited");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    agnostic_audit_close();
+}
+
+fn test_transport_ladder() {
+    test_group("ladder/transport-rules");
+    _t_open();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var a = arena_allocator(1048576);
+    # A context marked as a socket request — what only the serve adapter builds.
+    var c1 = agnostic_reqctx_new_a(a, 0, 0);
+    agnostic_reqctx_set_transport(c1, str_from("text/plain"), str_from("localhost"));
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/k", "{}", c1)),
+      AGNOSTIC_HTTP_UNSUPPORTED_MEDIA, "a socket PUT that is not JSON is 415");
+    var c2 = agnostic_reqctx_new_a(a, 0, 0);
+    agnostic_reqctx_set_transport(c2, str_from("application/json"), str_from("evil.example"));
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_GET, "/health", "", c2)), HTTP_FORBIDDEN,
+      "a foreign Host is 403 with auth off");
+    var c3 = agnostic_reqctx_new_a(a, 0, 0);
+    agnostic_reqctx_set_transport(c3, str_from("application/json"), str_from("127.0.0.1:8000"));
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/k", "{}", c3)),
+      AGNOSTIC_HTTP_CREATED, "a loopback JSON PUT goes through");
+    # In-process callers — a bare context, or none — are not subject to either rule.
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/k", "{}",
+          agnostic_reqctx_new_a(a, 0, 0))), HTTP_OK, "a bare context is in-process, and unaffected");
+    # With authentication required the Host is NOT checked (a proxy may rewrite it).
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    var c4 = agnostic_reqctx_new_a(a, 0, 0);
+    agnostic_reqctx_set_transport(c4, 0, str_from("agnostic.internal"));
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_GET, "/health", "", c4)), HTTP_OK,
+      "with auth required a non-loopback Host reaches the route");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    test_validator();
+    test_guards();
+    test_routes_match();
+    test_store();
+    test_count_limit();
+    test_routes();
+    test_transport_ladder();
+    agnostic_store_close();
+    return assert_summary();
+}
+
+var _agnostic_plugindata_test_exit = main();
+if (_agnostic_plugindata_test_exit > 0) { _agnostic_plugindata_test_exit = 1; }
+sys_exit_group(_agnostic_plugindata_test_exit);

@@ -2,11 +2,12 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-10-01, at **0.1.7** — Cyrius 6.6.12, agnosai 2.1.2 (every dep at
-> its latest tag), and the **WebGUI's first slice**: the shell at `/ui` with a Settings
-> tab, and Swarm Command as its first compiled-in plugin. (Version, Toolchain,
-> Dependencies, Source, the WebGUI section and the gate counts were refreshed then; the
-> milestone narrative below is as of M6 part 1 and did not move.)
+> Last refreshed: 2026-10-01, at **0.1.8** — the WebGUI's **plugin platform** (the host
+> bridge with manifest permissions, plugin documents per tenant, JSON-only writes and a
+> loopback Host when auth is off) and **Swarm Command 0.2.0** (saved swarms, cost
+> estimates, live crews). Toolchain and dependencies are unchanged from 0.1.7. (Version,
+> Source, the route table, the WebGUI section, Hardening and the gate counts were
+> refreshed then; the milestone narrative below is as of M6 part 1 and did not move.)
 >
 > **Picking this port up?** Start at [`handoff.md`](handoff.md) — orientation,
 > the build procedure that avoids an unreproducible lock, and what M6 must decide.
@@ -14,7 +15,7 @@
 
 ## Version
 
-**0.1.7** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.8** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -91,11 +92,12 @@ a process kill with no diagnostic).
 
 ## Source
 
-**M4 complete; M5 complete; M6 started; M9 seeded (0.1.7)** — 44 files, 16,617 lines,
-711 top-level definitions, all `agnostic_*`-prefixed. 6,034 of those lines are generated:
-`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (5,197 — two embedded pages).
+**M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
+(0.1.8)** — 47 files, 20,198 lines, 780 top-level definitions, all `agnostic_*`-prefixed.
+8,429 of those lines are generated: `src/presets_data.cyr` (837) and `src/webgui_data.cyr`
+(7,592 — two embedded pages).
 
-**Tests: 27 suites, 1,376 assertions, 0 failed** (`cyrius test`). Gates green:
+**Tests: 28 suites, 1,522 assertions, 0 failed** (`cyrius test`). Gates green:
 `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated
 per shipped target since 0.1.7), `check-clean.sh` (now also `gen-webgui.sh --check`),
 `deps --verify` 118/0.
@@ -171,6 +173,7 @@ refactor of any of it.
 | `src/engine/presets.cyr` | the canonical preset library, parsed once at mount |
 | `src/presets_data.cyr` | **generated** — the 18 documents as Cyrius literals |
 | `src/engine/settings.cyr` | deployment-wide settings, durable — the plugin switches (0.1.7) |
+| `src/engine/plugindata.cyr` | each plugin's own documents, per tenant, durable (0.1.8) |
 | `src/webgui/plugins.cyr` | the WebGUI's page table and plugin registry, loaded once at mount (0.1.7) |
 | `src/webgui_data.cyr` | **generated** — the shell and each plugin page, verbatim, with SHA-256 and CSP (0.1.7) |
 | `src/routes/health.cyr` | `/health` and `/ready` |
@@ -179,6 +182,8 @@ refactor of any of it.
 | `src/routes/presets.cyr` | the preset surface, read-only |
 | `src/routes/plugins.cyr` | list plugins, switch one on or off (0.1.7) |
 | `src/routes/webgui.cyr` | `/ui` and `/ui/plugins/{id}` — the pages (0.1.7) |
+| `src/routes/plugindata.cyr` | a plugin's documents — list, read, write, delete (0.1.8) |
+| `src/http/guard.cyr` | the transport rules: a JSON media type, a loopback Host (0.1.8) |
 | `src/server/serve.cyr` | the only module that touches a socket |
 | `src/app.cyr` | the canonical include order — **no definitions** |
 | `src/main.cyr` | entry point alone; includes `app.cyr` |
@@ -197,7 +202,7 @@ The crew surface, and what each code means:
 | `POST /api/v1/crews` | **202** accepted · 400 semantic · 422 shape · 503 engine down |
 | `GET /api/v1/crews/{id}` | 200 · 404 never submitted · 422 malformed id |
 | `POST /api/v1/crews/{id}/cancel` | 200 · 404 · **409 already terminal** · 422 · 503 |
-| `GET /api/v1/crews/{id}/events` | 200 · 404 · 422 |
+| `GET /api/v1/crews/{id}/events` | 200 — the status is refreshed first (0.1.8) · 404 · 422 |
 | `GET /api/v1/presets` | 200 — summaries, not documents |
 | `GET /api/v1/presets/{name}` | 200 · 404 unknown name |
 | `GET /api/v1/agents/definitions` | 200 |
@@ -207,12 +212,20 @@ The crew surface, and what each code means:
 | `DELETE /api/v1/agents/definitions/{key}` | 200 · 404 · 422 |
 | `GET /api/v1/plugins` | 200 — READ |
 | `PUT /api/v1/plugins/{id}` | 200 (`changed` true/false) · 400 · 404 · 422 · 500 — **ADMIN** |
+| `GET /api/v1/plugins/{id}/data` | 200 — keys, times, sizes, `scope` · 404 · 422 — READ |
+| `GET /api/v1/plugins/{id}/data/{key}` | 200 — the document, verbatim · 404 · 422 — READ |
+| `PUT /api/v1/plugins/{id}/data/{key}` | **201** · 200 · 400 · 404 · 413 · 422 · **507** — WRITE |
+| `DELETE /api/v1/plugins/{id}/data/{key}` | 200 · 404 · 422 — WRITE |
 | `GET /ui` · `/ui/` | 200 — the shell, **public** |
 | `GET /ui/plugins/{id}` | 200 · **404 while switched off** · 422 — **public** |
 
-The table is a flat scan of 15 paths. Measured at 0.1.7 (`tests/agnostic.bcyr`, one run):
-~0.11 µs to resolve the first entry, ~0.81 µs the last, ~0.65 µs for a miss that tries every
-pattern — against ~48 µs for the per-request user lookup. Still not worth an index.
+The table is a flat scan of 18 paths (19 patterns). Measured at 0.1.8 (`tests/agnostic.bcyr`): ~0.12 µs
+to resolve the first entry, ~0.93 µs the last, ~0.78 µs for a miss that tries every pattern,
+~2.1 µs for the two-capture document path — against ~48 µs for the per-request user lookup.
+Still not worth an index. (0.1.7, 16 paths — once miscounted as 15: 0.11 / 0.81 / 0.65 µs.) The 0.1.8 transport rules
+cost ~0.15 µs each per socket request; validating a full 32 KiB plugin document ~0.2 ms.
+⚠ The machine was under heavy load from other work during the 0.1.8 runs — successive runs
+varied up to 2×; these are from the run whose `noop` matched the 2 ns baseline.
 
 ⚠ **201 for a definition, 202 for a crew.** A crew is accepted work that is not
 finished; a definition *is* complete when the call returns. **No upsert** in
@@ -223,37 +236,47 @@ either direction: `POST` to an existing key is 409, `PUT` to an absent one is 40
 rather than a 404 claiming the collection does not exist. A listing endpoint
 needs pagination and a tenancy scope; both arrive with M4/M5.
 
-## WebGUI and plugins (0.1.7)
+## WebGUI and plugins (0.1.7, 0.1.8)
 
-**M9's first slice: the shell and the plugin host.** Why compiled-in plugins switched at
-run time is [ADR 0004](../adr/0004-webgui-plugins-compiled-in-switched-at-run-time.md);
+**M9's first slice (0.1.7), and its plugin platform (0.1.8).** Why compiled-in plugins
+switched at run time is [ADR 0004](../adr/0004-webgui-plugins-compiled-in-switched-at-run-time.md);
+how a plugin reaches the server is [ADR 0005](../adr/0005-plugins-reach-the-server-through-the-host-bridge.md);
 how to add one is [`guides/webgui-plugins.md`](../guides/webgui-plugins.md).
 
-- **`/ui`** — the shell (22,939 B): Overview (`/ready`, the views), a tab per plugin that
-  is switched on, Settings (the switches, the session). With `AGNOSTIC_AUTH=required` it
-  signs in through `POST /api/v1/auth/login` and keeps the token per tab
-  (`sessionStorage`).
-- **Swarm Command** (`swarm`, 251,217 B) — the RTS-style swarm view, moved unchanged from
-  the root `index.html`. **It runs on its own simulator**: its manifest says
-  `"data": "simulated"`, the API carries that, and the shell badges it. Driving it from
-  real crews needs a live event source passed in by the shell (`postMessage`), which does
-  not exist yet.
+- **`/ui`** — the shell (30,931 B): Overview (`/ready`, the views), a tab per plugin that
+  is switched on, Settings (the switches with each plugin's permissions and stored
+  documents, the session). With `AGNOSTIC_AUTH=required` it signs in through
+  `POST /api/v1/auth/login` and keeps the token per tab (`sessionStorage`). It is also the
+  **host bridge**: it answers a plugin's `postMessage` requests that its manifest permits,
+  with the user's token, which the plugin never sees.
+- **Swarm Command 0.2.0** (`swarm`, 392,843 B, `data: mixed`, permissions `storage`,
+  `presets:read`, `crews:read`, `crews:write`) — a launcher of saved swarms (plugin
+  documents `swarm-<id>`, per tenant), an editor for every capability with defaults, a
+  headless cost estimate over eight seeds, the simulator driven by the spec, and live runs:
+  the swarm's tasks submitted as a crew, polled through the bridge, cancellable, recorded on
+  the swarm. Every mission is labelled SIM or LIVE; a live crew's cost is n/a.
 - **Every plugin starts OFF.** The switch is `plugin.<id>.enabled` in the settings table;
-  it survives a restart, flipping it is ADMIN, and only a real change is audited.
+  it survives a restart, flipping it is ADMIN, and only a real change is audited. A plugin's
+  documents survive it being switched off.
 
 ⚠ **Pages are public; the API is not.** A browser navigation cannot carry a bearer token,
 and a page is the same compiled-in bytes for every caller. Everything it shows comes from
 authenticated API calls.
 
 ⚠ **Each page's CSP is computed by the generator** — `default-src 'none'`, inline scripts
-admitted by SHA-256, `connect-src 'self'` — and a page that needs anything else is refused
-at generation. `style-src 'unsafe-inline'` is accepted (the view styles from script and
+admitted by SHA-256; the shell `connect-src 'self'`, a plugin **`connect-src 'none'`**
+(0.1.8: its only way out is the bridge). A page that needs anything else is refused at
+generation. `style-src 'unsafe-inline'` is accepted (the view styles from script and
 markup); scripts are never inline-unsafe.
 
 ⚠ **Plugins run sandboxed** (`allow-scripts allow-downloads`, no `allow-same-origin`): an
-opaque origin, so a plugin cannot read the shell's token or call the API as the user.
-Verified in headless Chromium at 0.1.7 — the swarm app boots under its CSP, its storage
-access throws `SecurityError`, and neither frame logs a CSP violation.
+opaque origin, so a plugin cannot read the shell's token, reach the network, or open a
+modal dialog. Opened in its own tab, Swarm Command finds no shell, keeps swarms in that
+browser and disables live runs.
+
+⚠ **Permissions are a closed list in two places** — `PERMISSIONS` in
+`scripts/gen-webgui.sh` (manifests are checked against it) and `permitted()` in
+`src/webgui/index.html` (requests are checked against it). They must agree.
 
 ⚠ **The embedded pages are proven, not assumed.** `src/webgui_data.cyr` holds each page as
 a raw multi-line literal; `tests/webgui.tcyr` re-hashes the bytes in the binary against
@@ -261,18 +284,34 @@ the source file's SHA-256, and `check-clean.sh` runs `gen-webgui.sh --check`. A
 `\`-continued literal would have been wrong: `cyrius fmt` indents continuation lines,
 and the spaces land inside the string.
 
+⚠ **Verified in headless Chromium at 0.1.8**, against scratch servers with auth off and
+required, the placeholder engine and a live one (a slow local stand-in gateway): the
+bridge handshake and its refusals, the editor, saving, estimates, simulation, run records,
+live runs with real output, cancel, leaving and catching up, watching, presets, import,
+Settings and its Delete all (declined, then accepted), and the standalone page — 112 checks,
+no uncaught exception in either frame. The
+page's logic (simulator, spec normalizer, estimator, crew request) was tested in Node —
+225 assertions — and with default settings reproduces 0.1.7's cost distribution.
+
 The Python implementation is retained at `python-port/` as a behavioural oracle.
 It is never built or shipped, and it is **not** a specification —
 [`ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) records 86 verified defects in it.
 
 ## Tests
 
-**27 suites, 1,376 assertions, 0 failed** (`cyrius test`, under the 6.6.12 pin).
+**28 suites, 1,522 assertions, 0 failed** (`cyrius test`, under the 6.6.12 pin).
 `tests/store_concurrency.tcyr` (43, 0.1.4) is the only multi-threaded suite.
-`tests/webgui.tcyr` (136, 0.1.7) holds the WebGUI: the embedded pages re-hashed against
+`tests/webgui.tcyr` (141, 0.1.7) holds the WebGUI: the embedded pages re-hashed against
 their sources, the registry, durable switching, every route and code, the permission
-split, and audit-only-on-change — six mutations of those guards each fail a named
-assertion. The per-suite list below predates M5 and M6; its counts are as of then.
+split and audit-only-on-change — six mutations of those guards each fail a named
+assertion — and, since 0.1.8, the manifest permissions and the plugin CSP.
+`tests/plugindata.tcyr` (124, 0.1.8) holds the plugin platform's server half: the JSON
+validator, the transport guards, the two-capture router, the document store and its
+limits, the routes with tenant isolation and the permission split, and the ladder's
+transport rungs — each of four mutations (scope collapse, depth, any Host, no media rung)
+fails a named assertion. `tests/serve_mount.tcyr` (21) drives both rungs through the
+socket handler; `tests/crews_route.tcyr` (62) pins the events route's current status.
+The per-suite list below predates M5 and M6; its counts are as of then.
 
 ⚠ Counts here are assertion-suite lines only. `cyrius test`'s final
 `N passed, 0 failed` line is the **suite** tally, not a suite — earlier figures
@@ -334,6 +373,7 @@ Agnostic is built to stand on its own, not as a required layer.
 | audit-clean | [`2026-08-20-audit-m1.md`](../audit/2026-08-20-audit-m1.md) — 0 CRITICAL / 0 HIGH / 1 MEDIUM / 2 LOW; the MEDIUM is accepted with a documented bound |
 | fmt / lint / vet / deny | `check-clean.sh` OK |
 | store lock (0.1.4, 0.1.5) | `check-store-lock.py`, in `check-clean.sh` — every handle fetch under the store lock; no result string borrowed past its result set |
+| transport (0.1.8) | [ADR 0006](../adr/0006-loopback-host-and-json-only-writes.md): with auth off a non-loopback `Host` is 403; a POST or PUT without a JSON media type is 415 — both through the socket handler in `tests/serve_mount.tcyr`, mutation-checked |
 | symbols | `check-symbols.sh` OK — 129 definitions, no duplicates, all prefixed |
 | security | CI `security` job clean |
 | baseline benches | `bench-history.csv` seeded — `noop` 2 ns @ `830216c` |
@@ -496,7 +536,10 @@ real hardware at 0.1.7, a cyrius layout defect, filed upstream.** Run natively o
 pi`): 15 suites pass (717 assertions); `audit`, `authn`, `authstore`, `authz`, `crews_route`,
 `crypto`, `jwt`, `loginguard`, `loginroute`, `serve_mount`, `store_concurrency` and `webgui` crash —
 every suite that reaches sigil's crypto init. 0.1.6 is identical, so this is the "SIGBUS under qemu"
-recorded since 0.1.3, not a regression.
+recorded since 0.1.3, not a regression. **0.1.8 adds `plugindata` to the list** — at the same
+`ldaxr`, when its route group first initialises crypto, after its validator, guard, two-capture
+router, store and limit groups have passed natively; `codec` and `router` (touched at 0.1.8) still
+pass on the Pi.
 
 - **Mechanism (gdb on the Pi):** `ldaxr x4, [x0]` on `x0 = 0xa200f6` — an `atomic_cas` on sigil's
   `_sha_ni_probe_lock`, which is not 8-aligned. aarch64 faults on a misaligned exclusive or

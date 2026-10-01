@@ -326,6 +326,51 @@ fn test_events_route() {
     assert_eq(bayan_json_v_int(dropped) >= 0, 1, "as a count");
 }
 
+# ⭐ The status the events route reports is CURRENT. It used to be the ledger's
+# latch, which only `GET /crews/{id}` refreshed — so a client polling events alone
+# (the swarm plugin's live view, 0.1.8) saw `pending` for a crew long finished.
+fn test_events_route_status_is_current() {
+    test_group("crews/events-status");
+
+    var a = arena_allocator(262144);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"),
+      str_from(_T_BODY), 1048576, 0);
+    var id = agnostic_req_str(agnostic_response_body(resp), AGNOSTIC_JK_CREW_ID);
+    var path = str_builder_new();
+    str_builder_add_cstr(path, "/api/v1/crews/");
+    str_builder_add(path, id);
+    str_builder_add_cstr(path, "/events");
+    var url = str_builder_build(path);
+
+    # Bounded wait, polling ONLY the events route — never `GET /crews/{id}`.
+    var tries = 0;
+    var body = 0;
+    var done = 0;
+    while (tries < 100) {
+        var r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, url, str_from(""), 1048576, 0);
+        body = agnostic_response_body(r);
+        if (str_eq_cstr(agnostic_req_str(body, AGNOSTIC_JK_STATUS), "completed") == 1) {
+            done = 1;
+            break;
+        }
+        sleep_ms(10);
+        tries = tries + 1;
+    }
+    assert_eq(done, 1, "polling the events route alone sees the crew complete");
+
+    # And the snapshot that says so is whole: the closing event is in it.
+    var events = bayan_json_v_obj_get_by_str(body, AGNOSTIC_JK_EVENTS);
+    var n = bayan_json_v_arr_len(events);
+    assert_eq(n > 0, 1, "the completed crew's events are there");
+    var last = bayan_json_v_arr_get(events, n - 1);
+    assert_eq(str_eq_cstr(agnostic_req_str(last, AGNOSTIC_JK_TYPE), "crew_completed"), 1,
+      "ending with crew_completed");
+}
+
 fn test_readiness_registers_the_engine() {
     test_group("crews/ready");
 
@@ -362,6 +407,7 @@ fn main() {
     test_cancel_never_relabels_what_it_did_not_cancel();
     test_cancel_a_live_crew_stops_it();
     test_events_route();
+    test_events_route_status_is_current();
     test_readiness_registers_the_engine();
     return assert_summary();
 }

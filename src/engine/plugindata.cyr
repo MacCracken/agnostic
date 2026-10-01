@@ -1,0 +1,360 @@
+# agnostic/engine/plugindata — documents a WebGUI plugin keeps, per tenant (0.1.8).
+#
+# ## Why plugins need a store of their own
+#
+# A plugin page runs in a sandboxed frame with an opaque origin (ADR 0004): its
+# `localStorage` throws, and it cannot reach the API itself. What it saves — Swarm
+# Command's swarm specs are the first case — has to live on the server, reached
+# through the shell's host bridge (ADR 0005). This is that store: small JSON
+# documents, keyed by `(scope, plugin, key)`.
+#
+# ## Scoped by TENANT — and the scope cannot collide
+#
+# Documents are per tenant, as crews and definitions will be: the principal's tenant
+# key when it has one, otherwise the shared default scope `_`. Tenant keys are
+# `[a-z0-9][a-z0-9-]*` (`src/auth/tenant.cyr`), so `_` can never be a tenant, and
+# the scoped key `<scope>:<plugin>:<key>` splits unambiguously: none of the three
+# parts may contain `:`. With authentication off there is no principal and every
+# request is in `_`.
+#
+# ## Stored verbatim, validated without parsing
+#
+# The bytes a client PUTs are the bytes it GETs back — no re-encoding, so a plugin's
+# formatting and key order survive. The route checks the body is one well-formed JSON
+# object first (`agnostic_json_is_object`, which allocates nothing). What is inside is
+# the plugin's own business: the server cannot know a plugin's schema, and pretending
+# to would be worse than not. A plugin validates what it reads.
+#
+# ## Bounded, because nothing is ever freed
+#
+# A document is at most `AGNOSTIC_PLUGINDATA_DOC_MAX` bytes — small enough that a GET
+# is served from the 64 KiB request arena without spilling to the global allocator —
+# and a plugin keeps at most `AGNOSTIC_PLUGINDATA_MAX_DOCS` documents per scope. The
+# keys are refused at the door when too long, because `COL_STR` truncates silently.
+#
+# ## ⛔ The store lock, as everywhere else
+#
+# `lock; var r = _x_locked(...); unlock; return r;`, checked by
+# `scripts/check-store-lock.py`; every string read out of a result set is COPIED.
+
+var AGNOSTIC_PLUGINDATA_TABLE_SQL =
+"CREATE TABLE agnostic_plugin_data (dkey STR, upd INT, dlen INT, doc TEXT)";
+var AGNOSTIC_PLUGINDATA_INDEX_SQL = "CREATE INDEX ON agnostic_plugin_data (dkey)";
+
+# The largest document stored, in bytes.
+var AGNOSTIC_PLUGINDATA_DOC_MAX = 32768;
+
+# How many documents one plugin keeps in one scope.
+var AGNOSTIC_PLUGINDATA_MAX_DOCS = 256;
+
+# The longest document key.
+var AGNOSTIC_PLUGINDATA_KEY_MAX = 64;
+
+# The scope of a request with no tenant. Outside the tenant charset on purpose.
+var AGNOSTIC_PLUGINDATA_DEFAULT_SCOPE = str_from("_");
+
+# What `agnostic_plugindata_put` reports.
+enum AgnosticPluginDataPut {
+    AGNOSTIC_PDATA_FAILED   = 0;
+    AGNOSTIC_PDATA_CREATED  = 1;
+    AGNOSTIC_PDATA_REPLACED = 2;
+    AGNOSTIC_PDATA_FULL     = 3;
+}
+
+# One listed document: its key, last update (epoch seconds) and size.
+enum AgnosticPluginDataEntryOff {
+    AGNOSTIC_PDE_KEY  = 0;
+    AGNOSTIC_PDE_UPD  = 8;
+    AGNOSTIC_PDE_LEN  = 16;
+    AGNOSTIC_PDE_SIZE = 24;
+}
+
+# Ensure the schema. Mount time only. Returns 1 when it is in place.
+fn agnostic_plugindata_ensure(): i64 {
+    if (agnostic_store_ensure(AGNOSTIC_PLUGINDATA_TABLE_SQL) == 0) { return 0; }
+    if (agnostic_store_ensure(AGNOSTIC_PLUGINDATA_INDEX_SQL) == 0) { return 0; }
+    return 1;
+}
+
+# Whether `key` may name a document: `[a-z0-9][a-z0-9._-]*`, 1 to
+# `AGNOSTIC_PLUGINDATA_KEY_MAX` bytes. No `:` and no `/`, so it can neither split a
+# scoped key nor become a path segment. 1 or 0.
+fn agnostic_plugindata_key_is_valid(key: Str): i64 {
+    if (key == 0) { return 0; }
+    var n = str_len(key);
+    if (n == 0 || n > AGNOSTIC_PLUGINDATA_KEY_MAX) { return 0; }
+    var d = str_data(key);
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        var ok = 0;
+        if (c >= 97 && c <= 122) { ok = 1; }
+        if (c >= 48 && c <= 57) { ok = 1; }
+        if (i > 0) {
+            if (c == 46 || c == 95 || c == 45) { ok = 1; }
+        }
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# The scope for a request: the principal's tenant key when it is a legal one, else
+# the default scope `_`. A principal of 0 — authentication off — is in `_`.
+fn agnostic_plugindata_scope(principal): i64 {
+    var t = agnostic_principal_tenant(principal);
+    if (t != 0) {
+        if (agnostic_tenant_key_valid(t) == 1) { return t; }
+    }
+    return AGNOSTIC_PLUGINDATA_DEFAULT_SCOPE;
+}
+
+# `<scope>:<plugin>:` in `a` — the prefix every document of one plugin in one scope
+# shares. 0 when a part is illegal.
+fn _agnostic_plugindata_prefix_a(a, scope: Str, plugin: Str): i64 {
+    if (scope == 0 || plugin == 0) { return 0; }
+    if (str_eq(scope, AGNOSTIC_PLUGINDATA_DEFAULT_SCOPE) == 0) {
+        if (agnostic_tenant_key_valid(scope) == 0) { return 0; }
+    }
+    if (agnostic_plugin_id_is_valid(plugin) == 0) { return 0; }
+    var sn = str_len(scope);
+    var pn = str_len(plugin);
+    var buf = alloc_via(a, sn + pn + 2);
+    if (buf == 0) { return 0; }
+    memcpy(buf, str_data(scope), sn);
+    store8(buf + sn, 58);
+    memcpy(buf + sn + 1, str_data(plugin), pn);
+    store8(buf + sn + 1 + pn, 58);
+    return str_new_a(a, buf, sn + pn + 2);
+}
+
+# `<scope>:<plugin>:<key>` in `a`, or 0 when a part is illegal.
+fn _agnostic_plugindata_dkey_a(a, scope: Str, plugin: Str, key: Str): i64 {
+    if (agnostic_plugindata_key_is_valid(key) == 0) { return 0; }
+    var pre = _agnostic_plugindata_prefix_a(a, scope, plugin);
+    if (pre == 0) { return 0; }
+    var pl = str_len(pre);
+    var kn = str_len(key);
+    var buf = alloc_via(a, pl + kn);
+    if (buf == 0) { return 0; }
+    memcpy(buf, str_data(pre), pl);
+    memcpy(buf + pl, str_data(key), kn);
+    return str_new_a(a, buf, pl + kn);
+}
+
+# The document under `key`, copied into `a` as a `Str`, or 0 when there is none.
+# Its last update (epoch seconds) is stored through `out_upd` when that is not 0.
+fn agnostic_plugindata_get_a(a, scope: Str, plugin: Str, key: Str, out_upd): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_plugindata_get_locked_a(a, scope, plugin, key, out_upd);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_plugindata_get_a`'s body. The caller holds the store lock.
+fn _agnostic_plugindata_get_locked_a(a, scope: Str, plugin: Str, key: Str, out_upd): i64 {
+    var dkey = _agnostic_plugindata_dkey_a(a, scope, plugin, key);
+    if (dkey == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db, "SELECT upd, doc FROM agnostic_plugin_data WHERE dkey = ?");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(dkey), str_len(dkey));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    if (patra_result_count(rs) == 0) { patra_result_free(rs); return 0; }
+    if (out_upd != 0) { store64(out_upd, patra_result_get_int(rs, 0, 0)); }
+    var len = patra_result_get_text_len(rs, 0, 1);
+    if (len <= 0) { patra_result_free(rs); return 0; }
+    var buf = alloc_via(a, len);
+    if (buf == 0) { patra_result_free(rs); return 0; }
+    if (patra_result_read_text(db, rs, 0, 1, buf) != PATRA_OK) {
+        patra_result_free(rs);
+        return 0;
+    }
+    patra_result_free(rs);
+    return str_new_a(a, buf, len);
+}
+
+# Store `doc` under `key`, replacing any document already there. `now` is the update
+# time in epoch seconds. Returns AGNOSTIC_PDATA_CREATED, _REPLACED, _FULL (a NEW key
+# when the plugin already keeps `AGNOSTIC_PLUGINDATA_MAX_DOCS` in this scope), or
+# _FAILED — an illegal part, an over-long document, or a failed write.
+#
+# ⚠ The caller has already checked `doc` is a JSON object. This module stores bytes.
+fn agnostic_plugindata_put(a, scope: Str, plugin: Str, key: Str, doc: Str, now): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_plugindata_put_locked(a, scope, plugin, key, doc, now);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_plugindata_put`'s body. The caller holds the store lock, so "is there a
+# row?", the count and the write are one step against another writer.
+fn _agnostic_plugindata_put_locked(a, scope: Str, plugin: Str, key: Str, doc: Str, now): i64 {
+    if (doc == 0) { return AGNOSTIC_PDATA_FAILED; }
+    if (str_len(doc) > AGNOSTIC_PLUGINDATA_DOC_MAX) { return AGNOSTIC_PDATA_FAILED; }
+    var dkey = _agnostic_plugindata_dkey_a(a, scope, plugin, key);
+    if (dkey == 0) { return AGNOSTIC_PDATA_FAILED; }
+    var db = agnostic_store_db();
+    if (db == 0) { return AGNOSTIC_PDATA_FAILED; }
+
+    var probe = patra_prepare(db, "SELECT dkey FROM agnostic_plugin_data WHERE dkey = ?");
+    if (probe == 0) { return AGNOSTIC_PDATA_FAILED; }
+    patra_bind_text(probe, 0, str_data(dkey), str_len(dkey));
+    var rs = patra_query_prepared(db, probe);
+    patra_finalize(probe);
+    if (rs == 0) { return AGNOSTIC_PDATA_FAILED; }
+    var exists = patra_result_count(rs);
+    patra_result_free(rs);
+
+    var st = 0;
+    if (exists > 0) {
+        st = patra_prepare(db,
+          "UPDATE agnostic_plugin_data SET upd = ?, dlen = ?, doc = ? WHERE dkey = ?");
+        if (st == 0) { return AGNOSTIC_PDATA_FAILED; }
+        patra_bind_int(st, 0, now);
+        patra_bind_int(st, 1, str_len(doc));
+        patra_bind_text(st, 2, str_data(doc), str_len(doc));
+        patra_bind_text(st, 3, str_data(dkey), str_len(dkey));
+    } else {
+        if (_agnostic_plugindata_count_locked(a, scope, plugin) >= AGNOSTIC_PLUGINDATA_MAX_DOCS) {
+            return AGNOSTIC_PDATA_FULL;
+        }
+        st = patra_prepare(db,
+          "INSERT INTO agnostic_plugin_data (dkey, upd, dlen, doc) VALUES (?, ?, ?, ?)");
+        if (st == 0) { return AGNOSTIC_PDATA_FAILED; }
+        patra_bind_text(st, 0, str_data(dkey), str_len(dkey));
+        patra_bind_int(st, 1, now);
+        patra_bind_int(st, 2, str_len(doc));
+        patra_bind_text(st, 3, str_data(doc), str_len(doc));
+    }
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    if (rc != PATRA_OK) { return AGNOSTIC_PDATA_FAILED; }
+    if (exists > 0) { return AGNOSTIC_PDATA_REPLACED; }
+    return AGNOSTIC_PDATA_CREATED;
+}
+
+# Delete the document under `key`. 1 when one was deleted, 0 when there was none.
+fn agnostic_plugindata_delete(a, scope: Str, plugin: Str, key: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_plugindata_delete_locked(a, scope, plugin, key);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_plugindata_delete`'s body. The caller holds the store lock.
+fn _agnostic_plugindata_delete_locked(a, scope: Str, plugin: Str, key: Str): i64 {
+    var dkey = _agnostic_plugindata_dkey_a(a, scope, plugin, key);
+    if (dkey == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var probe = patra_prepare(db, "SELECT dkey FROM agnostic_plugin_data WHERE dkey = ?");
+    if (probe == 0) { return 0; }
+    patra_bind_text(probe, 0, str_data(dkey), str_len(dkey));
+    var rs = patra_query_prepared(db, probe);
+    patra_finalize(probe);
+    if (rs == 0) { return 0; }
+    var exists = patra_result_count(rs);
+    patra_result_free(rs);
+    if (exists == 0) { return 0; }
+    var st = patra_prepare(db, "DELETE FROM agnostic_plugin_data WHERE dkey = ?");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(dkey), str_len(dkey));
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    if (rc != PATRA_OK) { return 0; }
+    return 1;
+}
+
+# Whether row `row` of `rs` has a `dkey` (column 0) beginning with `pre`. Compares
+# in place; nothing is kept past the result set.
+fn _agnostic_plugindata_row_has_prefix(rs, row, pre: Str): i64 {
+    var n = patra_result_get_str_len(rs, row, 0);
+    var pl = str_len(pre);
+    if (n <= pl) { return 0; }
+    if (memeq(patra_result_get_str(rs, row, 0), str_data(pre), pl) == 1) { return 1; }
+    return 0;
+}
+
+# How many documents `plugin` keeps in `scope`. The caller holds the store lock.
+fn _agnostic_plugindata_count_locked(a, scope: Str, plugin: Str): i64 {
+    var pre = _agnostic_plugindata_prefix_a(a, scope, plugin);
+    if (pre == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var rs = patra_query(db, "SELECT dkey FROM agnostic_plugin_data");
+    if (rs == 0) { return 0; }
+    var total = patra_result_count(rs);
+    var n = 0;
+    var i = 0;
+    while (i < total) {
+        if (_agnostic_plugindata_row_has_prefix(rs, i, pre) == 1) { n = n + 1; }
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return n;
+}
+
+# Every document `plugin` keeps in `scope`, as a vec of entries in `a` — key, update
+# time, size; never the documents themselves, so a listing stays small.
+fn agnostic_plugindata_list_a(a, scope: Str, plugin: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_plugindata_list_locked_a(a, scope, plugin);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_plugindata_list_a`'s body. The caller holds the store lock.
+fn _agnostic_plugindata_list_locked_a(a, scope: Str, plugin: Str): i64 {
+    var out = vec_new_a(a);
+    if (out == 0) { return 0; }
+    var pre = _agnostic_plugindata_prefix_a(a, scope, plugin);
+    if (pre == 0) { return out; }
+    var db = agnostic_store_db();
+    if (db == 0) { return out; }
+    var rs = patra_query(db, "SELECT dkey, upd, dlen FROM agnostic_plugin_data");
+    if (rs == 0) { return out; }
+    var total = patra_result_count(rs);
+    var pl = str_len(pre);
+    var i = 0;
+    while (i < total) {
+        if (_agnostic_plugindata_row_has_prefix(rs, i, pre) == 1) {
+            # COPY the key's tail out of the result set — it is freed below.
+            var kn = patra_result_get_str_len(rs, i, 0) - pl;
+            var kb = alloc_via(a, kn + 1);
+            var e = alloc_via(a, AGNOSTIC_PDE_SIZE);
+            if (kb != 0 && e != 0) {
+                memcpy(kb, patra_result_get_str(rs, i, 0) + pl, kn);
+                store8(kb + kn, 0);
+                store64(e + AGNOSTIC_PDE_KEY, str_new_a(a, kb, kn));
+                store64(e + AGNOSTIC_PDE_UPD, patra_result_get_int(rs, i, 1));
+                store64(e + AGNOSTIC_PDE_LEN, patra_result_get_int(rs, i, 2));
+                vec_push_a(a, out, e);
+            }
+        }
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return out;
+}
+
+# A listed entry's key (`Str`), update time and size.
+fn agnostic_plugindata_entry_key(e): i64 { return load64(e + AGNOSTIC_PDE_KEY); }
+
+# A listed entry's last update, epoch seconds.
+fn agnostic_plugindata_entry_updated(e): i64 { return load64(e + AGNOSTIC_PDE_UPD); }
+
+# A listed entry's size in bytes.
+fn agnostic_plugindata_entry_bytes(e): i64 { return load64(e + AGNOSTIC_PDE_LEN); }
+
+# Drop every document. For tests.
+fn agnostic_plugindata_reset(): i64 {
+    agnostic_store_lock();
+    var db = agnostic_store_db();
+    if (db != 0) { patra_exec(db, "DELETE FROM agnostic_plugin_data"); }
+    agnostic_store_unlock();
+    return 0;
+}

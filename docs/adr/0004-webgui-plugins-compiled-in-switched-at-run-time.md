@@ -1,6 +1,6 @@
 # 0004 — WebGUI plugins are compiled in and switched at run time
 
-**Status**: Accepted
+**Status**: Accepted — amended by [0005](0005-plugins-reach-the-server-through-the-host-bridge.md): a plugin page's CSP is now `connect-src 'none'`, and plugins reach the API only through the shell's host bridge
 **Date**: 2026-10-01
 
 ## Context

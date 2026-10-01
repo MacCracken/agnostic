@@ -23,15 +23,17 @@
 # to amortise sixteen table attempts. A flat scan in table order is correct,
 # simpler, and faster at a small size.
 #
-# ⚠ **The table is 15 paths at 0.1.7 — M1 had 2, M2 took it to 6, M3 to 11, the
-# WebGUI to 15 — and the threshold at which the index becomes worth copying was
-# always "roughly a dozen".** It is still flat, and since 0.1.7 on a measurement
-# rather than an estimate (`tests/agnostic.bcyr`, one run, x86_64): resolving the
-# first entry costs ~0.1 µs, the last ~0.8 µs, and a miss that tries every pattern
-# ~0.65 µs — against ~48 µs for the per-request user lookup alone (ADR 0003). The
-# index earns its complexity when that stops being true, or when the table stops
-# fitting in a reader's head. The next change that adds a route should re-run
-# `cyrius bench` rather than inherit this sentence.
+# ⚠ **The table is 18 paths at 0.1.8 (19 patterns: `/ui` is tried with and without
+# its slash) — M1 had 2, M2 took it to 6, M3 to 11, the WebGUI to 16 (0.1.7, once
+# miscounted as 15), plugin documents to 18 — and the threshold at which the index
+# becomes worth copying was always "roughly a dozen".** It is still flat, on a
+# measurement rather than an estimate (`tests/agnostic.bcyr`, x86_64; re-measured at
+# 0.1.8): resolving the first entry costs ~0.12 µs, the last ~0.93 µs, a miss that
+# tries every pattern ~0.78 µs, and the one two-capture path ~2.1 µs — against
+# ~48 µs for the per-request user lookup alone (ADR 0003). The index earns its
+# complexity when that stops being true, or when the table stops fitting in a
+# reader's head. The next change that adds a route should re-run `cyrius bench`
+# rather than inherit this sentence.
 
 enum AgnosticRouteId {
     AGNOSTIC_ROUTE_NONE         = 0;
@@ -54,6 +56,10 @@ enum AgnosticRouteId {
     AGNOSTIC_ROUTE_PLUGIN_SET   = 17;
     AGNOSTIC_ROUTE_UI_SHELL     = 18;
     AGNOSTIC_ROUTE_UI_PLUGIN    = 19;
+    AGNOSTIC_ROUTE_PDATA_LIST   = 20;
+    AGNOSTIC_ROUTE_PDATA_GET    = 21;
+    AGNOSTIC_ROUTE_PDATA_PUT    = 22;
+    AGNOSTIC_ROUTE_PDATA_DELETE = 23;
 }
 
 var AGNOSTIC_METHOD_NONE   = 0;
@@ -66,7 +72,8 @@ enum AgnosticRouteMatchOff {
     AGNOSTIC_RM_ID              = 0;
     AGNOSTIC_RM_PARAM           = 8;
     AGNOSTIC_RM_METHOD_MISMATCH = 16;
-    AGNOSTIC_RM_SIZE            = 24;
+    AGNOSTIC_RM_PARAM2          = 24;
+    AGNOSTIC_RM_SIZE            = 32;
 }
 
 # Map an HTTP method name to its constant. Unknown methods are NONE, which the
@@ -81,11 +88,17 @@ fn agnostic_method_from(name: Str): i64 {
 
 # Build a match record in `a`.
 fn _agnostic_rm_new_a(a, id, param, mismatch): i64 {
+    return _agnostic_rm_new2_a(a, id, param, 0, mismatch);
+}
+
+# Build a match record carrying two captured segments, in `a`.
+fn _agnostic_rm_new2_a(a, id, param, param2, mismatch): i64 {
     var m = alloc_via(a, AGNOSTIC_RM_SIZE);
     if (m == 0) { return 0; }
     store64(m + AGNOSTIC_RM_ID, id);
     store64(m + AGNOSTIC_RM_PARAM, param);
     store64(m + AGNOSTIC_RM_METHOD_MISMATCH, mismatch);
+    store64(m + AGNOSTIC_RM_PARAM2, param2);
     return m;
 }
 
@@ -99,6 +112,12 @@ fn agnostic_route_match_id(m): i64 {
 fn agnostic_route_match_param(m): i64 {
     if (m == 0) { return 0; }
     return load64(m + AGNOSTIC_RM_PARAM);
+}
+
+# The SECOND captured `:name` segment as a Str, or 0 when the pattern had one or none.
+fn agnostic_route_match_param2(m): i64 {
+    if (m == 0) { return 0; }
+    return load64(m + AGNOSTIC_RM_PARAM2);
 }
 
 # 1 when the path matched a known route but the method did not — the 405-vs-404
@@ -123,10 +142,15 @@ fn agnostic_route_match_method_mismatch(m): i64 {
 # leaks a Str for every pattern that matches its parameter and then fails a later
 # segment — `/health/x` tried against `/health/:id/detail` captures `x`, fails on
 # the trailing segment, and allocates again on the next pattern.
-fn _agnostic_path_matches_at(a, path: Str, start, pattern, out_param): i64 {
+#
+# Up to TWO `:name` segments are captured (0.1.8 — `/api/v1/plugins/:id/data/:key`),
+# the first into `out_param` and the second into `out_param2`, which may be 0 when
+# the caller wants only one. A third `:name` matches but is not captured.
+fn _agnostic_path_matches_at(a, path: Str, start, pattern, out_param, out_param2): i64 {
     var p = str_data(path);
     var n = str_len(path);
     store64(out_param, 0);
+    if (out_param2 != 0) { store64(out_param2, 0); }
 
     # Skip exactly one leading `/` on each side.
     var pi = start;
@@ -144,11 +168,16 @@ fn _agnostic_path_matches_at(a, path: Str, start, pattern, out_param): i64 {
 
     var cap_at = 0 - 1;
     var cap_len = 0;
+    var cap2_at = 0 - 1;
+    var cap2_len = 0;
 
     while (1 == 1) {
         if (p_has == 0) {
             if (q_has == 0) {
                 if (cap_at >= 0) { store64(out_param, str_sub_a(a, path, cap_at, cap_len)); }
+                if (cap2_at >= 0 && out_param2 != 0) {
+                    store64(out_param2, str_sub_a(a, path, cap2_at, cap2_len));
+                }
                 return 1;
             }
             return 0;
@@ -169,10 +198,16 @@ fn _agnostic_path_matches_at(a, path: Str, start, pattern, out_param): i64 {
         var qlen = qe - qi;
 
         if ((load8(pattern + qi) & 255) == 58) {
-            # `:name` — matches one non-empty segment.
+            # `:name` — matches one non-empty segment. The first is captured into
+            # `out_param`, the second into `out_param2`.
             if (plen == 0) { return 0; }
-            cap_at = pi;
-            cap_len = plen;
+            if (cap_at < 0) {
+                cap_at = pi;
+                cap_len = plen;
+            } elif (cap2_at < 0) {
+                cap2_at = pi;
+                cap2_len = plen;
+            }
         } else {
             if (plen != qlen) { return 0; }
             var k = 0;
@@ -190,7 +225,12 @@ fn _agnostic_path_matches_at(a, path: Str, start, pattern, out_param): i64 {
 
 # Whether `path` matches `pattern`, capturing any `:name` segment.
 fn agnostic_path_matches_a(a, path: Str, pattern, out_param): i64 {
-    return _agnostic_path_matches_at(a, path, 0, pattern, out_param);
+    return _agnostic_path_matches_at(a, path, 0, pattern, out_param, 0);
+}
+
+# Whether `path` matches `pattern`, capturing the first two `:name` segments.
+fn agnostic_path_matches2_a(a, path: Str, pattern, out_param, out_param2): i64 {
+    return _agnostic_path_matches_at(a, path, 0, pattern, out_param, out_param2);
 }
 
 # Strip a query string, returning the path alone.
@@ -343,6 +383,28 @@ fn agnostic_route_resolve_a(a, method, path: Str): i64 {
         }
     }
 
+    # A plugin's own documents (0.1.8) — the first routes with two path parameters,
+    # so they go through the two-capture matcher.
+    if (agnostic_path_matches_a(a, clean, "/api/v1/plugins/:id/data", &param) == 1) {
+        path_hit = 1;
+        if (method == AGNOSTIC_METHOD_GET) {
+            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_PDATA_LIST, param, 0);
+        }
+    }
+    var param2 = 0;
+    if (agnostic_path_matches2_a(a, clean, "/api/v1/plugins/:id/data/:key", &param, &param2) == 1) {
+        path_hit = 1;
+        if (method == AGNOSTIC_METHOD_GET) {
+            return _agnostic_rm_new2_a(a, AGNOSTIC_ROUTE_PDATA_GET, param, param2, 0);
+        }
+        if (method == AGNOSTIC_METHOD_PUT) {
+            return _agnostic_rm_new2_a(a, AGNOSTIC_ROUTE_PDATA_PUT, param, param2, 0);
+        }
+        if (method == AGNOSTIC_METHOD_DELETE) {
+            return _agnostic_rm_new2_a(a, AGNOSTIC_ROUTE_PDATA_DELETE, param, param2, 0);
+        }
+    }
+
     # The WebGUI's pages (0.1.7). `/ui/` is listed beside `/ui` because the matcher
     # reads a trailing `/` as one more, empty, segment — and a person types either.
     if (agnostic_path_matches_a(a, clean, "/ui", &param) == 1
@@ -400,12 +462,15 @@ fn agnostic_route_needs_auth(id): i64 {
 # The ladder order is load-bearing:
 #   1. Body size, before routing — a 20 MB body to a bad path should be rejected
 #      on size, not parsed to discover it has nowhere to go.
-#   2. Route resolution; 405 when the path matched but the method did not,
+#   2. The Host rung (0.1.8): with authentication off, a socket request must name a
+#      loopback host — 403 otherwise. `src/http/guard.cyr` says why.
+#   3. Route resolution; 405 when the path matched but the method did not,
 #      404 otherwise.
-#   3. Authentication and authorisation — after routing so a 401 does not leak
+#   4. Authentication and authorisation — after routing so a 401 does not leak
 #      which paths exist, and before the handler so no privileged work runs for
-#      an unidentified caller.
-#   4. Dispatch.
+#      an unidentified caller. The resolved principal is recorded on `ctx`.
+#   5. The media-type rung (0.1.8): a socket POST or PUT must declare JSON — 415.
+#   6. Dispatch.
 #
 # `ctx` is an `agnostic_reqctx_new_a` block carrying the request's credential and
 # peer address, or 0 when neither is known. It is a parameter rather than a
@@ -426,6 +491,18 @@ fn agnostic_route_needs_auth(id): i64 {
 fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i64 {
     if (str_len(body) > max_body) {
         return agnostic_response_error_a(a, HTTP_PAYLOAD_TOO_LARGE, str_from("request body too large"));
+    }
+
+    # --- the Host rung (0.1.8) ----------------------------------------------
+    #
+    # With authentication OFF, a socket request must name a loopback host — the
+    # defence against DNS rebinding, `src/http/guard.cyr`. Before routing, like the
+    # body size: it is a property of how the request arrived, not of what it asked.
+    if (agnostic_reqctx_is_transport(ctx) == 1 && agnostic_authn_required() == 0) {
+        if (agnostic_host_is_loopback(agnostic_reqctx_host(ctx)) == 0) {
+            return agnostic_response_error_a(a, HTTP_FORBIDDEN,
+              str_from("AGNOSTIC_AUTH=off: only a loopback Host is answered (localhost, 127.0.0.1, [::1])"));
+        }
     }
 
     var m = agnostic_route_resolve_a(a, method, path);
@@ -454,6 +531,22 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
             if (agnostic_role_can(agnostic_principal_role(principal), need) == 0) {
                 return agnostic_response_error_a(a, HTTP_FORBIDDEN,
                   str_from("insufficient permissions"));
+            }
+            # Handlers that scope by tenant read it from here (0.1.8).
+            agnostic_reqctx_set_principal(ctx, principal);
+        }
+    }
+
+    # --- the media-type rung (0.1.8) ------------------------------------------
+    #
+    # A socket POST or PUT must declare a JSON body, even an empty one — the defence
+    # against a cross-site form post, `src/http/guard.cyr`. After authentication, so a
+    # bad token is still 401 first; before the handler, so nothing runs for it.
+    if (agnostic_reqctx_is_transport(ctx) == 1) {
+        if (method == AGNOSTIC_METHOD_POST || method == AGNOSTIC_METHOD_PUT) {
+            if (agnostic_content_type_is_json(agnostic_reqctx_ctype(ctx)) == 0) {
+                return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNSUPPORTED_MEDIA,
+                  str_from("POST and PUT need Content-Type: application/json"));
             }
         }
     }
@@ -500,6 +593,23 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     if (id == AGNOSTIC_ROUTE_UI_SHELL) { return agnostic_route_ui_shell_a(a); }
     if (id == AGNOSTIC_ROUTE_UI_PLUGIN) {
         return agnostic_route_ui_plugin_a(a, agnostic_route_match_param(m));
+    }
+
+    # The plugin-data handlers take `ctx`: the documents live in the caller's tenant.
+    if (id == AGNOSTIC_ROUTE_PDATA_LIST) {
+        return agnostic_route_plugindata_list_a(a, agnostic_route_match_param(m), ctx);
+    }
+    if (id == AGNOSTIC_ROUTE_PDATA_GET) {
+        return agnostic_route_plugindata_get_a(a, agnostic_route_match_param(m),
+          agnostic_route_match_param2(m), ctx);
+    }
+    if (id == AGNOSTIC_ROUTE_PDATA_PUT) {
+        return agnostic_route_plugindata_put_a(a, agnostic_route_match_param(m),
+          agnostic_route_match_param2(m), body, ctx);
+    }
+    if (id == AGNOSTIC_ROUTE_PDATA_DELETE) {
+        return agnostic_route_plugindata_delete_a(a, agnostic_route_match_param(m),
+          agnostic_route_match_param2(m), ctx);
     }
 
     # A resolved id with no dispatch arm is a table/ladder mismatch, not a client

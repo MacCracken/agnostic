@@ -59,10 +59,17 @@ PLUGINS = ["swarm"]
 
 # A manifest carries exactly these keys — the allow-list rule the API's request
 # decoders follow (src/http/codec.cyr): an unknown key is an error, never ignored.
-MANIFEST_KEYS = ["id", "name", "description", "version", "data", "entry"]
+MANIFEST_KEYS = ["id", "name", "description", "version", "data", "entry", "permissions"]
+STRING_KEYS = ["id", "name", "description", "version", "data", "entry"]
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-DATA_KINDS = ("simulated", "live")
+# `mixed`: the view shows both, and labels each mission itself (0.1.8).
+DATA_KINDS = ("simulated", "live", "mixed")
+
+# What a plugin may ask the shell to do on its behalf (ADR 0005). The shell maps each
+# to the exact routes it allows; an unknown name here is a build error, not a silent
+# no-op at run time.
+PERMISSIONS = ("storage", "presets:read", "definitions:read", "crews:read", "crews:write")
 
 def fail(msg):
     sys.stderr.write("gen-webgui: " + msg + "\n")
@@ -122,8 +129,10 @@ def csp(hashes, shell):
         parts += ["img-src data:", "connect-src 'self'", "frame-src 'self'",
                   "frame-ancestors 'none'"]
     else:
-        # A plugin page may be framed by the shell (same origin) and nothing else.
-        parts += ["connect-src 'self'", "frame-ancestors 'self'"]
+        # A plugin page may be framed by the shell (same origin) and nothing else, and
+        # it connects to NOTHING: every request goes through the shell's host bridge,
+        # which checks it against the plugin's `permissions` (ADR 0005).
+        parts += ["connect-src 'none'", "frame-ancestors 'self'"]
     parts += ["base-uri 'none'", "form-action 'none'"]
     return "; ".join(parts)
 
@@ -175,9 +184,16 @@ for pid in PLUGINS:
     if unknown or missing:
         fail("%s: unknown key(s) %s, missing key(s) %s"
              % (mpath, ", ".join(unknown) or "none", ", ".join(missing) or "none"))
-    for k in MANIFEST_KEYS:
+    for k in STRING_KEYS:
         if not isinstance(m[k], str) or not m[k]:
             fail("%s: `%s` must be a non-empty string" % (mpath, k))
+    perms = m["permissions"]
+    if not isinstance(perms, list) or not all(isinstance(x, str) for x in perms):
+        fail("%s: `permissions` must be a list of strings (it may be empty)" % mpath)
+    unknown_perms = [x for x in perms if x not in PERMISSIONS]
+    if unknown_perms or len(set(perms)) != len(perms):
+        fail("%s: `permissions` may hold each of %s once; got %s"
+             % (mpath, ", ".join(PERMISSIONS), ", ".join(perms) or "none"))
     if m["id"] != pid or not ID_RE.match(pid):
         fail("%s: `id` must equal its directory name and match [a-z0-9][a-z0-9-]{0,31}" % mpath)
     if len(m["name"]) > 64:
@@ -188,7 +204,8 @@ for pid in PLUGINS:
         fail("%s: `version` must be MAJOR.MINOR.PATCH" % mpath)
     if m["data"] not in DATA_KINDS:
         fail("%s: `data` must be one of %s — say whether the view shows simulated or live "
-             "data, because a simulation reads exactly like real work" % (mpath, ", ".join(DATA_KINDS)))
+             "data (or `mixed`, when it labels each mission itself), because a simulation "
+             "reads exactly like real work" % (mpath, ", ".join(DATA_KINDS)))
     if m["entry"] != "index.html":
         fail("%s: `entry` must be index.html — a plugin is one self-contained page" % mpath)
     doc = {k: m[k] for k in MANIFEST_KEYS}

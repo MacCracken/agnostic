@@ -230,7 +230,22 @@ fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
     # points at an unrelated file.
     var rctx = agnostic_reqctx_new_a(a, authz, sandhi_server_peer_ip(cfd));
 
-    var resp = agnostic_route_dispatch_a(a, method, path, body, max_body, rctx);
+    # The two headers the ladder's transport rules read (0.1.8), and the mark that
+    # makes those rules apply: this request came over a socket. Same accessor, and the
+    # same cstring-to-Str wrap, as the Authorization header above.
+    var ctype = 0;
+    var raw_ctype = sandhi_server_find_header_a(a, buf, blen, "content-type");
+    if (raw_ctype != 0) { ctype = str_from_a(a, raw_ctype); }
+    var host = 0;
+    var raw_host = sandhi_server_find_header_a(a, buf, blen, "host");
+    if (raw_host != 0) { host = str_from_a(a, raw_host); }
+    agnostic_reqctx_set_transport(rctx, ctype, host);
+
+    # ⚠ Fail CLOSED without a context. A null `rctx` reads to the ladder as an
+    # in-process caller, which skips the transport rules — so a request whose
+    # context could not be built is refused, never dispatched without them.
+    var resp = 0;
+    if (rctx != 0) { resp = agnostic_route_dispatch_a(a, method, path, body, max_body, rctx); }
     _agnostic_serve_send(a, cfd, resp);
 
     # Clear the trace id so a worker cannot leak the previous request's id onto
@@ -387,6 +402,10 @@ fn agnostic_serve_mount(cfg): i64 {
     }
     if (agnostic_settings_ensure() == 0) {
         sakshi_error("could not create the settings table; refusing to start", 54);
+        return 0;
+    }
+    if (agnostic_plugindata_ensure() == 0) {
+        sakshi_error("could not create the plugin data table; refusing to start", 57);
         return 0;
     }
 

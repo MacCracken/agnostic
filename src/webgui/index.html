@@ -74,6 +74,9 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
 .plugin-row:first-of-type { border-top: 0; }
 .plugin-row .title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .plugin-row .desc { grid-column: 1; color: var(--dim); max-width: 64ch; }
+.plugin-row .perms { grid-column: 1; color: var(--faint); font-size: 12px; }
+.plugin-row .stored { grid-column: 1; color: var(--faint); font-size: 12px; display: flex; align-items: center; gap: 10px; }
+.btn.small { padding: 2px 9px; font-size: 11px; }
 .switch { position: relative; width: 42px; height: 24px; border-radius: 12px; border: 1px solid var(--line-2); background: #142030; padding: 0; transition: background .15s, border-color .15s; }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--dim); transition: transform .15s, background .15s; }
 .switch[aria-checked="true"] { background: #0e3346; border-color: var(--accent); }
@@ -188,7 +191,10 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       const token = store.get(TOKEN_KEY);
       if (token) headers.Authorization = 'Bearer ' + token;
       const init = { method, headers, credentials: 'omit', cache: 'no-store' };
-      if (body !== undefined) { headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
+      // Every POST and PUT declares JSON, even with no body: the server refuses one that
+      // does not (415) — that refusal is what stops a cross-site form post.
+      if (method === 'POST' || method === 'PUT') headers['Content-Type'] = 'application/json';
+      if (body !== undefined) init.body = JSON.stringify(body);
       let res;
       try { res = await fetch(path, init); } catch (e) { return { status: 0, data: { error: 'the server is unreachable' } }; }
       let data = null;
@@ -248,6 +254,92 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     }
     function go(hash) { if (location.hash !== '#' + hash) location.hash = hash; else render(); }
 
+    // --- the plugin host bridge (0.1.8, ADR 0005) -----------------------------------
+    // A plugin page runs sandboxed in an opaque origin with connect-src 'none': it
+    // cannot reach the API itself. It asks the shell, by postMessage, and the shell
+    // answers only requests the plugin's manifest permits — made with the user's own
+    // credential, which the plugin never sees. The server still enforces the user's
+    // role on every one of them; this is the plugin's limit, not the user's.
+    const bridge = { plugin: null };
+    const PERMISSION_WORDS = {
+      'storage': 'keep its own documents',
+      'presets:read': 'read the preset library',
+      'definitions:read': 'read agent definitions',
+      'crews:read': 'read crews and their events',
+      'crews:write': 'start and cancel crews',
+    };
+    const RE_KEY = '[a-z0-9][a-z0-9._-]{0,63}';
+    const RE_UUID = '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}';
+    function permitted(p, method, path) {
+      const perms = p.permissions || [];
+      const rules = [];
+      if (perms.includes('storage')) {
+        const doc = new RegExp('^/api/v1/plugins/' + p.id + '/data/' + RE_KEY + '$');
+        rules.push(['GET', new RegExp('^/api/v1/plugins/' + p.id + '/data$')], ['GET', doc], ['PUT', doc], ['DELETE', doc]);
+      }
+      if (perms.includes('presets:read')) rules.push(['GET', /^\/api\/v1\/presets(\/[a-z0-9][a-z0-9-]{0,99})?$/]);
+      if (perms.includes('definitions:read')) rules.push(['GET', /^\/api\/v1\/agents\/definitions(\/[a-z0-9][a-z0-9-]{0,99})?$/]);
+      if (perms.includes('crews:read')) rules.push(['GET', new RegExp('^/api/v1/crews/' + RE_UUID + '(/events)?$')]);
+      if (perms.includes('crews:write')) {
+        rules.push(['POST', /^\/api\/v1\/crews$/], ['POST', new RegExp('^/api/v1/crews/' + RE_UUID + '/cancel$')]);
+      }
+      return rules.some(([m, re]) => m === method && re.test(path));
+    }
+    function dataLabel(p, long) {
+      if (p.data === 'mixed') return long ? 'SIMULATED + LIVE' : 'SIM + LIVE';
+      return long ? 'SIMULATED DATA' : 'SIMULATED';
+    }
+    function sendInit() {
+      const frame = $('plugin-frame');
+      if (!bridge.plugin || !frame.contentWindow) return;
+      frame.contentWindow.postMessage({
+        type: 'agnostic:init', protocol: 1,
+        plugin: { id: bridge.plugin.id, name: bridge.plugin.name, version: bridge.plugin.version },
+        permissions: (bridge.plugin.permissions || []).slice(),
+        // `off`: every route is open (loopback). `required`: the server enforces roles,
+        // and `role` is this user's. `unknown`: no answer from the server yet.
+        user: {
+          auth: state.auth === 'off' ? 'off' : state.auth === 'unknown' ? 'unknown' : 'required',
+          signedIn: !!store.get(TOKEN_KEY), role: store.get(ROLE_KEY) || null,
+        },
+      }, '*');
+    }
+    window.addEventListener('message', async (e) => {
+      const frame = $('plugin-frame');
+      // Only the plugin frame on screen may ask, and only as itself.
+      if (!bridge.plugin || !frame.contentWindow || e.source !== frame.contentWindow) return;
+      const msg = e.data;
+      if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
+      if (msg.type === 'agnostic:hello') { sendInit(); return; }
+      if (msg.type !== 'agnostic:request') return;
+      const p = bridge.plugin;
+      const reply = (status, data) => {
+        try { frame.contentWindow.postMessage({ type: 'agnostic:response', id: msg.id, status, data }, '*'); } catch (err) { /* frame gone */ }
+      };
+      const method = String(msg.method || '').toUpperCase();
+      const path = typeof msg.path === 'string' ? msg.path : '';
+      if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method) || !/^\/api\/v1\/[A-Za-z0-9\/._-]*$/.test(path)
+          || path.includes('..') || path.includes('//')) {
+        reply(400, { error: 'the shell refused a malformed request' });
+        return;
+      }
+      if (!permitted(p, method, path)) {
+        reply(403, { error: p.name + ' is not permitted to ' + method + ' ' + path });
+        return;
+      }
+      let body;
+      if (msg.body !== undefined && msg.body !== null) {
+        if (method === 'GET' || method === 'DELETE') { reply(400, { error: 'a ' + method + ' carries no body' }); return; }
+        let text;
+        try { text = JSON.stringify(msg.body); } catch (err) { reply(400, { error: 'the body is not JSON' }); return; }
+        if (typeof text !== 'string' || text.length > 262144) { reply(413, { error: 'the body is over 256 KB' }); return; }
+        body = msg.body;
+      }
+      const r = await api(method, path, body);
+      if (r.status === 401 && $('signin').hidden) openSignin('Sign in so ' + p.name + ' can reach the server.');
+      reply(r.status, r.data);
+    });
+
     // --- rendering ------------------------------------------------------------------
     function renderTabs(route) {
       const nav = $('tabs');
@@ -263,7 +355,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
         nav.append(b);
       };
       add('Overview', 'overview', route.view === 'overview');
-      for (const p of enabledPlugins()) add(p.name, 'plugin/' + p.id, route.view === 'plugin' && route.id === p.id, p.data === 'simulated');
+      for (const p of enabledPlugins()) add(p.name, 'plugin/' + p.id, route.view === 'plugin' && route.id === p.id, p.data !== 'live');
       add('Settings', 'settings', route.view === 'settings');
     }
 
@@ -319,7 +411,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       for (const p of state.plugins) {
         const li = el('li');
         li.append(el('span', 'name', p.name));
-        if (p.data === 'simulated') li.append(el('span', 'pill sim', 'SIMULATED'));
+        if (p.data !== 'live') li.append(el('span', 'pill sim', dataLabel(p, false)));
         li.append(el('span', 'spacer'));
         if (p.enabled) {
           const b = el('button', 'btn', 'Open');
@@ -347,7 +439,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
           const row = el('div', 'plugin-row');
           const title = el('div', 'title');
           title.append(el('span', 'name', p.name), el('span', 'pill', 'v' + p.version));
-          if (p.data === 'simulated') title.append(el('span', 'pill sim', 'SIMULATED DATA'));
+          if (p.data !== 'live') title.append(el('span', 'pill sim', dataLabel(p, true)));
           const sw = el('button', 'switch');
           sw.type = 'button';
           sw.setAttribute('role', 'switch');
@@ -356,6 +448,13 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
           if (!mayChange) { sw.disabled = true; sw.title = 'Changing a plugin needs the administrator role'; }
           sw.addEventListener('click', () => togglePlugin(p, sw));
           row.append(title, sw, el('div', 'desc', p.description));
+          const perms = (p.permissions || []).map((x) => PERMISSION_WORDS[x] || x);
+          row.append(el('div', 'perms', perms.length ? 'Can ' + perms.join(' · ') + ', as the signed-in user.' : 'Asks the server for nothing.'));
+          if ((p.permissions || []).includes('storage')) {
+            const stored = el('div', 'stored', 'Stored documents: …');
+            row.append(stored);
+            loadStored(p, stored);
+          }
           rows.append(row);
         }
       }
@@ -371,6 +470,39 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       } else {
         s.append(el('p', 'muted', 'Session state is not known yet.'));
       }
+    }
+
+    // A plugin's documents outlive switching it off, so Settings says what it keeps —
+    // in this user's tenant — and lets anyone who may write clear it.
+    const mayWrite = () => state.auth === 'off' || ['operator', 'admin', 'super_admin'].includes(store.get(ROLE_KEY));
+    const dataPath = (p, key) => '/api/v1/plugins/' + encodeURIComponent(p.id) + '/data' + (key ? '/' + encodeURIComponent(key) : '');
+    async function loadStored(p, node) {
+      const r = await api('GET', dataPath(p));
+      if (r.status !== 200 || !r.data || !Array.isArray(r.data.documents)) {
+        node.textContent = 'Stored documents: ' + (r.status === 403 ? 'not visible to your role' : 'unavailable — ' + errText(r));
+        return;
+      }
+      const docs = r.data.documents;
+      const bytes = docs.reduce((n, d) => n + (Number.isInteger(d.bytes) ? d.bytes : 0), 0);
+      const scope = typeof r.data.scope === 'string' && r.data.scope !== '_' ? ' in tenant ' + r.data.scope : '';
+      node.replaceChildren(el('span', null, 'Stored documents' + scope + ': ' + (docs.length ? docs.length + ' · ' + (bytes / 1024).toFixed(1) + ' KB' : 'none')));
+      if (docs.length && mayWrite()) {
+        const b = el('button', 'btn small', 'Delete all');
+        b.type = 'button';
+        b.addEventListener('click', () => clearStored(p, docs, node, b));
+        node.append(b);
+      }
+    }
+    async function clearStored(p, docs, node, b) {
+      if (!window.confirm('Delete all ' + docs.length + ' of ' + p.name + '\u2019s stored documents? This cannot be undone.')) return;
+      b.disabled = true;
+      let failed = 0;
+      for (const d of docs) {
+        const r = await api('DELETE', dataPath(p, d.key));
+        if (r.status !== 200 && r.status !== 404) failed++;
+      }
+      toast(failed ? 'Could not delete ' + failed + ' of ' + p.name + '\u2019s documents.' : p.name + '\u2019s stored documents are deleted.', failed > 0);
+      loadStored(p, node);
     }
 
     function renderPlugin(id) {
@@ -390,9 +522,12 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       }
       $('plugin-name').textContent = p.name;
       $('plugin-version').textContent = 'v' + p.version;
-      $('plugin-sim').hidden = p.data !== 'simulated';
+      // A `mixed` view labels each mission itself, so the bar says only that it can.
+      $('plugin-sim').hidden = p.data === 'live';
+      $('plugin-sim').textContent = dataLabel(p, true);
       $('plugin-newtab').href = p.url;
       frame.title = p.name;
+      bridge.plugin = p;
       if (frame.getAttribute('src') !== p.url) frame.setAttribute('src', p.url);
     }
 
@@ -402,7 +537,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       renderTabs(route);
       renderWho();
       for (const v of ['overview', 'settings', 'plugin']) $('view-' + v).hidden = v !== route.view;
-      if (route.view !== 'plugin') $('plugin-frame').removeAttribute('src');
+      if (route.view !== 'plugin') { $('plugin-frame').removeAttribute('src'); bridge.plugin = null; }
       if (route.view === 'overview') renderOverview();
       else if (route.view === 'settings') renderSettings();
       else renderPlugin(route.id);
@@ -445,6 +580,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
         store.set(ROLE_KEY, typeof r.data.role === 'string' ? r.data.role : '');
         closeSignin();
         await refresh();
+        sendInit();
         toast('Signed in.');
       } else {
         $('signin-error').textContent = errText(r);
@@ -455,6 +591,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       store.set(ROLE_KEY, '');
       state.auth = 'unknown';
       await refresh();
+      sendInit();
     }
 
     async function refresh() {
@@ -466,6 +603,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     // the page's CSP has form-action 'none', and the request goes through fetch.
     $('signin-form').addEventListener('submit', (e) => { e.preventDefault(); signIn(); });
     $('signin-cancel').addEventListener('click', closeSignin);
+    $('plugin-frame').addEventListener('load', sendInit);
     $('plugin-reload').addEventListener('click', () => {
       const f = $('plugin-frame');
       const src = f.getAttribute('src');

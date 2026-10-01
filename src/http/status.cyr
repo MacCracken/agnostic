@@ -24,6 +24,7 @@ var AGNOSTIC_HTTP_ACCEPTED          = 202;
 var AGNOSTIC_HTTP_CONFLICT          = 409;
 var AGNOSTIC_HTTP_UNPROCESSABLE     = 422;
 var AGNOSTIC_HTTP_TOO_MANY_REQUESTS = 429;
+var AGNOSTIC_HTTP_UNSUPPORTED_MEDIA = 415;
 var AGNOSTIC_HTTP_INSUFFICIENT_STORAGE = 507;
 
 var AGNOSTIC_JK_STATUS    = str_from("status");
@@ -62,6 +63,7 @@ fn agnostic_http_reason(status): i64 {
     if (status == AGNOSTIC_HTTP_CONFLICT) { return "Conflict"; }
     if (status == HTTP_PAYLOAD_TOO_LARGE) { return "Payload Too Large"; }
     if (status == AGNOSTIC_HTTP_UNPROCESSABLE) { return "Unprocessable Entity"; }
+    if (status == AGNOSTIC_HTTP_UNSUPPORTED_MEDIA) { return "Unsupported Media Type"; }
     if (status == AGNOSTIC_HTTP_TOO_MANY_REQUESTS) { return "Too Many Requests"; }
     if (status == HTTP_NOT_IMPLEMENTED) { return "Not Implemented"; }  #skip-lint: HTTP 501 status code, not a deferral
     if (status == HTTP_SERVICE_UNAVAILABLE) { return "Service Unavailable"; }

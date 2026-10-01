@@ -349,13 +349,26 @@ second driver. It is currently P2 / post-v1.0 with no date.
   ADMIN, audited, durable), sandboxed in the shell, served under a generated CSP.
 - [x] Swarm Command as the first plugin — on its simulator, disclosed as `data: simulated`.
 
+**Grown at 0.1.8** — the plugin platform, and Swarm Command on real crews:
+
+- [x] The host bridge (ADR 0005): a plugin reaches the API only by asking the shell, which
+  answers what the plugin's manifest `permissions` grant, with the user's credential — never
+  handed to the plugin. Plugin pages lose their own network (`connect-src 'none'`).
+- [x] Plugin documents, per tenant (`/api/v1/plugins/{id}/data[/{key}]`, READ/WRITE, audited,
+  32 KiB × 256), shown — and clearable — in Settings.
+- [x] Transport hardening (ADR 0006): with auth off only a loopback `Host` is answered, and
+  every POST and PUT must declare JSON — request forgery and DNS rebinding closed.
+- [x] Swarm Command: saved swarms with every capability editable (roles and caps, models,
+  tools, regions, budget, failure model, tasks), headless cost estimates over several seeds,
+  and live runs — its tasks submitted as a crew, polled through the bridge, watched, cancelled,
+  recorded on the swarm. `data: mixed`; every mission is labelled SIM or LIVE.
+
 Still owed for 1.0.0:
 
-- [ ] Views over the real surface: crews (submit, poll, events), agent definitions, presets,
-  the audit trail. They are the reason M9 exists; the shell is only where they will live.
-- [ ] A live event source for Swarm Command: the shell reads the crew event stream with the
-  user's token and hands events into the sandboxed frame by `postMessage`, translated into
-  the view's event schema. Until then its manifest says `simulated`.
+- [ ] Views over the real surface: crews (a list needs pagination and tenancy — `GET
+  /api/v1/crews` is still 405), agent definitions, presets, the audit trail. They are the
+  reason M9 exists; the shell is only where they will live.
+- [ ] Streaming crew events (M7's transport) in place of the bridge's one-second poll.
 - [ ] M8's reports, once they exist, as views or downloads from the shell.
 
 ## Release shape
