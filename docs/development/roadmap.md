@@ -371,6 +371,16 @@ Still owed for 1.0.0:
 - [ ] Streaming crew events (M7's transport) in place of the bridge's one-second poll.
 - [ ] M8's reports, once they exist, as views or downloads from the shell.
 
+## Moving the cyrius pin to 6.6.13 (recorded 2026-10-02)
+
+- **The aarch64 SIGBUS is fixed upstream** (cyrius 6.6.13, I9, filed by 0.1.7): every global now starts at
+  its natural alignment, so sankoch's odd-sized `u8` arrays no longer misalign sigil's atomic init flags or
+  majra's `_mq_next_job_id`. Rebuild on the 6.6.13 pin and re-run the release binary and the 12 failing
+  suites natively on the pi.
+- A modules-less `[deps.X]` now means `dist/X.cyr` or warns by name (I10, filed by 0.1.7): the
+  `cyrius.cyml` comment about blocks that must list `modules` can say so.
+- Re-vendor `lib/math.cyr` with `cyrius deps` in the same commit — 6.6.13 made `f64_le` / `f64_ge` / `f64_trunc` compiler builtins (reserved names), and a pre-6.6.13 vendored copy still defines them (`reserved keyword`).
+
 ## Release shape
 
 **✅ Decided 2026-08-20 — one release. M1–M9 ship together as 1.0.0.**
