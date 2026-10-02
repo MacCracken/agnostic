@@ -30,7 +30,16 @@ if [ "$major" -lt 20 ]; then
     exit 1
 fi
 
-out=$(node --test --test-reporter=spec tests/webgui/ 2>&1)
+# The files are named, not the directory: since Node 21, `--test` arguments are glob patterns,
+# and a directory is no longer searched — Node 22 tries to load `tests/webgui/` itself as a module
+# ("Cannot find module"), while Node 20 and 26 search it. Naming the files works on all of them.
+shopt -s nullglob
+files=(tests/webgui/*.test.mjs)
+if [ "${#files[@]}" -eq 0 ]; then
+    echo "webgui js: no tests found — tests/webgui/*.test.mjs is empty" >&2
+    exit 1
+fi
+out=$(node --test --test-reporter=spec "${files[@]}" 2>&1)
 rc=$?
 if [ "$rc" -ne 0 ]; then
     printf '%s\n' "$out" | grep -E '✖|Error|expected|actual' | head -40 >&2

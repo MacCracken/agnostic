@@ -8,8 +8,8 @@
 // `const` / `class` declarations live in the context's global lexical scope, not on its
 // global object, so `page.get('({A, B})')` is how they are reached).
 //
-// Run with `node --test tests/webgui/` from the repository root, or through
-// `scripts/check-webgui-js.sh`, which CI runs.
+// Run with `node --test tests/webgui/*.test.mjs` from the repository root (name the files: since
+// Node 21 a directory argument is not searched), or through `scripts/check-webgui-js.sh`, which CI runs.
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
