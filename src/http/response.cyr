@@ -101,6 +101,20 @@ fn agnostic_response_error_a(a, status, message: Str): i64 {
     return agnostic_response_json_a(a, status, obj);
 }
 
+# An error response that also names a machine-readable `code` (a C string) — for refusals
+# a client acts on rather than shows, like the plugin rung's `plugin_off` (0.1.9).
+fn agnostic_response_error_code_a(a, status, code, message: Str): i64 {
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    var msg = bayan_json_v_str_new_a(a, message);
+    if (msg == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ERROR, msg);
+    var cv = bayan_json_v_str_new_a(a, str_from_a(a, code));
+    if (cv == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CODE, cv);
+    return agnostic_response_json_a(a, status, obj);
+}
+
 # An error response from the global allocator. Not for request paths.
 fn agnostic_response_error(status, message: Str): i64 {
     return agnostic_response_error_a(default_alloc(), status, message);

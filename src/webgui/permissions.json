@@ -1,0 +1,41 @@
+{
+  "storage": {
+    "grants": "keep its own documents",
+    "routes": [
+      "GET /api/v1/plugins/:self/data",
+      "GET /api/v1/plugins/:self/data/:key",
+      "PUT /api/v1/plugins/:self/data/:key",
+      "DELETE /api/v1/plugins/:self/data/:key"
+    ]
+  },
+  "presets:read": {
+    "grants": "read the preset library",
+    "routes": [
+      "GET /api/v1/presets",
+      "GET /api/v1/presets/:name"
+    ]
+  },
+  "definitions:read": {
+    "grants": "read agent definitions",
+    "routes": [
+      "GET /api/v1/agents/definitions",
+      "GET /api/v1/agents/definitions/:key"
+    ]
+  },
+  "crews:read": {
+    "grants": "list crews and read their plans, progress and results",
+    "routes": [
+      "GET /api/v1/crews",
+      "GET /api/v1/crews/:id",
+      "GET /api/v1/crews/:id/events",
+      "GET /api/v1/crews/:id/plan"
+    ]
+  },
+  "crews:write": {
+    "grants": "start and cancel crews",
+    "routes": [
+      "POST /api/v1/crews",
+      "POST /api/v1/crews/:id/cancel"
+    ]
+  }
+}

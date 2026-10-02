@@ -4,6 +4,140 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-10-02
+
+**The plugin platform is checked by the server, and Swarm Command runs on real numbers** — a crew's
+real tokens and cost, its progress read by cursor and collected without a poller, crews that belong
+to their tenant and can be listed and watched, document revisions, and idempotent submits.
+
+**29 suites, 1,749 assertions, 0 failed**, plus **30 JavaScript tests** under Node
+(`tests/webgui/`, new). Cyrius, agnosai and every dependency are unchanged from 0.1.8; `lib/` and
+`cyrius.lock` are byte-identical to it.
+
+### Added — real usage on every crew (the engine metered it; agnostic dropped it)
+
+- Each result carries **`usage`** — `model`, `provider`, `prompt_tokens`, `completion_tokens`,
+  `total_tokens`, `cost_micro_usd` (only when the gateway priced the call — an absent cost is never a
+  zero one), `duration_ms` — and a failed call its **`error`**, picked by name out of the engine's
+  result metadata. The crew carries the totals: `usage` with `metered_tasks` and `costed_tasks`, so a
+  partial cost says it is partial. A placeholder task reports its duration and no tokens.
+- `GET /api/v1/crews/{id}` and the stored outcome also carry `name`, `scope`, `process`,
+  `tasks_submitted`, the `engine_mode` the crew **ran** under, and `submitted_at` / `started_at` /
+  `finished_at` (epoch ms).
+- The 202 carries **`task_ids`** — the engine's id for each task, in request order — and
+  **`GET /api/v1/crews/{id}/plan`** (READ) describes any crew the ledger holds: its agents, and its
+  tasks with ids, descriptions, priorities and dependency indices. A client binds events by id.
+
+### Added — crew progress is collected by the server and read by cursor (ADR 0009)
+
+- **A collector thread** keeps every live crew current every 200 ms — drains its events, reads the
+  engine, latches, persists a terminal outcome. Before 0.1.9 a crew moved only when polled: an
+  unwatched crew lost events past the engine's 256-event queue, and **a crew that finished unpolled
+  was not durable** — a restart lost its outcome.
+- **Every event is numbered (`seq`) and timed (`at_ms`)**; `GET /crews/{id}/events?after=N` answers
+  only what is new, with `next`, `missed` (overwritten before you read it) and `lost_events` (dropped
+  before it was numbered). Without `after`, the whole window, as before.
+- **`running` is reported** once `crew_started` is collected — the engine's registry never says it.
+
+### Added — crews belong to their tenant; a listing; idempotent submits (ADR 0008)
+
+- **`GET /api/v1/crews`** (READ): the caller's crews, newest first — running ones from the ledger,
+  finished ones from a durable index (`agnostic_crew_index`) — with status, times, task count, engine
+  mode, tokens and cost. `?limit=` (1–200, default 50) and `?before=<next>` page by cursor.
+- **`Idempotency-Key`** on `POST /api/v1/crews`: a repeat with the same key in the same scope answers
+  the crew it started (202, `"replayed": true`); the same key over another body is a 422.
+
+### Changed — ⚠ breaking: a crew is invisible to every other tenant
+
+- GET, cancel, events and plan answer **404** for a crew of another scope, exactly as for one never
+  submitted. Before 0.1.9 any user holding a crew's id could read it, and an operator cancel it. A crew
+  stored before 0.1.9 has no scope and belongs to `_` (users without a tenant, or auth off); it is not
+  listed, though `GET /crews/{id}` still answers it there.
+
+### Added — the plugin platform, checked by the server (ADR 0007)
+
+- **One permission vocabulary, `src/webgui/permissions.json`**: each permission's words and routes.
+  The generator validates manifests against it and embeds it; the server parses it at mount; the shell
+  reads it from `GET /api/v1/plugins` (`catalogue`). A new permission was four edits; it is one.
+- **The plugin rung**: every request the shell makes for a plugin carries `X-Agnostic-Plugin`, and the
+  server refuses it — before authentication — unless the plugin is built in, **switched on**, and
+  granted the route: `403` with `code` `plugin_unknown`, `plugin_off` or `plugin_forbidden`. A plugin
+  switched off elsewhere stops working in every open view on its next request, and the shell leaves it.
+- **Plugin documents have revisions**: an `ETag` on GET and `etag` on PUT (the first 64 bits of the
+  document's SHA-256); `If-Match` on PUT/DELETE and `If-None-Match: *` on PUT, checked under the store
+  lock in the same step as the write — **412** otherwise.
+- **The shell's bridge**: its gate is a pure script (`window.AgnosticBridge`) built from the catalogue
+  and tested under Node; it answers only the page session that asked (a reply after a reload, or after
+  another plugin took the frame, is dropped — the frame's window object does not change, so `e.source`
+  could not tell them apart); it accepts messages only from an opaque origin; it caps a plugin at 16
+  requests in flight (429); it carries query strings, `ifMatch` / `ifNoneMatch` (and answers `etag`)
+  and `idempotencyKey`, announced in `init.features`; and `init` is sent once per `hello` (the plugin
+  loaded its library twice).
+
+### Changed — Swarm Command 0.3.0: a working plugin, not a demo
+
+- **What a live crew really cost**: the summary shows the tokens agnostic metered and the cost the
+  gateway reported (n/a when it reported none — never a simulated number), beside the simulator's
+  estimate and how the two compare; the top bar shows ≈ tokens and n/a cost while the crew runs and
+  the metered numbers when it ends. **Results** shows every task's output, with its model, tokens,
+  cost and time, and downloads them as Markdown or JSON.
+- **Crews**: the launcher lists every crew of your tenant and watches any of them — bound through the
+  crew's own plan, titled from it, played at its real pace (`at_ms`). A crew from before the server's
+  last restart is shown from its outcome.
+- **Reading a crew**: by cursor, one poll at a time (two used to race and could double a crew's
+  output), bound to tasks by engine id — duplicate titles and out-of-order waves no longer cross
+  outputs; a parallel crew shows no more tasks at work than its concurrency limit. Losing contact
+  (no answer, 401, 403) **pauses** the watch and a sign-in resumes it — it used to record the crew as
+  *lost* after six misses. Polling slows to 5 s while the view is hidden.
+- **Submitting safely**: the run is recorded on its swarm **before** the crew is submitted, with an
+  `Idempotency-Key`; no answer is retried with the same key, and a submission never answered is
+  *unconfirmed* — not *refused*, and not resubmitted. Leaving mid-submission asks first, and the crew
+  is recorded either way.
+- **Swarms that cannot be lost**: every save carries the swarm's revision. A background record (a run,
+  an estimate) is applied to the latest copy and retried on a conflict; an editor save that would undo
+  another tab's change asks — overwrite, save as a copy, or keep editing. Writes to one swarm queue.
+  Editor saves keep 4 KB for run records; an oversize record trims old simulations first. Live runs and
+  simulations are capped apart (20 and 10). Write failures are shown, not logged. A swarm from a newer
+  Swarm Command is read-only; viewers can open, simulate and estimate, not change.
+- Gone: the `WebSocketSource` stub, the "prototype" label, and every place that said agnostic does not
+  report cost.
+
+### Added — tests for the WebGUI's JavaScript
+
+- `tests/webgui/` (`node --test`, Node 20+): the shell's bridge gate against the real vocabulary (8),
+  and Swarm Command's simulator, specs, library and live crew source against a fake agnostic that
+  answers as 0.1.9's server does (22). `scripts/check-webgui-js.sh`, run by `check-clean.sh`.
+  Mutation-checked: a gate that grants everything, and binding a crew's tasks by text, each fail a named
+  test. Until now this logic was tested once, by hand, and the tests were discarded.
+
+### Fixed
+
+- **The crew event window leaked.** Past 256 events every new event copied the other 255 into a new
+  vec, never freed. It is a ring now; `tests/ledger.tcyr` asserts a drain allocates nothing (a per-event
+  allocation fails it).
+
+### Verified
+
+- In headless Chromium over CDP, against servers running real crews through a stand-in LLM gateway that
+  prices calls: auth off (29 checks — the bridge features, a live crew from submit to metered cost,
+  results, the run record, watching it again, the Crews list and a crew from a script, a two-tab
+  conflict, switching the plugin off under an open view) and auth required (13 — sign-in, the admin
+  switch, catalogue words in Settings, the token out of the plugin's reach, a session invalidated
+  mid-crew pausing and resuming the watch), and the standalone page (7). No uncaught exception in
+  either frame. Over the socket with curl: every new route and header.
+- `tests/agnostic.bcyr` benches what 0.1.9 adds: the plugin rung ~1.2 µs per bridged request; copying
+  one new event out of the ring ~0.12 µs, a whole 256-event window ~5.7 µs; the route table (19 paths)
+  ~0.10 µs first, ~0.87 µs last, ~0.73 µs miss, ~2.0 µs for the two-capture path.
+
+### Known — recorded, not fixed here
+
+- **Cancelling a crew loses the results its finished tasks already produced** (the ledger latches
+  CANCELLED with none, and the engine's later state with them is refused by the latch). Outputs that
+  arrived as events are still shown. Roadmap.
+- agnosai: a parallel or DAG crew publishes `task_started` for a whole wave before it runs and
+  `task_completed` only after every batch, with no `token` events; `agent_cost_usd` is always empty.
+  Roadmap, as agnosai follow-ups.
+
 ## [0.1.8] — 2026-10-01
 
 **Swarm Command becomes a working tool** — saved swarms with every capability editable, cost

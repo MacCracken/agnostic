@@ -57,7 +57,11 @@ enum AgnosticReqCtxOff {
     AGNOSTIC_REQCTX_CTYPE     = 24;
     AGNOSTIC_REQCTX_HOST      = 32;
     AGNOSTIC_REQCTX_TRANSPORT = 40;
-    AGNOSTIC_REQCTX_SIZE      = 48;
+    AGNOSTIC_REQCTX_IDEM      = 48;   # `Idempotency-Key`, or 0 (0.1.9)
+    AGNOSTIC_REQCTX_PLUGIN    = 56;   # `X-Agnostic-Plugin`, or 0 (0.1.9)
+    AGNOSTIC_REQCTX_IFMATCH   = 64;   # `If-Match`, or 0 (0.1.9)
+    AGNOSTIC_REQCTX_IFNONE    = 72;   # `If-None-Match`, or 0 (0.1.9)
+    AGNOSTIC_REQCTX_SIZE      = 80;
 }
 
 # Build a request context in `a`. 0 on exhaustion.
@@ -70,6 +74,10 @@ fn agnostic_reqctx_new_a(a, authz, peer_ip): i64 {
     store64(c + AGNOSTIC_REQCTX_CTYPE, 0);
     store64(c + AGNOSTIC_REQCTX_HOST, 0);
     store64(c + AGNOSTIC_REQCTX_TRANSPORT, 0);
+    store64(c + AGNOSTIC_REQCTX_IDEM, 0);
+    store64(c + AGNOSTIC_REQCTX_PLUGIN, 0);
+    store64(c + AGNOSTIC_REQCTX_IFMATCH, 0);
+    store64(c + AGNOSTIC_REQCTX_IFNONE, 0);
     return c;
 }
 
@@ -81,6 +89,43 @@ fn agnostic_reqctx_set_transport(ctx, ctype, host): i64 {
     store64(ctx + AGNOSTIC_REQCTX_HOST, host);
     store64(ctx + AGNOSTIC_REQCTX_TRANSPORT, 1);
     return ctx;
+}
+
+# Record the four request headers handlers read (0.1.9), each a `Str` or 0 when absent:
+# `Idempotency-Key` (crew submit), `X-Agnostic-Plugin` (the plugin rung, ADR 0007),
+# `If-Match` and `If-None-Match` (plugin documents). Unlike `Content-Type` and `Host`
+# these are not transport rules — an in-process caller may set them too.
+fn agnostic_reqctx_set_headers(ctx, idem, plugin, if_match, if_none): i64 {
+    if (ctx == 0) { return 0; }
+    store64(ctx + AGNOSTIC_REQCTX_IDEM, idem);
+    store64(ctx + AGNOSTIC_REQCTX_PLUGIN, plugin);
+    store64(ctx + AGNOSTIC_REQCTX_IFMATCH, if_match);
+    store64(ctx + AGNOSTIC_REQCTX_IFNONE, if_none);
+    return ctx;
+}
+
+# The `Idempotency-Key` header as a Str, or 0.
+fn agnostic_reqctx_idem(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + AGNOSTIC_REQCTX_IDEM);
+}
+
+# The `X-Agnostic-Plugin` header — the plugin a bridged request is made for — or 0.
+fn agnostic_reqctx_plugin(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + AGNOSTIC_REQCTX_PLUGIN);
+}
+
+# The `If-Match` header as a Str, or 0.
+fn agnostic_reqctx_if_match(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + AGNOSTIC_REQCTX_IFMATCH);
+}
+
+# The `If-None-Match` header as a Str, or 0.
+fn agnostic_reqctx_if_none_match(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + AGNOSTIC_REQCTX_IFNONE);
 }
 
 # 1 when the request arrived over a socket, 0 for an in-process caller.
@@ -215,6 +260,26 @@ fn agnostic_principal_role(p): i64 {
 fn agnostic_principal_tenant(p): i64 {
     if (p == 0) { return 0; }
     return load64(p + AGNOSTIC_PR_TENANT);
+}
+
+# The scope of a request with no tenant — authentication off, or a user without one.
+# Outside the tenant-key charset (`[a-z0-9][a-z0-9-]*`), so it can never be a tenant.
+var AGNOSTIC_SCOPE_DEFAULT = str_from("_");
+
+# The scope a principal acts in (0.1.9): its tenant key when that is a legal one, else
+# `_`. A principal of 0 — authentication off — is in `_`. Everything tenant-scoped reads
+# this one function: plugin documents since 0.1.8, crews since 0.1.9.
+fn agnostic_principal_scope(p): i64 {
+    var t = agnostic_principal_tenant(p);
+    if (t != 0) {
+        if (agnostic_tenant_key_valid(t) == 1) { return t; }
+    }
+    return AGNOSTIC_SCOPE_DEFAULT;
+}
+
+# The scope of the request `ctx` carries — its principal's, once the auth rung has run.
+fn agnostic_reqctx_scope(ctx): i64 {
+    return agnostic_principal_scope(agnostic_reqctx_principal(ctx));
 }
 
 # Whether `header` begins with `scheme` followed by exactly one space.

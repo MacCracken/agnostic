@@ -214,7 +214,7 @@ fn test_drain_without_a_subscription() {
     assert_eq(agnostic_ledger_drain(e), 0, "draining a subscription-less entry takes nothing");
     assert_eq(agnostic_ledger_drain(0), 0, "and a null entry is safe");
     assert_eq(agnostic_ledger_dropped(e), 0, "with nothing counted as dropped");
-    assert_eq(vec_len(agnostic_ledger_events(e)), 0, "and no events recorded");
+    assert_eq(agnostic_ledger_event_count(e), 0, "and no events recorded");
 }
 
 fn test_null_entry_accessors() {
@@ -224,9 +224,213 @@ fn test_null_entry_accessors() {
     assert_eq(agnostic_ledger_crew_id(0), 0, "null has no id");
     assert_eq(agnostic_ledger_error(0), 0, "null has no reason");
     assert_eq(agnostic_ledger_results(0), 0, "null has no results");
-    assert_eq(agnostic_ledger_events(0), 0, "null has no events");
+    assert_eq(agnostic_ledger_event_count(0), 0, "null has no events");
+    assert_eq(agnostic_ledger_snapshot_a(arena_allocator(4096), 0, 0), 0, "and no snapshot");
+    assert_eq(agnostic_ledger_is_live(0), 0, "and is not live");
     assert_eq(agnostic_ledger_dropped(0), 0, "null dropped none");
     assert_eq(agnostic_ledger_latch(0, AGNOSTIC_CREW_FAILED, 0, 0), 0, "latching null is refused, not a fault");
+}
+
+# --- the event ring (0.1.9) -----------------------------------------------------
+
+# Publish `count` events of `type` for crew `id` on `bus`, numbering their data from `from`.
+fn _t_send(bus, id, type, from, count): i64 {
+    var tx = agnosai_event_bus_sender(bus, id);
+    var i = 0;
+    while (i < count) {
+        var data = bayan_json_v_obj_new();
+        bayan_json_v_obj_set(data, str_from("n"), bayan_json_v_int_new(from + i));
+        agnosai_event_sender_send(tx, agnosai_crew_event_new(id, str_from(type), data));
+        i = i + 1;
+    }
+    return count;
+}
+
+# The `n` a snapshot record's event carries.
+fn _t_n(rec): i64 {
+    return bayan_json_v_int(bayan_json_v_obj_get_by_str(
+        agnosai_crew_event_data(agnostic_ledger_ev_event(rec)), str_from("n")));
+}
+
+fn test_ring_numbers_every_event() {
+    test_group("ledger/ring-cursor");
+
+    agnostic_ledger_reset();
+    var bus = agnosai_event_bus_new();
+    var id = _t_id(21);
+    var e = agnostic_ledger_record(id, str_from("c"), agnosai_event_bus_subscribe(bus, id));
+    var a = arena_allocator(262144);
+
+    _t_send(bus, id, "task_started", 1, 200);
+    assert_eq(agnostic_ledger_drain(e), 200, "a drain takes everything queued");
+    assert_eq(agnostic_ledger_event_count(e), 200, "and numbers each event");
+    assert_eq(agnostic_ledger_trimmed(e), 0, "nothing trimmed below the cap");
+
+    var all = agnostic_ledger_snapshot_a(a, e, 0);
+    var evs = agnostic_ledger_snap_events(all);
+    assert_eq(vec_len(evs), 200, "after=0 is the whole window");
+    assert_eq(agnostic_ledger_ev_seq(vec_get(evs, 0)), 1, "numbered from 1");
+    assert_eq(agnostic_ledger_ev_seq(vec_get(evs, 199)), 200, "to the last, contiguously");
+    assert_eq(_t_n(vec_get(evs, 199)), 200, "each number on its own event");
+    assert_eq(agnostic_ledger_snap_next(all), 200, "next is the newest number");
+    assert_eq(agnostic_ledger_snap_missed(all), 0, "and nothing was missed");
+    var mono = 1;
+    var j = 1;
+    while (j < vec_len(evs)) {
+        if (agnostic_ledger_ev_at(vec_get(evs, j)) < agnostic_ledger_ev_at(vec_get(evs, j - 1))) { mono = 0; }
+        j = j + 1;
+    }
+    assert_eq(mono, 1, "at_ms never goes backwards");
+    assert_eq(agnostic_ledger_ev_at(vec_get(evs, 0)) >= 0, 1, "and is time since the crew was accepted");
+
+    var tail = agnostic_ledger_snapshot_a(a, e, 150);
+    assert_eq(vec_len(agnostic_ledger_snap_events(tail)), 50, "after=150 is only what came after");
+    assert_eq(agnostic_ledger_ev_seq(vec_get(agnostic_ledger_snap_events(tail), 0)), 151, "starting at 151");
+
+    var none = agnostic_ledger_snapshot_a(a, e, 200);
+    assert_eq(vec_len(agnostic_ledger_snap_events(none)), 0, "after=newest is nothing new");
+    assert_eq(agnostic_ledger_snap_next(none), 200, "and next does not move");
+
+    var ahead = agnostic_ledger_snapshot_a(a, e, 999);
+    assert_eq(vec_len(agnostic_ledger_snap_events(ahead)), 0, "a cursor ahead of the crew reads nothing");
+    assert_eq(agnostic_ledger_snap_next(ahead), 999, "and is handed back unchanged, never reset to 0");
+
+    # Past the cap: the ring keeps the newest 256 and says exactly what it dropped.
+    _t_send(bus, id, "token", 201, 100);
+    agnostic_ledger_drain(e);
+    assert_eq(agnostic_ledger_event_count(e), 300, "the count keeps climbing past the cap");
+    assert_eq(agnostic_ledger_trimmed(e), 44, "44 numbered events were overwritten");
+    assert_eq(agnostic_ledger_dropped(e), 44, "dropped_events counts them, as since M2");
+
+    var full = agnostic_ledger_snapshot_a(a, e, 0);
+    var fe = agnostic_ledger_snap_events(full);
+    assert_eq(vec_len(fe), AGNOSTIC_LEDGER_MAX_EVENTS, "the window holds the cap");
+    assert_eq(agnostic_ledger_ev_seq(vec_get(fe, 0)), 45, "the oldest retained is 45");
+    assert_eq(_t_n(vec_get(fe, 0)), 45, "and its slot holds event 45, not a stale one");
+    assert_eq(_t_n(vec_get(fe, 255)), 300, "the newest is 300");
+    assert_eq(agnostic_ledger_snap_missed(full), 44, "a reader starting at 0 missed 44");
+
+    var behind = agnostic_ledger_snapshot_a(a, e, 10);
+    assert_eq(agnostic_ledger_snap_missed(behind), 34, "a reader at 10 missed 11 through 44");
+    assert_eq(agnostic_ledger_ev_seq(vec_get(agnostic_ledger_snap_events(behind), 0)), 45, "and resumes at 45");
+
+    var near = agnostic_ledger_snapshot_a(a, e, 250);
+    assert_eq(vec_len(agnostic_ledger_snap_events(near)), 50, "a reader inside the window misses nothing");
+    assert_eq(agnostic_ledger_snap_missed(near), 0, "and is told so");
+}
+
+# ⭐ The leak 0.1.9 closes: the window used to copy itself into a fresh vec for every
+# event past the cap, and nothing is ever freed. The ring allocates once, with the entry.
+fn test_ring_allocates_nothing_per_event() {
+    test_group("ledger/ring-no-alloc");
+
+    agnostic_ledger_reset();
+    var bus = agnosai_event_bus_new();
+    var id = _t_id(22);
+    var e = agnostic_ledger_record(id, str_from("c"), agnosai_event_bus_subscribe(bus, id));
+
+    var grew = 0;
+    var round = 0;
+    while (round < 4) {
+        _t_send(bus, id, "token", round * 200, 200);
+        var before = alloc_used();
+        agnostic_ledger_drain(e);
+        grew = grew + (alloc_used() - before);
+        round = round + 1;
+    }
+    assert_eq(agnostic_ledger_event_count(e), 800, "800 events taken, the ring wrapping three times");
+    assert_eq(grew, 0, "draining them allocated nothing");
+}
+
+# Two different losses, kept apart: events the bus dropped before a drain were never
+# numbered, so they are LOST — not trimmed, and not a gap in the numbering.
+fn test_lost_is_not_trimmed() {
+    test_group("ledger/lost");
+
+    agnostic_ledger_reset();
+    var bus = agnosai_event_bus_new();
+    var id = _t_id(23);
+    var e = agnostic_ledger_record(id, str_from("c"), agnosai_event_bus_subscribe(bus, id));
+
+    # More than the engine's per-subscriber queue holds, before anyone drains.
+    _t_send(bus, id, "token", 1, AGNOSAI_SSE_CHANNEL_CAPACITY + 44);
+    agnostic_ledger_drain(e);
+    assert_eq(agnostic_ledger_lost(e), 44, "the bus dropped 44 and the ledger counts them as lost");
+    assert_eq(agnostic_ledger_event_count(e), AGNOSAI_SSE_CHANNEL_CAPACITY, "the rest are numbered");
+    assert_eq(agnostic_ledger_trimmed(e), 0, "none of them trimmed");
+    assert_eq(agnostic_ledger_dropped(e), 44, "dropped_events is the sum");
+    var s = agnostic_ledger_snapshot_a(arena_allocator(65536), e, 0);
+    assert_eq(agnostic_ledger_snap_missed(s), 0, "a lost event is not a missed number");
+    assert_eq(_t_n(vec_get(agnostic_ledger_snap_events(s), 0)), 45, "the first numbered is the oldest the bus kept");
+}
+
+fn test_crew_started_is_noticed() {
+    test_group("ledger/started");
+
+    agnostic_ledger_reset();
+    var bus = agnosai_event_bus_new();
+    var id = _t_id(24);
+    var e = agnostic_ledger_record(id, str_from("c"), agnosai_event_bus_subscribe(bus, id));
+    assert_eq(agnostic_ledger_submitted_ms(e) > 0, 1, "an entry knows when it was accepted");
+    assert_eq(agnostic_ledger_started_ms(e), 0, "but not started");
+
+    _t_send(bus, id, "task_started", 1, 1);
+    agnostic_ledger_drain(e);
+    assert_eq(agnostic_ledger_started_ms(e), 0, "a task event does not start the crew");
+    _t_send(bus, id, "crew_started", 2, 1);
+    agnostic_ledger_drain(e);
+    assert_eq(agnostic_ledger_started_ms(e) >= agnostic_ledger_submitted_ms(e), 1,
+      "crew_started does, no earlier than acceptance");
+
+    # The engine's registry never says RUNNING; the ledger's collected crew_started does.
+    assert_eq(agnostic_crew_live_status(AGNOSTIC_CREW_PENDING, 0), AGNOSTIC_CREW_PENDING,
+      "pending with no crew_started stays pending");
+    assert_eq(agnostic_crew_live_status(AGNOSTIC_CREW_PENDING, 7), AGNOSTIC_CREW_RUNNING,
+      "pending after crew_started is running");
+    assert_eq(agnostic_crew_live_status(AGNOSTIC_CREW_COMPLETED, 7), AGNOSTIC_CREW_COMPLETED,
+      "a terminal observation stands");
+    assert_eq(agnostic_crew_live_status(AGNOSTIC_CREW_UNKNOWN, 7), AGNOSTIC_CREW_UNKNOWN,
+      "and so does unknown");
+
+    assert_eq(agnostic_ledger_finished_ms(e), 0, "not finished");
+    agnostic_ledger_latch(e, AGNOSTIC_CREW_COMPLETED, 0, 0);
+    assert_eq(agnostic_ledger_finished_ms(e) >= agnostic_ledger_started_ms(e), 1,
+      "the terminal latch stamps when it finished");
+}
+
+# What the collector sweeps: anything not yet terminal, and anything whose subscription
+# is still open — a crew that just finished still has its closing events to collect.
+fn test_live_entries() {
+    test_group("ledger/live");
+
+    agnostic_ledger_reset();
+    var bus = agnosai_event_bus_new();
+    var a = arena_allocator(65536);
+
+    var pending = agnostic_ledger_record(_t_id(31), str_from("c"), 0);
+    var done = agnostic_ledger_record(_t_id(32), str_from("c"), 0);
+    agnostic_ledger_latch(done, AGNOSTIC_CREW_COMPLETED, 0, 0);
+    var cid = _t_id(33);
+    var closing = agnostic_ledger_record(cid, str_from("c"), agnosai_event_bus_subscribe(bus, cid));
+    agnostic_ledger_latch(closing, AGNOSTIC_CREW_FAILED, 0, 0);
+
+    assert_eq(agnostic_ledger_is_live(pending), 1, "a pending crew is live");
+    assert_eq(agnostic_ledger_is_live(done), 0, "a finished crew with nothing to collect is not");
+    assert_eq(agnostic_ledger_is_live(closing), 1, "a finished crew with an open channel still is");
+    assert_eq(vec_len(agnostic_ledger_live_entries_a(a)), 2, "and the sweep list holds exactly those two");
+
+    agnosai_event_bus_remove(bus, cid);
+    agnostic_ledger_drain(closing);
+    assert_eq(agnostic_ledger_is_live(closing), 0, "once its channel is closed and drained, it is done");
+    assert_eq(vec_len(agnostic_ledger_live_entries_a(a)), 1, "and leaves the sweep list");
+
+    # The sweep list walks the map's slots directly (no global allocation); hold that
+    # walk to the map's own count, so a stdlib that changes the slot layout fails here.
+    agnostic_ledger_reset();
+    var i = 0;
+    while (i < 40) { agnostic_ledger_record(_t_id(100 + i), str_from("c"), 0); i = i + 1; }
+    assert_eq(vec_len(agnostic_ledger_live_entries_a(a)), agnostic_ledger_count(),
+      "every live entry the map holds, and nothing else");
 }
 
 fn main() {
@@ -244,6 +448,11 @@ fn main() {
     test_eviction_never_drops_live_work();
     test_drain_without_a_subscription();
     test_null_entry_accessors();
+    test_ring_numbers_every_event();
+    test_ring_allocates_nothing_per_event();
+    test_lost_is_not_trimmed();
+    test_crew_started_is_noticed();
+    test_live_entries();
     return assert_summary();
 }
 

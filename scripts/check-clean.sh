@@ -291,9 +291,22 @@ else
     printf '%s\n' "$out"
 fi
 
+# --- the WebGUI's JavaScript (0.1.9) ---------------------------------------
+# The shell's host-bridge gate and each plugin's logic run under Node, against the pages'
+# own bytes (`tests/webgui/`). Until 0.1.9 that logic was tested once, by hand, and the
+# tests discarded; `cyrius test` cannot reach it. Node is a test-time dependency only.
+# Mutation-verified: making the gate grant a route outside a plugin's permissions, or
+# binding a live crew's tasks by position instead of by id, fails a named test.
+if ! out=$(./scripts/check-webgui-js.sh 2>&1); then
+    note "webgui js: tests/webgui/ failed"
+    printf '%s\n' "$out" | head -30 | sed 's/^/      /'
+    fail=1
+else
+    printf '%s\n' "$out"
+fi
 
 if [ "$fail" -ne 0 ]; then
     echo "cleanliness check FAILED"
     exit 1
 fi
-echo "cleanliness check OK — fmt, lint, doc, log lengths, store lock, vet, deny, deps --verify, lib snapshot, generated sources all clean"
+echo "cleanliness check OK — fmt, lint, doc, log lengths, store lock, vet, deny, deps --verify, lib snapshot, generated sources, webgui js all clean"

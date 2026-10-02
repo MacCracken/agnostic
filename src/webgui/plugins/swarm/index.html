@@ -273,6 +273,26 @@ canvas.timeline { width: 100%; height: 16px; display: block; border-radius: 3px;
 .sw-est .bar { margin-top: 5px; height: 4px; }
 .sw-est .bar i { background: var(--accent); }
 .sw-runs { display: flex; flex-wrap: wrap; gap: 4px; min-height: 18px; }
+.lsec-title { display: flex; align-items: center; gap: 8px; }
+.lsec-title .spacer { flex: 1; }
+.crew-list { display: flex; flex-direction: column; gap: 4px; }
+.crew-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; gap: 10px; align-items: center; padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 6px; background: rgba(12,19,28,.85); font-size: 12px; }
+.crew-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crew-row .nm small { color: var(--dim); margin-left: 6px; font: 11px var(--mono); }
+.crew-row .st { font: 600 10.5px var(--mono); letter-spacing: .05em; }
+.crew-row .st.bad { color: #fca5a5; } .crew-row .st.ok { color: #86efac; } .crew-row .st.run { color: #fcd34d; }
+.crew-row .mt { color: var(--dim); font: 11px var(--mono); white-space: nowrap; }
+.crew-empty { color: var(--dim); font-size: 12px; padding: 6px 2px; }
+.modal-box.wide { width: min(920px, 94vw); max-height: 84vh; display: flex; flex-direction: column; }
+.modal-box.wide .modal-body { overflow: auto; min-height: 0; }
+.results { display: flex; flex-direction: column; gap: 10px; }
+.res-item { border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 10px; background: rgba(8,13,20,.6); }
+.res-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.res-head small { color: var(--dim); font: 11px var(--mono); }
+.res-st { font: 600 10px var(--mono); letter-spacing: .05em; } .res-st.ok { color: #86efac; } .res-st.bad { color: #fca5a5; }
+.res-out { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font: 12px/1.45 var(--mono); color: var(--text); max-height: 320px; overflow: auto; }
+.res-dl { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.ro-badge { font: 600 10px var(--mono); color: #fcd34d; border: 1px solid rgba(252,211,77,.45); border-radius: 8px; padding: 1px 6px; margin-left: 6px; }
 .run-chip { font: 10px var(--mono); padding: 1px 7px; border-radius: 3px; border: 1px solid var(--line-2); color: var(--dim); background: #0b141e; white-space: nowrap; }
 .run-chip.live { border-color: #1f5133; color: #a7f3d0; }
 .run-chip.bad { border-color: #6b1f1f; color: #fca5a5; }
@@ -446,6 +466,11 @@ pre.req { max-height: 260px; overflow: auto; background: #070c12; border: 1px so
         <div class="lsec-title">YOUR SWARMS <small id="lib-count"></small></div>
         <div id="lib-list" class="swarm-list"></div>
       </div>
+      <div class="lsec" id="crews-sec" hidden>
+        <div class="lsec-title">CREWS <small id="crews-count">every crew this server has run for you, newest first — watch any of them</small>
+          <span class="spacer"></span><button id="crews-refresh" class="lbtn" type="button" title="Ask agnostic again">↻</button></div>
+        <div id="crews-list" class="crew-list"></div>
+      </div>
       <div class="lsec">
         <div class="lsec-title">TEMPLATES <small>a quick demo, or the starting point for a swarm of your own</small></div>
         <div class="cards templates" id="scenario-cards"></div>
@@ -496,7 +521,7 @@ pre.req { max-height: 260px; overflow: auto; background: #070c12; border: 1px so
     <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-title" id="modal-title"></div>
       <div class="modal-body" id="modal-body"></div>
-      <div class="modal-actions"><button id="modal-no" class="lbtn" type="button">Cancel</button><button id="modal-yes" class="lbtn primary" type="button">OK</button></div>
+      <div class="modal-actions"><button id="modal-no" class="lbtn" type="button">Cancel</button><button id="modal-alt" class="lbtn hidden" type="button"></button><button id="modal-yes" class="lbtn primary" type="button">OK</button></div>
     </div>
   </div>
 </div>
@@ -504,7 +529,7 @@ pre.req { max-height: 260px; overflow: auto; background: #070c12; border: 1px so
 <script>
 'use strict';
 /* =====================================================================================
- *  SWARM COMMAND — an RTS-style command view for AI agent swarms (prototype)
+ *  SWARM COMMAND — an RTS-style command view for AI agent swarms
  *
  *  Data flow (one direction only):
  *
@@ -586,6 +611,8 @@ function fmtTokens(n) {
 }
 function fmtCost(x, digits = 2) { return '$' + (x || 0).toFixed(digits); }
 function fmtPct(x) { return Math.round(x * 100) + '%'; }
+/** A cost agnostic reported, in micro-USD, as dollars: exact to the cent, finer below a cent. */
+function fmtMicro(m) { const d = (m || 0) / 1e6; return '$' + (d > 0 && d < 0.01 ? d.toFixed(4) : d.toFixed(2)); }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function fmtKB(bytes) { return (bytes / 1024).toFixed(bytes < 10240 ? 1 : 0) + ' KB'; }
 function fmtAgo(at) {
@@ -601,6 +628,15 @@ function oneLine(s, n) {
   return t.length > n ? t.slice(0, n - 1) + '…' : t;
 }
 const deepCopy = (x) => JSON.parse(JSON.stringify(x));
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+/** `n` random characters of [a-z0-9] — request-id prefixes, idempotency keys. */
+function randomToken(n) {
+  const b = new Uint8Array(n);
+  try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
+  let s = '';
+  for (const x of b) s += (x % 36).toString(36);
+  return s;
+}
 /** Median / quantile of a numeric array (copied, not sorted in place). */
 function quantile(xs, q) {
   if (!xs.length) return 0;
@@ -763,6 +799,11 @@ function makeCommand(type, agentIds, target, payload) {
  *
  *  The shell re-sends init after a sign-in or sign-out. Opened on its own (a new tab) there is no
  *  shell: `mode` is 'standalone', and the page keeps its swarms in this browser instead.
+ *
+ *  Since agnostic 0.1.9 a request may carry `ifMatch` / `ifNoneMatch` (a document's revision, which
+ *  comes back as `etag`) and `idempotencyKey` (a POST that is safe to retry), and its path may
+ *  carry a query string — each when the shell lists the feature in `init.features`. The server
+ *  checks every bridged request against this plugin's permissions too, not only the shell.
  * ===================================================================================== */
 class Host {
   constructor() {
@@ -770,6 +811,9 @@ class Host {
     this.info = null;          // the latest agnostic:init
     this.pending = new Map();  // request id → {resolve, timer}
     this.seq = 0;
+    // A random prefix per page load: request ids restart with every load, and a reply the shell
+    // sends after a reload must never match a request of this page that happens to share a number.
+    this.prefix = 'q' + randomToken(6) + '-';
     this.listeners = new Set();
     let framed = false;
     try { framed = window.parent !== window; } catch (err) { framed = true; }
@@ -788,6 +832,7 @@ class Host {
       this.info = {
         plugin: m.plugin && typeof m.plugin === 'object' ? m.plugin : {},
         permissions: Array.isArray(m.permissions) ? m.permissions.filter((x) => typeof x === 'string') : [],
+        features: Array.isArray(m.features) ? m.features.filter((x) => typeof x === 'string') : [],
         user: { auth: typeof u.auth === 'string' ? u.auth : 'unknown', signedIn: !!u.signedIn, role: typeof u.role === 'string' ? u.role : null },
       };
       clearTimeout(this.timer);
@@ -797,26 +842,33 @@ class Host {
       if (!r) return;
       this.pending.delete(m.id);
       clearTimeout(r.timer);
-      r.resolve({ status: Number.isInteger(m.status) ? m.status : 0, data: m.data === undefined ? null : m.data });
+      r.resolve({ status: Number.isInteger(m.status) ? m.status : 0, data: m.data === undefined ? null : m.data, etag: typeof m.etag === 'string' ? m.etag : null });
     }
   }
   setMode(mode) { this.mode = mode; for (const fn of this.listeners) fn(this); }
   onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   can(permission) { return this.mode === 'connected' && this.info.permissions.includes(permission); }
+  /** Whether the shell's bridge carries `feature` ('query' | 'revisions' | 'idempotency'). */
+  has(feature) { return this.mode === 'connected' && this.info.features.includes(feature); }
   pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || 'swarm'; }
   /** The user's role when the server enforces roles; null when auth is off or unknown. */
   role() { return this.info && this.info.user.auth === 'required' ? this.info.user.role : null; }
   /** Whether the user may write at all (start crews, save swarms): any role but viewer. */
   mayWrite() { return this.mode === 'connected' && this.role() !== 'viewer'; }
-  request(method, path, body) {
-    if (this.mode !== 'connected') return Promise.resolve({ status: 0, data: { error: 'not connected to agnostic' } });
-    const id = 'q' + ++this.seq;
+  /** `opts`: {ifMatch, ifNoneMatch, idempotencyKey}, each sent only when the shell carries it. */
+  request(method, path, body, opts) {
+    if (this.mode !== 'connected') return Promise.resolve({ status: 0, data: { error: 'not connected to agnostic' }, etag: null });
+    const id = this.prefix + ++this.seq;
     return new Promise((resolve) => {
-      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' } }); }, 30000);
+      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' }, etag: null }); }, 30000);
       this.pending.set(id, { resolve, timer });
       const msg = { type: 'agnostic:request', id, method, path };
       if (body !== undefined) msg.body = body;
-      try { window.parent.postMessage(msg, '*'); } catch (err) { this.pending.delete(id); clearTimeout(timer); resolve({ status: 0, data: { error: 'the shell is gone' } }); }
+      const o = opts || {};
+      if (o.ifMatch && this.has('revisions')) msg.ifMatch = o.ifMatch;
+      if (o.ifNoneMatch && this.has('revisions')) msg.ifNoneMatch = o.ifNoneMatch;
+      if (o.idempotencyKey && this.has('idempotency')) msg.idempotencyKey = o.idempotencyKey;
+      try { window.parent.postMessage(msg, '*'); } catch (err) { this.pending.delete(id); clearTimeout(timer); resolve({ status: 0, data: { error: 'the shell is gone' }, etag: null }); }
     });
   }
 }
@@ -1946,10 +1998,13 @@ Object.assign(Sim.prototype, {
  *  how much work a template generates, and the editor rescales caps and budget alongside it.
  * ===================================================================================== */
 const SPEC_VERSION = 1;
+const RECORDING_MAX = 200000;      // events a mission's replay log keeps (see App.record)
 const SPEC_PREFIX = 'swarm-';      // document keys: swarm-<id>
 const SPEC_MAX_BYTES = 32768;      // the server keeps a plugin document of up to 32 KiB
 const SPEC_MAX_TASKS = 300;
-const SPEC_MAX_RUNS = 20;
+const SPEC_MAX_LIVE_RUNS = 20;     // live crews and simulations are capped apart: a burst of
+const SPEC_MAX_SIM_RUNS = 10;      // simulations never pushes a crew you might watch out of the list
+const SPEC_RESERVE = 4096;         // room an editor save leaves for run records and the estimate
 const SPEC_MAX_MODELS = 12;
 const REGION_IDS = ['local', 'us-east', 'eu-west', 'ap-south'];
 const TOOL_KEYS = ['llm', 'search', 'exec', 'db', 'fs'];
@@ -1961,6 +2016,7 @@ const RE_TASK_KEY = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const RE_PRESET = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const RE_LIVE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,99}$/;
 const RE_CREW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RE_IDEM_KEY = /^[A-Za-z0-9._:-]{8,128}$/;
 
 const ROLE_GOALS = {
   planner: 'Break the objective into a plan, sequence the work, and write up the result',
@@ -2108,8 +2164,37 @@ function normalizeSpec(raw) {
   };
   if (l.models && typeof l.models === 'object') for (const r of ROLE_KEYS) if (typeof l.models[r] === 'string' && RE_LIVE_MODEL.test(l.models[r])) s.live.models[r] = l.models[r];
   s.estimate = normalizeEstimate(raw.estimate);
-  s.runs = Array.isArray(raw.runs) ? raw.runs.map(normalizeRun).filter(Boolean).slice(-SPEC_MAX_RUNS) : [];
+  s.runs = Array.isArray(raw.runs) ? raw.runs.map(normalizeRun).filter(Boolean) : [];
+  capRuns(s);
+  // A document from a NEWER Swarm Command may hold fields this one does not know; writing it
+  // back would drop them. It is shown and simulated, never saved over.
+  if (Number.isInteger(raw.v) && raw.v > SPEC_VERSION) s.readOnly = true;
   return s;
+}
+/** Keep the newest SPEC_MAX_LIVE_RUNS live runs and SPEC_MAX_SIM_RUNS simulations, oldest first. */
+function capRuns(s) {
+  const live = s.runs.filter((r) => r.kind === 'live').slice(-SPEC_MAX_LIVE_RUNS);
+  const sim = s.runs.filter((r) => r.kind === 'sim').slice(-SPEC_MAX_SIM_RUNS);
+  s.runs = live.concat(sim).sort((a, b) => a.at - b.at);
+  return s;
+}
+/** Trim what can be recomputed or spared until `s` fits the server's limit: old simulations first, then the estimate, then old live runs. */
+function fitSpec(s) {
+  while (specBytes(storableSpec(s)) > SPEC_MAX_BYTES) {
+    const sim = s.runs.findIndex((r) => r.kind === 'sim');
+    if (sim >= 0) { s.runs.splice(sim, 1); continue; }
+    if (s.estimate) { s.estimate = null; continue; }
+    if (s.runs.length) { s.runs.shift(); continue; }
+    break;
+  }
+  return s;
+}
+/** The document a spec is stored as — without the flags that only exist on screen. */
+function storableSpec(s) {
+  const d = Object.assign({}, s);
+  delete d.readOnly;
+  delete d.unsaved;
+  return d;
 }
 function normalizeTasks(list) {
   const out = [], seen = new Set();
@@ -2152,15 +2237,24 @@ function normalizeEstimate(e) {
     failed: n(e.failed), over: rdInt(e.over, 0, runs, 0), stalled: rdInt(e.stalled, 0, runs, 0),
   };
 }
+/**
+ * A run record. A live run is recorded BEFORE its crew is submitted, with the idempotency key the
+ * submission carries (`key`), and gains the crew's id once agnostic answers — so a run whose answer
+ * never arrived ('unconfirmed') is still on the card, and still says which key to look for.
+ * `tokens` and `costMicro` are what agnostic metered for a finished live crew; never a simulation's.
+ */
 function normalizeRun(r) {
   if (!r || typeof r !== 'object' || (r.kind !== 'sim' && r.kind !== 'live')) return null;
   const o = { kind: r.kind, at: rdNum(r.at, 0, 1e15, 0), status: rdStr(r.status, 24, '') };
   if (r.kind === 'live') {
-    if (typeof r.crew !== 'string' || !RE_CREW_ID.test(r.crew)) return null;
-    o.crew = r.crew.toLowerCase();
+    const crew = typeof r.crew === 'string' && RE_CREW_ID.test(r.crew) ? r.crew.toLowerCase() : '';
+    const key = typeof r.key === 'string' && RE_IDEM_KEY.test(r.key) ? r.key : '';
+    if (!crew && !key) return null;
+    if (crew) o.crew = crew;
+    if (key) o.key = key;
     o.engine = rdStr(r.engine, 24, '');
   }
-  for (const k of ['seed', 'cost', 'durationMs', 'done', 'failed', 'total']) if (typeof r[k] === 'number' && Number.isFinite(r[k])) o[k] = rdNum(r[k], 0, 1e12, 0);
+  for (const k of ['seed', 'cost', 'durationMs', 'done', 'failed', 'total', 'tokens', 'costMicro']) if (typeof r[k] === 'number' && Number.isFinite(r[k])) o[k] = rdNum(r[k], 0, 1e12, 0);
   return o;
 }
 
@@ -2265,7 +2359,7 @@ function validateSpec(s) {
   else if (s.maxActive != null && s.maxActive > cap) warnings.push('The swarm-wide cap (' + s.maxActive + ') is above the regions’ total (' + cap + '), so the regions bind first.');
   if (TOOL_KEYS.every((k) => !s.tools[k].on)) warnings.push('Every tool is off — agents only think, and no tool tokens or latency are simulated.');
   const bytes = specBytes(s);
-  return { errors, warnings, tabs, bytes, tooBig: bytes > SPEC_MAX_BYTES, taskCount: tasks.length, fanout: tasks.reduce((n, t) => n + (t.fanout ? t.fanout.titles.length : 0), 0) };
+  return { errors, warnings, tabs, bytes, tooBig: bytes > SPEC_MAX_BYTES - SPEC_RESERVE, taskCount: tasks.length, fanout: tasks.reduce((n, t) => n + (t.fanout ? t.fanout.titles.length : 0), 0) };
 }
 
 /** A spec → {sc, cfg} for `new Sim(sc, {seed, scale, cfg})`. Regions that are off drop out of the world. */
@@ -2425,6 +2519,7 @@ function specToCrewRequest(s, preset) {
     request,
     plan: {
       process,
+      maxConcurrency: process === 'parallel' ? s.live.maxConcurrency : 0,
       tasks: order.map((t, i) => ({ idx: i, key: t.key, title: t.title, role: t.role, kind: t.kind || 'work', priority: t.priority || 1,
         deps: process === 'parallel' ? [] : (t.deps || []).filter((k) => pos.has(k)), description: tasks[i].description })),
       agents: roster.map((a) => ({ key: a.def.key, name: a.def.name || a.def.key, role: a.view, model: a.def.llm_model || '' })),
@@ -2514,215 +2609,317 @@ class ReadOnlySink extends CommandSink {
 }
 
 /**
- * WebSocketSource — STUB showing where a real orchestrator plugs in. Not used by the demo.
- *
- * Wire protocol (suggested):
- *   server → client   one schema event per message, or an array of events:
- *                     {"id":"e1","type":"agent.spawned","timestamp":0,"agentId":"orch","territory":"local","payload":{...}}
- *   client → server   {"kind":"command","command":{id,type,issuedAt,agentIds,target,payload}}
- *   server → client   {"kind":"ack","id":"c12","ok":true,"message":"3 agents migrating"}
- *
- * On the orchestrator side, emit these from your agent runtime's hooks, e.g.
- *   runtime.on('agent_start',  a  => send({type:'agent.spawned', agentId:a.id, territory:a.host, payload:{name, role, model}}))
- *   runtime.on('tool_start',   c  => send({type:'tool.called',   agentId:c.agent, territory:c.region, payload:{toolId, kind, op}}))
- *   runtime.on('tool_end',     c  => send({type:'tool.returned', ...}))
- *   billing.every(1000,        s  => send({type:'resource.tick', territory:'global', payload:{tokens, cost, ...}}))
- * agent.moved is optional: the view synthesizes travel from task.assigned / tool.called when it is absent.
- */
-class WebSocketSource extends EventSource {
-  constructor(url) {
-    super();
-    this.url = url;
-    this.capabilities = { pause: false, speed: false, seek: false }; // live: the view can't slow down reality
-    this.ws = null;
-    this.lastTs = 0;
-    this.lastArrival = 0;
-    this.acks = new Map();
-  }
-  start() {
-    this.ws = new WebSocket(this.url);
-    this.ws.onopen = () => {
-      // TODO: authenticate, then subscribe to a mission: this.ws.send(JSON.stringify({kind:'subscribe', mission:'…', fromEventId: null}))
-    };
-    this.ws.onmessage = (msg) => {
-      let data;
-      try { data = JSON.parse(msg.data); } catch { return; }
-      if (data && data.kind === 'ack') { const r = this.acks.get(data.id); if (r) { this.acks.delete(data.id); r({ ok: data.ok, message: data.message }); } return; }
-      for (const e of Array.isArray(data) ? data : [data]) {
-        const err = validateEvent(e);
-        if (err) { console.warn('[WebSocketSource] dropped event:', err, e); continue; }
-        this.lastTs = Math.max(this.lastTs, e.timestamp);
-        this.lastArrival = performance.now();
-        this._emit(e);
-      }
-    };
-    this.ws.onclose = () => {
-      // TODO: reconnect with backoff and request a resend from the last seen event id.
-    };
-  }
-  stop() { if (this.ws) this.ws.close(); }
-  /** Estimated server clock: newest event timestamp + wall time since it arrived. */
-  now() { return this.lastTs + (this.lastArrival ? performance.now() - this.lastArrival : 0); }
-}
-class WebSocketCommandSink extends CommandSink {
-  constructor(source) { super(); this.source = source; }
-  send(cmd) {
-    const ws = this.source.ws;
-    if (!ws || ws.readyState !== 1) return Promise.resolve({ ok: false, message: 'Not connected' });
-    return new Promise((resolve) => {
-      this.source.acks.set(cmd.id, resolve);
-      ws.send(JSON.stringify({ kind: 'command', command: cmd }));
-      setTimeout(() => { if (this.source.acks.delete(cmd.id)) resolve({ ok: false, message: 'Timed out waiting for ack' }); }, 5000);
-    });
-  }
-}
-
-/**
  * LiveCrewSource — drives the view from a real agnostic crew, through the host bridge.
  *
- * agnostic reports a crew as a polled snapshot, not a stream: GET /crews/{id}/events answers the
- * crew's retained event window (its newest 256 events), so each poll is matched against the last
- * one and only what is new gets mapped (fresh()). The roster, the tasks and one tool structure
- * are known up front from the request; engine events then move them:
+ * agnostic numbers every event of a crew and stamps it with when it collected it (0.1.9), so the
+ * source reads with a cursor — GET /crews/{id}/events?after=N — and sees each event exactly once,
+ * one poll at a time; the view's clock follows the server's (`at_ms`), so a replay keeps the
+ * crew's real pace. Tasks are bound by the ENGINE's task ids, never by matching description text:
+ * a crew this source submits takes them from the 202 (`task_ids`, in request order), and any other
+ * crew — an earlier run of this swarm, a crew from the Crews list — from GET /crews/{id}/plan,
+ * which describes its agents and tasks. A crew from before the server last restarted has no plan
+ * and no events left; its outcome alone is shown.
  *
  *     crew_started   → the orchestrator reports the run
- *     task_started   → a unit of the chosen agent walks to the task and works it (a clone when the
- *                      agent is already busy — a parallel crew runs one agent on several tasks)
- *     token          → the task's output (the engine sends the whole text as one token event)
+ *     task_started   → a unit of the agent the engine chose walks to the task and works it (a clone
+ *                      when that agent is already busy; in a parallel crew, beyond the concurrency
+ *                      limit the task waits as queued — the engine reports a whole wave at once)
+ *     token          → the task's output (the engine sends the whole text as one token event; a
+ *                      parallel or DAG crew sends none, and its outputs arrive with the outcome)
  *     task_completed → task done or failed; the unit returns to HQ (a clone retires)
- *     crew_completed → the outcome (GET /crews/{id}) fills in what the window missed; mission over
+ *     crew_completed → mission over; GET /crews/{id} fills in results, usage and anything missed
  *
- * Nothing on the wire counts tokens or dollars, so tokens are estimated from the output length
- * (≈ 4 characters each) and the cost is reported as unknown — never as a simulated number.
+ * Tokens and cost. While the crew runs, tokens are estimated from output length (≈ 4 characters
+ * each) and shown with ≈. When it ends, GET /crews/{id} answers what the engine METERED for each
+ * task — tokens, model, duration, and the gateway's cost when it reported one — and those replace
+ * the estimate. A cost the gateway did not report stays n/a: never a simulated number.
+ *
+ * Losing contact is not an outcome. No answer, a 401 or a 403 pauses the source — it says so, and
+ * resumes when the shell answers again (a sign-in re-sends init) — rather than recording the crew
+ * as lost. Only the server saying it holds no such crew ends it that way.
  */
 const CREW_TERMINAL = new Set(['completed', 'failed', 'cancelled', 'unknown']);
+/** A task's title from a crew task description: the part after this plugin's "Mission: …\nTask: " prefix. */
+function taskTitle(description, i) {
+  const m = /^Mission:[^\n]*\n(?:Task: )?([\s\S]*)$/.exec(String(description || ''));
+  return oneLine(m ? m[1] : description, 90) || 'Task ' + (i + 1);
+}
+/**
+ * The plan GET /crews/{id}/plan describes, in the view's terms. When the crew is this swarm's own
+ * (`built` has the same tasks in the same order) its titles, roles and kinds are kept; otherwise
+ * they come from the crew itself.
+ */
+function planFromServer(p, built) {
+  const tasks = p && Array.isArray(p.tasks) ? p.tasks : [];
+  const ours = built && built.plan && built.plan.tasks.length === tasks.length
+    && built.plan.tasks.every((t, i) => tasks[i] && t.description === tasks[i].description);
+  const keyOf = (j) => (ours ? built.plan.tasks[j].key : 't' + j);
+  const plan = {
+    process: p && typeof p.process === 'string' ? p.process : 'sequential',
+    maxConcurrency: p && Number.isInteger(p.max_concurrency) ? p.max_concurrency : 0,
+    tasks: tasks.map((t, i) => {
+      const own = ours ? built.plan.tasks[i] : null;
+      const deps = Array.isArray(t.dependencies) ? t.dependencies.filter((j) => Number.isInteger(j) && j >= 0 && j < tasks.length && j !== i).map(keyOf) : [];
+      return {
+        idx: i, key: keyOf(i), title: own ? own.title : taskTitle(t.description, i),
+        role: own ? own.role : guessRole(t.description), kind: own ? own.kind : 'work',
+        priority: own ? own.priority : ({ critical: 4, high: 3, normal: 2, low: 1, background: 1 }[t.priority] || 2),
+        deps, description: typeof t.description === 'string' ? t.description : '', engineId: typeof t.task_id === 'string' ? t.task_id : null,
+      };
+    }),
+    agents: (p && Array.isArray(p.agents) ? p.agents : []).filter((a) => a && typeof a.key === 'string').map((a) => ({
+      key: a.key, name: typeof a.name === 'string' && a.name ? a.name : a.key,
+      role: guessRole((a.role || '') + ' ' + (a.name || '') + ' ' + a.key), model: typeof a.llm_model === 'string' ? a.llm_model : '',
+    })),
+  };
+  return plan;
+}
+
 class LiveCrewSource extends EventSource {
+  /**
+   * `built` is {request, plan} from specToCrewRequest when this source submits the crew, and may be
+   * null when it watches one (`opts.crewId`): the plan then comes from the server.
+   * opts: {crewId, idempotencyKey, onSubmitted(crewId|null, engineMode, status), onFinished(status, summary)}.
+   */
   constructor(host, spec, built, opts = {}) {
     super();
     this.capabilities = { pause: false, speed: false, seek: false, commands: false };
     this.host = host;
     this.spec = spec;
-    this.request = built.request;
-    this.plan = built.plan;
+    this.built = built || null;
+    this.request = built ? built.request : null;
     this.crewId = opts.crewId || null;
-    this.onSubmitted = opts.onSubmitted || null; // (crewId, engineMode) — the run is real from here on
-    this.onFinished = opts.onFinished || null;   // (status, summary)
+    this.idemKey = opts.idempotencyKey || null;
+    this.onSubmitted = opts.onSubmitted || null;
+    this.onFinished = opts.onFinished || null;
+    // Timing, in ms — fields so a test can run a whole crew in milliseconds.
+    this.firstPollMs = 400;
+    this.pollMs = 1000;
+    this.hiddenPollMs = 5000;
+    this.retryMs = 1500;
     this.t0 = 0;
     this.seq = 0;
     this.timer = 0;
     this.stopped = false;
     this.finished = false;
+    this.polling = false;
     this.misses = 0;
+    this.waiting = '';            // why the source is paused, or '' while it runs
+    this.after = 0;               // the event cursor: the highest number read
+    this.serverT = 0;             // the server's clock (at_ms) as of `serverAt`
+    this.serverAt = 0;
     this.status = this.crewId ? 'pending' : 'submitting';
     this.engineMode = '';
-    this.dropped = 0;
-    this.prevSigs = [];
+    this.lost = 0;
+    this.missed = 0;
     this.byEngine = new Map();     // engine task id → plan task
     this.outputs = new Map();      // engine task id → output seen before its task was bound
     this.unitTokens = {};
-    this.tokens = 0;
+    this.tokens = 0;               // estimated while running; replaced by the metered total at the end
+    this.tokensActual = false;
+    this.usage = null;             // the crew's metered usage, once the outcome is read
     this.peak = 0;
     this.wallMs = 0;
+    this.times = null;             // {submitted, started, finished} epoch ms, from the outcome
     this.sawEnd = false;
-    this.tasks = this.plan.tasks.map((t) => Object.assign({}, t, { id: 't' + t.idx, engineId: null, status: 'pending', output: '', startedAt: 0, agentKey: null, unit: null }));
-    this.byKey = new Map(this.tasks.map((t) => [t.key, t]));
-    this.agents = new Map(this.plan.agents.map((a) => [a.key, Object.assign({}, a, { id: 'ag-' + a.key, busyMain: false, clones: 0 })]));
+    this.unforwarded = [];
+    this.tasks = [];
+    this.byKey = new Map();
+    this.agents = new Map();
+    // Submitting: the swarm's own plan IS the crew's. Watching: the crew's plan comes from the
+    // server (attach), and `built` only lends titles and roles when the tasks are the same.
+    if (this.built && !this.crewId) this.adoptPlan(this.built.plan);
+    this.unwatchHost = host.onChange(() => { if (this.waiting && !this.stopped && !this.finished) this.resume(); });
   }
-  now() { return this.t0 ? performance.now() - this.t0 : 0; }
+  /** Take `plan` as the crew's tasks and roster. */
+  adoptPlan(plan) {
+    this.plan = plan;
+    this.tasks = plan.tasks.map((t) => Object.assign({}, t, { id: 't' + t.idx, status: 'pending', output: '', startedAt: 0, agentKey: null, unit: null, usage: null }));
+    this.byKey = new Map(this.tasks.map((t) => [t.key, t]));
+    for (const t of this.tasks) if (t.engineId) this.byEngine.set(t.engineId, t);
+    this.agents = new Map(plan.agents.map((a) => [a.key, Object.assign({}, a, { id: 'ag-' + safeId(a.key), busyMain: false, clones: 0 })]));
+  }
+  /** The view's clock: the server's `at_ms`, advanced by the time since it was last seen. */
+  now() {
+    if (!this.t0) return 0;
+    if (this.finished) return this.serverT;
+    return this.serverT + (performance.now() - this.serverAt);
+  }
   ts() { return Math.round(this.now()); }
-  emit(type, agentId, taskId, payload) {
-    const e = { id: 'L' + ++this.seq, type, timestamp: this.ts(), territory: type === 'resource.tick' ? 'global' : 'local', payload: payload || {} };
+  /** An event the server stamped at `at` ms: keep the clock from running behind it. */
+  sync(at) {
+    if (!Number.isFinite(at) || at < 0) return;
+    if (at > this.now()) { this.serverT = at; this.serverAt = performance.now(); }
+  }
+  emit(type, agentId, taskId, payload, at) {
+    const e = { id: 'L' + ++this.seq, type, timestamp: at != null ? at : this.ts(), territory: type === 'resource.tick' ? 'global' : 'local', payload: payload || {} };
     if (agentId) e.agentId = agentId;
     if (taskId) e.taskId = taskId;
     this._emit(e);
   }
-  say(step) { this.emit('agent.state_changed', 'orch', null, { state: this.finished ? 'done' : 'working', step }); }
+  say(step) { this.emit('agent.state_changed', 'orch', null, { state: this.finished ? 'done' : this.waiting ? 'paused' : 'working', step }); }
   start() {
     this.t0 = performance.now();
-    this.boot();
-    if (this.crewId) this.poll(); else this.submit();
+    this.serverAt = this.t0;
+    this.bootOrchestrator();
+    if (this.crewId) this.attach(); else this.submit();
   }
-  stop() { this.stopped = true; clearTimeout(this.timer); }
-  boot() {
+  stop() { this.stopped = true; clearTimeout(this.timer); if (this.unwatchHost) this.unwatchHost(); }
+  bootOrchestrator() {
     this.emit('agent.spawned', 'orch', null, {
-      name: 'agnostic', role: 'orchestrator', model: 'crew · ' + this.plan.process, health: 100, spawnAt: { kind: 'hq' },
+      name: 'agnostic', role: 'orchestrator', model: 'crew', health: 100, spawnAt: { kind: 'hq' },
       mission: { title: this.spec.name, scenario: 'live', objective: this.spec.objective, budget: 0, seed: 0, kind: 'live', specId: this.spec.id, crewId: this.crewId || '' },
       world: {
-        territories: [{ id: 'local', name: 'agnostic', region: 'this server', kind: 'local', cap: this.agents.size, costPerSec: 0, speed: 1, latencyMs: {} }],
+        territories: [{ id: 'local', name: 'agnostic', region: 'this server', kind: 'local', cap: Math.max(1, this.agents.size), costPerSec: 0, speed: 1, latencyMs: {} }],
         tools: [{ id: 'local.llm', kind: 'llm', name: 'LLM gateway', territory: 'local' }],
       },
     });
+  }
+  /** Put the plan's tasks and agents on the map. */
+  bootPlan() {
     for (const t of this.tasks) {
-      this.emit('task.created', null, t.id, { title: t.title, role: t.role, deps: t.deps.map((k) => this.byKey.get(k).id), work: 1, kind: t.kind, priority: t.priority });
+      this.emit('task.created', null, t.id, { title: t.title, role: t.role, deps: t.deps.map((k) => this.byKey.get(k)).filter(Boolean).map((x) => x.id), work: 1, kind: t.kind, priority: t.priority });
     }
     for (const a of this.agents.values()) this.emit('agent.spawned', a.id, null, { name: a.name, role: a.role, model: a.model || 'server default', health: 100, spawnAt: { kind: 'hq' } });
-    this.say(this.crewId ? 'Reattaching to crew ' + this.crewId.slice(0, 8) : 'Submitting the crew to agnostic');
   }
-  async submit() {
-    const r = await this.host.request('POST', '/api/v1/crews', this.request);
+  /** Watch a crew this source did not submit: its plan from the server, then its events. */
+  async attach() {
+    this.say('Reattaching to crew ' + this.crewId.slice(0, 8));
+    const r = await this.host.request('GET', '/api/v1/crews/' + this.crewId + '/plan');
     if (this.stopped) return;
-    const d = r.data && typeof r.data === 'object' ? r.data : {};
-    if (r.status !== 202 || typeof d.crew_id !== 'string' || !RE_CREW_ID.test(d.crew_id)) {
-      this.fail(r.status ? 'agnostic refused the crew (' + r.status + '): ' + errOf(r) : 'Could not reach agnostic: ' + errOf(r));
+    if (r.status === 200 && r.data && Array.isArray(r.data.tasks)) {
+      this.adoptPlan(planFromServer(r.data, this.built));
+      this.bootPlan();
+      this.poll();
       return;
     }
-    this.crewId = d.crew_id.toLowerCase();
-    this.engineMode = typeof d.engine_mode === 'string' ? d.engine_mode : '';
-    this.status = typeof d.status === 'string' ? d.status : 'pending';
-    if (this.onSubmitted) this.onSubmitted(this.crewId, this.engineMode);
-    this.say('Crew ' + this.crewId.slice(0, 8) + ' accepted' + (this.engineMode === 'placeholder' ? ' — placeholder engine: no LLM gateway is configured, outputs are echoes' : ''));
-    this.schedule(400);
+    if (r.status === 0 || r.status === 401 || r.status === 403) { this.pause(r, () => this.attach()); return; }
+    // No plan held: the crew finished before the server last restarted. Its outcome is all there is.
+    this.say('This crew ran before agnostic last restarted — showing its outcome');
+    this.finalize();
   }
-  schedule(ms) { if (!this.stopped && !this.finished) { clearTimeout(this.timer); this.timer = setTimeout(() => this.poll(), ms); } }
+  /** Submit the crew — safely retried with its idempotency key when agnostic does not answer. */
+  async submit() {
+    this.bootPlan();
+    this.say('Submitting the crew to agnostic');
+    const opts = this.idemKey ? { idempotencyKey: this.idemKey } : undefined;
+    let r = null;
+    for (let tries = 0; ; tries++) {
+      r = await this.host.request('POST', '/api/v1/crews', this.request, opts);
+      // Only a keyed request may be repeated: without the key a retry could start a second crew.
+      if (r.status !== 0 || tries >= 3 || !this.idemKey || !this.host.has('idempotency')) break;
+      if (!this.stopped) this.say('No answer from agnostic — retrying the submission, safely (' + (tries + 1) + ')');
+      await sleepMs(this.retryMs * (tries + 1));
+    }
+    const d = r.data && typeof r.data === 'object' ? r.data : {};
+    const id = typeof d.crew_id === 'string' && RE_CREW_ID.test(d.crew_id) ? d.crew_id.toLowerCase() : null;
+    if ((r.status === 202 || r.status === 503) && id) {
+      // The crew exists from here on — record it even if this view has been left meanwhile.
+      this.crewId = id;
+      this.engineMode = typeof d.engine_mode === 'string' ? d.engine_mode : '';
+      if (Array.isArray(d.task_ids)) {
+        d.task_ids.forEach((tid, i) => {
+          const t = this.tasks[i];
+          if (t && typeof tid === 'string' && !t.engineId) { t.engineId = tid; this.byEngine.set(tid, t); }
+        });
+      }
+      if (Array.isArray(d.unforwarded)) this.unforwarded = d.unforwarded.filter((x) => typeof x === 'string');
+      const st = r.status === 503 ? 'failed' : typeof d.status === 'string' ? d.status : 'pending';
+      if (this.onSubmitted) this.onSubmitted(id, this.engineMode, st);
+      if (this.stopped) return;
+      if (r.status === 503) { this.fail('agnostic accepted the crew but could not start it: ' + errOf(r)); return; }
+      this.status = st;
+      this.say('Crew ' + id.slice(0, 8) + (d.replayed ? ' (already submitted)' : ' accepted')
+        + (this.engineMode === 'placeholder' ? ' — placeholder engine: no LLM gateway is configured, outputs are echoes' : '')
+        + (this.unforwarded.length ? ' · not forwarded: ' + this.unforwarded.join(', ') : ''));
+      this.schedule(this.firstPollMs);
+      return;
+    }
+    if (r.status === 0) {
+      // No answer at all: the crew may or may not have started. Say so — never "refused".
+      if (this.onSubmitted) this.onSubmitted(null, '', 'unconfirmed');
+      this.fail('agnostic did not answer, so whether the crew started is unknown — look for it in Crews before running it again', 'unconfirmed');
+      return;
+    }
+    if (this.onSubmitted) this.onSubmitted(null, '', 'refused');
+    this.fail('agnostic refused the crew (' + r.status + '): ' + errOf(r), 'refused');
+  }
+  /** The poll interval: brisk while the crew runs and the view is seen, slow when it is hidden. */
+  interval() {
+    let hidden = false;
+    try { hidden = typeof document !== 'undefined' && document.hidden; } catch (err) { hidden = false; }
+    return hidden ? this.hiddenPollMs : this.pollMs;
+  }
+  schedule(ms) {
+    if (this.stopped || this.finished || this.waiting) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.poll(), ms);
+  }
+  /** Pause on no answer, 401 or 403 — and resume by `retry` when the shell answers again (or after a while). */
+  pause(r, retry) {
+    clearTimeout(this.timer);
+    this.waiting = r.status === 401 ? 'Sign in to keep watching this crew' : r.status === 403 ? 'Your session cannot read this crew' : 'agnostic is not answering — retrying';
+    this.retry = retry;
+    this.say(this.waiting);
+    const wait = Math.min(30000, this.retryMs * 2 ** Math.min(4, this.misses++));
+    this.timer = setTimeout(() => this.resume(), r.status === 0 ? wait : 60000);
+  }
+  resume() {
+    if (!this.waiting || this.stopped || this.finished) return;
+    this.waiting = '';
+    clearTimeout(this.timer);
+    const again = this.retry || (() => this.poll());
+    this.retry = null;
+    this.say('Back in contact with agnostic');
+    again();
+  }
   async poll() {
+    if (this.stopped || this.finished || this.polling || this.waiting) return;
+    this.polling = true;
+    let r;
+    try {
+      r = await this.host.request('GET', '/api/v1/crews/' + this.crewId + '/events?after=' + this.after);
+    } finally {
+      this.polling = false;
+    }
     if (this.stopped || this.finished) return;
-    const r = await this.host.request('GET', '/api/v1/crews/' + this.crewId + '/events');
-    if (this.stopped || this.finished) return;
-    if (r.status === 404) { this.finalize(); return; } // gone from the ledger; the outcome store may still have it
+    if (r.status === 404) { this.finalize(); return; } // not held any more; the outcome store may still have it
+    if (r.status === 0 || r.status === 401 || r.status === 403) { this.pause(r, () => this.poll()); return; }
     if (r.status !== 200 || !r.data || !Array.isArray(r.data.events)) {
-      if (++this.misses >= 6) { this.fail('Lost contact with crew ' + this.crewId.slice(0, 8) + ': ' + errOf(r)); return; }
-      this.schedule(Math.min(10000, 1000 * 2 ** this.misses));
+      if (++this.misses >= 6) { this.pause({ status: 0 }, () => this.poll()); return; }
+      this.schedule(Math.min(10000, this.pollMs * 2 ** this.misses));
       return;
     }
     this.misses = 0;
-    for (const ev of this.fresh(r.data.events)) this.map(ev);
-    this.dropped = Number.isInteger(r.data.dropped_events) ? r.data.dropped_events : this.dropped;
+    for (const ev of r.data.events) {
+      if (!ev || typeof ev !== 'object') continue;
+      if (Number.isInteger(ev.seq)) {
+        if (ev.seq <= this.after) continue; // already read — a cursor never repeats, but be sure
+        this.after = ev.seq;
+      }
+      this.sync(ev.at_ms);
+      this.map(ev, Number.isFinite(ev.at_ms) ? ev.at_ms : null);
+    }
+    if (Number.isInteger(r.data.next) && r.data.next > this.after) this.after = r.data.next;
+    if (Number.isInteger(r.data.missed)) this.missed += r.data.missed;
+    if (Number.isInteger(r.data.lost_events)) this.lost = r.data.lost_events;
     if (typeof r.data.status === 'string') this.status = r.data.status;
     this.tick();
     // crew_completed is final even if a status were to lag behind it
     if (CREW_TERMINAL.has(this.status) || this.sawEnd) { this.finalize(); return; }
-    this.schedule(1000);
+    this.schedule(this.interval());
   }
-  /** The events in `events` not seen by the last poll. The window only ever loses its oldest events. */
-  fresh(events) {
-    const sigs = events.map((e) => { try { return JSON.stringify(e); } catch (err) { return '?'; } });
-    const prev = this.prevSigs;
-    let start = 0;
-    if (prev.length) {
-      start = -1;
-      for (let e = 0; e < prev.length && start < 0; e++) {
-        const n = prev.length - e;
-        if (n > sigs.length) continue;
-        let ok = true;
-        for (let i = 0; ok && i < n; i++) if (prev[e + i] !== sigs[i]) ok = false;
-        if (ok) start = n;
-      }
-      if (start < 0) start = 0; // nothing overlaps: more than a window's worth arrived since the last poll
-    }
-    this.prevSigs = sigs;
-    return events.slice(start);
-  }
-  map(ev) {
+  map(ev, at) {
     if (!ev || typeof ev !== 'object' || typeof ev.type !== 'string') return;
     const d = ev.data && typeof ev.data === 'object' && !Array.isArray(ev.data) ? ev.data : {};
     const tid = typeof d.task_id === 'string' ? d.task_id : null;
     switch (ev.type) {
-      case 'crew_started': this.status = 'running'; this.say('Crew running · ' + (Number.isInteger(d.task_count) ? d.task_count : this.tasks.length) + ' tasks · ' + this.plan.process); break;
-      case 'task_started': this.taskStarted(tid, typeof d.description === 'string' ? d.description : '', d.agent); break;
-      case 'token': this.token(tid, typeof d.token === 'string' ? d.token : ''); break;
+      case 'crew_started': this.status = 'running'; this.say('Crew running · ' + (Number.isInteger(d.task_count) ? d.task_count : this.tasks.length) + ' tasks · ' + (this.plan ? this.plan.process : '')); break;
+      case 'task_started': this.taskStarted(tid, typeof d.description === 'string' ? d.description : '', d.agent, at); break;
+      case 'token': this.token(tid, typeof d.token === 'string' ? d.token : '', at); break;
       case 'task_completed': {
         const t = tid && this.byEngine.get(tid);
-        if (t) this.resolve(t, typeof d.status === 'string' ? d.status : 'completed');
+        if (t) this.resolve(t, typeof d.status === 'string' ? d.status : 'completed', '', at);
         break;
       }
       case 'crew_completed':
@@ -2732,58 +2929,67 @@ class LiveCrewSource extends EventSource {
         break;
       default:
         if (/error|fail/i.test(ev.type)) {
-          this.emit('agent.error', 'orch', null, { code: 'ENGINE', message: oneLine(d.message || d.error || ev.type, 200), damage: 0, health: 100, fatal: false });
+          this.emit('agent.error', 'orch', null, { code: 'ENGINE', message: oneLine(d.message || d.error || ev.type, 200), damage: 0, health: 100, fatal: false }, at);
         }
     }
   }
-  /** The plan task an engine task is: by id once bound, else by description, else a new one. */
+  /** The plan task an engine task is: by id. One the plan does not know — it should not happen — is added. */
   bind(engineId, description) {
     let t = engineId ? this.byEngine.get(engineId) : null;
     if (t) return t;
-    t = this.tasks.find((x) => !x.engineId && x.description === description) || null;
-    if (!t) {
-      // The engine is running a task the plan does not know: the swarm changed since this crew started.
-      const idx = this.tasks.length;
-      t = { idx, key: 'x' + idx, title: oneLine(description.replace(/^Mission:[^\n]*\n(Task: )?/, ''), 90) || 'Task ' + (idx + 1), role: 'coder', kind: 'work', priority: 2, deps: [],
-        description, id: 't' + idx, engineId: null, status: 'pending', output: '', startedAt: 0, agentKey: null, unit: null };
-      this.tasks.push(t);
-      this.emit('task.created', null, t.id, { title: t.title, role: t.role, deps: [], work: 1, kind: 'work', priority: 2 });
-    }
-    if (engineId) { t.engineId = engineId; this.byEngine.set(engineId, t); }
+    const idx = this.tasks.length;
+    t = { idx, key: 'x' + idx, title: taskTitle(description, idx), role: guessRole(description), kind: 'work', priority: 2, deps: [],
+      description, id: 't' + idx, engineId: engineId || null, status: 'pending', output: '', startedAt: 0, agentKey: null, unit: null, usage: null };
+    this.tasks.push(t);
+    if (engineId) this.byEngine.set(engineId, t);
+    this.emit('task.created', null, t.id, { title: t.title, role: t.role, deps: [], work: 1, kind: 'work', priority: 2 });
     return t;
   }
   agentFor(key) {
     if (typeof key !== 'string' || !key) return null;
     let a = this.agents.get(key);
     if (!a) {
-      a = { key, name: key, role: guessRole(key), model: '', id: 'ag-' + (key.replace(/[^A-Za-z0-9-]/g, '').slice(0, 40) || 'agent'), busyMain: false, clones: 0 };
+      a = { key, name: key, role: guessRole(key), model: '', id: 'ag-' + safeId(key), busyMain: false, clones: 0 };
       this.agents.set(key, a);
       this.emit('agent.spawned', a.id, null, { name: a.name, role: a.role, model: 'server default', health: 100, spawnAt: { kind: 'hq' } });
     }
     return a;
   }
-  taskStarted(engineId, description, agentKey) {
+  /** How many tasks hold a working unit now. */
+  activeCount() { let n = 0; for (const x of this.tasks) if (x.status === 'active') n++; return n; }
+  taskStarted(engineId, description, agentKey, at) {
     const t = this.bind(engineId, description);
     if (t.status !== 'pending') return;
+    // A parallel crew publishes a whole wave of task_started before any of it runs; past its
+    // concurrency limit a task is shown queued rather than as one more unit at work.
+    const cap = this.plan && this.plan.process === 'parallel' && this.plan.maxConcurrency > 0 ? this.plan.maxConcurrency : Infinity;
+    if (this.activeCount() >= cap) {
+      t.status = 'queued';
+      t.agentKey = typeof agentKey === 'string' ? agentKey : null;
+      this.emit('task.assigned', null, t.id, { mode: 'auto' }, at);
+      return;
+    }
+    this.work(t, agentKey, at);
+  }
+  /** Put a unit of the task's agent to work on it. */
+  work(t, agentKey, at) {
     t.status = 'active';
-    t.startedAt = this.ts();
+    t.startedAt = at != null ? at : this.ts();
     const a = this.agentFor(agentKey);
     if (!a) return; // no agent could take it — the engine fails it
     t.agentKey = a.key;
     if (!a.busyMain) { a.busyMain = true; t.unit = { id: a.id, clone: false }; }
     else {
       const id = a.id + '-' + ++a.clones;
-      this.emit('agent.spawned', id, null, { name: a.name + ' #' + (a.clones + 1), role: a.role, model: a.model || 'server default', parentId: a.id, health: 100, spawnAt: { kind: 'agent', id: a.id } });
+      this.emit('agent.spawned', id, null, { name: a.name + ' #' + (a.clones + 1), role: a.role, model: a.model || 'server default', parentId: a.id, health: 100, spawnAt: { kind: 'agent', id: a.id } }, at);
       t.unit = { id, clone: true };
     }
-    this.emit('agent.moved', t.unit.id, t.id, { to: { kind: 'task', id: t.id }, durationMs: 900, reason: 'task' });
-    this.emit('task.assigned', t.unit.id, t.id, { mode: 'auto' });
-    this.emit('agent.state_changed', t.unit.id, null, { state: 'working', step: t.title, taskId: t.id, expectedMs: 0 });
-    let active = 0;
-    for (const x of this.tasks) if (x.status === 'active') active++;
-    this.peak = Math.max(this.peak, active);
+    this.emit('agent.moved', t.unit.id, t.id, { to: { kind: 'task', id: t.id }, durationMs: 900, reason: 'task' }, at);
+    this.emit('task.assigned', t.unit.id, t.id, { mode: 'auto' }, at);
+    this.emit('agent.state_changed', t.unit.id, null, { state: 'working', step: t.title, taskId: t.id, expectedMs: 0 }, at);
+    this.peak = Math.max(this.peak, this.activeCount());
   }
-  token(engineId, text) {
+  token(engineId, text, at) {
     const t = engineId && this.byEngine.get(engineId);
     if (!t) { if (engineId) this.outputs.set(engineId, (this.outputs.get(engineId) || '') + text); return; }
     t.output += text;
@@ -2791,108 +2997,148 @@ class LiveCrewSource extends EventSource {
     this.tokens += n;
     if (t.unit) {
       this.unitTokens[t.unit.id] = (this.unitTokens[t.unit.id] || 0) + n;
-      this.emit('agent.message', t.unit.id, t.id, { to: 'orch', kind: 'result', text: oneLine(text, 80) || '(empty output)', durationMs: 900 });
+      this.emit('agent.message', t.unit.id, t.id, { to: 'orch', kind: 'result', text: oneLine(text, 80) || '(empty output)', durationMs: 900 }, at);
     }
   }
-  resolve(t, status, output) {
+  resolve(t, status, output, at) {
     if (t.status === 'done' || t.status === 'failed') return;
-    if (output && !t.output) { t.output = output; this.tokens += Math.ceil(output.length / 4); }
+    if (t.status === 'queued') this.work(t, t.agentKey, at);
+    if (output && !t.output) { t.output = output; if (!this.tokensActual) this.tokens += Math.ceil(output.length / 4); }
     const ok = status === 'completed';
     t.status = ok ? 'done' : 'failed';
     const who = t.unit ? t.unit.id : null;
-    if (ok) this.emit('task.completed', who, t.id, { result: oneLine(t.output, 140) || 'completed', durationMs: t.startedAt ? this.ts() - t.startedAt : 0 });
-    else this.emit('task.failed', null, t.id, { reason: status === 'cancelled' ? 'Cancelled' : status === 'not run' ? 'Never ran' : 'The engine reported ' + status, attempts: 1 });
+    const took = t.startedAt ? (at != null ? at : this.ts()) - t.startedAt : 0;
+    if (ok) this.emit('task.completed', who, t.id, { result: oneLine(t.output, 140) || 'completed', output: t.output, durationMs: took }, at);
+    else this.emit('task.failed', null, t.id, { reason: status === 'cancelled' ? 'Cancelled' : status === 'not run' ? 'Never ran' : 'The engine reported ' + status, output: t.output, attempts: 1 }, at);
     const u = t.unit;
     t.unit = null;
     if (!u) return;
-    if (u.clone) this.emit('agent.completed', u.id, null, { result: ok ? 'Task done' : 'Task ' + status, tokens: this.unitTokens[u.id] || 0, cost: 0 });
+    if (u.clone) this.emit('agent.completed', u.id, null, { result: ok ? 'Task done' : 'Task ' + status, tokens: this.unitTokens[u.id] || 0, cost: 0 }, at);
     else {
       const a = this.agents.get(t.agentKey);
       if (a) a.busyMain = false;
-      this.emit('agent.moved', u.id, null, { to: { kind: 'hq' }, durationMs: 900, reason: 'recall' });
-      this.emit('agent.state_changed', u.id, null, { state: 'idle', step: 'Awaiting the next task', taskId: null });
+      this.emit('agent.moved', u.id, null, { to: { kind: 'hq' }, durationMs: 900, reason: 'recall' }, at);
+      this.emit('agent.state_changed', u.id, null, { state: 'idle', step: 'Awaiting the next task', taskId: null }, at);
     }
+    // A unit freed in a parallel crew takes the next queued task.
+    const next = this.tasks.find((x) => x.status === 'queued');
+    if (next) this.work(next, next.agentKey, at);
   }
   tick() {
-    let active = 0;
-    for (const t of this.tasks) if (t.status === 'active') active++;
+    const active = this.activeCount();
     const agents = {};
     for (const id in this.unitTokens) agents[id] = [this.unitTokens[id], 0];
     const cap = Math.max(active, this.agents.size);
+    const cost = this.usage && Number.isInteger(this.usage.cost_micro_usd) ? this.usage.cost_micro_usd / 1e6 : 0;
     this.emit('resource.tick', null, null, {
-      tokens: this.tokens, tokensPerSec: Math.round(this.tokens / Math.max(1, this.now() / 1000)), cost: 0, costPerSec: 0, budget: 0, active, cap,
-      byTerritory: { local: { active, cap, tokens: this.tokens, cost: 0, costPerSec: 0 } }, agents,
+      tokens: this.tokens, tokensPerSec: Math.round(this.tokens / Math.max(1, this.now() / 1000)), cost, costPerSec: 0, budget: 0, active, cap,
+      byTerritory: { local: { active, cap, tokens: this.tokens, cost, costPerSec: 0 } }, agents,
+      estimated: !this.tokensActual, costKnown: !!(this.usage && Number.isInteger(this.usage.cost_micro_usd)),
     });
   }
   /** The crew is over (or its events are gone): read the outcome, settle every task, end the mission. */
   async finalize() {
-    if (this.finished || this.stopped) return;
-    const r = await this.host.request('GET', '/api/v1/crews/' + this.crewId);
+    if (this.finished || this.stopped || this.polling) return;
+    this.polling = true;
+    let r;
+    try { r = await this.host.request('GET', '/api/v1/crews/' + this.crewId); } finally { this.polling = false; }
     if (this.stopped || this.finished) return;
     const d = r.data && typeof r.data === 'object' ? r.data : null;
     if (r.status === 200 && d) {
       const st = typeof d.status === 'string' ? d.status : 'unknown';
       if (typeof d.engine_mode === 'string') this.engineMode = d.engine_mode;
       if (!CREW_TERMINAL.has(st)) {
-        // Still running, but its event window is gone: follow the status alone.
+        // Still running, but its events are no longer held: follow the status alone.
         this.status = st;
         this.say('Crew ' + st + ' · progress events are no longer available');
         clearTimeout(this.timer);
-        this.timer = setTimeout(() => this.finalize(), 2000);
+        this.timer = setTimeout(() => this.finalize(), this.pollMs * 2);
         return;
       }
-      for (const res of Array.isArray(d.results) ? d.results : []) {
+      this.times = { submitted: d.submitted_at || 0, started: d.started_at || 0, finished: d.finished_at || 0 };
+      const results = Array.isArray(d.results) ? d.results : [];
+      // A crew shown from its outcome alone (no plan held) gets a task per result.
+      if (!this.tasks.length) {
+        this.adoptPlan({ process: typeof d.process === 'string' ? d.process : 'sequential', maxConcurrency: 0, agents: [],
+          tasks: results.map((res, i) => ({ idx: i, key: 't' + i, title: 'Task ' + (i + 1), role: 'coder', kind: 'work', priority: 2, deps: [], description: '', engineId: res && typeof res.task_id === 'string' ? res.task_id : null })) });
+        this.bootPlan();
+      }
+      let metered = 0;
+      for (const res of results) {
         if (!res || typeof res !== 'object') continue;
         const id = typeof res.task_id === 'string' ? res.task_id : null;
-        let t = id ? this.byEngine.get(id) : null;
-        if (!t) {
-          // Its task_started fell out of the window: bind in plan order.
-          t = this.tasks.find((x) => !x.engineId && x.status === 'pending') || null;
-          if (t && id) { t.engineId = id; this.byEngine.set(id, t); }
-        }
+        const t = id ? this.byEngine.get(id) : null;
         if (!t) continue;
+        if (res.usage && typeof res.usage === 'object') { t.usage = res.usage; if (Number.isInteger(res.usage.total_tokens)) metered++; }
         const out = typeof res.output === 'string' ? res.output : (id && this.outputs.get(id)) || '';
         // Parallel and DAG crews publish no token events: their outputs arrive only here,
         // often for tasks a task_completed event already settled.
-        if (out && !t.output && (t.status === 'done' || t.status === 'failed')) { t.output = out; this.tokens += Math.ceil(out.length / 4); }
+        if (out && !t.output && (t.status === 'done' || t.status === 'failed')) t.output = out;
         this.resolve(t, typeof res.status === 'string' ? res.status : st === 'completed' ? 'completed' : 'failed', out);
       }
-      for (const t of this.tasks) if (t.status === 'pending' || t.status === 'active') this.resolve(t, st === 'cancelled' ? 'cancelled' : 'not run');
+      for (const t of this.tasks) if (t.status === 'pending' || t.status === 'active' || t.status === 'queued') this.resolve(t, st === 'cancelled' ? 'cancelled' : 'not run');
+      // What the engine metered replaces the estimate — when it metered anything.
+      if (d.usage && typeof d.usage === 'object') {
+        this.usage = d.usage;
+        if (Number.isInteger(d.usage.metered_tasks) && d.usage.metered_tasks > 0 && Number.isInteger(d.usage.total_tokens)) {
+          this.tokens = d.usage.total_tokens;
+          this.tokensActual = true;
+        }
+      } else if (metered) {
+        this.tokensActual = false;
+      }
       this.finish(st, typeof d.error === 'string' ? d.error : '');
       return;
     }
-    if (r.status === 404) { this.fail('agnostic no longer holds crew ' + this.crewId.slice(0, 8) + ', and kept no outcome for it'); return; }
-    if (++this.misses >= 6) { this.fail('Could not read the outcome of crew ' + this.crewId.slice(0, 8) + ': ' + errOf(r)); return; }
+    if (r.status === 404) { this.fail('agnostic holds no crew ' + this.crewId.slice(0, 8) + ' — it ran before agnostic kept outcomes, or belongs to another tenant', 'lost'); return; }
+    if (r.status === 0 || r.status === 401 || r.status === 403) { this.pause(r, () => this.finalize()); return; }
+    if (++this.misses >= 6) { this.pause({ status: 0 }, () => this.finalize()); return; }
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.finalize(), 2000);
+    this.timer = setTimeout(() => this.finalize(), this.pollMs * 2);
   }
   finish(status, error) {
     if (this.finished) return;
     this.status = status;
     this.tick();
-    this.finished = true;
     clearTimeout(this.timer);
-    for (const a of this.agents.values()) this.emit('agent.completed', a.id, null, { result: 'Crew ' + status, tokens: this.unitTokens[a.id] || 0, cost: 0 });
+    // The crew's own times when the server reported them; then the engine's wall time; then how long this view watched.
+    let durationMs = this.wallMs || 0, timed = durationMs > 0;
+    if (this.times && this.times.finished && (this.times.started || this.times.submitted)) {
+      durationMs = this.times.finished - (this.times.started || this.times.submitted);
+      timed = true;
+    }
+    if (!timed) durationMs = this.ts();
+    const end = timed && this.times && this.times.finished && this.times.submitted ? Math.max(this.serverT, this.times.finished - this.times.submitted) : this.ts();
+    this.serverT = end;
+    this.finished = true;
+    for (const a of this.agents.values()) this.emit('agent.completed', a.id, null, { result: 'Crew ' + status, tokens: this.unitTokens[a.id] || 0, cost: 0 }, end);
     let done = 0, failed = 0;
     for (const t of this.tasks) { if (t.status === 'done') done++; else failed++; }
-    // The crew's own wall time when the engine reported it; otherwise how long this view watched.
-    const summary = { live: true, status, error: error || '', engineMode: this.engineMode, crewId: this.crewId || '', process: this.plan.process,
-      durationMs: this.wallMs || this.ts(), wallMs: this.wallMs || 0, tokens: this.tokens, cost: 0, tasksDone: done, tasksFailed: failed,
-      spawned: this.agents.size, peak: this.peak, dropped: this.dropped };
-    this.emit('agent.completed', 'orch', null, { result: 'Crew ' + status, tokens: this.tokens, cost: 0, summary });
+    const u = this.usage || {};
+    const summary = {
+      live: true, status, error: error || '', engineMode: this.engineMode, crewId: this.crewId || '', process: this.plan ? this.plan.process : '',
+      durationMs, timed, wallMs: this.wallMs || 0, tokens: this.tokens, tokensActual: this.tokensActual,
+      costMicro: Number.isInteger(u.cost_micro_usd) ? u.cost_micro_usd : null, costedTasks: Number.isInteger(u.costed_tasks) ? u.costed_tasks : 0,
+      meteredTasks: Number.isInteger(u.metered_tasks) ? u.metered_tasks : 0, cost: Number.isInteger(u.cost_micro_usd) ? u.cost_micro_usd / 1e6 : 0,
+      tasksDone: done, tasksFailed: failed, spawned: this.agents.size, peak: this.peak, dropped: this.lost + this.missed, missed: this.missed, lost: this.lost,
+      unforwarded: this.unforwarded.slice(),
+      results: this.tasks.map((t) => ({ key: t.key, title: t.title, status: t.status, output: t.output, usage: t.usage })),
+    };
+    this.emit('agent.completed', 'orch', null, { result: 'Crew ' + status, tokens: this.tokens, cost: summary.cost, summary }, end);
     this.ended = true;
+    if (this.unwatchHost) this.unwatchHost();
     if (this.onFinished) this.onFinished(status, summary);
   }
-  fail(message) {
+  fail(message, status) {
     if (this.finished) return;
     this.emit('agent.error', 'orch', null, { code: 'CREW', message, damage: 0, health: 100, fatal: false });
-    for (const t of this.tasks) if (t.status === 'pending' || t.status === 'active') this.resolve(t, 'not run');
-    this.finish(this.crewId ? 'lost' : 'refused', message);
+    for (const t of this.tasks) if (t.status === 'pending' || t.status === 'active' || t.status === 'queued') this.resolve(t, 'not run');
+    this.finish(status || (this.crewId ? 'lost' : 'refused'), message);
   }
   async cancel() {
     if (!this.crewId || this.finished) return { ok: false, message: 'There is no running crew to cancel' };
     const r = await this.host.request('POST', '/api/v1/crews/' + this.crewId + '/cancel');
-    if (r.status === 200) { this.say('Cancelling the crew'); this.schedule(300); return { ok: true, message: 'Crew cancelled' }; }
+    if (r.status === 200) { this.say('Cancelling the crew'); this.schedule(this.firstPollMs); return { ok: true, message: 'Crew cancelled' }; }
     if (r.status === 409) return { ok: false, message: 'The crew has already finished' };
     return { ok: false, message: 'Could not cancel: ' + errOf(r) };
   }
@@ -2901,6 +3147,8 @@ class LiveCrewSource extends EventSource {
 class LiveCommandSink extends CommandSink {
   send() { return Promise.resolve({ ok: false, message: 'A live crew takes no unit orders — Cancel crew is the one control agnostic has' }); }
 }
+/** An id-safe form of a key: [A-Za-z0-9-], at most 40 characters. */
+function safeId(key) { return String(key).replace(/[^A-Za-z0-9-]/g, '').slice(0, 40) || 'agent'; }
 
 /* =====================================================================================
  *  SECTION 4 · STATE STORE — a pure reducer over the event stream
@@ -3205,7 +3453,7 @@ class Store {
   }
   _resources(e, p) {
     const r = this.resources;
-    for (const k of ['tokens', 'tokensPerSec', 'cost', 'costPerSec', 'active', 'cap']) if (p[k] != null) r[k] = p[k];
+    for (const k of ['tokens', 'tokensPerSec', 'cost', 'costPerSec', 'active', 'cap', 'estimated', 'costKnown']) if (p[k] != null) r[k] = p[k];
     if (p.budget) r.budget = p.budget;
     if (p.byTerritory) {
       r.byTerritory = p.byTerritory;
@@ -4726,9 +4974,12 @@ class HUD {
     const s = this.store, r = s.resources, el = this.el;
     el.tps.querySelector('.v').textContent = fmtTokens(r.tokensPerSec || 0);
     this.drawSpark();
-    el.tokens.querySelector('.v').textContent = fmtTokens(r.tokens || 0);
-    el.cost.querySelector('.v').textContent = fmtCost(r.cost);
-    el.cost.querySelector('small').textContent = '+' + fmtCost(r.costPerSec, 3) + '/s';
+    // A live crew's tokens are an estimate until agnostic reports what it metered (≈), and its
+    // cost is n/a until the gateway reports one — never a simulated number.
+    const live = !!(s.mission && s.mission.kind === 'live');
+    el.tokens.querySelector('.v').textContent = (live && r.estimated ? '≈ ' : '') + fmtTokens(r.tokens || 0);
+    el.cost.querySelector('.v').textContent = live && !r.costKnown ? 'n/a' : fmtCost(r.cost);
+    el.cost.querySelector('small').textContent = live ? (r.costKnown ? 'reported by agnostic' : 'not reported') : '+' + fmtCost(r.costPerSec, 3) + '/s';
     const left = Math.max(0, (r.budget || 0) - (r.cost || 0)), frac = r.budget ? left / r.budget : 1;
     el.budget.querySelector('i').style.width = (frac * 100).toFixed(1) + '%';
     el.budget.querySelector('.v2').textContent = r.budget ? fmtCost(left) + ' of ' + fmtCost(r.budget, 0) : '—';
@@ -4747,14 +4998,15 @@ class HUD {
     el.time.querySelector('.v').textContent = s.mission.status === 'idle' ? '00:00' : fmtTime(end - (s.mission.startedAt || 0));
     el.mission.textContent = s.mission.title || '';
     // Every mission says what it is: a simulation, a real crew, or a replay of either.
-    const live = s.mission.kind === 'live';
     const tag = this.app.mode === 'replay' ? 'replay' : live ? 'live' : 'sim';
     el.srcTag.className = 'src-tag ' + tag;
     el.srcTag.textContent = tag === 'replay' ? (live ? 'REPLAY · LIVE' : 'REPLAY · SIM') : live ? 'LIVE' : 'SIM';
     el.srcTag.title = tag === 'replay' ? 'A replay of the recorded event log' : live ? 'A real crew on this agnostic server' : 'Simulated — no agent ran';
-    el.cost.querySelector('.v').textContent = live ? 'n/a' : fmtCost(r.cost);
-    if (live) el.cost.querySelector('small').textContent = 'not reported';
-    el.cost.title = live ? 'agnostic does not report token cost for a crew' : 'Estimated spend: model tokens + per-second compute';
+    // The label says what the number is: a simulator's estimate, or what agnostic reported.
+    el.cost.querySelector('label').textContent = live ? 'COST' : 'EST. COST';
+    el.cost.title = live
+      ? (r.costKnown ? 'The cost the LLM gateway reported for this crew\'s calls, through agnostic' : 'No cost reported yet — the gateway prices each call, and agnostic reports it when the crew ends')
+      : 'Estimated spend: model tokens + per-second compute';
     const lsrc = this.app.live && this.app.live.source;
     el.cancel.classList.toggle('hidden', !(this.app.mode === 'live' && lsrc instanceof LiveCrewSource && !lsrc.finished && lsrc.crewId));
     const src = this.app.source;
@@ -4983,7 +5235,8 @@ class HUD {
       const b = e.target.closest('button[data-act]');
       if (!b) return;
       const act = b.dataset.act;
-      if (act === 'replay') this.app.enterReplay(true);
+      if (act === 'results') this.showResults(this.store.mission);
+      else if (act === 'replay') this.app.enterReplay(true);
       else if (act === 'again') this.app.runAgain(false);
       else if (act === 'reseed') this.app.runAgain(true);
       else if (act === 'edit' || act === 'save') this.app.editRunSpec();
@@ -4992,34 +5245,80 @@ class HUD {
       else box.classList.add('hidden');
     };
   }
-  /** A real crew's summary: what agnostic reported, with nothing simulated mixed in. */
+  /**
+   * A real crew's summary: what agnostic reported, with nothing simulated mixed in. Tokens and cost
+   * are the engine's own metering once the crew has ended; a cost the gateway did not report is n/a,
+   * and a token count nothing metered is marked as the estimate it is.
+   */
   showLiveSummary(sum, m, stat, box) {
     const ls = m.summary || {};
     const run = this.app.live || {};
     const spec = run.spec && (this.app.library.get(run.spec.id) || run.spec);
-    const est = spec && spec.estimate;
+    const est = run.saved && spec && spec.estimate;
     const status = String(ls.status || 'finished');
     const good = status === 'completed';
-    const head = { completed: 'CREW <b>COMPLETED</b>', failed: 'CREW <b>FAILED</b>', cancelled: 'CREW <b>CANCELLED</b>', refused: 'CREW <b>REFUSED</b>', lost: 'CREW <b>LOST</b>' }[status] || 'CREW <b>' + escapeHtml(status.toUpperCase()) + '</b>';
+    const head = { completed: 'CREW <b>COMPLETED</b>', failed: 'CREW <b>FAILED</b>', cancelled: 'CREW <b>CANCELLED</b>', refused: 'CREW <b>REFUSED</b>', lost: 'CREW <b>LOST</b>',
+      unconfirmed: 'CREW <b>UNCONFIRMED</b>' }[status] || 'CREW <b>' + escapeHtml(status.toUpperCase()) + '</b>';
     const total = (ls.tasksDone || 0) + (ls.tasksFailed || 0);
+    const tok = ls.tokensActual
+      ? stat('TOKENS', fmtTokens(ls.tokens || 0), 'metered by agnostic for ' + (ls.meteredTasks || 0) + ' of ' + total + ' tasks')
+      : stat('TOKENS', '≈ ' + fmtTokens(ls.tokens || 0), ls.engineMode === 'placeholder' ? 'estimated — the placeholder engine meters nothing' : 'estimated from output length — nothing was metered');
+    const cost = ls.costMicro != null
+      ? stat('COST', fmtMicro(ls.costMicro), 'reported by the gateway' + (ls.costedTasks < ls.meteredTasks ? ' for ' + ls.costedTasks + ' of ' + ls.meteredTasks + ' calls — the rest unpriced' : ''))
+      : stat('COST', 'n/a', ls.meteredTasks ? 'the gateway reported no cost' : 'nothing was metered');
+    const vsEst = est && ls.costMicro != null && est.cost.p50 > 0
+      ? ' · actual is ' + Math.round(((ls.costMicro / 1e6) / est.cost.p50) * 100) + '% of it' : '';
     $('summary-inner').innerHTML = '<div class="ov-title"' + (good ? '' : ' style="color:#fca5a5"') + '>' + head + '</div>'
       + '<div class="ov-sub"><span class="src-tag live">LIVE</span>' + escapeHtml(m.title) + (ls.crewId ? ' · crew <span class="mono">' + escapeHtml(ls.crewId) + '</span>' : '') + '</div>'
       + (ls.error ? '<div class="ov-sub" style="color:#fca5a5;margin-top:-14px">' + escapeHtml(ls.error) + '</div>' : '')
+      + (ls.unforwarded && ls.unforwarded.length ? '<div class="ov-sub" style="margin-top:-14px">Not forwarded to the engine: ' + escapeHtml(ls.unforwarded.join(', ')) + '</div>' : '')
       + '<div class="sum-grid">'
-      + stat('DURATION', fmtTime(ls.durationMs || sum.durationMs), 'wall-clock time')
+      + stat('DURATION', fmtTime(ls.durationMs || sum.durationMs), ls.timed ? 'run time, as agnostic recorded it' : 'how long this view watched')
       + stat('TASKS', (ls.tasksDone || 0) + ' / ' + total, (ls.tasksFailed || 0) + ' not completed')
       + stat('AGENTS', ls.spawned || 0, 'peak ' + (ls.peak || 0) + ' tasks at once · ' + escapeHtml(ls.process || ''))
       + stat('ENGINE', escapeHtml(ls.engineMode || '?'), ls.engineMode === 'placeholder' ? 'no LLM gateway — outputs are echoes' : 'as reported by agnostic')
-      + stat('OUTPUT', '≈ ' + fmtTokens(ls.tokens || 0), 'tokens, estimated from output length')
-      + stat('COST', 'n/a', 'agnostic does not report token cost')
-      + stat('SIMULATED EST.', est ? fmtCost(est.cost.p50) : '—', est ? 'p50 of ' + est.runs + ' simulated runs' : 'estimate the swarm to compare')
-      + stat('EVENTS LOST', ls.dropped || 0, ls.dropped ? 'the crew’s event window overflowed' : 'every progress event arrived')
+      + tok + cost
+      + stat('SIMULATED EST.', est ? fmtCost(est.cost.p50) : '—', est ? 'p50 of ' + est.runs + ' simulated runs' + vsEst : 'estimate the swarm to compare')
+      + stat('EVENTS MISSED', ls.dropped || 0, ls.dropped ? (ls.lost ? ls.lost + ' dropped before agnostic took them' : 'fell out of the crew’s event window') : 'every progress event arrived')
       + '</div>'
-      + '<div class="sum-actions"><button class="primary" data-act="replay">⟲ Watch replay</button>'
-      + (spec ? '<button data-act="again" title="Submit this swarm to agnostic again">⚡ Run live again</button>' : '')
+      + '<div class="sum-actions"><button class="primary" data-act="results"' + (total ? '' : ' disabled') + '>☰ Results</button><button data-act="replay">⟲ Watch replay</button>'
+      + (run.saved && status !== 'unconfirmed' ? '<button data-act="again" title="Submit this swarm to agnostic again">⚡ Run live again</button>' : '')
       + '<button data-act="menu">☰ Swarms</button><button data-act="export">⤓ Export log</button><button data-act="close">Close</button></div>';
     this.bindSummary(box);
     box.classList.remove('hidden');
+  }
+  /** Every task's output, with what agnostic metered for it — and the whole as a file to keep. */
+  showResults(m) {
+    const ls = (m && m.summary) || {};
+    const rows = Array.isArray(ls.results) ? ls.results : [];
+    const usageLine = (u) => {
+      if (!u || typeof u !== 'object') return '';
+      const parts = [];
+      if (typeof u.model === 'string') parts.push(u.model);
+      if (Number.isInteger(u.total_tokens)) parts.push(fmtTokens(u.total_tokens) + ' tokens');
+      if (Number.isInteger(u.cost_micro_usd)) parts.push(fmtMicro(u.cost_micro_usd));
+      if (Number.isInteger(u.duration_ms)) parts.push(fmtTime(u.duration_ms));
+      return parts.join(' · ');
+    };
+    const html = '<div class="results">' + rows.map((t, i) => '<div class="res-item"><div class="res-head"><b>' + (i + 1) + '. ' + escapeHtml(t.title || 'Task') + '</b>'
+      + '<span class="res-st ' + (t.status === 'done' ? 'ok' : 'bad') + '">' + escapeHtml(t.status === 'done' ? 'DONE' : String(t.status || '').toUpperCase()) + '</span>'
+      + '<small>' + escapeHtml(usageLine(t.usage)) + '</small></div>'
+      + '<pre class="res-out">' + escapeHtml(t.output || '(no output)') + '</pre></div>').join('') + '</div>'
+      + '<div class="res-dl"><button class="lbtn" type="button" data-dl="md">⤓ Markdown</button><button class="lbtn" type="button" data-dl="json">⤓ JSON</button></div>';
+    this.app.modal.confirm('Results · ' + (m.title || 'crew'), html, { yes: 'Close', no: '', wide: true });
+    const dl = (e) => {
+      const b = e.target.closest('button[data-dl]');
+      if (!b) return;
+      const base = 'crew-' + (ls.crewId ? ls.crewId.slice(0, 8) : 'results');
+      if (b.dataset.dl === 'json') {
+        downloadText(base + '.json', JSON.stringify({ crew_id: ls.crewId || null, status: ls.status, engine_mode: ls.engineMode, tokens: ls.tokensActual ? ls.tokens : null,
+          cost_micro_usd: ls.costMicro, tasks: rows.map((t) => ({ title: t.title, status: t.status, usage: t.usage || null, output: t.output })) }, null, 2));
+      } else {
+        downloadText(base + '.md', '# ' + (m.title || 'Crew') + '\n\nCrew `' + (ls.crewId || '?') + '` — ' + ls.status + (ls.engineMode ? ' · ' + ls.engineMode + ' engine' : '') + '\n\n'
+          + rows.map((t, i) => '## ' + (i + 1) + '. ' + t.title + ' — ' + t.status + (usageLine(t.usage) ? '\n\n_' + usageLine(t.usage) + '_' : '') + '\n\n' + (t.output || '_(no output)_') + '\n').join('\n'));
+      }
+    };
+    $('modal-body').onclick = dl;
   }
 }
 
@@ -5321,6 +5620,7 @@ class Modal {
     this.resolve = null;
     $('modal-yes').addEventListener('click', () => this.close(true));
     $('modal-no').addEventListener('click', () => this.close(false));
+    $('modal-alt').addEventListener('click', () => this.close('alt'));
     this.el.addEventListener('mousedown', (e) => { if (e.target === this.el) this.close(false); });
     window.addEventListener('keydown', (e) => {
       if (!this.isOpen()) return;
@@ -5329,12 +5629,19 @@ class Modal {
     }, true);
   }
   isOpen() { return !this.el.classList.contains('hidden'); }
-  /** Resolves true for yes. `html` is trusted markup: callers escape what they interpolate. */
-  confirm(title, html, { yes = 'OK', no = 'Cancel', danger = false } = {}) {
+  /**
+   * Resolves true for yes, false for no (and Escape), 'alt' for the optional third choice.
+   * `html` is trusted markup: callers escape what they interpolate.
+   */
+  confirm(title, html, { yes = 'OK', no = 'Cancel', danger = false, alt = '', wide = false } = {}) {
     if (this.resolve) this.close(false);
+    this.el.querySelector('.modal-box').classList.toggle('wide', !!wide);
+    $('modal-body').onclick = null;
     $('modal-title').textContent = title;
     $('modal-body').innerHTML = html;
-    const y = $('modal-yes'), n = $('modal-no');
+    const y = $('modal-yes'), n = $('modal-no'), x = $('modal-alt');
+    x.textContent = alt;
+    x.classList.toggle('hidden', !alt);
     y.textContent = yes;
     y.className = 'lbtn ' + (danger ? 'danger' : 'primary');
     n.textContent = no || '';
@@ -5367,25 +5674,43 @@ function browserStore() {
  * SwarmLibrary — the saved swarms. Inside agnostic they are this plugin's documents on the
  * server, in the caller's tenant (key swarm-<id>, one spec each); opened on its own the page keeps
  * them in this browser; with neither, they last for the session.
+ *
+ * Every write to the server carries the document's revision (`ifMatch`, the etag it was read or
+ * last written at), so a write made from a stale copy — another tab, an older read — is refused
+ * (412) instead of silently undoing someone else's change. Writes to one swarm go one at a time
+ * through a queue: a background record (a run, an estimate) is applied to the LATEST copy and
+ * retried on a conflict; the editor's save is not retried — it reports the conflict and lets the
+ * user choose (Editor.saveConflict).
  */
 class SwarmLibrary {
   constructor(host) {
     this.host = host;
     this.specs = new Map();
+    this.etags = new Map();   // id → the revision the cached copy was read or written at
+    this.queues = new Map();  // id → the tail of that swarm's write queue
     this.state = 'idle'; // 'idle' | 'loading' | 'ready' | 'error'
     this.error = '';
     this.scope = '';
     this.skipped = 0;
     this.seq = 0;
     this.listeners = new Set();
+    this.errorListeners = new Set();
   }
   onChange(fn) { this.listeners.add(fn); }
   changed() { for (const fn of this.listeners) fn(); }
+  /** Background writes that fail are reported here, never only to the console. */
+  onError(fn) { this.errorListeners.add(fn); }
+  reportError(message) { for (const fn of this.errorListeners) fn(message); }
   /** 'server' | 'browser' | 'none' (this session only) | 'pending' (the shell has not answered yet). */
   backend() {
     if (this.host.mode === 'connected') return this.host.can('storage') ? 'server' : 'none';
     if (this.host.mode === 'standalone') return browserStore() ? 'browser' : 'none';
     return 'pending';
+  }
+  /** Whether this user may write swarms here: not a viewer, and not a read-only document. */
+  writable(spec) {
+    if (spec && spec.readOnly) return false;
+    return !(this.host.mode === 'connected' && this.host.role() === 'viewer');
   }
   get(id) { return this.specs.get(id) || null; }
   list() { return [...this.specs.values()].sort((a, b) => b.updated - a.updated); }
@@ -5395,17 +5720,23 @@ class SwarmLibrary {
     this.error = '';
     this.skipped = 0;
     if (be === 'pending') { this.state = 'loading'; this.changed(); return; }
+    // Swarms that exist only in this session (made before agnostic answered, or with no
+    // storage permission) are kept across a reload rather than vanishing with it.
+    const sessionOnly = [...this.specs.values()].filter((x) => x.unsaved);
     if (be === 'none') { this.state = 'ready'; this.changed(); return; }
     if (be === 'browser') {
       this.specs.clear();
       for (const raw of Object.values(browserStore().read())) { const s = normalizeSpec(raw); if (s) this.specs.set(s.id, s); else this.skipped++; }
+      for (const x of sessionOnly) if (!this.specs.has(x.id)) this.specs.set(x.id, x);
       this.state = 'ready';
       this.changed();
       return;
     }
     this.state = 'loading';
     this.changed();
-    const r = await this.host.request('GET', this.docPath());
+    let r = await this.host.request('GET', this.docPath());
+    // A transient failure gets one more try before the launcher says it could not list.
+    if (r.status === 0 || r.status >= 500) { await sleepMs(800); if (seq !== this.seq) return; r = await this.host.request('GET', this.docPath()); }
     if (seq !== this.seq) return;
     if (r.status !== 200 || !r.data || !Array.isArray(r.data.documents)) {
       this.state = 'error';
@@ -5415,74 +5746,151 @@ class SwarmLibrary {
     }
     this.scope = typeof r.data.scope === 'string' ? r.data.scope : '';
     const keys = r.data.documents.map((d) => d && d.key).filter((k) => typeof k === 'string' && k.startsWith(SPEC_PREFIX) && RE_SPEC_ID.test(k.slice(SPEC_PREFIX.length)));
-    const got = new Map();
+    const got = new Map(), tags = new Map();
     let next = 0;
     const worker = async () => {
       while (next < keys.length) {
         const key = keys[next++];
-        const g = await this.host.request('GET', this.docPath(key));
+        let g = await this.host.request('GET', this.docPath(key));
+        if (g.status === 0 || g.status >= 500) g = await this.host.request('GET', this.docPath(key));
         const s = g.status === 200 ? normalizeSpec(g.data) : null;
-        if (s) { s.id = key.slice(SPEC_PREFIX.length); got.set(s.id, s); } else this.skipped++;
+        if (s) { s.id = key.slice(SPEC_PREFIX.length); got.set(s.id, s); if (g.etag) tags.set(s.id, g.etag); } else this.skipped++;
       }
     };
     await Promise.all([worker(), worker(), worker(), worker()]);
     if (seq !== this.seq) return;
+    for (const x of sessionOnly) if (!got.has(x.id)) got.set(x.id, x);
     this.specs = got;
+    this.etags = tags;
     this.state = 'ready';
     this.changed();
   }
-  /** Save a whole spec (create or replace). Resolves {ok, message, spec}. */
-  async save(spec) {
-    const s = deepCopy(spec);
-    s.updated = Date.now();
-    const bytes = specBytes(s);
+  /** Run `job` after every earlier write to swarm `id` has finished. */
+  enqueue(id, job) {
+    const prev = this.queues.get(id) || Promise.resolve();
+    const run = prev.then(job, job);
+    this.queues.set(id, run.catch(() => {}));
+    return run;
+  }
+  /**
+   * Write `s` as it is. `mode`: 'create' (refused if it exists), 'replace' (refused unless the
+   * stored copy is still the one we hold), or 'force' (overwrite whatever is there). Resolves
+   * {ok, message, conflict?, spec?}.
+   */
+  async write(s, mode) {
+    const doc = storableSpec(s);
+    const bytes = specBytes(doc);
     if (bytes > SPEC_MAX_BYTES) return { ok: false, message: 'This swarm is ' + fmtKB(bytes) + ' — the server keeps up to 32 KB per swarm' };
     const be = this.backend();
     if (be === 'server') {
-      const r = await this.host.request('PUT', this.docPath(SPEC_PREFIX + s.id), s);
+      const opts = {};
+      const tag = this.etags.get(s.id);
+      if (mode === 'create') opts.ifNoneMatch = '*';
+      else if (mode === 'replace' && tag && this.host.has('revisions')) opts.ifMatch = tag;
+      const r = await this.host.request('PUT', this.docPath(SPEC_PREFIX + s.id), doc, opts);
+      if (r.status === 412) return { ok: false, conflict: true, message: 'This swarm was changed somewhere else since it was loaded' };
       if (r.status !== 200 && r.status !== 201) {
         const why = { 401: 'Sign in to save swarms', 403: 'Your role cannot save swarms — it needs write access', 413: 'Too big for the server (32 KB per swarm)',
           507: 'The server already holds the most swarms it keeps for this plugin (256) — delete some first' }[r.status];
         return { ok: false, message: why || 'Could not save: ' + errOf(r) };
       }
+      if (r.data && typeof r.data.etag === 'string') this.etags.set(s.id, r.data.etag);
+      else this.etags.delete(s.id);
     } else if (be === 'browser') {
       const st = browserStore(), all = st.read();
-      all[s.id] = s;
+      all[s.id] = doc;
       if (!st.write(all)) return { ok: false, message: 'This browser refused to store the swarm' };
     } else if (be === 'pending') {
       return { ok: false, message: 'Still connecting to agnostic — try again in a moment' };
     }
-    this.specs.set(s.id, s);
+    const kept = normalizeSpec(doc) || s;
+    kept.id = s.id;
+    if (be === 'none') kept.unsaved = true;
+    this.specs.set(s.id, kept);
     this.changed();
-    return { ok: true, message: be === 'none' ? 'kept for this session only' : '', spec: s };
+    return { ok: true, message: be === 'none' ? 'kept for this session only' : '', spec: kept };
+  }
+  /**
+   * Save a whole spec from the editor. `isNew` creates it; otherwise the copy being replaced must
+   * still be the stored one, and a conflict comes back as {conflict: true} for the user to settle.
+   * `force` overwrites regardless. Editor saves leave SPEC_RESERVE bytes for run records.
+   */
+  save(spec, { isNew = false, force = false } = {}) {
+    if (!this.writable(spec)) return Promise.resolve({ ok: false, message: spec && spec.readOnly ? 'This swarm was made by a newer Swarm Command and is read-only here' : 'Your role (viewer) cannot save swarms' });
+    const s = deepCopy(spec);
+    delete s.readOnly;
+    delete s.unsaved;
+    s.updated = Date.now();
+    const bytes = specBytes(storableSpec(s));
+    if (bytes > SPEC_MAX_BYTES - SPEC_RESERVE) {
+      return Promise.resolve({ ok: false, message: 'This swarm is ' + fmtKB(bytes) + ' — keep it under ' + fmtKB(SPEC_MAX_BYTES - SPEC_RESERVE) + ' so its runs can be recorded on it' });
+    }
+    return this.enqueue(s.id, () => this.write(s, force ? 'force' : isNew ? 'create' : 'replace'));
   }
   async remove(id) {
-    const be = this.backend();
-    if (be === 'server') {
-      const r = await this.host.request('DELETE', this.docPath(SPEC_PREFIX + id));
-      if (r.status !== 200 && r.status !== 404) return { ok: false, message: r.status === 403 ? 'Your role cannot delete swarms' : 'Could not delete: ' + errOf(r) };
-    } else if (be === 'browser') {
-      const st = browserStore(), all = st.read();
-      delete all[id];
-      st.write(all);
-    }
-    this.specs.delete(id);
-    this.changed();
-    return { ok: true };
-  }
-  /** Change a saved spec in place — run records, estimates. Resolves the saved spec, or null. */
-  async patch(id, fn) {
-    const cur = this.specs.get(id);
-    if (!cur) return null;
-    const next = deepCopy(cur);
-    fn(next);
-    const r = await this.save(next);
-    if (!r.ok) {
-      console.warn('[swarm] could not update ' + id + ': ' + r.message);
-      fn(cur); // keep it for this session at least
+    const spec = this.specs.get(id);
+    if (spec && !this.writable(spec) && !spec.readOnly) return { ok: false, message: 'Your role (viewer) cannot delete swarms' };
+    return this.enqueue(id, async () => {
+      const be = this.backend();
+      if (be === 'server') {
+        const r = await this.host.request('DELETE', this.docPath(SPEC_PREFIX + id));
+        if (r.status !== 200 && r.status !== 404) return { ok: false, message: r.status === 403 ? 'Your role cannot delete swarms' : 'Could not delete: ' + errOf(r) };
+      } else if (be === 'browser') {
+        const st = browserStore(), all = st.read();
+        delete all[id];
+        st.write(all);
+      }
+      this.specs.delete(id);
+      this.etags.delete(id);
       this.changed();
-    }
-    return r.ok ? r.spec : null;
+      return { ok: true };
+    });
+  }
+  /** Read swarm `id` fresh from the server, with its revision. Resolves the spec, or null. */
+  async reload(id) {
+    if (this.backend() !== 'server') return this.get(id);
+    const g = await this.host.request('GET', this.docPath(SPEC_PREFIX + id));
+    if (g.status !== 200) return null;
+    const s = normalizeSpec(g.data);
+    if (!s) return null;
+    s.id = id;
+    if (g.etag) this.etags.set(id, g.etag);
+    this.specs.set(id, s);
+    this.changed();
+    return s;
+  }
+  /**
+   * Change a saved spec in place — run records, estimates. `fn` is applied to the LATEST copy;
+   * on a conflict the copy is re-read and `fn` applied again (up to three times), so two writers
+   * never undo each other. `touch: false` keeps the card where it is (a background record is not
+   * an edit). A spec that would outgrow the server's limit is trimmed — oldest simulations first,
+   * then the estimate, then the oldest live runs — before it is refused. Resolves the saved spec,
+   * or null after reporting why.
+   */
+  patch(id, fn, { touch = true } = {}) {
+    return this.enqueue(id, async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const cur = this.specs.get(id);
+        if (!cur) return null;
+        if (!this.writable(cur)) { fn(cur); this.changed(); return null; } // kept on screen, not stored
+        const next = deepCopy(cur);
+        delete next.readOnly;
+        delete next.unsaved;
+        fn(next);
+        capRuns(next);
+        if (touch) next.updated = Date.now();
+        fitSpec(next);
+        const r = await this.write(next, 'replace');
+        if (r.ok) return r.spec;
+        if (r.conflict) { if (!(await this.reload(id))) break; continue; }
+        this.reportError('Could not update ' + cur.name + ': ' + r.message);
+        fn(cur); // keep it on screen for this session at least
+        this.changed();
+        return null;
+      }
+      this.reportError('Could not update a swarm: it kept changing somewhere else');
+      return null;
+    });
   }
 }
 
@@ -5500,33 +5908,92 @@ class Launcher {
     $('opt-import').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) this.importFile(f); });
     $('opt-load').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) this.app.loadLogFile(f); });
     this.lib.onChange(() => { this.render(); if (this.lib.state === 'ready') this.refreshRuns(); });
-    this.host.onChange(() => { this.lib.load(); this.render(); });
+    this.lib.onError((m) => this.app.hud.toast(m, 'bad'));
+    this.host.onChange(() => { this.lib.load(); this.render(); this.loadCrews(); });
+    $('crews-refresh').addEventListener('click', () => this.loadCrews(true));
+    $('crews-list').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-crew]');
+      const c = b && this.crews.find((x) => x.crew_id === b.dataset.crew);
+      if (c) this.app.watchCrew(c);
+    });
     this.runsCheckedAt = 0;
+    this.crews = [];
+    this.crewsAt = 0;
+    // While the launcher is on screen, crews and run records are kept current.
+    setInterval(() => { if (this.visible()) { this.refreshRuns(); this.loadCrews(); } }, 15000);
   }
   /**
    * A crew left running when its view closed is still "running" on its card. Ask agnostic how the
-   * recent ones ended — a few at most, and not more often than every 20 seconds.
+   * recent ones ended — newest first, a few at a time, not more often than every 15 seconds — and
+   * record what it metered. A run whose submission was never answered ('submitting' with no crew
+   * id after ten minutes) becomes 'unconfirmed': only the Crews list can say whether it started.
    */
   async refreshRuns() {
-    if (!this.host.can('crews:read') || Date.now() - this.runsCheckedAt < 20000) return;
+    if (!this.host.can('crews:read') || Date.now() - this.runsCheckedAt < 15000) return;
     this.runsCheckedAt = Date.now();
     const open = [];
     for (const s of this.lib.list()) {
-      for (const r of s.runs) if (r.kind === 'live' && !CREW_TERMINAL.has(r.status) && !/lost|refused/.test(r.status) && Date.now() - r.at < 7 * 86400000) open.push([s.id, r.crew]);
+      if (!this.lib.writable(s)) continue;
+      for (const r of s.runs) {
+        if (r.kind !== 'live' || CREW_TERMINAL.has(r.status) || /lost|refused|unconfirmed/.test(r.status)) continue;
+        if (Date.now() - r.at > 7 * 86400000) continue;
+        open.push({ id: s.id, run: r });
+      }
     }
-    for (const [id, crew] of open.slice(-6)) {
-      const g = await this.host.request('GET', '/api/v1/crews/' + crew);
+    open.sort((x, y) => y.run.at - x.run.at);
+    for (const { id, run } of open.slice(0, 6)) {
+      if (!run.crew) {
+        if (Date.now() - run.at > 600000) {
+          await this.lib.patch(id, (x) => { const r = x.runs.find((q) => q.kind === 'live' && q.key === run.key); if (r && !r.crew) r.status = 'unconfirmed'; }, { touch: false });
+        }
+        continue;
+      }
+      const g = await this.host.request('GET', '/api/v1/crews/' + run.crew);
       let status = null;
       if (g.status === 200 && g.data && typeof g.data.status === 'string') status = g.data.status;
       else if (g.status === 404) status = 'lost';
       if (!status || status === 'pending' || status === 'running') continue;
-      const total = g.data && Array.isArray(g.data.results) ? g.data.results.length : 0;
-      const done = total ? g.data.results.filter((x) => x && x.status === 'completed').length : 0;
+      const res = g.data && Array.isArray(g.data.results) ? g.data.results : [];
+      const done = res.filter((x) => x && x.status === 'completed').length;
+      const u = g.data && g.data.usage && typeof g.data.usage === 'object' ? g.data.usage : null;
       await this.lib.patch(id, (x) => {
-        const r = x.runs.find((q) => q.kind === 'live' && q.crew === crew);
-        if (r) Object.assign(r, { status }, total ? { done, failed: total - done, total } : {});
-      });
+        const r = x.runs.find((q) => q.kind === 'live' && q.crew === run.crew);
+        if (!r) return;
+        r.status = status;
+        if (res.length) Object.assign(r, { done, failed: res.length - done, total: res.length });
+        if (g.data && g.data.finished_at && (g.data.started_at || g.data.submitted_at)) r.durationMs = g.data.finished_at - (g.data.started_at || g.data.submitted_at);
+        if (u && Number.isInteger(u.metered_tasks) && u.metered_tasks > 0 && Number.isInteger(u.total_tokens)) r.tokens = u.total_tokens;
+        if (u && Number.isInteger(u.cost_micro_usd)) r.costMicro = u.cost_micro_usd;
+      }, { touch: false });
     }
+  }
+  /** The tenant's crews, from agnostic — the newest dozen — for the Crews section. */
+  async loadCrews(force) {
+    const sec = $('crews-sec');
+    if (!this.host.can('crews:read') || !this.host.has('query')) { sec.hidden = true; return; }
+    sec.hidden = false;
+    if (!force && Date.now() - this.crewsAt < 10000) return;
+    this.crewsAt = Date.now();
+    const r = await this.host.request('GET', '/api/v1/crews?limit=12');
+    if (r.status === 200 && r.data && Array.isArray(r.data.crews)) this.crews = r.data.crews.filter((c) => c && typeof c.crew_id === 'string' && RE_CREW_ID.test(c.crew_id));
+    this.renderCrews(r.status === 200 ? '' : r.status === 401 ? 'Sign in to see your crews.' : 'Could not list crews: ' + errOf(r));
+  }
+  renderCrews(error) {
+    const list = $('crews-list');
+    if (error) { list.innerHTML = '<div class="crew-empty">' + escapeHtml(error) + '</div>'; return; }
+    if (!this.crews.length) { list.innerHTML = '<div class="crew-empty">No crews yet. Run a swarm live, or submit one to the API — every crew of yours shows up here.</div>'; return; }
+    list.innerHTML = this.crews.map((c) => {
+      const st = String(c.status || '?');
+      const cls = /failed|cancelled|unknown/.test(st) ? 'bad' : st === 'completed' ? 'ok' : 'run';
+      const when = Number.isFinite(c.submitted_at) ? fmtAgo(c.submitted_at) : '';
+      const took = Number.isFinite(c.finished_at) && Number.isFinite(c.submitted_at) ? fmtTime(c.finished_at - (c.started_at || c.submitted_at)) : '';
+      const meter = (Number.isInteger(c.total_tokens) ? fmtTokens(c.total_tokens) + ' tok' : '') + (Number.isInteger(c.cost_micro_usd) ? ' · ' + fmtMicro(c.cost_micro_usd) : '');
+      return '<div class="crew-row"><span class="nm">' + escapeHtml(c.name || 'crew') + '<small>' + escapeHtml(c.crew_id.slice(0, 8)) + (c.engine_mode === 'placeholder' ? ' · placeholder' : '') + '</small></span>'
+        + '<span class="st ' + cls + '">' + escapeHtml(st.toUpperCase()) + '</span>'
+        + '<span class="mt">' + (Number.isInteger(c.tasks_submitted) ? c.tasks_submitted + ' tasks' : '') + (took ? ' · ' + took : '') + '</span>'
+        + '<span class="mt" title="what agnostic metered">' + escapeHtml(meter || when) + '</span>'
+        + '<button class="lbtn" type="button" data-crew="' + escapeHtml(c.crew_id) + '" title="Watch it on the map">WATCH ▸</button></div>';
+    }).join('');
   }
   visible() { return !$('start-screen').classList.contains('hidden'); }
   buildTemplates() {
@@ -5563,6 +6030,12 @@ class Launcher {
   render() {
     if (!this.visible()) return;
     this.renderConn();
+    this.loadCrews();
+    // A viewer may look, simulate and estimate — not create or import.
+    const w = this.lib.writable(null);
+    $('btn-new').disabled = !w;
+    $('btn-new').title = w ? '' : 'Your role (viewer) cannot create swarms';
+    $('opt-import').disabled = !w;
     const list = $('lib-list'), lib = this.lib, specs = lib.list();
     $('lib-count').textContent = specs.length ? specs.length + (specs.length === 1 ? ' swarm' : ' swarms') + (lib.skipped ? ' · ' + lib.skipped + ' unreadable document(s) skipped' : '') : '';
     if (lib.state === 'error') { list.innerHTML = '<div class="swarm-empty">' + escapeHtml(lib.error) + '</div>'; return; }
@@ -5586,16 +6059,21 @@ class Launcher {
       : h.role() === 'viewer' ? 'Your role (viewer) cannot start crews' : v.errors.length ? v.errors[0] : '';
     const runs = s.runs.slice(-4).reverse().map((r) => this.runChip(r)).join('');
     const id = escapeHtml(s.id);
+    // A viewer — and anyone, on a document from a newer Swarm Command — may look, simulate and
+    // estimate, but not change what is stored.
+    const ro = !this.lib.writable(s);
+    const roWhy = s.readOnly ? 'Made by a newer Swarm Command — read-only here' : 'Your role (viewer) cannot change swarms';
+    const roAttr = ro ? ' disabled title="' + escapeHtml(roWhy) + '"' : '';
     return '<div class="swarm" data-id="' + id + '">'
-      + '<div class="sw-head"><span class="ico">' + T.icon + '</span><div class="sw-name">' + escapeHtml(s.name) + '<small>' + escapeHtml(s.objective || T.desc) + '</small></div>'
-      + '<div class="sw-tools"><button type="button" data-act="dup" title="Duplicate">⧉</button><button type="button" data-act="export" title="Export as a file">⤓</button><button type="button" class="del" data-act="del" title="Delete">✕</button></div></div>'
+      + '<div class="sw-head"><span class="ico">' + T.icon + '</span><div class="sw-name">' + escapeHtml(s.name) + (s.readOnly ? '<span class="ro-badge">READ-ONLY</span>' : '') + (s.unsaved ? '<span class="ro-badge">NOT SAVED</span>' : '') + '<small>' + escapeHtml(s.objective || T.desc) + '</small></div>'
+      + '<div class="sw-tools"><button type="button" data-act="dup" title="Duplicate"' + (this.lib.writable(null) ? '' : ' disabled') + '>⧉</button><button type="button" data-act="export" title="Export as a file">⤓</button><button type="button" class="del" data-act="del"' + (ro && !s.readOnly ? roAttr : ' title="Delete"') + '>✕</button></div></div>'
       + '<div class="sw-chips">' + chips.map((c) => '<span>' + escapeHtml(c) + '</span>').join('') + '</div>'
       + '<div class="sw-est">' + this.estHtml(s) + '</div>'
       + '<div class="sw-runs">' + (runs || '<span class="run-chip" style="opacity:.6">never run</span>') + '</div>'
       + '<div class="sw-actions"><button class="lbtn primary" type="button" data-act="sim"' + (v.errors.length ? ' disabled title="' + escapeHtml(v.errors[0]) + '"' : ' title="Watch it play out in the simulator"') + '>▶ SIMULATE</button>'
       + '<button class="lbtn" type="button" data-act="estimate"' + (v.errors.length ? ' disabled' : '') + ' title="Simulate it ' + ESTIMATE_RUNS + ' times, headless, and price it">' + (this.busy.has(s.id) ? '■ STOP' : 'Σ ESTIMATE') + '</button>'
       + '<button class="lbtn" type="button" data-act="live"' + (why ? ' disabled title="' + escapeHtml(why) + '"' : ' title="Submit its tasks to agnostic as a real crew"') + '>⚡ RUN LIVE</button>'
-      + '<button class="lbtn" type="button" data-act="edit" title="Edit every setting">✎ EDIT</button></div></div>';
+      + '<button class="lbtn" type="button" data-act="edit"' + (ro ? roAttr : ' title="Edit every setting"') + '>✎ EDIT</button></div></div>';
   }
   estHtml(s) {
     const b = this.busy.get(s.id);
@@ -5610,10 +6088,13 @@ class Launcher {
     if (r.kind === 'sim') {
       return '<span class="run-chip" title="Simulated ' + escapeHtml(new Date(r.at).toLocaleString()) + (r.seed ? ' · seed ' + r.seed : '') + '">SIM ' + fmtCost(r.cost || 0) + ' · ' + (r.done || 0) + '/' + (r.total || 0) + ' · ' + fmtAgo(r.at) + '</span>';
     }
-    const st = r.status || 'submitted', bad = /failed|cancelled|lost|refused|unknown/.test(st);
-    const tip = 'Crew ' + r.crew + ' · ' + st + (r.engine ? ' · ' + r.engine + ' engine' : '') + (r.total ? ' · ' + (r.done || 0) + '/' + r.total + ' tasks' : '');
-    const label = 'LIVE ' + st + ' · ' + fmtAgo(r.at);
-    if (!this.host.can('crews:read')) return '<span class="run-chip live' + (bad ? ' bad' : '') + '" title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
+    const st = r.status || 'submitted', bad = /failed|cancelled|lost|refused|unknown|unconfirmed/.test(st);
+    const metered = (Number.isFinite(r.tokens) ? ' · ' + fmtTokens(r.tokens) + ' tokens' : '') + (Number.isFinite(r.costMicro) ? ' · ' + fmtMicro(r.costMicro) + ' (reported by agnostic)' : '');
+    const tip = (r.crew ? 'Crew ' + r.crew : 'Submission ' + (r.key || '')) + ' · ' + st + (r.engine ? ' · ' + r.engine + ' engine' : '') + (r.total ? ' · ' + (r.done || 0) + '/' + r.total + ' tasks' : '')
+      + (r.durationMs ? ' · ' + fmtTime(r.durationMs) : '') + metered
+      + (st === 'unconfirmed' ? ' — agnostic never answered the submission; look for it in Crews' : '');
+    const label = 'LIVE ' + st + (Number.isFinite(r.costMicro) ? ' · ' + fmtMicro(r.costMicro) : '') + ' · ' + fmtAgo(r.at);
+    if (!r.crew || !this.host.can('crews:read')) return '<span class="run-chip live' + (bad ? ' bad' : '') + '" title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
     return '<button type="button" class="run-chip live' + (bad ? ' bad' : '') + '" data-act="watch" data-crew="' + escapeHtml(r.crew) + '" title="' + escapeHtml(tip + ' — watch it') + '">' + escapeHtml(label) + ' ▸</button>';
   }
   paintEstimate(id) {
@@ -5637,7 +6118,9 @@ class Launcher {
       case 'dup': {
         const c = deepCopy(s);
         Object.assign(c, { id: newSpecId(), name: (s.name + ' (copy)').slice(0, 80), created: Date.now(), runs: [] });
-        const r = await this.lib.save(c);
+        delete c.readOnly;
+        c.v = SPEC_VERSION;
+        const r = await this.lib.save(c, { isNew: true });
         this.app.hud.toast(r.ok ? 'Duplicated ' + s.name : r.message, r.ok ? 'good' : 'bad');
         break;
       }
@@ -5662,7 +6145,7 @@ class Launcher {
     });
     this.busy.delete(spec.id);
     if (!est) { this.render(); return; }
-    await this.lib.patch(spec.id, (s) => { s.estimate = est; });
+    await this.lib.patch(spec.id, (s) => { s.estimate = est; }, { touch: false });
     this.render();
     this.app.hud.toast(spec.name + ': ≈ ' + fmtCost(est.cost.p50) + ' (p50 of ' + est.runs + ' simulated runs)', 'good');
   }
@@ -5674,7 +6157,7 @@ class Launcher {
       if (!s) throw new Error('it does not hold a swarm');
       if (this.lib.get(s.id)) s.id = newSpecId();
       s.runs = []; // its crews ran on some other server
-      const r = await this.lib.save(s);
+      const r = await this.lib.save(s, { isNew: true });
       this.app.hud.toast(r.ok ? 'Imported ' + s.name : r.message, r.ok ? 'good' : 'bad');
     } catch (err) {
       this.app.hud.toast('Could not import: ' + err.message, 'bad');
@@ -5946,14 +6429,28 @@ class Editor {
   async save(thenSimulate) {
     const v = validateSpec(this.draft);
     if (v.errors.length) { this.app.hud.toast(v.errors[0], 'bad'); return; }
-    if (v.tooBig) { this.app.hud.toast('This swarm is ' + fmtKB(v.bytes) + ' — the server keeps up to 32 KB per swarm', 'bad'); return; }
+    if (v.tooBig) { this.app.hud.toast('This swarm is ' + fmtKB(v.bytes) + ' — keep it under ' + fmtKB(SPEC_MAX_BYTES - SPEC_RESERVE) + ' so its runs can be recorded on it', 'bad'); return; }
     const d = this.draft;
     d.name = d.name.trim();
     d.objective = d.objective.trim();
     if (d.tasks) for (const t of d.tasks) t.title = t.title.trim() || t.key;
     for (const r of ROLE_KEYS) d.roles[r].goal = d.roles[r].goal.trim() || ROLE_GOALS[r];
     $('ed-save').disabled = true;
-    const r = await this.app.library.save(d);
+    let r = await this.app.library.save(d, { isNew: this.isNew });
+    if (!r.ok && r.conflict) {
+      // Someone else saved this swarm since it was opened here — another tab, another user. Never
+      // overwrite that silently: say so, and let the user choose.
+      const pick = await this.app.modal.confirm('This swarm changed somewhere else',
+        'It was saved from another tab or by someone else since you opened it here. <b>Overwrite</b> replaces that version with yours; '
+        + '<b>Save as a copy</b> keeps both; <b>Cancel</b> keeps editing — and nothing is lost either way.',
+        { yes: 'Overwrite', alt: 'Save as a copy', no: 'Cancel', danger: true });
+      if (pick === true) r = await this.app.library.save(d, { force: true });
+      else if (pick === 'alt') {
+        const c = deepCopy(d);
+        Object.assign(c, { id: newSpecId(), name: (d.name + ' (mine)').slice(0, 80), created: Date.now(), runs: [], estimate: null });
+        r = await this.app.library.save(c, { isNew: true });
+      } else { $('ed-save').disabled = false; return; }
+    }
     $('ed-save').disabled = false;
     if (!r.ok) { this.app.hud.toast(r.message, 'bad'); return; }
     this.orig = JSON.stringify(this.draft);
@@ -6011,7 +6508,7 @@ class Editor {
     }
     html += '</div><div class="ed-box"><div class="panel-title">CHECKS</div><div class="chk-list">'
       + v.errors.map((x) => '<div class="e">✕ ' + escapeHtml(x) + '</div>').join('')
-      + (v.tooBig ? '<div class="e">✕ ' + fmtKB(v.bytes) + ' is over the server’s 32 KB per swarm.</div>' : '')
+      + (v.tooBig ? '<div class="e">✕ ' + fmtKB(v.bytes) + ' — the server keeps 32 KB per swarm, and ' + fmtKB(SPEC_RESERVE) + ' of that is kept for its run records.</div>' : '')
       + v.warnings.map((x) => '<div class="w">⚠ ' + escapeHtml(x) + '</div>').join('')
       + (!v.errors.length && !v.tooBig && !v.warnings.length ? '<div class="ok">✓ Ready to run</div>' : '') + '</div>'
       + row('tasks', v.taskCount + (v.fanout ? ' + ' + v.fanout + ' sub-tasks' : '')) + row('size', fmtKB(v.bytes) + ' of 32 KB') + '</div>';
@@ -6157,14 +6654,14 @@ class Editor {
       + '</label></div>';
     html += '<h4>PROCESS</h4><div class="frm"><label>Process</label><div>'
       + edSel('live|process', d.live.process, [['auto', 'Auto — a DAG when tasks have dependencies'], ['sequential', 'Sequential — one task at a time, in order'], ['parallel', 'Parallel — every task at once, ignoring dependencies'], ['dag', 'DAG — follows the dependencies']], { rr: true })
-      + '</div><label>Max concurrency</label><div>' + edNum('live|maxConcurrency', d.live.maxConcurrency, { t: 'int', min: 1, max: 64, step: 1, cls: 'w-sm', dis: R.process !== 'parallel' }) + '<span class="hint">parallel only</span></div></div>';
+      + '</div><label>Max concurrency</label><div>' + edNum('live|maxConcurrency', d.live.maxConcurrency, { t: 'int', min: 1, max: 64, step: 1, cls: 'w-sm', dis: R.process !== 'parallel' }) + '<span class="hint">' + (R.process === 'dag' ? 'a DAG runs each wave of ready tasks all at once — the engine applies no limit' : 'parallel only') + '</span></div></div>';
     if (d.live.roster === 'roles') {
       html += '<h4>LLM MODELS</h4><div class="tbl-wrap"><table class="etbl"><tr><th>ROLE</th><th>MODEL ID — OPTIONAL</th></tr>'
         + ROLE_KEYS.map((r) => '<tr><td>' + roleCell(r) + '</td><td class="grow">' + edText('live|models|' + r, d.live.models[r] || '', { t: 'livemodel', ph: 'the server’s default model', max: 100 }) + '</td></tr>').join('')
         + '</table></div><p class="note">Model ids your LLM gateway knows. The simulator’s catalogue is not sent.</p>';
     }
     html += '<h4>WHAT GETS SUBMITTED</h4><p class="note" style="margin-top:0">' + R.agents.length + ' agent' + (R.agents.length === 1 ? '' : 's') + ' and ' + R.tasks.length + ' tasks, process <b>' + R.process + '</b>'
-      + (R.max_concurrency ? ' (' + R.max_concurrency + ' at a time)' : '') + '. Fan-out, rework, regions, caps, tools and the failure model shape only the simulator: a live crew runs these tasks with these agents on this agnostic server, which does not report token cost.</p>'
+      + (R.max_concurrency ? ' (' + R.max_concurrency + ' at a time)' : '') + '. Fan-out, rework, regions, caps, tools and the failure model shape only the simulator: a live crew runs these tasks with these agents on this agnostic server, which reports the tokens and cost the LLM gateway metered once the crew ends.</p>'
       + (d.live.roster === 'preset' && !d.live.preset ? '<p class="note" style="color:#fcd34d">Choose a preset — until then the roster is one agent per role.</p>' : '')
       + '<div class="ed-actions"><button class="lbtn sm" type="button" data-act="toggle-req">' + (this.showReq ? 'Hide' : 'Show') + ' the request</button></div>'
       + (this.showReq ? '<pre class="req">' + escapeHtml(JSON.stringify(R, null, 2)) + '</pre>' : '');
@@ -6405,7 +6902,16 @@ class App {
   /** Record everything `source` emits — kept apart from attach() so a live crew is still recorded while a replay is on screen. */
   record(source) {
     if (this.recUnsub) this.recUnsub();
-    this.recUnsub = source.subscribe((e) => this.recording.push(e));
+    // Bounded: a long crew watched for hours must not grow the page without limit. Past the cap
+    // the oldest half goes, and the replay starts later — said in the log rather than hidden.
+    this.recUnsub = source.subscribe((e) => {
+      this.recording.push(e);
+      if (this.recording.length > RECORDING_MAX) {
+        const keep = this.recording.slice(-Math.floor(RECORDING_MAX / 2));
+        this.recording = [this.recording[0]].concat(keep); // the first event carries the world
+        console.warn('[swarm] the recorded event log reached ' + RECORDING_MAX + ' events; its oldest half was dropped');
+      }
+    });
   }
   teardown() {
     if (this.unsub) { this.unsub(); this.unsub = null; }
@@ -6473,8 +6979,10 @@ class App {
   }
   async showMenu() {
     const src = this.live && this.live.source;
-    if (src instanceof LiveCrewSource && !src.finished && src.crewId && this.mode !== 'menu') {
-      const ok = await this.modal.confirm('Leave this crew?', 'It keeps running on agnostic — leaving only stops watching it. Its swarm’s card can watch it again.', { yes: 'Leave', no: 'Stay' });
+    if (src instanceof LiveCrewSource && !src.finished && (src.crewId || src.status === 'submitting') && this.mode !== 'menu') {
+      const ok = await this.modal.confirm('Leave this crew?', src.crewId
+        ? 'It keeps running on agnostic — leaving only stops watching it. Its swarm’s card, and the Crews list, can watch it again.'
+        : 'It is still being submitted. Leaving does not stop that: the crew is recorded on its swarm’s card either way.', { yes: 'Leave', no: 'Stay' });
       if (!ok) return;
     }
     this.hud.showReplayBar(false);
@@ -6489,7 +6997,7 @@ class App {
     if (this.presetCache.has(name)) return this.presetCache.get(name);
     if (!this.host.can('presets:read') || !RE_PRESET.test(name)) return null;
     const r = await this.host.request('GET', '/api/v1/presets/' + name);
-    if (r.status !== 200 || !r.data || !Array.isArray(r.data.agents)) return null;
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.agents)) return null; // a failure is not cached
     this.presetCache.set(name, r.data);
     return r.data;
   }
@@ -6510,17 +7018,34 @@ class App {
     if (R.tasks.length > 1000 || R.agents.length > 100) { this.hud.toast('agnostic takes at most 1000 tasks and 100 agents in a crew', 'bad'); return; }
     const ok = await this.modal.confirm('Run ' + spec.name + ' live?',
       'This submits a real crew to agnostic: <b>' + R.agents.length + ' agent' + (R.agents.length === 1 ? '' : 's') + '</b> and <b>' + R.tasks.length + ' tasks</b>, process <b>' + escapeHtml(R.process) + '</b>. '
-      + 'With an LLM gateway configured every task is a real model call, and can cost money.'
+      + 'With an LLM gateway configured every task is a real model call, and can cost money — the cost agnostic reports is shown when the crew ends.'
       + (spec.estimate ? ' The simulator estimated ≈ ' + fmtCost(spec.estimate.cost.p50) + ' for this swarm — a simulation, not a quote.' : ''), { yes: '⚡ Submit crew' });
     if (!ok) return;
     this.startCrew(spec, built, null);
   }
-  /** Watch a crew a swarm started earlier — still running, or finished. */
+  /** Watch a crew a swarm started earlier — still running, or finished. Bound by the crew's own plan. */
   async watchRun(spec, crewId) {
     if (!this.host.can('crews:read') || !RE_CREW_ID.test(crewId || '')) { this.hud.toast('Open this view inside agnostic to watch a crew', 'bad'); return; }
     const preset = spec.live.roster === 'preset' && spec.live.preset ? await this.presetDoc(spec.live.preset) : null;
+    // The swarm's current plan lends its titles and roles only if the crew's tasks are the same.
     this.startCrew(spec, specToCrewRequest(spec, preset), crewId.toLowerCase());
   }
+  /** Watch any crew of this tenant — from the Crews list — whether or not one of these swarms started it. */
+  watchCrew(crew) {
+    const id = String(crew && crew.crew_id || '').toLowerCase();
+    if (!RE_CREW_ID.test(id)) return;
+    const owner = this.library.list().find((s) => s.runs.some((r) => r.kind === 'live' && r.crew === id));
+    if (owner) { this.watchRun(owner, id); return; }
+    const spec = defaultSpec('custom', 1);
+    spec.name = typeof crew.name === 'string' && crew.name ? crew.name : 'Crew ' + id.slice(0, 8);
+    spec.objective = '';
+    this.startCrew(spec, null, id);
+  }
+  /**
+   * Run or watch a crew. A run of a saved swarm is recorded on it BEFORE it is submitted, with the
+   * idempotency key the submission carries — so leaving the view, a dropped answer or a closed tab
+   * never loses the record of a crew that may be costing money.
+   */
   startCrew(spec, built, crewId) {
     const s = deepCopy(spec);
     const saved = !!this.library.get(s.id);
@@ -6528,13 +7053,24 @@ class App {
     this.recording = [];
     this.store.reset();
     this.resetUI();
+    const key = crewId ? null : 'sw-' + s.id + '-' + randomToken(12);
+    const at = Date.now();
+    if (!crewId && saved) {
+      this.library.patch(s.id, (x) => { x.runs.push({ kind: 'live', at, status: 'submitting', key, engine: '' }); }, { touch: false });
+    }
     const source = new LiveCrewSource(this.host, s, built, {
-      crewId,
-      onSubmitted: (id, engine) => {
+      crewId, idempotencyKey: key,
+      onSubmitted: (id, engine, status) => {
         if (!saved) return;
-        this.library.patch(s.id, (x) => { x.runs.push({ kind: 'live', at: Date.now(), crew: id, status: 'running', engine }); x.runs = x.runs.slice(-SPEC_MAX_RUNS); });
+        this.library.patch(s.id, (x) => {
+          let r = x.runs.find((q) => q.kind === 'live' && q.key === key);
+          if (!r) { r = { kind: 'live', at, key }; x.runs.push(r); }
+          if (id) r.crew = id;
+          r.status = status === 'pending' ? 'running' : status;
+          r.engine = engine || r.engine || '';
+        }, { touch: false });
       },
-      onFinished: (status, sum) => { if (saved && sum.crewId) this.recordLive(s.id, sum); },
+      onFinished: (status, sum) => { if (saved && (sum.crewId || key)) this.recordLive(s.id, sum, key); },
     });
     const sink = new LiveCommandSink();
     this.live = { source, sink, spec: s, kind: 'live', saved };
@@ -6549,26 +7085,29 @@ class App {
     this.renderer.fitAll(true, true);
     this.hud.toast(crewId ? 'Watching crew ' + crewId.slice(0, 8) : 'Submitting ' + s.name + ' to agnostic…', 'good');
   }
-  recordLive(id, sum) {
+  /** Record how a live crew ended on its swarm: status, counts, its real duration, and what agnostic metered. */
+  recordLive(id, sum, key) {
     this.library.patch(id, (x) => {
-      let r = x.runs.find((q) => q.kind === 'live' && q.crew === sum.crewId);
-      if (!r) { r = { kind: 'live', at: Date.now(), crew: sum.crewId }; x.runs.push(r); }
+      let r = x.runs.find((q) => q.kind === 'live' && ((sum.crewId && q.crew === sum.crewId) || (key && q.key === key)));
+      if (!r) { r = { kind: 'live', at: Date.now() }; x.runs.push(r); }
+      if (sum.crewId) r.crew = sum.crewId;
       Object.assign(r, { status: sum.status, engine: sum.engineMode || r.engine || '', done: sum.tasksDone, failed: sum.tasksFailed, total: sum.tasksDone + sum.tasksFailed });
-      if (sum.wallMs) r.durationMs = sum.wallMs;
-      x.runs = x.runs.slice(-SPEC_MAX_RUNS);
-    });
+      if (sum.timed) r.durationMs = Math.round(sum.durationMs);
+      if (sum.tokensActual) r.tokens = sum.tokens; else delete r.tokens;
+      if (sum.costMicro != null) r.costMicro = sum.costMicro; else delete r.costMicro;
+    }, { touch: false });
   }
   recordSim(sum) {
     const l = this.live;
     if (!l || l.kind !== 'sim' || !l.saved) return;
     this.library.patch(l.spec.id, (x) => {
       x.runs.push({ kind: 'sim', at: Date.now(), status: 'complete', seed: l.spec.seed, cost: +sum.cost.toFixed(4), durationMs: Math.round(sum.durationMs), done: sum.tasksDone, failed: sum.tasksFailed, total: sum.tasksTotal });
-      x.runs = x.runs.slice(-SPEC_MAX_RUNS);
-    });
+    }, { touch: false });
   }
   async cancelCrew() {
     const src = this.live && this.live.source;
     if (!(src instanceof LiveCrewSource) || src.finished) return;
+    if (!src.crewId) { this.hud.toast('The crew has not been accepted yet — wait for agnostic to answer', 'bad'); return; }
     const ok = await this.modal.confirm('Cancel this crew?', 'agnostic stops it: tasks that have not finished will not run.', { yes: 'Cancel crew', no: 'Keep it running', danger: true });
     if (!ok) return;
     const r = await src.cancel();

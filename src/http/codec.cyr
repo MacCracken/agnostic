@@ -407,3 +407,76 @@ fn agnostic_json_is_object(body: Str): i64 {
     if (agnostic_json_kind(body) == AGNOSTIC_JSON_OBJECT) { return 1; }
     return 0;
 }
+
+# ## Query strings (0.1.9)
+#
+# The router matches on the path alone (`agnostic_path_only_a`), so a handler that takes a
+# query parameter reads it from the raw request target here. Only what a handler asks for
+# by name is read; nothing is percent-decoded, because nothing that takes a parameter yet
+# accepts a character that would need it — a parameter is parsed into exactly the shape
+# its handler wants (`agnostic_query_uint_a`) or refused.
+
+# The raw value of query parameter `name` in `path`, as a `Str` in `a`, or 0 when the path
+# has no such parameter. The first occurrence wins; a bare `name` (no `=`) is an empty
+# value, which is present — not absent.
+fn agnostic_query_get_a(a, path: Str, name): i64 {
+    if (path == 0) { return 0; }
+    var d = str_data(path);
+    var n = str_len(path);
+    var q = 0;
+    while (q < n) {
+        var c = load8(d + q) & 255;
+        if (c == 35) { return 0; }   # '#' before any '?': no query
+        if (c == 63) { break; }      # '?'
+        q = q + 1;
+    }
+    if (q >= n) { return 0; }
+    var nl = strlen(name);
+    var i = q + 1;
+    while (i < n) {
+        # One `key[=value]` field, ending at `&`, `#` or the end.
+        var fe = i;
+        while (fe < n) {
+            var fc = load8(d + fe) & 255;
+            if (fc == 38 || fc == 35) { break; }
+            fe = fe + 1;
+        }
+        var ke = i;
+        while (ke < fe) {
+            if ((load8(d + ke) & 255) == 61) { break; }
+            ke = ke + 1;
+        }
+        if (ke - i == nl) {
+            if (memeq(d + i, name, nl) == 1) {
+                var vs = ke;
+                if (vs < fe) { vs = vs + 1; }
+                return str_sub_a(a, path, vs, fe - vs);
+            }
+        }
+        if (fe >= n) { break; }
+        if ((load8(d + fe) & 255) == 35) { break; }
+        i = fe + 1;
+    }
+    return 0;
+}
+
+# Query parameter `name` as a non-negative integer: `dflt` when absent, the value when it
+# is 1 to 18 decimal digits, and -1 when it is present and anything else — empty, signed,
+# fractional, or too long to be a count. A malformed parameter is the handler's 422 to
+# give, never a silent default.
+fn agnostic_query_uint_a(a, path: Str, name, dflt): i64 {
+    var v = agnostic_query_get_a(a, path, name);
+    if (v == 0) { return dflt; }
+    var n = str_len(v);
+    if (n == 0 || n > 18) { return 0 - 1; }
+    var d = str_data(v);
+    var out = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        if (c < 48 || c > 57) { return 0 - 1; }
+        out = out * 10 + (c - 48);
+        i = i + 1;
+    }
+    return out;
+}

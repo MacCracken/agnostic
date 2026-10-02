@@ -2,11 +2,12 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-10-01, at **0.1.8** — the WebGUI's **plugin platform** (the host
-> bridge with manifest permissions, plugin documents per tenant, JSON-only writes and a
-> loopback Host when auth is off) and **Swarm Command 0.2.0** (saved swarms, cost
-> estimates, live crews). Toolchain and dependencies are unchanged from 0.1.7. (Version,
-> Source, the route table, the WebGUI section, Hardening and the gate counts were
+> Last refreshed: 2026-10-02, at **0.1.9** — plugin requests **checked by the server** against one
+> permission vocabulary (ADR 0007), crews that **belong to their tenant**, a crew **listing** and
+> **idempotent submits** (ADR 0008), crew progress **collected by the server** and read by
+> **cursor** (ADR 0009), **real usage** (tokens, cost) on every result, document **revisions**, and
+> **Swarm Command 0.3.0** on all of it. Toolchain and dependencies are unchanged from 0.1.7. (Version,
+> Source, the route table, the WebGUI section, Persistence, Tests, Hardening and the gate counts were
 > refreshed then; the milestone narrative below is as of M6 part 1 and did not move.)
 >
 > **Picking this port up?** Start at [`handoff.md`](handoff.md) — orientation,
@@ -15,7 +16,7 @@
 
 ## Version
 
-**0.1.8** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.9** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -93,14 +94,15 @@ a process kill with no diagnostic).
 ## Source
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
-(0.1.8)** — 47 files, 20,198 lines, 780 top-level definitions, all `agnostic_*`-prefixed.
-8,429 of those lines are generated: `src/presets_data.cyr` (837) and `src/webgui_data.cyr`
-(7,592 — two embedded pages).
+(0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9)** — 48 files,
+22,814 lines, 927 top-level definitions, all `agnostic_*`-prefixed. 9,075 of those lines are
+generated: `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (8,238 — two embedded pages and
+the plugin permission vocabulary).
 
-**Tests: 28 suites, 1,522 assertions, 0 failed** (`cyrius test`). Gates green:
-`check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated
-per shipped target since 0.1.7), `check-clean.sh` (now also `gen-webgui.sh --check`),
-`deps --verify` 118/0.
+**Tests: 29 suites, 1,749 assertions, 0 failed** (`cyrius test`), plus **30 JavaScript
+tests** (`scripts/check-webgui-js.sh`, Node 20+). Gates green: `check-symbols.sh` (4 rules — Rule 4,
+the `lib/`↔`lib/` constant check, is evaluated per shipped target since 0.1.7), `check-clean.sh`
+(also `gen-webgui.sh --check` and, since 0.1.9, the WebGUI's JavaScript), `deps --verify` 118/0.
 
 **M5 — identity and tenancy — is done.** `src/auth/` holds credential primitives
 (`crypto`), users and API keys (`store`), HS256 tokens (`jwt`), the static
@@ -160,21 +162,23 @@ refactor of any of it.
 | `src/log.cyr` | sakshi emit hook, one JSON object per event |
 | `src/http/{status,response,codec,router}.cyr` | status table, response records, JSON allow-list codec, route matching |
 | `src/engine/outcome.cyr` | the result type carrying status + error + engine id + results |
-| `src/engine/ledger.cyr` | what Agnostic remembers about submitted crews; the terminal latch |
+| `src/engine/ledger.cyr` | what Agnostic remembers about submitted crews; the terminal latch; the numbered event ring, scope and idempotency key (0.1.9) |
 | `src/engine/request.cyr` | one task model, allow-list decoded, DAG validated |
 | `src/engine/crew.cyr` | the orchestrator bridge — submit, poll, cancel |
+| `src/engine/collector.cyr` | the thread that keeps every live crew's ledger entry current (0.1.9, ADR 0009) |
 | `src/engine/reject.cyr` | how a request says no; the typed-field readers |
 | `src/engine/agentdef.cyr` | **one** agent model — forwarded, retained, or refused |
 | `src/engine/definitions.cyr` | the definition store — **patra-backed** since M4 |
 | `src/engine/rlock.cyr` | the re-entrant lock the store and the audit trail serialize under |
 | `src/engine/store.cyr` | the one patra handle the durable tables share — **handed out only under the store lock** |
-| `src/engine/crewstore.cyr` | terminal crew outcomes, durable |
+| `src/engine/crewstore.cyr` | terminal crew outcomes, durable; the crew index the listing reads (0.1.9) |
 | `src/engine/audit.cyr` | the tamper-evident trail, libro over patra |
 | `src/engine/presets.cyr` | the canonical preset library, parsed once at mount |
 | `src/presets_data.cyr` | **generated** — the 18 documents as Cyrius literals |
 | `src/engine/settings.cyr` | deployment-wide settings, durable — the plugin switches (0.1.7) |
 | `src/engine/plugindata.cyr` | each plugin's own documents, per tenant, durable (0.1.8) |
-| `src/webgui/plugins.cyr` | the WebGUI's page table and plugin registry, loaded once at mount (0.1.7) |
+| `src/webgui/plugins.cyr` | the WebGUI's page table and plugin registry, loaded once at mount (0.1.7); the permission vocabulary and the plugin rung (0.1.9) |
+| `src/webgui/permissions.json` | the plugin permission vocabulary — the one source the generator, server and shell read (0.1.9) |
 | `src/webgui_data.cyr` | **generated** — the shell and each plugin page, verbatim, with SHA-256 and CSP (0.1.7) |
 | `src/routes/health.cyr` | `/health` and `/ready` |
 | `src/routes/crews.cyr` | the crew surface |
@@ -199,10 +203,12 @@ The crew surface, and what each code means:
 
 | route | codes |
 |---|---|
-| `POST /api/v1/crews` | **202** accepted · 400 semantic · 422 shape · 503 engine down |
-| `GET /api/v1/crews/{id}` | 200 · 404 never submitted · 422 malformed id |
+| `POST /api/v1/crews` | **202** accepted (`task_ids`; `replayed` for a repeated `Idempotency-Key`) · 400 semantic · 422 shape or key reused over another body · 503 engine down |
+| `GET /api/v1/crews` | 200 — the caller's tenant's crews, newest first; `?limit=` `?before=` (0.1.9) · 422 |
+| `GET /api/v1/crews/{id}` | 200 (with `usage`, times, `scope`) · 404 never submitted **or another tenant's** · 422 malformed id |
 | `POST /api/v1/crews/{id}/cancel` | 200 · 404 · **409 already terminal** · 422 · 503 |
-| `GET /api/v1/crews/{id}/events` | 200 — the status is refreshed first (0.1.8) · 404 · 422 |
+| `GET /api/v1/crews/{id}/events` | 200 — refreshed first (0.1.8); `?after=N` cursor, `seq`/`at_ms`, `next`, `missed`, `lost_events` (0.1.9) · 404 · 422 |
+| `GET /api/v1/crews/{id}/plan` | 200 — agents and tasks with engine ids (0.1.9) · 404 not held · 422 |
 | `GET /api/v1/presets` | 200 — summaries, not documents |
 | `GET /api/v1/presets/{name}` | 200 · 404 unknown name |
 | `GET /api/v1/agents/definitions` | 200 |
@@ -210,18 +216,20 @@ The crew surface, and what each code means:
 | `GET /api/v1/agents/definitions/{key}` | 200 · 404 · 422 |
 | `PUT /api/v1/agents/definitions/{key}` | 200 · 400 · 404 · 422 |
 | `DELETE /api/v1/agents/definitions/{key}` | 200 · 404 · 422 |
-| `GET /api/v1/plugins` | 200 — READ |
+| `GET /api/v1/plugins` | 200 — with the permission `catalogue` (0.1.9) — READ |
 | `PUT /api/v1/plugins/{id}` | 200 (`changed` true/false) · 400 · 404 · 422 · 500 — **ADMIN** |
 | `GET /api/v1/plugins/{id}/data` | 200 — keys, times, sizes, `scope` · 404 · 422 — READ |
-| `GET /api/v1/plugins/{id}/data/{key}` | 200 — the document, verbatim · 404 · 422 — READ |
-| `PUT /api/v1/plugins/{id}/data/{key}` | **201** · 200 · 400 · 404 · 413 · 422 · **507** — WRITE |
-| `DELETE /api/v1/plugins/{id}/data/{key}` | 200 · 404 · 422 — WRITE |
+| `GET /api/v1/plugins/{id}/data/{key}` | 200 — the document, verbatim, with its `ETag` (0.1.9) · 404 · 422 — READ |
+| `PUT /api/v1/plugins/{id}/data/{key}` | **201** · 200 · 400 · 404 · **412** (0.1.9) · 413 · 422 · **507** — WRITE |
+| `DELETE /api/v1/plugins/{id}/data/{key}` | 200 · 404 · **412** (0.1.9) · 422 — WRITE |
 | `GET /ui` · `/ui/` | 200 — the shell, **public** |
 | `GET /ui/plugins/{id}` | 200 · **404 while switched off** · 422 — **public** |
 
-The table is a flat scan of 18 paths (19 patterns). Measured at 0.1.8 (`tests/agnostic.bcyr`): ~0.12 µs
-to resolve the first entry, ~0.93 µs the last, ~0.78 µs for a miss that tries every pattern,
-~2.1 µs for the two-capture document path — against ~48 µs for the per-request user lookup.
+The table is a flat scan of 19 paths (20 patterns). Measured at 0.1.9 (`tests/agnostic.bcyr`): ~0.10 µs
+to resolve the first entry, ~0.87 µs the last, ~0.73 µs for a miss that tries every pattern,
+~2.0 µs for the two-capture document path — against ~48 µs for the per-request user lookup. A request
+a plugin makes also pays the plugin rung, ~1.2 µs; a cursor poll copies one new event out of the ring
+in ~0.12 µs (a whole 256-event window ~5.7 µs). (0.1.8, 18 paths: 0.12 / 0.93 / 0.78 / 2.1 µs.)
 Still not worth an index. (0.1.7, 16 paths — once miscounted as 15: 0.11 / 0.81 / 0.65 µs.) The 0.1.8 transport rules
 cost ~0.15 µs each per socket request; validating a full 32 KiB plugin document ~0.2 ms.
 ⚠ The machine was under heavy load from other work during the 0.1.8 runs — successive runs
@@ -232,16 +240,26 @@ finished; a definition *is* complete when the call returns. **No upsert** in
 either direction: `POST` to an existing key is 409, `PUT` to an absent one is 404
 — an upsert turns a typo'd key into a second silently-created definition.
 
-⚠ `GET /api/v1/crews` is in the table with no handler, so it answers **405**
-rather than a 404 claiming the collection does not exist. A listing endpoint
-needs pagination and a tenancy scope; both arrive with M4/M5.
+✅ `GET /api/v1/crews` **lists** since 0.1.9 — it answered 405 until a listing could be
+paginated (a cursor) and scoped (crews belong to their tenant, ADR 0008). ⚠ A crew is
+**404 to every other tenant** on every crew route; a crew stored before 0.1.9 belongs to `_`
+and is not listed.
 
-## WebGUI and plugins (0.1.7, 0.1.8)
+## WebGUI and plugins (0.1.7, 0.1.8, 0.1.9)
 
-**M9's first slice (0.1.7), and its plugin platform (0.1.8).** Why compiled-in plugins
-switched at run time is [ADR 0004](../adr/0004-webgui-plugins-compiled-in-switched-at-run-time.md);
-how a plugin reaches the server is [ADR 0005](../adr/0005-plugins-reach-the-server-through-the-host-bridge.md);
+**M9's first slice (0.1.7), its plugin platform (0.1.8), checked by the server (0.1.9).** Why
+compiled-in plugins switched at run time is [ADR 0004](../adr/0004-webgui-plugins-compiled-in-switched-at-run-time.md);
+how a plugin reaches the server is [ADR 0005](../adr/0005-plugins-reach-the-server-through-the-host-bridge.md),
+and why the server checks it too, against one vocabulary, is [ADR 0007](../adr/0007-plugin-requests-are-checked-by-the-server.md);
 how to add one is [`guides/webgui-plugins.md`](../guides/webgui-plugins.md).
+
+**0.1.9, in one paragraph.** Plugin permissions live in `src/webgui/permissions.json` and are enforced
+by the server on every request the shell makes for a plugin (`X-Agnostic-Plugin` → the plugin rung,
+before authentication: `403` with `plugin_unknown` / `plugin_off` / `plugin_forbidden`). The shell's
+gate (`window.AgnosticBridge`, a pure script) is built from the same vocabulary, answers only the page
+session that asked, takes messages only from an opaque origin, caps a plugin at 16 requests in flight,
+and carries query strings, revisions and idempotency keys. Plugin documents have ETags; `If-Match` /
+`If-None-Match: *` answer 412. Swarm Command 0.3.0 runs on real crews and real numbers — see below.
 
 - **`/ui`** — the shell (30,931 B): Overview (`/ready`, the views), a tab per plugin that
   is switched on, Settings (the switches with each plugin's permissions and stored
@@ -249,12 +267,14 @@ how to add one is [`guides/webgui-plugins.md`](../guides/webgui-plugins.md).
   `POST /api/v1/auth/login` and keeps the token per tab (`sessionStorage`). It is also the
   **host bridge**: it answers a plugin's `postMessage` requests that its manifest permits,
   with the user's token, which the plugin never sees.
-- **Swarm Command 0.2.0** (`swarm`, 392,843 B, `data: mixed`, permissions `storage`,
+- **Swarm Command 0.3.0** (`swarm`, 429,829 B, `data: mixed`, permissions `storage`,
   `presets:read`, `crews:read`, `crews:write`) — a launcher of saved swarms (plugin
-  documents `swarm-<id>`, per tenant), an editor for every capability with defaults, a
-  headless cost estimate over eight seeds, the simulator driven by the spec, and live runs:
-  the swarm's tasks submitted as a crew, polled through the bridge, cancellable, recorded on
-  the swarm. Every mission is labelled SIM or LIVE; a live crew's cost is n/a.
+  documents `swarm-<id>`, per tenant, written with their revision), an editor for every
+  capability with defaults, a headless cost estimate over eight seeds, the simulator driven by
+  the spec, live runs — submitted with an idempotency key and recorded before they start, read by
+  cursor, bound by engine task id, ended with the tokens and cost agnostic metered beside the
+  estimate, outputs under Results — and a **Crews** list that watches any crew of the tenant. Every
+  mission is labelled SIM or LIVE; a live cost the gateway did not report is n/a, never simulated.
 - **Every plugin starts OFF.** The switch is `plugin.<id>.enabled` in the settings table;
   it survives a restart, flipping it is ADMIN, and only a real change is audited. A plugin's
   documents survive it being switched off.
@@ -274,9 +294,10 @@ opaque origin, so a plugin cannot read the shell's token, reach the network, or 
 modal dialog. Opened in its own tab, Swarm Command finds no shell, keeps swarms in that
 browser and disables live runs.
 
-⚠ **Permissions are a closed list in two places** — `PERMISSIONS` in
-`scripts/gen-webgui.sh` (manifests are checked against it) and `permitted()` in
-`src/webgui/index.html` (requests are checked against it). They must agree.
+✅ **Permissions are ONE list since 0.1.9** — `src/webgui/permissions.json`, read by the generator
+(manifests are checked against it), the server (it enforces it) and the shell (from
+`GET /api/v1/plugins`). The shell's `permitted()` and the generator's hard-coded `PERMISSIONS` are
+gone. A new permission is one edit to that file, and the docs.
 
 ⚠ **The embedded pages are proven, not assumed.** `src/webgui_data.cyr` holds each page as
 a raw multi-line literal; `tests/webgui.tcyr` re-hashes the bytes in the binary against
@@ -284,14 +305,18 @@ the source file's SHA-256, and `check-clean.sh` runs `gen-webgui.sh --check`. A
 `\`-continued literal would have been wrong: `cyrius fmt` indents continuation lines,
 and the spaces land inside the string.
 
-⚠ **Verified in headless Chromium at 0.1.8**, against scratch servers with auth off and
-required, the placeholder engine and a live one (a slow local stand-in gateway): the
-bridge handshake and its refusals, the editor, saving, estimates, simulation, run records,
-live runs with real output, cancel, leaving and catching up, watching, presets, import,
-Settings and its Delete all (declined, then accepted), and the standalone page — 112 checks,
-no uncaught exception in either frame. The
-page's logic (simulator, spec normalizer, estimator, crew request) was tested in Node —
-225 assertions — and with default settings reproduces 0.1.7's cost distribution.
+⚠ **Verified in headless Chromium at 0.1.9** (CDP; the plugin frame is in-process there, reached
+through its execution context), against scratch servers running real crews through a stand-in
+gateway that prices calls: auth off — 29 checks, from the bridge features through a live crew's
+metered cost, results, the run record, watching, the Crews list, a crew from a script, a two-tab
+conflict and switching the plugin off under an open view; auth required — 13, including a session
+invalidated mid-crew pausing and resuming the watch; the standalone page — 7. No uncaught exception
+in either frame. (0.1.8: 112 checks, much of the same ground before these changes.)
+
+✅ **The page's logic is tested in the repo now** — `tests/webgui/` under Node (`check-clean.sh` runs
+it): the shell's gate against the real vocabulary, and Swarm Command's simulator, specs, library and
+live crew source against a fake agnostic that answers as 0.1.9's server does. At 0.1.8 the 225
+assertions that covered this ran once and were discarded.
 
 The Python implementation is retained at `python-port/` as a behavioural oracle.
 It is never built or shipped, and it is **not** a specification —
@@ -299,7 +324,14 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**28 suites, 1,522 assertions, 0 failed** (`cyrius test`, under the 6.6.12 pin).
+**29 suites, 1,749 assertions, 0 failed** (`cyrius test`, under the 6.6.12 pin), and
+**30 JavaScript tests** (`./scripts/check-webgui-js.sh`). 0.1.9's additions:
+`tests/ledger.tcyr` (the ring, the cursor, a drain that allocates nothing, lost vs trimmed),
+`tests/crews_route.tcyr` (the cursor over HTTP, the collector carrying an unpolled crew to a persisted
+outcome, task ids and the plan), `tests/outcome.tcyr` (usage, per task and per crew), the new
+`tests/crew_tenancy.tcyr` (isolation on every crew route, the listing and its cursor, the durable
+index across a restart, idempotency keys — four mutations each fail a named assertion),
+`tests/webgui.tcyr` (the plugin rung — two mutations) and `tests/plugindata.tcyr` (revisions — one).
 `tests/store_concurrency.tcyr` (43, 0.1.4) is the only multi-threaded suite.
 `tests/webgui.tcyr` (141, 0.1.7) holds the WebGUI: the embedded pages re-hashed against
 their sources, the registry, durable switching, every route and code, the permission
@@ -374,7 +406,10 @@ Agnostic is built to stand on its own, not as a required layer.
 | fmt / lint / vet / deny | `check-clean.sh` OK |
 | store lock (0.1.4, 0.1.5) | `check-store-lock.py`, in `check-clean.sh` — every handle fetch under the store lock; no result string borrowed past its result set |
 | transport (0.1.8) | [ADR 0006](../adr/0006-loopback-host-and-json-only-writes.md): with auth off a non-loopback `Host` is 403; a POST or PUT without a JSON media type is 415 — both through the socket handler in `tests/serve_mount.tcyr`, mutation-checked |
-| symbols | `check-symbols.sh` OK — 129 definitions, no duplicates, all prefixed |
+| plugins (0.1.9) | [ADR 0007](../adr/0007-plugin-requests-are-checked-by-the-server.md): every bridged request is checked by the server against `permissions.json`; mutation-checked in `tests/webgui.tcyr` and, for the shell's gate, `tests/webgui/shell.test.mjs` |
+| crew tenancy (0.1.9) | [ADR 0008](../adr/0008-crews-belong-to-the-submitting-tenant.md): another tenant's crew is 404 on every route; mutation-checked in `tests/crew_tenancy.tcyr` |
+| webgui js (0.1.9) | `scripts/check-webgui-js.sh` in `check-clean.sh` — Node 20+, a test-time dependency only |
+| symbols | `check-symbols.sh` OK — 927 top-level definitions across 48 files, no duplicates, all prefixed |
 | security | CI `security` job clean |
 | baseline benches | `bench-history.csv` seeded — `noop` 2 ns @ `830216c` |
 | documented | `BENCHMARKS.md` generated |
@@ -488,10 +523,11 @@ if that changes the cache goes rather than gets patched.
 
 ## Persistence
 
-**One patra database, six tables**, behind `src/engine/store.cyr`:
+**One patra database, eight tables**, behind `src/engine/store.cyr`:
 `agnostic_definitions (dkey, doc)`, `agnostic_crews (crew_id, cname, cstatus, doc)`,
 the identity tables `agnostic_users`, `agnostic_apikeys` and `agnostic_tenants` (M5),
-and `agnostic_settings (skey, sval)` (0.1.7). patra allows exactly **one index per
+`agnostic_settings (skey, sval)` (0.1.7), `agnostic_plugin_data` (0.1.8), and
+`agnostic_crew_index` (0.1.9 — one row per terminal crew, indexed on `scope`, what the listing reads). patra allows exactly **one index per
 table** — `SCH_IDX_COL` is a single slot in the schema page — so each gets it on the
 column everything looks up by. The audit chain has its own file: `patrastore_open`
 opens its own handle.

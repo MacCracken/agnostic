@@ -42,6 +42,11 @@ fn agnostic_route_plugins_list_a(a): i64 {
     }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_PLUGINS, arr);
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOTAL, bayan_json_v_int_new_a(a, n));
+    # The permission vocabulary the server enforces (0.1.9, ADR 0007): each permission's
+    # words and routes, so the shell shows and pre-checks exactly what is enforced. Parsed
+    # once at mount and never mutated, so the response may point at it.
+    var cat = agnostic_plugin_catalogue();
+    if (cat != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CATALOGUE, cat); }
     return agnostic_response_json_a(a, HTTP_OK, obj);
 }
 

@@ -254,6 +254,101 @@ fn test_task_result_shape() {
     assert_eq(bayan_json_v_obj_get_by_str(first, str_from("metadata")), 0, "engine metadata is not exposed");
 }
 
+# A result shaped like `_agnosai_crew_success_metadata` writes one: model, provider,
+# tokens{prompt, completion, total}, an optional cost_micro_usd, task_duration_ms.
+fn _t_metered(id, prompt, compl, cost, dur): i64 {
+    var r = agnosai_task_result_new(str_from(id), str_from("answer"), AGNOSAI_STATUS_COMPLETED);
+    agnosai_task_result_with_metadata(r, str_from("model"), bayan_json_v_str_new(str_from("gpt-x")));
+    agnosai_task_result_with_metadata(r, str_from("provider"), bayan_json_v_str_new(str_from("openai")));
+    var tok = bayan_json_v_obj_new();
+    bayan_json_v_obj_set(tok, str_from("prompt"), bayan_json_v_int_new(prompt));
+    bayan_json_v_obj_set(tok, str_from("completion"), bayan_json_v_int_new(compl));
+    bayan_json_v_obj_set(tok, str_from("total"), bayan_json_v_int_new(prompt + compl));
+    agnosai_task_result_with_metadata(r, str_from("tokens"), tok);
+    if (cost >= 0) {
+        agnosai_task_result_with_metadata(r, str_from("cost_micro_usd"), bayan_json_v_int_new(cost));
+    }
+    agnosai_task_result_with_metadata(r, str_from("task_duration_ms"), bayan_json_v_int_new(dur));
+    return r;
+}
+
+fn _t_usage_of(a, r): i64 {
+    return bayan_json_v_obj_get_by_str(_agnostic_task_result_to_value_a(a, r), AGNOSTIC_JK_USAGE);
+}
+
+# ⭐ 0.1.9: what the engine metered reaches the wire — under agnostic's names, picked
+# field by field, and never invented where the engine measured nothing.
+fn test_task_usage() {
+    test_group("outcome/usage-task");
+
+    var a = arena_allocator(65536);
+    var u = _t_usage_of(a, _t_metered("t1", 120, 30, 4500, 812));
+    assert_neq(u, 0, "an LLM-answered task carries usage");
+    assert_eq(str_eq_cstr(agnostic_req_str(u, AGNOSTIC_JK_MODEL), "gpt-x"), 1, "the model");
+    assert_eq(str_eq_cstr(agnostic_req_str(u, AGNOSTIC_JK_PROVIDER), "openai"), 1, "the provider");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_PROMPT_TOK, 0 - 1), 120, "prompt tokens");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_COMPL_TOK, 0 - 1), 30, "completion tokens");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_TOTAL_TOK, 0 - 1), 150, "total tokens");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_COST_MICRO, 0 - 1), 4500, "the cost, in micro-USD as metered");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_DURATION_MS, 0 - 1), 812, "and the duration");
+
+    # ⚠ An unpriced call has NO cost — not a zero one, which would read as free.
+    var nu = _t_usage_of(a, _t_metered("t2", 10, 5, 0 - 1, 40));
+    assert_eq(bayan_json_v_obj_get_by_str(nu, AGNOSTIC_JK_COST_MICRO), 0, "an unpriced call carries no cost key");
+    assert_eq(agnostic_req_int(nu, AGNOSTIC_JK_TOTAL_TOK, 0 - 1), 15, "but still its tokens");
+
+    # A placeholder task: only how long the echo took — no tokens invented for it.
+    var ph = agnosai_task_result_new(str_from("t3"), str_from("echo"), AGNOSAI_STATUS_COMPLETED);
+    agnosai_task_result_with_metadata(ph, str_from("task_duration_ms"), bayan_json_v_int_new(3));
+    var pu = _t_usage_of(a, ph);
+    assert_eq(agnostic_req_int(pu, AGNOSTIC_JK_DURATION_MS, 0 - 1), 3, "a placeholder carries its duration");
+    assert_eq(bayan_json_v_obj_get_by_str(pu, AGNOSTIC_JK_TOTAL_TOK), 0, "and no token count");
+
+    # An LLM error: the duration, and the error beside the output rather than inside it.
+    var er = agnosai_task_result_new(str_from("t4"), str_from("LLM error: 502"), AGNOSAI_STATUS_FAILED);
+    agnosai_task_result_with_metadata(er, str_from("error"), bayan_json_v_str_new(str_from("502")));
+    agnosai_task_result_with_metadata(er, str_from("task_duration_ms"), bayan_json_v_int_new(9));
+    var ev = _agnostic_task_result_to_value_a(a, er);
+    assert_eq(str_eq_cstr(agnostic_req_str(ev, AGNOSTIC_JK_ERROR), "502"), 1, "a failed call says why");
+    assert_eq(agnostic_req_int(bayan_json_v_obj_get_by_str(ev, AGNOSTIC_JK_USAGE), AGNOSTIC_JK_DURATION_MS, 0 - 1), 9,
+      "and how long it took");
+
+    # A job cancelled before it ran has no metadata at all — and so no usage.
+    var cx = agnosai_task_result_new(str_from("t5"), str_from("crew cancelled"), AGNOSAI_STATUS_FAILED);
+    assert_eq(_t_usage_of(a, cx), 0, "nothing metered, no usage object");
+    assert_eq(bayan_json_v_obj_get_by_str(_agnostic_task_result_to_value_a(a, cx), AGNOSTIC_JK_ERROR), 0,
+      "and no error key it did not have");
+
+    # The engine's metadata object itself stays inside.
+    assert_eq(bayan_json_v_obj_get_by_str(_agnostic_task_result_to_value_a(a, _t_metered("t6", 1, 1, 1, 1)),
+        str_from("metadata")), 0, "engine metadata is still not exposed");
+}
+
+fn test_crew_usage() {
+    test_group("outcome/usage-crew");
+
+    var a = arena_allocator(65536);
+    var s = agnosai_crew_state_new(str_from("11111111-2222-3333-4444-555555555555"), AGNOSAI_CREW_COMPLETED);
+    agnosai_crew_state_with_result(s, _t_metered("t1", 100, 20, 3000, 5));
+    agnosai_crew_state_with_result(s, _t_metered("t2", 50, 10, 0 - 1, 5));
+    agnosai_crew_state_with_result(s, _t_metered("t3", 7, 3, 500, 5));
+    var o = agnostic_outcome_from_state_a(a, s);
+    var u = bayan_json_v_obj_get_by_str(agnostic_outcome_to_value_a(a, o), AGNOSTIC_JK_USAGE);
+    assert_neq(u, 0, "a crew carries its usage");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_PROMPT_TOK, 0 - 1), 157, "prompt tokens summed");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_COMPL_TOK, 0 - 1), 33, "completion tokens summed");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_TOTAL_TOK, 0 - 1), 190, "total tokens summed");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_METERED, 0 - 1), 3, "three tasks metered");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_COSTED, 0 - 1), 2, "two of them priced");
+    assert_eq(agnostic_req_int(u, AGNOSTIC_JK_COST_MICRO, 0 - 1), 3500, "and the price is theirs, said to be partial");
+
+    var none = agnostic_outcome_from_state_a(a, _t_state(AGNOSAI_CREW_COMPLETED, 2));
+    var nu = bayan_json_v_obj_get_by_str(agnostic_outcome_to_value_a(a, none), AGNOSTIC_JK_USAGE);
+    assert_neq(nu, 0, "usage is present even when nothing was metered");
+    assert_eq(agnostic_req_int(nu, AGNOSTIC_JK_METERED, 0 - 1), 0, "and says so: zero metered");
+    assert_eq(bayan_json_v_obj_get_by_str(nu, AGNOSTIC_JK_COST_MICRO), 0, "with no cost — not a cost of zero");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -268,6 +363,8 @@ fn main() {
     test_results_absent_vs_empty();
     test_wire_shape();
     test_task_result_shape();
+    test_task_usage();
+    test_crew_usage();
     return assert_summary();
 }
 

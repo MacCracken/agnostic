@@ -4,8 +4,17 @@
 # |---|---|
 # | `GET /api/v1/plugins/{id}/data` | 200 — keys, update times, sizes; never the documents |
 # | `GET /api/v1/plugins/{id}/data/{key}` | 200 — the document, verbatim · 404 · 422 |
-# | `PUT /api/v1/plugins/{id}/data/{key}` | **201** created · 200 replaced · 400 · 404 · **413** · 422 · **507** |
-# | `DELETE /api/v1/plugins/{id}/data/{key}` | 200 · 404 · 422 |
+# | `PUT /api/v1/plugins/{id}/data/{key}` | **201** created · 200 replaced · 400 · 404 · |
+# |  | **412** · **413** · 422 · **507** |
+# | `DELETE /api/v1/plugins/{id}/data/{key}` | 200 · 404 · **412** · 422 |
+#
+# ## Revisions (0.1.9)
+#
+# A GET answers the document with an `ETag`; a PUT answers the new one as `etag`. A PUT or
+# DELETE that sends `If-Match: <etag>` happens only if the document is still that revision,
+# and a PUT that sends `If-None-Match: *` only if the key is new — otherwise 412 and nothing
+# changes. That is how two tabs editing one document find out, instead of the second save
+# silently undoing the first. See `src/engine/plugindata.cyr`.
 #
 # Reading is READ and writing is WRITE (`src/auth/perm.cyr`). Every document lives in
 # the caller's tenant — `agnostic_plugindata_scope` — so one tenant can neither list
@@ -31,6 +40,7 @@ var AGNOSTIC_JK_UPDATED   = str_from("updated");
 var AGNOSTIC_JK_BYTES     = str_from("bytes");
 var AGNOSTIC_JK_CREATED   = str_from("created");
 var AGNOSTIC_JK_SCOPE     = str_from("scope");
+var AGNOSTIC_JK_ETAG      = str_from("etag");
 
 # The 422 a malformed plugin id earns.
 fn _agnostic_pdata_bad_plugin_a(a): i64 {
@@ -102,7 +112,14 @@ fn agnostic_route_plugindata_get_a(a, id: Str, key: Str, ctx): i64 {
     if (doc == 0) {
         return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "no such document"));
     }
-    return agnostic_response_bytes_a(a, HTTP_OK, "application/json", doc, 0);
+    # The revision, as a header: the body is the document itself, byte for byte.
+    var tag = agnostic_plugindata_etag_a(a, doc);
+    if (tag == 0) { return 0; }
+    var hb = str_builder_new_a(a);
+    str_builder_add_cstr_a(a, hb, "ETag: ");
+    str_builder_add_a(a, hb, tag);
+    str_builder_add_cstr_a(a, hb, "\r\n");
+    return agnostic_response_bytes_a(a, HTTP_OK, "application/json", doc, str_data(str_builder_build_a(a, hb)));
 }
 
 # `PUT /api/v1/plugins/{id}/data/{key}` — create or replace one document.
@@ -125,7 +142,12 @@ fn agnostic_route_plugindata_put_a(a, id: Str, key: Str, body: Str, ctx): i64 {
 
     var scope = agnostic_plugindata_scope(agnostic_reqctx_principal(ctx));
     var now = clock_epoch_secs();
-    var rc = agnostic_plugindata_put(a, scope, id, key, body, now);
+    var rc = agnostic_plugindata_put_if(a, scope, id, key, body, now,
+      agnostic_reqctx_if_match(ctx), agnostic_reqctx_if_none_match(ctx));
+    if (rc == AGNOSTIC_PDATA_PRECONDITION) {
+        return agnostic_response_error_code_a(a, AGNOSTIC_HTTP_PRECONDITION_FAILED, "revision",
+          str_from_a(a, "the document is not the revision this write was made from; read it again"));
+    }
     if (rc == AGNOSTIC_PDATA_FULL) {
         # 507, and the message says what to do — the same reasoning as the
         # definition store's: a retry without a delete fails identically.
@@ -145,6 +167,8 @@ fn agnostic_route_plugindata_put_a(a, id: Str, key: Str, body: Str, ctx): i64 {
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_KEY, bayan_json_v_str_new_a(a, key));
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_UPDATED, bayan_json_v_int_new_a(a, now));
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_BYTES, bayan_json_v_int_new_a(a, str_len(body)));
+    var tag = agnostic_plugindata_etag_a(a, body);
+    if (tag != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ETAG, bayan_json_v_str_new_a(a, tag)); }
     var created = 0;
     if (rc == AGNOSTIC_PDATA_CREATED) { created = 1; }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREATED, bayan_json_v_bool_new_a(a, created));
@@ -158,7 +182,12 @@ fn agnostic_route_plugindata_delete_a(a, id: Str, key: Str, ctx): i64 {
     if (_agnostic_pdata_plugin_a(a, id, &resp) == 0) { return load64(&resp); }
     if (agnostic_plugindata_key_is_valid(key) == 0) { return _agnostic_pdata_bad_key_a(a); }
     var scope = agnostic_plugindata_scope(agnostic_reqctx_principal(ctx));
-    if (agnostic_plugindata_delete(a, scope, id, key) == 0) {
+    var dr = agnostic_plugindata_delete_if(a, scope, id, key, agnostic_reqctx_if_match(ctx));
+    if (dr == AGNOSTIC_PDATA_PRECONDITION) {
+        return agnostic_response_error_code_a(a, AGNOSTIC_HTTP_PRECONDITION_FAILED, "revision",
+          str_from_a(a, "the document is not the revision this delete was made from; read it again"));
+    }
+    if (dr == 0) {
         return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "no such document"));
     }
     # WARNING, like a definition's delete: it is the entry an operator looks for.

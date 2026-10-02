@@ -66,14 +66,53 @@ VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 # `mixed`: the view shows both, and labels each mission itself (0.1.8).
 DATA_KINDS = ("simulated", "live", "mixed")
 
-# What a plugin may ask the shell to do on its behalf (ADR 0005). The shell maps each
-# to the exact routes it allows; an unknown name here is a build error, not a silent
-# no-op at run time.
-PERMISSIONS = ("storage", "presets:read", "definitions:read", "crews:read", "crews:write")
+# What a plugin may ask the server for (ADR 0005, ADR 0007). ONE file defines the
+# vocabulary — each permission's name, the words Settings shows for it, and the exact
+# routes it grants — and everything else reads it: this generator validates manifests
+# against it and embeds it, the server enforces it on every request a plugin makes
+# (`X-Agnostic-Plugin`), and the shell shows its words. Adding a permission is an edit
+# to that file (and the docs), never to code in three places.
+PERMISSIONS_FILE = "src/webgui/permissions.json"
+PERM_NAME_RE = re.compile(r"^[a-z]+(:[a-z]+)?$")
+ROUTE_RE = re.compile(r"^(GET|POST|PUT|DELETE) (/(?:[a-z0-9._-]+|:[a-z]+))+$")
 
 def fail(msg):
     sys.stderr.write("gen-webgui: " + msg + "\n")
     sys.exit(2)
+
+def load_permissions():
+    try:
+        raw = json.load(open(PERMISSIONS_FILE))
+    except (OSError, ValueError) as e:
+        fail("%s: %s" % (PERMISSIONS_FILE, e))
+    if not isinstance(raw, dict) or not raw:
+        fail("%s: the vocabulary is a non-empty JSON object" % PERMISSIONS_FILE)
+    for name, p in raw.items():
+        if not PERM_NAME_RE.match(name):
+            fail("%s: permission %r must match %s" % (PERMISSIONS_FILE, name, PERM_NAME_RE.pattern))
+        if not isinstance(p, dict) or sorted(p) != ["grants", "routes"]:
+            fail("%s: %s must hold exactly `grants` and `routes`" % (PERMISSIONS_FILE, name))
+        if not isinstance(p["grants"], str) or not p["grants"] or len(p["grants"]) > 120:
+            fail("%s: %s.grants must be a sentence of 1-120 characters" % (PERMISSIONS_FILE, name))
+        routes = p["routes"]
+        if not isinstance(routes, list) or not routes or len(set(routes)) != len(routes):
+            fail("%s: %s.routes must be a non-empty list without repeats" % (PERMISSIONS_FILE, name))
+        for r in routes:
+            if not isinstance(r, str) or not ROUTE_RE.match(r):
+                fail("%s: %s: route %r is not `METHOD /path` with literal or :name segments"
+                     % (PERMISSIONS_FILE, name, r))
+            segs = r.split(" ", 1)[1].split("/")[1:]
+            if not r.split(" ", 1)[1].startswith("/api/v1/"):
+                fail("%s: %s: route %r is not under /api/v1/ — a plugin reaches the API and "
+                     "nothing else" % (PERMISSIONS_FILE, name, r))
+            for i, seg in enumerate(segs):
+                if seg == ":self" and segs[:i] != ["api", "v1", "plugins"]:
+                    fail("%s: %s: `:self` may only follow /api/v1/plugins/ — it names the "
+                         "asking plugin's own id" % (PERMISSIONS_FILE, name))
+    return raw
+
+PERMISSION_TABLE = load_permissions()
+PERMISSIONS = tuple(PERMISSION_TABLE)
 
 root = "src/webgui/plugins"
 on_disk = sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)))
@@ -268,6 +307,13 @@ chain("agnostic_webgui_asset_path",
 chain("agnostic_webgui_asset_csp",
       ["The Content-Security-Policy the `i`th page is served with, or 0."],
       [q(policy) for _, _, _, policy in pages])
+L.append("# The plugin permission vocabulary, `src/webgui/permissions.json`, as compact JSON:")
+L.append("# `{name: {grants, routes[]}}`. Parsed once at mount (`src/webgui/plugins.cyr`), which")
+L.append("# enforces it on every request a plugin makes (ADR 0007).")
+L.append("fn agnostic_webgui_permissions_json(): i64 {")
+L.append("    return %s;" % q(json.dumps(PERMISSION_TABLE, separators=(",", ":"), ensure_ascii=False)))
+L.append("}")
+L.append("")
 chain("agnostic_webgui_plugin_manifest",
       ["The `i`th plugin's manifest as compact JSON, or 0. `asset` is the page the",
        "generator resolved its `entry` to."],

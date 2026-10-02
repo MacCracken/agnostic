@@ -171,6 +171,101 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
 
 <script>
   'use strict';
+  // The plugin host bridge's gate (ADR 0005, ADR 0007): pure functions, no DOM and no state,
+  // so they run in Node as well (tests/webgui/shell.test.mjs). The app script below holds the
+  // state, makes the calls and answers the frame.
+  //
+  // What a plugin may ask for is the SERVER's catalogue — `GET /api/v1/plugins` answers each
+  // permission's routes (from src/webgui/permissions.json) — compiled here into matchers.
+  // The server checks the same table again on every bridged request (`X-Agnostic-Plugin`),
+  // so this check is a fast refusal and a second wall, never the only one.
+  window.AgnosticBridge = (() => {
+    const METHODS = Object.freeze(['GET', 'POST', 'PUT', 'DELETE']);
+    const MAX_BODY = 262144;
+    const MAX_INFLIGHT = 16;
+    const RE_PATH = /^\/api\/v1\/[A-Za-z0-9\/._-]*(\?[A-Za-z0-9._~=&%-]{0,512})?$/;
+    const RE_ID = /^[A-Za-z0-9._:-]{1,64}$/;
+    const RE_ETAG = /^"[0-9a-f]{16}"$/;
+    const RE_IDEM = /^[A-Za-z0-9._:-]{8,128}$/;
+    const reEscape = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    /** One catalogue route ("GET /api/v1/crews/:id") as a matcher for plugin `pluginId`. */
+    function compileRoute(route, pluginId) {
+      const sp = String(route).indexOf(' ');
+      if (sp < 1) return null;
+      const method = route.slice(0, sp);
+      const segs = route.slice(sp + 1).split('/').slice(1).map((seg) => {
+        if (seg === ':self') return reEscape(pluginId);
+        if (seg.startsWith(':')) return '[^/]+';
+        return reEscape(seg);
+      });
+      return { method, re: new RegExp('^/' + segs.join('/') + '$') };
+    }
+    /** Every route the plugin's permissions grant, per the catalogue. Unknown names grant nothing. */
+    function grantsFor(plugin, catalogue) {
+      const out = [];
+      for (const name of (plugin && plugin.permissions) || []) {
+        const entry = catalogue && Object.prototype.hasOwnProperty.call(catalogue, name) ? catalogue[name] : null;
+        for (const route of (entry && Array.isArray(entry.routes) ? entry.routes : [])) {
+          const g = compileRoute(route, plugin.id);
+          if (g) out.push(g);
+        }
+      }
+      return out;
+    }
+    /** Whether (method, path) is one of `grants`. The query string is not part of the match. */
+    function granted(grants, method, path) {
+      const bare = String(path).split('?')[0];
+      return grants.some((g) => g.method === method && g.re.test(bare));
+    }
+    /**
+     * Check one `agnostic:request` from `plugin`. Returns `{ok: true, method, path, body, headers}`
+     * — what to send — or `{ok: false, status, error}`, answered by the shell without reaching
+     * the network: 400 malformed, 403 not granted, 413 too large.
+     */
+    function check(msg, plugin, grants) {
+      const no = (status, error) => ({ ok: false, status, error });
+      const idOk = (typeof msg.id === 'string' && RE_ID.test(msg.id)) || (typeof msg.id === 'number' && Number.isFinite(msg.id));
+      if (!idOk) return no(400, 'a request id is a short string or a number');
+      const method = typeof msg.method === 'string' ? msg.method.toUpperCase() : '';
+      const path = typeof msg.path === 'string' ? msg.path : '';
+      if (!METHODS.includes(method) || !RE_PATH.test(path) || path.includes('..') || path.includes('//')) {
+        return no(400, 'the shell refused a malformed request');
+      }
+      if (!granted(grants, method, path)) return no(403, plugin.name + ' is not permitted to ' + method + ' ' + path.split('?')[0]);
+      let body;
+      if (msg.body !== undefined && msg.body !== null) {
+        if (method === 'GET' || method === 'DELETE') return no(400, 'a ' + method + ' carries no body');
+        let text;
+        try { text = JSON.stringify(msg.body); } catch (err) { return no(400, 'the body is not JSON'); }
+        if (typeof text !== 'string') return no(400, 'the body is not JSON');
+        if (text.length > MAX_BODY) return no(413, 'the body is over 256 KB');
+        body = msg.body;
+      }
+      const headers = {};
+      if (msg.ifMatch !== undefined) {
+        if ((method !== 'PUT' && method !== 'DELETE') || typeof msg.ifMatch !== 'string' || !RE_ETAG.test(msg.ifMatch)) {
+          return no(400, 'ifMatch is a document etag, on a PUT or a DELETE');
+        }
+        headers['If-Match'] = msg.ifMatch;
+      }
+      if (msg.ifNoneMatch !== undefined) {
+        if (method !== 'PUT' || msg.ifNoneMatch !== '*') return no(400, "ifNoneMatch is '*', on a PUT");
+        headers['If-None-Match'] = '*';
+      }
+      if (msg.idempotencyKey !== undefined) {
+        if (method !== 'POST' || typeof msg.idempotencyKey !== 'string' || !RE_IDEM.test(msg.idempotencyKey)) {
+          return no(400, 'an idempotencyKey is 8-128 of [A-Za-z0-9._:-], on a POST');
+        }
+        headers['Idempotency-Key'] = msg.idempotencyKey;
+      }
+      return { ok: true, method, path, body, headers };
+    }
+    return Object.freeze({ METHODS, MAX_BODY, MAX_INFLIGHT, compileRoute, grantsFor, granted, check });
+  })();
+</script>
+<script>
+  'use strict';
   // Agnostic WebGUI shell. Served at /ui with a CSP that admits exactly this script
   // (by hash) and connects only to its own origin. Every value that came from the
   // server is written with textContent, never innerHTML.
@@ -178,7 +273,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     const $ = (id) => document.getElementById(id);
     const TOKEN_KEY = 'agnostic.token';
     const ROLE_KEY = 'agnostic.role';
-    const state = { plugins: null, pluginsError: null, ready: null, auth: 'unknown', route: 'overview' };
+    const state = { plugins: null, pluginsError: null, catalogue: {}, ready: null, auth: 'unknown', route: 'overview' };
 
     // --- session: kept per tab, and only if storage is usable ---------------------
     const store = {
@@ -186,8 +281,10 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       set(k, v) { try { if (v) sessionStorage.setItem(k, v); else sessionStorage.removeItem(k); } catch (e) { /* storage unavailable */ } },
     };
 
-    async function api(method, path, body) {
-      const headers = { Accept: 'application/json' };
+    // `extra`: further request headers — the bridge's `X-Agnostic-Plugin`, `If-Match`,
+    // `If-None-Match` and `Idempotency-Key`, which `AgnosticBridge.check` has already vetted.
+    async function api(method, path, body, extra) {
+      const headers = Object.assign({ Accept: 'application/json' }, extra || {});
       const token = store.get(TOKEN_KEY);
       if (token) headers.Authorization = 'Bearer ' + token;
       const init = { method, headers, credentials: 'omit', cache: 'no-store' };
@@ -199,6 +296,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       try { res = await fetch(path, init); } catch (e) { return { status: 0, data: { error: 'the server is unreachable' } }; }
       let data = null;
       try { data = await res.json(); } catch (e) { data = null; }
+      const etag = res.headers.get('ETag');
       if (res.status === 401) {
         state.auth = 'required';
         if (token) { store.set(TOKEN_KEY, ''); store.set(ROLE_KEY, ''); }
@@ -207,7 +305,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       } else if (res.ok) {
         state.auth = 'signed-in';
       }
-      return { status: res.status, data };
+      return { status: res.status, data, etag: etag || null };
     }
     const errText = (r) => (r.data && typeof r.data.error === 'string') ? r.data.error : ('HTTP ' + r.status);
 
@@ -236,6 +334,8 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       const r = await api('GET', '/api/v1/plugins');
       if (r.status === 200 && r.data && Array.isArray(r.data.plugins)) {
         state.plugins = r.data.plugins;
+        // The permission vocabulary, as the server enforces it (src/webgui/permissions.json).
+        state.catalogue = r.data.catalogue && typeof r.data.catalogue === 'object' ? r.data.catalogue : {};
         state.pluginsError = null;
       } else {
         state.plugins = null;
@@ -254,37 +354,25 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     }
     function go(hash) { if (location.hash !== '#' + hash) location.hash = hash; else render(); }
 
-    // --- the plugin host bridge (0.1.8, ADR 0005) -----------------------------------
+    // --- the plugin host bridge (0.1.8, ADR 0005; checked by the server since 0.1.9, ADR 0007)
     // A plugin page runs sandboxed in an opaque origin with connect-src 'none': it
     // cannot reach the API itself. It asks the shell, by postMessage, and the shell
     // answers only requests the plugin's manifest permits — made with the user's own
-    // credential, which the plugin never sees. The server still enforces the user's
-    // role on every one of them; this is the plugin's limit, not the user's.
-    const bridge = { plugin: null };
-    const PERMISSION_WORDS = {
-      'storage': 'keep its own documents',
-      'presets:read': 'read the preset library',
-      'definitions:read': 'read agent definitions',
-      'crews:read': 'read crews and their events',
-      'crews:write': 'start and cancel crews',
+    // credential, which the plugin never sees, and marked `X-Agnostic-Plugin` so the
+    // server checks the same permissions again. The server also still enforces the
+    // user's role on every one of them: a permission is the plugin's limit, not the user's.
+    //
+    // ⚠ `gen` is the page SESSION. A page announces itself with `agnostic:hello`, and a
+    // reload or a different plugin in the frame starts a new session — the frame's window
+    // object stays the same, so `e.source` cannot tell two pages apart. A reply is posted
+    // only into the session that asked; anything answered after the page changed is
+    // dropped, so a late answer can never resolve the next page's request of the same id.
+    const bridge = { plugin: null, grants: [], gen: 0, inflight: 0 };
+    const permissionWords = (name) => {
+      const c = state.catalogue && state.catalogue[name];
+      return c && typeof c.grants === 'string' ? c.grants : name;
     };
-    const RE_KEY = '[a-z0-9][a-z0-9._-]{0,63}';
-    const RE_UUID = '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}';
-    function permitted(p, method, path) {
-      const perms = p.permissions || [];
-      const rules = [];
-      if (perms.includes('storage')) {
-        const doc = new RegExp('^/api/v1/plugins/' + p.id + '/data/' + RE_KEY + '$');
-        rules.push(['GET', new RegExp('^/api/v1/plugins/' + p.id + '/data$')], ['GET', doc], ['PUT', doc], ['DELETE', doc]);
-      }
-      if (perms.includes('presets:read')) rules.push(['GET', /^\/api\/v1\/presets(\/[a-z0-9][a-z0-9-]{0,99})?$/]);
-      if (perms.includes('definitions:read')) rules.push(['GET', /^\/api\/v1\/agents\/definitions(\/[a-z0-9][a-z0-9-]{0,99})?$/]);
-      if (perms.includes('crews:read')) rules.push(['GET', new RegExp('^/api/v1/crews/' + RE_UUID + '(/events)?$')]);
-      if (perms.includes('crews:write')) {
-        rules.push(['POST', /^\/api\/v1\/crews$/], ['POST', new RegExp('^/api/v1/crews/' + RE_UUID + '/cancel$')]);
-      }
-      return rules.some(([m, re]) => m === method && re.test(path));
-    }
+    function newSession() { bridge.gen++; bridge.inflight = 0; }
     function dataLabel(p, long) {
       if (p.data === 'mixed') return long ? 'SIMULATED + LIVE' : 'SIM + LIVE';
       return long ? 'SIMULATED DATA' : 'SIMULATED';
@@ -294,6 +382,10 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       if (!bridge.plugin || !frame.contentWindow) return;
       frame.contentWindow.postMessage({
         type: 'agnostic:init', protocol: 1,
+        // What this shell's bridge carries beyond protocol 1's first form (0.1.9): query
+        // strings in a path, `ifMatch`/`ifNoneMatch` with an `etag` on the answer, and an
+        // `idempotencyKey` on a POST. A plugin checks for a feature before relying on it.
+        features: ['query', 'revisions', 'idempotency'],
         plugin: { id: bridge.plugin.id, name: bridge.plugin.name, version: bridge.plugin.version },
         permissions: (bridge.plugin.permissions || []).slice(),
         // `off`: every route is open (loopback). `required`: the server enforces roles,
@@ -306,38 +398,46 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     }
     window.addEventListener('message', async (e) => {
       const frame = $('plugin-frame');
-      // Only the plugin frame on screen may ask, and only as itself.
+      // Only the plugin frame on screen may ask, and only as itself — and it is always
+      // sandboxed, so its origin is opaque ('null'). A frame that navigated itself to a
+      // real origin is no longer the plugin, and gets nothing.
       if (!bridge.plugin || !frame.contentWindow || e.source !== frame.contentWindow) return;
+      if (e.origin !== 'null') return;
       const msg = e.data;
       if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
-      if (msg.type === 'agnostic:hello') { sendInit(); return; }
+      if (msg.type === 'agnostic:hello') { newSession(); sendInit(); return; }
       if (msg.type !== 'agnostic:request') return;
       const p = bridge.plugin;
-      const reply = (status, data) => {
-        try { frame.contentWindow.postMessage({ type: 'agnostic:response', id: msg.id, status, data }, '*'); } catch (err) { /* frame gone */ }
+      const gen = bridge.gen;
+      const reply = (status, data, etag) => {
+        if (gen !== bridge.gen || bridge.plugin !== p) return; // the page that asked is gone
+        const out = { type: 'agnostic:response', id: msg.id, status, data };
+        if (etag) out.etag = etag;
+        try { frame.contentWindow.postMessage(out, '*'); } catch (err) { /* frame gone */ }
       };
-      const method = String(msg.method || '').toUpperCase();
-      const path = typeof msg.path === 'string' ? msg.path : '';
-      if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method) || !/^\/api\/v1\/[A-Za-z0-9\/._-]*$/.test(path)
-          || path.includes('..') || path.includes('//')) {
-        reply(400, { error: 'the shell refused a malformed request' });
+      const c = window.AgnosticBridge.check(msg, p, bridge.grants);
+      if (!c.ok) { reply(c.status, { error: c.error }); return; }
+      if (bridge.inflight >= window.AgnosticBridge.MAX_INFLIGHT) {
+        reply(429, { error: p.name + ' has too many requests in flight; wait for an answer first' });
         return;
       }
-      if (!permitted(p, method, path)) {
-        reply(403, { error: p.name + ' is not permitted to ' + method + ' ' + path });
-        return;
+      bridge.inflight++;
+      let r;
+      try {
+        r = await api(c.method, c.path, c.body, Object.assign({ 'X-Agnostic-Plugin': p.id }, c.headers));
+      } finally {
+        if (gen === bridge.gen) bridge.inflight--;
       }
-      let body;
-      if (msg.body !== undefined && msg.body !== null) {
-        if (method === 'GET' || method === 'DELETE') { reply(400, { error: 'a ' + method + ' carries no body' }); return; }
-        let text;
-        try { text = JSON.stringify(msg.body); } catch (err) { reply(400, { error: 'the body is not JSON' }); return; }
-        if (typeof text !== 'string' || text.length > 262144) { reply(413, { error: 'the body is over 256 KB' }); return; }
-        body = msg.body;
-      }
-      const r = await api(method, path, body);
       if (r.status === 401 && $('signin').hidden) openSignin('Sign in so ' + p.name + ' can reach the server.');
-      reply(r.status, r.data);
+      reply(r.status, r.data, r.etag);
+      // The server refused the PLUGIN itself: switched off (by someone else, since this
+      // view opened) or gone from this build. Say so and leave the view.
+      const code = r.data && typeof r.data.code === 'string' ? r.data.code : '';
+      if (r.status === 403 && (code === 'plugin_off' || code === 'plugin_unknown') && gen === bridge.gen) {
+        toast(p.name + (code === 'plugin_off' ? ' was switched off.' : ' is not available.'), true);
+        await refresh();
+        go('overview');
+      }
     });
 
     // --- rendering ------------------------------------------------------------------
@@ -448,7 +548,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
           if (!mayChange) { sw.disabled = true; sw.title = 'Changing a plugin needs the administrator role'; }
           sw.addEventListener('click', () => togglePlugin(p, sw));
           row.append(title, sw, el('div', 'desc', p.description));
-          const perms = (p.permissions || []).map((x) => PERMISSION_WORDS[x] || x);
+          const perms = (p.permissions || []).map(permissionWords);
           row.append(el('div', 'perms', perms.length ? 'Can ' + perms.join(' · ') + ', as the signed-in user.' : 'Asks the server for nothing.'));
           if ((p.permissions || []).includes('storage')) {
             const stored = el('div', 'stored', 'Stored documents: …');
@@ -528,7 +628,8 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       $('plugin-newtab').href = p.url;
       frame.title = p.name;
       bridge.plugin = p;
-      if (frame.getAttribute('src') !== p.url) frame.setAttribute('src', p.url);
+      bridge.grants = window.AgnosticBridge.grantsFor(p, state.catalogue);
+      if (frame.getAttribute('src') !== p.url) { newSession(); frame.setAttribute('src', p.url); }
     }
 
     function render() {
@@ -537,7 +638,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       renderTabs(route);
       renderWho();
       for (const v of ['overview', 'settings', 'plugin']) $('view-' + v).hidden = v !== route.view;
-      if (route.view !== 'plugin') { $('plugin-frame').removeAttribute('src'); bridge.plugin = null; }
+      if (route.view !== 'plugin') { $('plugin-frame').removeAttribute('src'); bridge.plugin = null; bridge.grants = []; newSession(); }
       if (route.view === 'overview') renderOverview();
       else if (route.view === 'settings') renderSettings();
       else renderPlugin(route.id);
@@ -603,11 +704,10 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     // the page's CSP has form-action 'none', and the request goes through fetch.
     $('signin-form').addEventListener('submit', (e) => { e.preventDefault(); signIn(); });
     $('signin-cancel').addEventListener('click', closeSignin);
-    $('plugin-frame').addEventListener('load', sendInit);
     $('plugin-reload').addEventListener('click', () => {
       const f = $('plugin-frame');
       const src = f.getAttribute('src');
-      if (src) { f.removeAttribute('src'); f.setAttribute('src', src); }
+      if (src) { newSession(); f.removeAttribute('src'); f.setAttribute('src', src); }
     });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('signin').hidden) closeSignin(); });
     window.addEventListener('hashchange', render);

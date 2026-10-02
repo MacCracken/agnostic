@@ -27,3 +27,6 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0004](0004-webgui-plugins-compiled-in-switched-at-run-time.md) | WebGUI plugins are compiled in and switched at run time |
 | [0005](0005-plugins-reach-the-server-through-the-host-bridge.md) | Plugins reach the server only through the shell's host bridge, under their manifest's permissions |
 | [0006](0006-loopback-host-and-json-only-writes.md) | With authentication off the server answers only a loopback Host, and every POST and PUT must declare JSON |
+| [0007](0007-plugin-requests-are-checked-by-the-server.md) | Plugin requests are checked by the server, against one permission vocabulary |
+| [0008](0008-crews-belong-to-the-submitting-tenant.md) | Crews belong to the tenant that submitted them, are listed by cursor, and a keyed submit is idempotent |
+| [0009](0009-crew-progress-is-collected-by-the-server.md) | Crew progress is collected by the server and read by cursor, not streamed |

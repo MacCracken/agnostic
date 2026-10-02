@@ -32,6 +32,17 @@
 # and a plugin keeps at most `AGNOSTIC_PLUGINDATA_MAX_DOCS` documents per scope. The
 # keys are refused at the door when too long, because `COL_STR` truncates silently.
 #
+# ## Revisions: a document's ETag, and conditional writes (0.1.9)
+#
+# Every document has an ETag — the first 64 bits of the SHA-256 of its bytes, as
+# `"<16 hex>"` — answered by a GET and by a PUT. A PUT or DELETE may name the revision it
+# was made from (`If-Match`), and a PUT may insist the key is new (`If-None-Match: *`); a
+# write whose condition does not hold changes nothing and is told so (412). The condition is
+# checked under the store lock, in the same step as the write, so two writers racing from
+# the same revision cannot both succeed. Content-addressed, so it needs no column: an
+# unconditional write of identical bytes keeps the revision a reader holds valid, which is
+# right — nothing that reader saw has changed.
+#
 # ## ⛔ The store lock, as everywhere else
 #
 # `lock; var r = _x_locked(...); unlock; return r;`, checked by
@@ -50,15 +61,51 @@ var AGNOSTIC_PLUGINDATA_MAX_DOCS = 256;
 # The longest document key.
 var AGNOSTIC_PLUGINDATA_KEY_MAX = 64;
 
-# The scope of a request with no tenant. Outside the tenant charset on purpose.
-var AGNOSTIC_PLUGINDATA_DEFAULT_SCOPE = str_from("_");
+# The scope of a request with no tenant — `AGNOSTIC_SCOPE_DEFAULT` (`src/auth/authn.cyr`,
+# included before this module, so the initialiser reads it set).
+var AGNOSTIC_PLUGINDATA_DEFAULT_SCOPE = AGNOSTIC_SCOPE_DEFAULT;
 
 # What `agnostic_plugindata_put` reports.
 enum AgnosticPluginDataPut {
-    AGNOSTIC_PDATA_FAILED   = 0;
-    AGNOSTIC_PDATA_CREATED  = 1;
-    AGNOSTIC_PDATA_REPLACED = 2;
-    AGNOSTIC_PDATA_FULL     = 3;
+    AGNOSTIC_PDATA_FAILED       = 0;
+    AGNOSTIC_PDATA_CREATED      = 1;
+    AGNOSTIC_PDATA_REPLACED     = 2;
+    AGNOSTIC_PDATA_FULL         = 3;
+    AGNOSTIC_PDATA_PRECONDITION = 4;   # an If-Match / If-None-Match that did not hold (0.1.9)
+}
+
+# How long an ETag's hex is: 16 characters, 64 bits of the SHA-256.
+var AGNOSTIC_PDATA_ETAG_HEX = 16;
+
+# The ETag of a document's bytes: `"<16 hex>"`, in `a`. 0 on exhaustion.
+fn agnostic_plugindata_etag_a(a, doc: Str): i64 {
+    var hex = agnostic_sha256_hex_a(a, doc);
+    if (hex == 0) { return 0; }
+    var buf = alloc_via(a, AGNOSTIC_PDATA_ETAG_HEX + 3);
+    if (buf == 0) { return 0; }
+    store8(buf, 34);
+    memcpy(buf + 1, str_data(hex), AGNOSTIC_PDATA_ETAG_HEX);
+    store8(buf + AGNOSTIC_PDATA_ETAG_HEX + 1, 34);
+    store8(buf + AGNOSTIC_PDATA_ETAG_HEX + 2, 0);
+    return str_new_a(a, buf, AGNOSTIC_PDATA_ETAG_HEX + 2);
+}
+
+# Whether the write condition holds for a document that is `cur` (0 when absent).
+# `if_match`: an ETag (or `*`, "it exists"), or 0 for none. `if_none`: `*` (it must not
+# exist), or 0. A condition this server cannot meet — anything else — does not hold.
+fn _agnostic_plugindata_precondition_a(a, cur: Str, if_match: Str, if_none: Str): i64 {
+    if (if_none != 0) {
+        if (str_eq_cstr(if_none, "*") == 0) { return 0; }
+        if (cur != 0) { return 0; }
+    }
+    if (if_match != 0) {
+        if (cur == 0) { return 0; }
+        if (str_eq_cstr(if_match, "*") == 1) { return 1; }
+        var tag = agnostic_plugindata_etag_a(a, cur);
+        if (tag == 0) { return 0; }
+        if (str_eq(tag, if_match) == 0) { return 0; }
+    }
+    return 1;
 }
 
 # One listed document: its key, last update (epoch seconds) and size.
@@ -100,13 +147,9 @@ fn agnostic_plugindata_key_is_valid(key: Str): i64 {
 }
 
 # The scope for a request: the principal's tenant key when it is a legal one, else
-# the default scope `_`. A principal of 0 — authentication off — is in `_`.
+# the default scope `_` — `agnostic_principal_scope`, which crews share since 0.1.9.
 fn agnostic_plugindata_scope(principal): i64 {
-    var t = agnostic_principal_tenant(principal);
-    if (t != 0) {
-        if (agnostic_tenant_key_valid(t) == 1) { return t; }
-    }
-    return AGNOSTIC_PLUGINDATA_DEFAULT_SCOPE;
+    return agnostic_principal_scope(principal);
 }
 
 # `<scope>:<plugin>:` in `a` — the prefix every document of one plugin in one scope
@@ -184,8 +227,21 @@ fn _agnostic_plugindata_get_locked_a(a, scope: Str, plugin: Str, key: Str, out_u
 #
 # ⚠ The caller has already checked `doc` is a JSON object. This module stores bytes.
 fn agnostic_plugindata_put(a, scope: Str, plugin: Str, key: Str, doc: Str, now): i64 {
+    return agnostic_plugindata_put_if(a, scope, plugin, key, doc, now, 0, 0);
+}
+
+# `agnostic_plugindata_put` under a condition (0.1.9): `if_match` (an ETag, or `*`) and
+# `if_none` (`*`), each 0 for none. AGNOSTIC_PDATA_PRECONDITION when it does not hold —
+# checked against the stored document under the store lock, in the same step as the write.
+fn agnostic_plugindata_put_if(a, scope: Str, plugin: Str, key: Str, doc: Str, now, if_match: Str, if_none: Str): i64 {
     agnostic_store_lock();
-    var r = _agnostic_plugindata_put_locked(a, scope, plugin, key, doc, now);
+    var r = AGNOSTIC_PDATA_PRECONDITION;
+    var ok = 1;
+    if (if_match != 0 || if_none != 0) {
+        var cur = _agnostic_plugindata_get_locked_a(a, scope, plugin, key, 0);
+        ok = _agnostic_plugindata_precondition_a(a, cur, if_match, if_none);
+    }
+    if (ok == 1) { r = _agnostic_plugindata_put_locked(a, scope, plugin, key, doc, now); }
     agnostic_store_unlock();
     return r;
 }
@@ -239,8 +295,21 @@ fn _agnostic_plugindata_put_locked(a, scope: Str, plugin: Str, key: Str, doc: St
 
 # Delete the document under `key`. 1 when one was deleted, 0 when there was none.
 fn agnostic_plugindata_delete(a, scope: Str, plugin: Str, key: Str): i64 {
+    return agnostic_plugindata_delete_if(a, scope, plugin, key, 0);
+}
+
+# `agnostic_plugindata_delete` under an `If-Match` (an ETag, or `*`; 0 for none) — 0.1.9.
+# 1 deleted, 0 there was none, AGNOSTIC_PDATA_PRECONDITION when the condition did not hold.
+fn agnostic_plugindata_delete_if(a, scope: Str, plugin: Str, key: Str, if_match: Str): i64 {
     agnostic_store_lock();
-    var r = _agnostic_plugindata_delete_locked(a, scope, plugin, key);
+    var r = AGNOSTIC_PDATA_PRECONDITION;
+    var ok = 1;
+    if (if_match != 0) {
+        var cur = _agnostic_plugindata_get_locked_a(a, scope, plugin, key, 0);
+        if (cur == 0) { ok = 2; } else { ok = _agnostic_plugindata_precondition_a(a, cur, if_match, 0); }
+    }
+    if (ok == 2) { r = 0; }
+    if (ok == 1) { r = _agnostic_plugindata_delete_locked(a, scope, plugin, key); }
     agnostic_store_unlock();
     return r;
 }

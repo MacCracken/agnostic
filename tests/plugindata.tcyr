@@ -371,6 +371,74 @@ fn test_transport_ladder() {
     agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
 }
 
+# A context carrying `If-Match` / `If-None-Match` (each 0 for none).
+fn _t_ctx_if(a, if_match, if_none) {
+    var c = agnostic_reqctx_new_a(a, 0, 0);
+    var im = 0;
+    var inm = 0;
+    if (if_match != 0) { im = if_match; }
+    if (if_none != 0) { inm = str_from(if_none); }
+    agnostic_reqctx_set_headers(c, 0, 0, im, inm);
+    return c;
+}
+
+fn _t_etag(r) {
+    return bayan_json_v_str(bayan_json_v_obj_get_by_str(agnostic_response_body(r), str_from("etag")));
+}
+
+# ⭐ 0.1.9: a document has a revision, and a write made from a stale one is refused —
+# that is what stops a second tab's save silently undoing the first's.
+fn test_revisions() {
+    test_group("plugindata/revisions");
+    _t_open();
+    agnostic_plugindata_reset();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var a = arena_allocator(4194304);
+    var path = "/api/v1/plugins/swarm/data/rev";
+
+    var r1 = _t_req(a, AGNOSTIC_METHOD_PUT, path, "{\"v\":1}", 0);
+    assert_eq(_t_status(r1), AGNOSTIC_HTTP_CREATED, "an unconditional PUT creates");
+    var e1 = _t_etag(r1);
+    assert_eq(str_len(e1), 18, "and answers its revision: a quoted 16-hex ETag");
+    var g = _t_req(a, AGNOSTIC_METHOD_GET, path, "", 0);
+    assert_neq(agnostic_response_headers(g), 0, "a GET carries headers");
+    var hdr = str_from(agnostic_response_headers(g));
+    assert_eq(str_contains(hdr, e1), 1, "⭐ and its ETag is the revision the PUT answered");
+
+    var r2 = _t_req(a, AGNOSTIC_METHOD_PUT, path, "{\"v\":2}", _t_ctx_if(a, e1, 0));
+    assert_eq(_t_status(r2), HTTP_OK, "If-Match the current revision: the write happens");
+    var e2 = _t_etag(r2);
+    assert_eq(str_eq(e1, e2), 0, "and the revision moves");
+
+    var stale = _t_req(a, AGNOSTIC_METHOD_PUT, path, "{\"v\":99}", _t_ctx_if(a, e1, 0));
+    assert_eq(_t_status(stale), AGNOSTIC_HTTP_PRECONDITION_FAILED, "⭐ If-Match a STALE revision: 412");
+    assert_eq(str_eq_cstr(agnostic_response_body(_t_req(a, AGNOSTIC_METHOD_GET, path, "", 0)), "{\"v\":2}"), 1,
+      "and the stored document is untouched");
+
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, path, "{\"v\":3}", _t_ctx_if(a, str_from("*"), 0))), HTTP_OK,
+      "If-Match: * on a document that exists: the write happens");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/absent", "{}", _t_ctx_if(a, e1, 0))),
+      AGNOSTIC_HTTP_PRECONDITION_FAILED, "If-Match on a document that does not exist: 412, not a create");
+
+    var n1 = _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/fresh", "{}", _t_ctx_if(a, 0, "*"));
+    assert_eq(_t_status(n1), AGNOSTIC_HTTP_CREATED, "If-None-Match: * on a new key creates it");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/fresh", "{\"x\":1}", _t_ctx_if(a, 0, "*"))),
+      AGNOSTIC_HTTP_PRECONDITION_FAILED, "⭐ and on an existing one is 412 — two tabs cannot both create one swarm");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/odd", "{}", _t_ctx_if(a, 0, "abc"))),
+      AGNOSTIC_HTTP_PRECONDITION_FAILED, "an If-None-Match other than * cannot be met");
+
+    var cur = _t_etag(_t_req(a, AGNOSTIC_METHOD_PUT, path, "{\"v\":4}", 0));
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_DELETE, path, "", _t_ctx_if(a, e2, 0))),
+      AGNOSTIC_HTTP_PRECONDITION_FAILED, "a DELETE from a stale revision is 412");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_GET, path, "", 0)), HTTP_OK, "and deletes nothing");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_DELETE, path, "", _t_ctx_if(a, cur, 0))), HTTP_OK,
+      "from the current one it deletes");
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_DELETE, path, "", _t_ctx_if(a, cur, 0))), HTTP_NOT_FOUND,
+      "and a conditional delete of what is gone is 404");
+    assert_eq(str_eq(_t_etag(_t_req(a, AGNOSTIC_METHOD_PUT, path, "{\"v\":4}", 0)), cur), 1,
+      "the revision is the content's: the same bytes, the same ETag");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -381,6 +449,7 @@ fn main() {
     test_count_limit();
     test_routes();
     test_transport_ladder();
+    test_revisions();
     agnostic_store_close();
     return assert_summary();
 }

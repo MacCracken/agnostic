@@ -385,6 +385,82 @@ fn test_audit() {
     agnostic_audit_close();
 }
 
+# Dispatch a request the shell's bridge made for plugin `pid` (it carries X-Agnostic-Plugin).
+fn _t_req_for(a, pid, method, path, body) {
+    var ctx = agnostic_reqctx_new_a(a, 0, 0);
+    agnostic_reqctx_set_headers(ctx, 0, str_from(pid), 0, 0);
+    return agnostic_route_dispatch_a(a, method, str_from(path), str_from(body), _T_MAXBODY, ctx);
+}
+
+# A response's `code`, or "" when it has none — never 0, so a refusal that lost its code
+# fails an assertion instead of crashing the suite.
+fn _t_code(r) {
+    var c = _t_field(r, "code");
+    if (bayan_json_v_is_str(c) != 1) { return str_from(""); }
+    return bayan_json_v_str(c);
+}
+
+# ⭐ 0.1.9, ADR 0007: the server checks every request the bridge makes for a plugin against
+# that plugin's permissions — from ONE vocabulary, served to the shell as `catalogue`.
+fn test_plugin_rung() {
+    test_group("plugins/rung");
+    _t_open();
+    agnostic_plugindata_ensure();
+    agnostic_crews_ensure();
+    agnostic_webgui_init();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var a = arena_allocator(1048576);
+
+    # The vocabulary is served with the plugins, words and routes.
+    var list = _t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins", "");
+    var cat = _t_field(list, "catalogue");
+    assert_neq(cat, 0, "GET /plugins serves the permission catalogue");
+    var crews_read = bayan_json_v_obj_get_by_str(cat, str_from("crews:read"));
+    assert_neq(crews_read, 0, "with each permission");
+    assert_eq(bayan_json_v_is_str(bayan_json_v_obj_get_by_str(crews_read, str_from("grants"))), 1, "its words");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(crews_read, str_from("routes"))), 4, "and its routes");
+
+    # Switched off, everything a plugin asks for is refused — before authentication.
+    var off = _t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/presets", "");
+    assert_eq(agnostic_response_status(off), HTTP_FORBIDDEN, "⭐ a switched-off plugin is refused");
+    assert_eq(str_eq_cstr(_t_code(off), "plugin_off"), 1, "with code plugin_off, which the shell acts on");
+
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":true}");
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/presets", "")), HTTP_OK,
+      "switched on, a granted route answers (presets:read)");
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/crews?limit=5", "")),
+      HTTP_OK, "with a query string too — the match is on the path");
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/k1", "{}")),
+      AGNOSTIC_HTTP_CREATED, "its own documents (storage, :self)");
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/crews", "")), HTTP_OK,
+      "the crew list (crews:read)");
+
+    var other = _t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/plugins/someone-else/data", "");
+    assert_eq(agnostic_response_status(other), HTTP_FORBIDDEN, "⭐ but not ANOTHER plugin's documents");
+    assert_eq(str_eq_cstr(_t_code(other), "plugin_forbidden"), 1, "plugin_forbidden");
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":false}")),
+      HTTP_FORBIDDEN, "⭐ nor its own switch");
+    assert_eq(agnostic_plugin_enabled(agnostic_plugin_find(str_from("swarm"))), 1, "which stays on");
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/audit", "")), HTTP_FORBIDDEN,
+      "nor the audit trail");
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions", "")),
+      HTTP_FORBIDDEN, "nor definitions, which its manifest does not ask for");
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", "{}")),
+      HTTP_FORBIDDEN, "nor writing a definition");
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_DELETE, "/api/v1/presets", "")),
+      HTTP_METHOD_NOT_ALLOWED, "a method no route takes is 405 from routing, before the rung — there is nothing to grant");
+
+    var nobody = _t_req_for(a, "no-such-plugin", AGNOSTIC_METHOD_GET, "/api/v1/presets", "");
+    assert_eq(agnostic_response_status(nobody), HTTP_FORBIDDEN, "an unknown plugin is refused");
+    assert_eq(str_eq_cstr(_t_code(nobody), "plugin_unknown"), 1, "plugin_unknown");
+    assert_eq(str_eq_cstr(_t_code(_t_req_for(a, "Not An Id", AGNOSTIC_METHOD_GET, "/api/v1/presets", "")), "plugin_unknown"), 1,
+      "and so is a malformed id");
+
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/audit", "")), HTTP_OK,
+      "a request WITHOUT the header is not a plugin's, and passes as before");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":false}");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -397,6 +473,7 @@ fn main() {
     test_plugin_api();
     test_permissions();
     test_audit();
+    test_plugin_rung();
     agnostic_store_close();
     return assert_summary();
 }

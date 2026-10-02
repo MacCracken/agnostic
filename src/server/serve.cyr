@@ -161,6 +161,14 @@ fn _agnostic_serve_send(a, cfd, resp): i64 {
       str_data(body), str_len(body), extra);
 }
 
+# A request header as a `Str` in `a`, or 0 when the request does not carry it. `name` is
+# lower-case; sandhi matches header names case-insensitively.
+fn _agnostic_serve_header_a(a, buf, blen, name): i64 {
+    var raw = sandhi_server_find_header_a(a, buf, blen, name);
+    if (raw == 0) { return 0; }
+    return str_from_a(a, raw);
+}
+
 # sandhi's handler: `fn(ctx, cfd, buf, blen)`.
 #
 # ⚠ **sandhi's accessors return NUL-terminated cstrings, not `Str`.** Passing one
@@ -240,6 +248,12 @@ fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
     var raw_host = sandhi_server_find_header_a(a, buf, blen, "host");
     if (raw_host != 0) { host = str_from_a(a, raw_host); }
     agnostic_reqctx_set_transport(rctx, ctype, host);
+    # The four headers handlers read (0.1.9) — see `agnostic_reqctx_set_headers`.
+    agnostic_reqctx_set_headers(rctx,
+      _agnostic_serve_header_a(a, buf, blen, "idempotency-key"),
+      _agnostic_serve_header_a(a, buf, blen, "x-agnostic-plugin"),
+      _agnostic_serve_header_a(a, buf, blen, "if-match"),
+      _agnostic_serve_header_a(a, buf, blen, "if-none-match"));
 
     # ⚠ Fail CLOSED without a context. A null `rctx` reads to the ladder as an
     # in-process caller, which skips the transport rules — so a request whose
@@ -518,6 +532,10 @@ fn agnostic_serve(cfg): i64 {
         return 1;
     }
     agnostic_serve_install_signals();
+    # After the signal mask, which every thread inherits — see `collector.cyr`. A
+    # collector that cannot start is survivable: crews are then refreshed only when
+    # polled, which is how every release before 0.1.9 ran.
+    agnostic_collector_start(&_agnostic_serve_stop);
 
     var port = agnostic_config_port(cfg);
     var addr = agnostic_config_addr(cfg);

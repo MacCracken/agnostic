@@ -90,6 +90,72 @@ fn _agnostic_bench_json_kind(): i64 {
     return kinds;
 }
 
+# 0.1.9 — what a request the shell made for a plugin pays on the plugin rung (ADR 0007):
+# find the plugin, read its switch, and match the route against its grants. The path is a
+# crew-events URL, granted by the fourth permission Swarm Command holds, so the match walks
+# most of its grant list before it hits.
+fn _agnostic_bench_plugin_gate(): i64 {
+    agnostic_webgui_init();
+    var p = agnostic_plugin_find(str_from("swarm"));
+    if (p == 0) { return 0; }
+    atomic_store(p + AGNOSTIC_PLUGIN_ENABLED, 1);
+    var a = arena_allocator(8388608);
+    var pid = str_from("swarm");
+    var path = str_from("/api/v1/crews/6ba7b810-9dad-41d1-80b4-00c04fd430c8/events?after=12");
+    var refused = 0;
+    var bg = bench_new("plugin_gate_granted");
+    bench_batch_start(bg);
+    var i = 0;
+    while (i < 100000) {
+        if (agnostic_plugin_gate_a(a, pid, AGNOSTIC_METHOD_GET, path) != 0) { refused = refused + 1; }
+        i = i + 1;
+        if ((i & 1023) == 0) { reset_via(a); }
+    }
+    bench_batch_stop(bg, 100000);
+    bench_report(bg);
+    return refused;
+}
+
+# 0.1.9 — what a poll of `GET /crews/{id}/events?after=N` pays to copy events out of the
+# ring under the ledger lock: the whole 256-event window (a reader starting at 0) and one
+# new event (a reader keeping up).
+fn _agnostic_bench_ledger_snapshot(): i64 {
+    agnostic_ledger_reset();
+    var bus = agnosai_event_bus_new();
+    var id = str_from("bench-crew");
+    var e = agnostic_ledger_record(id, str_from("bench"), agnosai_event_bus_subscribe(bus, id));
+    var tx = agnosai_event_bus_sender(bus, id);
+    var k = 0;
+    while (k < 256) {
+        agnosai_event_sender_send(tx, agnosai_crew_event_new(id, str_from("token"), bayan_json_v_obj_new()));
+        k = k + 1;
+    }
+    agnostic_ledger_drain(e);
+    var a = arena_allocator(1048576);
+    var n = 0;
+    var bw = bench_new("ledger_snapshot_window_256");
+    bench_batch_start(bw);
+    var i = 0;
+    while (i < 10000) {
+        n = n + vec_len(agnostic_ledger_snap_events(agnostic_ledger_snapshot_a(a, e, 0)));
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(bw, 10000);
+    bench_report(bw);
+    var b1 = bench_new("ledger_snapshot_one_new");
+    bench_batch_start(b1);
+    i = 0;
+    while (i < 100000) {
+        n = n + vec_len(agnostic_ledger_snap_events(agnostic_ledger_snapshot_a(a, e, 255)));
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(b1, 100000);
+    bench_report(b1);
+    return n;
+}
+
 fn main(): i64 {
     alloc_init();
     var b = bench_new("noop");
@@ -147,6 +213,8 @@ fn main(): i64 {
     _agnostic_bench_route("route_plugindata_doc", "/api/v1/plugins/swarm/data/swarm-abc123");
     _agnostic_bench_guards();
     _agnostic_bench_json_kind();
+    _agnostic_bench_plugin_gate();
+    _agnostic_bench_ledger_snapshot();
     return 0;
 }
 

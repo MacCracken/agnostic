@@ -1,0 +1,106 @@
+# agnostic/engine/collector — keeps every live crew's ledger entry current (0.1.9).
+#
+# ## Why a thread, when every crew route already refreshes on a poll
+#
+# Until 0.1.9 a crew's ledger entry moved only when a client asked about it: the routes
+# drained the bus and read the engine's state on each GET (`agnostic_crew_refresh_a`), and
+# nothing else did. Three things followed from "nobody is asking":
+#
+#   * **Events were lost.** The engine's per-subscriber queue holds 256 events and drops
+#     the oldest beyond that (`AGNOSAI_SSE_CHANNEL_CAPACITY`). A crew nobody watched lost
+#     its early progress before anyone drained it — so watching it later showed a story
+#     with its beginning missing.
+#   * **An outcome could be lost.** Terminal outcomes are persisted when the ledger
+#     latches them, and the ledger latched only on a poll. A crew that finished while no
+#     one was looking was not durable: restart the process before the first poll and its
+#     results were gone.
+#   * **Times were the poller's.** An event's `at_ms` is when agnostic took it off the bus;
+#     with no collector that was whenever someone next polled.
+#
+# One thread fixes all three: every `AGNOSTIC_COLLECTOR_INTERVAL_MS` it refreshes each
+# live entry — drains its bus into the ring, reads the engine, latches, persists a
+# terminal outcome — exactly what a poll does, on a clock. The routes still refresh too,
+# so a poll is never staler than the poll itself, and a process with no collector (every
+# suite) behaves as it did before.
+#
+# ## ⚠ What it may not do
+#
+# It allocates nothing that outlives a sweep: each sweep runs in its own arena, rewound
+# before the next, and `agnostic_ledger_live_entries_a` walks the ledger without the global
+# allocator. The one exception is the outcome document written once per crew when it turns
+# terminal (`_agnostic_ledger_persist`), the same bytes a poll would have spent.
+#
+# It holds no lock across another: the ledger lock is taken and released per operation
+# inside the refresh, the orchestrator's lock inside the engine call, and the store lock
+# inside the persist — never two at once, in the order every request path already uses.
+#
+# It must be started AFTER `agnostic_serve_install_signals`, like every other thread: the
+# signal mask is inherited, and a thread spawned before it would take a SIGTERM meant for
+# the signalfd thread.
+
+# How often the collector sweeps, in milliseconds. Short enough that a watcher polling
+# once a second sees nothing it could have seen sooner; long enough that an idle server
+# does next to nothing.
+var AGNOSTIC_COLLECTOR_INTERVAL_MS = 200;
+
+# The collector's arena. A sweep needs one small outcome record per live crew, so this is
+# room for every crew the ledger can hold several times over; SPILL beyond it.
+var AGNOSTIC_COLLECTOR_ARENA_BYTES = 262144;
+
+# 1 once the thread is running.
+var _agnostic_collector_started = 0;
+
+# How many sweeps have completed. Read by the suites and the bench.
+var _agnostic_collector_sweeps = 0;
+
+# One sweep: refresh every live ledger entry, in `a`. Returns how many entries it
+# refreshed. Safe to call from any thread, concurrently with the routes — it is exactly
+# the refresh a poll performs.
+fn agnostic_collector_sweep_a(a): i64 {
+    var live = agnostic_ledger_live_entries_a(a);
+    if (live == 0) { return 0; }
+    var n = vec_len(live);
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(live, i);
+        agnostic_crew_refresh_a(a, e, agnostic_ledger_crew_id(e));
+        i = i + 1;
+    }
+    return n;
+}
+
+# How many sweeps the collector thread has completed.
+fn agnostic_collector_sweeps(): i64 {
+    return atomic_load(&_agnostic_collector_sweeps);
+}
+
+# The thread body: sweep, rewind, sleep, until `stop_flag` (a pointer to the server's
+# stop word) reads non-zero.
+fn _agnostic_collector_thread(stop_flag): i64 {
+    var a = arena_allocator(AGNOSTIC_COLLECTOR_ARENA_BYTES);
+    if (a == 0) {
+        sakshi_error("crew collector: no arena; crews are refreshed only when polled", 62);
+        return 0;
+    }
+    arena_allocator_set_on_full(a, ARENA_FULL_SPILL);
+    while (load64(stop_flag) == 0) {
+        agnostic_collector_sweep_a(a);
+        reset_via(a);
+        atomic_fetch_add(&_agnostic_collector_sweeps, 1);
+        sleep_ms(AGNOSTIC_COLLECTOR_INTERVAL_MS);
+    }
+    return 0;
+}
+
+# Start the collector thread. `stop_flag` is a pointer to the word that ends it. Returns
+# 1 when it is running (or already was), 0 when the thread could not be created — which
+# is logged and survivable: crews are then refreshed only when polled, as before 0.1.9.
+fn agnostic_collector_start(stop_flag): i64 {
+    if (_agnostic_collector_started == 1) { return 1; }
+    if (thread_create(&_agnostic_collector_thread, stop_flag) == 0) {
+        sakshi_warn("could not start the crew collector; crews are refreshed only when polled", 72);
+        return 0;
+    }
+    _agnostic_collector_started = 1;
+    return 1;
+}

@@ -5,8 +5,9 @@
 > Last refreshed: **2026-08-23**, after M5 and the M6 viability gate. The toolchain
 > and dependency facts in §2 and §6 were refreshed **2026-10-01**, at 0.1.7; §5
 > gained the store-lock rules at 0.1.4, the borrow/TLS rules at 0.1.5, the
-> dependency and embedding rules at 0.1.7, and the transport and plugin rules at 0.1.8.
-> §1 notes the WebGUI (0.1.7) and its plugin platform (0.1.8).
+> dependency and embedding rules at 0.1.7, the transport and plugin rules at 0.1.8, and the
+> crew-surface and plugin-rung rules at 0.1.9. §1 notes the WebGUI (0.1.7), its plugin
+> platform (0.1.8), and the server-checked plugins and tenant-scoped crews of 0.1.9.
 
 Read in this order:
 
@@ -17,7 +18,7 @@ Read in this order:
 | [`roadmap.md`](roadmap.md) | M0–M9 sequencing and per-milestone gates |
 | [`../../CYRIUS-PORT-BRIEF.md`](../../CYRIUS-PORT-BRIEF.md) | Research snapshot (2026-08-19): language notes, dep stack, **§7 decisions — binding** |
 | [`../../ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) | 86 verified defects in the Python oracle. §3 gated M2, §2.2 gated M3; **§3.15 is what M6's gate now measures** |
-| [`../adr/`](../adr/) | Six ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes |
+| [`../adr/`](../adr/) | Nine ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server |
 
 ---
 
@@ -57,7 +58,14 @@ live as a real crew — labelling every mission SIM or LIVE. With auth off the s
 only loopback Hosts, and every POST/PUT must be JSON (ADR 0006). ADRs 0004–0006 are the
 why; `state.md` § WebGUI is the what.
 
-Version is **0.1.8** — see `CHANGELOG.md`. Per decision #4 the port's milestones
+**0.1.9 made the crew surface something a UI can stand on, and the plugin platform something the
+server enforces:** every request a plugin makes is checked by the server against one permission file
+(ADR 0007); crews belong to their tenant, are listed by cursor, and take an `Idempotency-Key`
+(ADR 0008); a collector thread keeps every crew current, its events numbered for a cursor, its
+outcome durable without a poller (ADR 0009); results carry the tokens and cost the engine metered.
+Swarm Command 0.3.0 runs on all of it, and its JavaScript is tested under Node in CI.
+
+Version is **0.1.9** — see `CHANGELOG.md`. Per decision #4 the port's milestones
 ship together as **1.0.0** (§4).
 
 ## 2. ⚠ Build it correctly, or you will write a lock CI cannot reproduce
@@ -204,6 +212,32 @@ then, against a real requirement. Out of scope for v1.0.
 
 ## 5. Cyrius footguns that have already cost time
 
+**Added at 0.1.9:**
+
+- **A crew route must look its crew up IN SCOPE** — `agnostic_ledger_entry_in(key,
+  agnostic_reqctx_scope(ctx))`, never `agnostic_ledger_entry(key)` — and answer another tenant's
+  crew with the same 404 as an unknown one. A stored outcome is checked against its document's
+  `scope` (absent = `_`). `tests/crew_tenancy.tcyr` holds every route to it.
+- **The engine's result metadata is a Str-keyed MAP of bayan values, not a bayan object** — read it
+  with `map_get`; only `tokens` inside it is an object. Reading it with `bayan_json_v_obj_get_by_str`
+  answers nothing, silently.
+- **Anything that walks the ledger on a timer must not allocate globally.** `map_keys` builds its
+  vec with the global allocator; the collector walks the map's slots instead
+  (`agnostic_ledger_live_entries_a`), and each sweep runs in an arena it rewinds. A per-sweep
+  `alloc` is a leak at five sweeps a second, forever.
+- **A long SQL literal may continue onto a second line** — the newline the `\`-continuation keeps is
+  whitespace to patra's tokenizer. That is how a >120-character `CREATE TABLE` passes lint.
+- **The plugin rung runs BEFORE authentication.** A plugin request outside its grants never
+  authenticates; a test that expects 401 for one must not also send `X-Agnostic-Plugin`.
+- **A route the router does not take for that method answers 405 before the plugin rung runs** —
+  there is nothing to grant. A test of "granted path, ungranted method" needs a method that route has.
+- **In the browser, the sandboxed plugin frame may be IN-process** (headless Chromium put it there
+  at 0.1.9, though 0.1.8's notes say out-of-process): a CDP driver that waits only for an attached
+  target never finds it. Find it through `Page.getFrameTree` and evaluate in its default execution
+  context.
+- **Cross-realm arrays fail `assert.deepEqual`** in the Node tests — an array made inside the page's
+  `vm` context has that context's prototype. Compare lengths or fields.
+
 **Added at 0.1.8:**
 
 - **Every POST and PUT needs `Content-Type: application/json`** — 415 otherwise, even with
@@ -218,9 +252,9 @@ then, against a real requirement. Out of scope for v1.0.
 - **A plugin page has no network** (`connect-src 'none'`) **and no modal dialogs** (the
   sandbox lacks `allow-modals`, so `confirm()` returns false without asking). It asks the
   shell (ADR 0005), and draws its own dialogs.
-- **A new plugin permission is four edits**: `PERMISSIONS` in `scripts/gen-webgui.sh`,
-  `permitted()` and `PERMISSION_WORDS` in `src/webgui/index.html`, and the tables in ADR 0005
-  and `guides/webgui-plugins.md`.
+- ~~**A new plugin permission is four edits**~~ — **one since 0.1.9**: `src/webgui/permissions.json`
+  (and the tables in ADR 0005 and `guides/webgui-plugins.md`). The generator, the server and the
+  shell all read that file.
 - **Swarm Command's logic runs in Node.** Its page has no top-level DOM access, so its
   `<script>` evaluates in a `vm` context; the simulator, spec normalizer, estimator and crew
   request builder were tested that way at 0.1.8, and the whole flow in headless Chromium over

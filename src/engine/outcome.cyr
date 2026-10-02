@@ -92,6 +92,33 @@ var AGNOSTIC_JK_TASK_COUNT = str_from("task_count");
 var AGNOSTIC_JK_TASK_ID    = str_from("task_id");
 var AGNOSTIC_JK_OUTPUT     = str_from("output");
 
+# Usage, per task and per crew (0.1.9) — agnostic's names for what the engine meters.
+var AGNOSTIC_JK_USAGE       = str_from("usage");
+var AGNOSTIC_JK_MODEL       = str_from("model");
+var AGNOSTIC_JK_PROVIDER    = str_from("provider");
+var AGNOSTIC_JK_PROMPT_TOK  = str_from("prompt_tokens");
+var AGNOSTIC_JK_COMPL_TOK   = str_from("completion_tokens");
+var AGNOSTIC_JK_TOTAL_TOK   = str_from("total_tokens");
+var AGNOSTIC_JK_COST_MICRO  = str_from("cost_micro_usd");
+var AGNOSTIC_JK_DURATION_MS = str_from("duration_ms");
+var AGNOSTIC_JK_METERED     = str_from("metered_tasks");
+var AGNOSTIC_JK_COSTED      = str_from("costed_tasks");
+
+# The ENGINE's metadata keys, as `_agnosai_crew_success_metadata` and
+# `_agnosai_crew_error_result` write them. Interned here — never read through the
+# engine's own spellings, for the reason above — and read only by
+# `_agnostic_result_usage_a`, so an engine rename is one place to change and one suite
+# (`tests/outcome.tcyr`) to fail.
+var _AGNOSTIC_MK_MODEL      = str_from("model");
+var _AGNOSTIC_MK_PROVIDER   = str_from("provider");
+var _AGNOSTIC_MK_TOKENS     = str_from("tokens");
+var _AGNOSTIC_MK_PROMPT     = str_from("prompt");
+var _AGNOSTIC_MK_COMPLETION = str_from("completion");
+var _AGNOSTIC_MK_TOTAL      = str_from("total");
+var _AGNOSTIC_MK_COST       = str_from("cost_micro_usd");
+var _AGNOSTIC_MK_DURATION   = str_from("task_duration_ms");
+var _AGNOSTIC_MK_ERROR      = str_from("error");
+
 var AGNOSTIC_JV_PENDING   = str_from("pending");
 var AGNOSTIC_JV_RUNNING   = str_from("running");
 var AGNOSTIC_JV_COMPLETED = str_from("completed");
@@ -357,6 +384,10 @@ fn agnostic_outcome_to_value_a(a, o): i64 {
     }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_RESULTS, arr);
 
+    var usage = _agnostic_outcome_usage_a(a, results);
+    if (usage == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_USAGE, usage);
+
     var err = agnostic_outcome_error(o);
     if (err != 0) {
         var ev = bayan_json_v_str_new_a(a, err);
@@ -366,13 +397,14 @@ fn agnostic_outcome_to_value_a(a, o): i64 {
     return obj;
 }
 
-# Render one engine task result as `{task_id, status, output}`.
+# Render one engine task result as `{task_id, status, output, usage?, error?}`.
 #
 # ⚠ **Rendered here rather than through `agnosai_task_result_to_value_a`.** The
 # engine's renderer emits its own key set and would make an upstream rename a
 # silent change to Agnostic's wire contract — the same reasoning as the interned
-# vocabulary above. It also emits `metadata`, which is engine-internal and has no
-# place in a product-tier response.
+# vocabulary above. It also emits `metadata` whole, which is engine-internal: since
+# 0.1.9 the parts a client needs — tokens, cost, model, duration, the LLM error — are
+# picked out of it by name into `usage` and `error`, and the rest stays inside.
 fn _agnostic_task_result_to_value_a(a, r): i64 {
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0 || r == 0) { return obj; }
@@ -389,5 +421,151 @@ fn _agnostic_task_result_to_value_a(a, r): i64 {
     var ov = bayan_json_v_str_new_a(a, agnosai_task_result_output(r));
     if (ov == 0) { return 0; }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_OUTPUT, ov);
+
+    # What the engine metered for this task (0.1.9) — see `_agnostic_result_usage_a`.
+    var usage = _agnostic_result_usage_a(a, r);
+    if (usage != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_USAGE, usage); }
+    var meta = agnosai_task_result_metadata(r);
+    if (meta != 0) {
+        var ev = map_get(meta, _AGNOSTIC_MK_ERROR);
+        if (bayan_json_v_is_str(ev) == 1) {
+            bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ERROR, bayan_json_v_str_new_a(a, bayan_json_v_str(ev)));
+        }
+    }
     return obj;
+}
+
+# An integer bayan value as a count, or -1 when `v` is absent or not an integer. Token
+# counts and costs are never negative, so -1 is "not reported".
+fn _agnostic_meta_count(v): i64 {
+    if (bayan_json_v_is_int(v) != 1) { return 0 - 1; }
+    return bayan_json_v_int(v);
+}
+
+# The integer under `key` in the engine's result METADATA — a Str-keyed map of bayan
+# values (`agnosai_task_result_with_metadata`), not a bayan object — or -1.
+fn _agnostic_meta_int(meta, key: Str): i64 {
+    if (meta == 0) { return 0 - 1; }
+    return _agnostic_meta_count(map_get(meta, key));
+}
+
+# The integer under `key` in the bayan object `o` (the metadata's `tokens`), or -1.
+fn _agnostic_tok_int(o, key: Str): i64 {
+    if (bayan_json_v_is_obj(o) != 1) { return 0 - 1; }
+    return _agnostic_meta_count(bayan_json_v_obj_get_by_str(o, key));
+}
+
+# A task's usage, from the engine's result metadata, in agnostic's own key names — or 0
+# when the engine metered nothing for it (a cancelled job carries no metadata at all).
+#
+# `{model, provider, prompt_tokens, completion_tokens, total_tokens, cost_micro_usd,
+# duration_ms}`, each present only when the engine reported it:
+#
+#   * a task the LLM answered carries all of them — `cost_micro_usd` only when the
+#     gateway priced the call. ⚠ An absent cost is NOT a zero cost: zero is a real
+#     price for a local model, so a missing one stays missing, as the engine does it;
+#   * a task whose LLM call failed carries `duration_ms` (and the result its `error`);
+#   * a placeholder task — no gateway configured — carries `duration_ms` alone, so no
+#     token count is ever invented for an echo.
+#
+# ⚠ Picked field by field, never the engine's metadata object passed through: that
+# object's keys are the engine's, and a rename inside a dependency would silently change
+# agnostic's wire contract (see the vocabulary note at the top of this module).
+fn _agnostic_result_usage_a(a, r): i64 {
+    # ⚠ The metadata is a Str-keyed MAP of bayan values, not a bayan object: read with
+    # `map_get`; only `tokens` inside it is an object.
+    var meta = agnosai_task_result_metadata(r);
+    if (meta == 0) { return 0; }
+    if (map_size(meta) == 0) { return 0; }
+    var u = bayan_json_v_obj_new_a(a);
+    if (u == 0) { return 0; }
+    var any = 0;
+
+    var mv = map_get(meta, _AGNOSTIC_MK_MODEL);
+    if (bayan_json_v_is_str(mv) == 1) {
+        bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_MODEL, bayan_json_v_str_new_a(a, bayan_json_v_str(mv)));
+        any = 1;
+    }
+    var pv = map_get(meta, _AGNOSTIC_MK_PROVIDER);
+    if (bayan_json_v_is_str(pv) == 1) {
+        bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_PROVIDER, bayan_json_v_str_new_a(a, bayan_json_v_str(pv)));
+        any = 1;
+    }
+    var tok = map_get(meta, _AGNOSTIC_MK_TOKENS);
+    if (bayan_json_v_is_obj(tok) == 1) {
+        var p = _agnostic_tok_int(tok, _AGNOSTIC_MK_PROMPT);
+        var c = _agnostic_tok_int(tok, _AGNOSTIC_MK_COMPLETION);
+        var t = _agnostic_tok_int(tok, _AGNOSTIC_MK_TOTAL);
+        if (p >= 0) { bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_PROMPT_TOK, bayan_json_v_int_new_a(a, p)); any = 1; }
+        if (c >= 0) { bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_COMPL_TOK, bayan_json_v_int_new_a(a, c)); any = 1; }
+        if (t >= 0) { bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_TOTAL_TOK, bayan_json_v_int_new_a(a, t)); any = 1; }
+    }
+    var cost = _agnostic_meta_int(meta, _AGNOSTIC_MK_COST);
+    if (cost >= 0) {
+        bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_COST_MICRO, bayan_json_v_int_new_a(a, cost));
+        any = 1;
+    }
+    var dur = _agnostic_meta_int(meta, _AGNOSTIC_MK_DURATION);
+    if (dur >= 0) {
+        bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_DURATION_MS, bayan_json_v_int_new_a(a, dur));
+        any = 1;
+    }
+    if (any == 0) { return 0; }
+    return u;
+}
+
+# A crew's usage: the sum of what its tasks were metered for (0.1.9).
+#
+# `{prompt_tokens, completion_tokens, total_tokens, metered_tasks, costed_tasks,
+# cost_micro_usd}`. `metered_tasks` is how many results carry a token count and
+# `costed_tasks` how many carry a cost, so a client can tell a whole total from a
+# partial one: a crew whose gateway priced 3 calls of 5 reports the price of those 3
+# and says so. ⚠ `cost_micro_usd` is absent when no task reported a cost — never 0,
+# which would read as "free".
+#
+# Always present, even for a crew with no results: zero metered tasks says plainly that
+# nothing was measured.
+fn _agnostic_outcome_usage_a(a, results): i64 {
+    var u = bayan_json_v_obj_new_a(a);
+    if (u == 0) { return 0; }
+    var prompt = 0;
+    var compl = 0;
+    var total = 0;
+    var cost = 0;
+    var metered = 0;
+    var costed = 0;
+    if (results != 0) {
+        var n = vec_len(results);
+        var i = 0;
+        while (i < n) {
+            var meta = agnosai_task_result_metadata(vec_get(results, i));
+            if (meta != 0) {
+                var tok = map_get(meta, _AGNOSTIC_MK_TOKENS);
+                if (bayan_json_v_is_obj(tok) == 1) {
+                    var p = _agnostic_tok_int(tok, _AGNOSTIC_MK_PROMPT);
+                    var c = _agnostic_tok_int(tok, _AGNOSTIC_MK_COMPLETION);
+                    var t = _agnostic_tok_int(tok, _AGNOSTIC_MK_TOTAL);
+                    if (p > 0) { prompt = prompt + p; }
+                    if (c > 0) { compl = compl + c; }
+                    if (t > 0) { total = total + t; }
+                    metered = metered + 1;
+                }
+                var cm = _agnostic_meta_int(meta, _AGNOSTIC_MK_COST);
+                if (cm >= 0) {
+                    cost = cost + cm;
+                    costed = costed + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_PROMPT_TOK, bayan_json_v_int_new_a(a, prompt));
+    bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_COMPL_TOK, bayan_json_v_int_new_a(a, compl));
+    bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_TOTAL_TOK, bayan_json_v_int_new_a(a, total));
+    bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_METERED, bayan_json_v_int_new_a(a, metered));
+    bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_COSTED, bayan_json_v_int_new_a(a, costed));
+    if (costed > 0) {
+        bayan_json_v_obj_set_a(a, u, AGNOSTIC_JK_COST_MICRO, bayan_json_v_int_new_a(a, cost));
+    }
+    return u;
 }

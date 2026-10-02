@@ -26,9 +26,11 @@ var AGNOSTIC_HTTP_UNPROCESSABLE     = 422;
 var AGNOSTIC_HTTP_TOO_MANY_REQUESTS = 429;
 var AGNOSTIC_HTTP_UNSUPPORTED_MEDIA = 415;
 var AGNOSTIC_HTTP_INSUFFICIENT_STORAGE = 507;
+var AGNOSTIC_HTTP_PRECONDITION_FAILED  = 412;
 
 var AGNOSTIC_JK_STATUS    = str_from("status");
 var AGNOSTIC_JK_ERROR     = str_from("error");
+var AGNOSTIC_JK_CODE      = str_from("code");
 var AGNOSTIC_JK_VERSION   = str_from("version");
 # Shared from M3: `name` is used by the crew surface and the preset surface, and
 # `tools` by the preset library and the agent-definition decoder. A key with two
@@ -68,5 +70,6 @@ fn agnostic_http_reason(status): i64 {
     if (status == HTTP_NOT_IMPLEMENTED) { return "Not Implemented"; }  #skip-lint: HTTP 501 status code, not a deferral
     if (status == HTTP_SERVICE_UNAVAILABLE) { return "Service Unavailable"; }
     if (status == AGNOSTIC_HTTP_INSUFFICIENT_STORAGE) { return "Insufficient Storage"; }
+    if (status == AGNOSTIC_HTTP_PRECONDITION_FAILED) { return "Precondition Failed"; }
     return "Internal Server Error";
 }

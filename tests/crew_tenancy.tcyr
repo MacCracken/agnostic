@@ -1,0 +1,296 @@
+# agnostic/routes/crews — crews belong to a tenant, are listed per tenant, and a keyed
+# submit is safe to retry (0.1.9).
+#
+# What this suite holds:
+#
+#   1. A crew belongs to the scope it was submitted in. To every other scope it does not
+#      exist: GET, cancel, events and plan all answer 404 — not 403, which would confirm it.
+#   2. `GET /api/v1/crews` lists the caller's crews and nobody else's, newest first, with a
+#      cursor that pages without repeating or skipping.
+#   3. A finished crew stays listed after the ledger forgets it (a restart), from the
+#      durable index, and its stored outcome is still scoped.
+#   4. `Idempotency-Key`: the same key and body answers the same crew; the same key with
+#      another body is refused; keys do not cross scopes.
+include "src/app.cyr"
+
+var _T_DB = "/tmp/agnostic-crew-tenancy-suite.patra";
+var _T_MAXB = 1048576;
+var _T_BODY = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}";
+var _T_BODY2 = "{\"name\":\"other\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"something else\"}]}";
+
+fn _t_open() {
+    agnostic_store_close();
+    sys_unlink(_T_DB);
+    patra_init();
+    agnostic_store_open(str_from(_T_DB));
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_crews_ensure();
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+    return 0;
+}
+
+# A request context carrying `Bearer <token>` (0 for none), and an Idempotency-Key (0).
+fn _t_ctx(a, token, idem) {
+    var authz = 0;
+    if (token != 0) {
+        var h = alloc_via(a, 7 + str_len(token));
+        memcpy(h, "Bearer ", 7);
+        memcpy(h + 7, str_data(token), str_len(token));
+        authz = str_new_a(a, h, 7 + str_len(token));
+    }
+    var c = agnostic_reqctx_new_a(a, authz, 0);
+    if (idem != 0) { agnostic_reqctx_set_headers(c, str_from(idem), 0, 0, 0); }
+    return c;
+}
+
+fn _t_req(a, method, path: Str, body, ctx) {
+    return agnostic_route_dispatch_a(a, method, path, str_from(body), _T_MAXB, ctx);
+}
+
+fn _t_url(id, tail) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/crews/");
+    str_builder_add(sb, id);
+    str_builder_add_cstr(sb, tail);
+    return str_builder_build(sb);
+}
+
+fn _t_submit(a, ctx, body) {
+    var r = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), body, ctx);
+    return agnostic_req_str(agnostic_response_body(r), AGNOSTIC_JK_CREW_ID);
+}
+
+# Wait, polling as `ctx`, until the crew is terminal. 1 when it got there.
+fn _t_wait(a, id, ctx) {
+    var tries = 0;
+    while (tries < 300) {
+        var b = agnostic_response_body(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(id, ""), "", ctx));
+        var st = agnostic_req_str(b, AGNOSTIC_JK_STATUS);
+        if (st != 0) {
+            if (str_eq_cstr(st, "completed") == 1 || str_eq_cstr(st, "failed") == 1) { return 1; }
+        }
+        sleep_ms(10);
+        tries = tries + 1;
+    }
+    return 0;
+}
+
+fn _t_list(a, query, ctx) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/crews");
+    if (query != 0) { str_builder_add_cstr(sb, "?"); str_builder_add_cstr(sb, query); }
+    return _t_req(a, AGNOSTIC_METHOD_GET, str_builder_build(sb), "", ctx);
+}
+
+fn _t_listed(r) {
+    return bayan_json_v_obj_get_by_str(agnostic_response_body(r), AGNOSTIC_JK_CREWS);
+}
+
+fn test_crews_belong_to_their_tenant() {
+    test_group("tenancy/isolation");
+    _t_open();
+    var a = arena_allocator(4194304);
+
+    agnostic_argon_pool_init();
+    var k = alloc(32);
+    var i = 0;
+    while (i < 32) { store8(k + i, 70 + i); i = i + 1; }
+    agnostic_jwt_set_secret(k, 32);
+    var ua = agnostic_users_create_a(a, str_from("op@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("acme"));
+    var ug = agnostic_users_create_a(a, str_from("op@globex.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("globex"));
+    var ta = agnostic_jwt_issue_a(a, ua, AGNOSTIC_ROLE_OPERATOR, str_from("acme"), 600);
+    var tg = agnostic_jwt_issue_a(a, ug, AGNOSTIC_ROLE_OPERATOR, str_from("globex"), 600);
+
+    # A crew in the default scope, submitted with authentication off.
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var anon = _t_submit(a, 0, _T_BODY);
+    assert_neq(anon, 0, "a crew is accepted with authentication off");
+    assert_eq(_t_wait(a, anon, 0), 1, "and finishes");
+
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    var acme = _t_submit(a, _t_ctx(a, ta, 0), _T_BODY);
+    assert_neq(acme, 0, "an acme operator submits a crew");
+    var accepted = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+        _t_url(acme, ""), str_from(""), _T_MAXB, _t_ctx(a, ta, 0)));
+    assert_eq(str_eq_cstr(agnostic_req_str(accepted, AGNOSTIC_JK_CREW_SCOPE), "acme"), 1,
+      "⭐ and the crew is acme's");
+
+    # ⭐ To globex, acme's crew does not exist — on every route.
+    var cg = _t_ctx(a, tg, 0);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, ""), "", cg)), HTTP_NOT_FOUND,
+      "globex cannot read acme's crew — 404, not 403");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, "/events"), "", _t_ctx(a, tg, 0))),
+      HTTP_NOT_FOUND, "nor its events");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, "/plan"), "", _t_ctx(a, tg, 0))),
+      HTTP_NOT_FOUND, "nor its plan");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_POST, _t_url(acme, "/cancel"), "", _t_ctx(a, tg, 0))),
+      HTTP_NOT_FOUND, "nor cancel it");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(anon, ""), "", _t_ctx(a, ta, 0))),
+      HTTP_NOT_FOUND, "and the default scope's crew is not acme's either");
+    assert_eq(_t_wait(a, acme, _t_ctx(a, ta, 0)), 1, "acme reads its own crew to the end");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, "/plan"), "", _t_ctx(a, ta, 0))),
+      HTTP_OK, "and its plan");
+
+    # ⭐ The listing is per tenant.
+    var la = _t_listed(_t_list(a, 0, _t_ctx(a, ta, 0)));
+    assert_eq(bayan_json_v_arr_len(la), 1, "acme lists exactly its one crew");
+    assert_eq(str_eq(agnostic_req_str(bayan_json_v_arr_get(la, 0), AGNOSTIC_JK_CREW_ID), acme), 1, "that one");
+    assert_eq(bayan_json_v_arr_len(_t_listed(_t_list(a, 0, _t_ctx(a, tg, 0)))), 0, "globex lists none");
+    assert_eq(agnostic_response_status(_t_list(a, 0, 0)), HTTP_UNAUTHORIZED, "and without a credential, 401");
+
+    # A durable crew read back after the ledger forgets it is still scoped.
+    agnostic_ledger_reset();
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, ""), "", _t_ctx(a, ta, 0))),
+      HTTP_OK, "after a restart acme still reads its finished crew, from the store");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, ""), "", _t_ctx(a, tg, 0))),
+      HTTP_NOT_FOUND, "⭐ and globex still cannot — the stored document carries its scope");
+    var after = _t_listed(_t_list(a, 0, _t_ctx(a, ta, 0)));
+    assert_eq(bayan_json_v_arr_len(after), 1, "⭐ and it is still listed, from the durable index");
+    var item = bayan_json_v_arr_get(after, 0);
+    assert_eq(str_eq_cstr(agnostic_req_str(item, AGNOSTIC_JK_STATUS), "completed"), 1, "with its status");
+    assert_eq(agnostic_req_int(item, AGNOSTIC_JK_TASKS_SUB, 0 - 1), 1, "its task count");
+    assert_eq(agnostic_req_int(item, AGNOSTIC_JK_FINISHED_AT, 0 - 1) > 0, 1, "and when it finished");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
+fn test_listing_pages_by_cursor() {
+    test_group("tenancy/list-cursor");
+    _t_open();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var a = arena_allocator(4194304);
+
+    var n = 0;
+    while (n < 5) {
+        _t_submit(a, 0, _T_BODY);
+        sleep_ms(3);
+        n = n + 1;
+    }
+    var all = _t_listed(_t_list(a, 0, 0));
+    assert_eq(bayan_json_v_arr_len(all), 5, "five crews listed");
+    var newest_first = 1;
+    var j = 1;
+    while (j < 5) {
+        if (agnostic_req_int(bayan_json_v_arr_get(all, j), AGNOSTIC_JK_SUBMITTED_AT, 0)
+          > agnostic_req_int(bayan_json_v_arr_get(all, j - 1), AGNOSTIC_JK_SUBMITTED_AT, 0)) { newest_first = 0; }
+        j = j + 1;
+    }
+    assert_eq(newest_first, 1, "newest first");
+
+    # Two at a time, following `next`, must visit all five once each.
+    var seen = 0;
+    var same = 1;
+    var pages = 0;
+    var cursor = 0;
+    while (pages < 5) {
+        var q = str_builder_new();
+        str_builder_add_cstr(q, "limit=2");
+        if (cursor != 0) { str_builder_add_cstr(q, "&before="); str_builder_add(q, cursor); }
+        var r = _t_list(a, str_data(str_builder_build(q)), 0);
+        assert_eq(agnostic_response_status(r), HTTP_OK, "each page is 200");
+        var page = _t_listed(r);
+        var p = 0;
+        while (p < bayan_json_v_arr_len(page)) {
+            if (str_eq(agnostic_req_str(bayan_json_v_arr_get(page, p), AGNOSTIC_JK_CREW_ID),
+                agnostic_req_str(bayan_json_v_arr_get(all, seen), AGNOSTIC_JK_CREW_ID)) == 0) { same = 0; }
+            seen = seen + 1;
+            p = p + 1;
+        }
+        pages = pages + 1;
+        cursor = agnostic_req_str(agnostic_response_body(r), AGNOSTIC_JK_NEXT);
+        if (cursor == 0) { break; }
+    }
+    assert_eq(seen, 5, "paging by two visits every crew");
+    assert_eq(same, 1, "once each, in the listing's order");
+    assert_eq(pages, 3, "in three pages, the last without a next");
+
+    assert_eq(agnostic_response_status(_t_list(a, "limit=0", 0)), AGNOSTIC_HTTP_UNPROCESSABLE, "limit=0 is 422");
+    assert_eq(agnostic_response_status(_t_list(a, "limit=201", 0)), AGNOSTIC_HTTP_UNPROCESSABLE, "limit=201 is 422");
+    assert_eq(agnostic_response_status(_t_list(a, "before=yesterday", 0)), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "a cursor that is not one is 422");
+    assert_eq(agnostic_response_status(_t_list(a, "before=12.not-a-uuid", 0)), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "nor is one with a bad id");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_CREW_LIST), AGNOSTIC_PERM_READ, "listing is READ");
+}
+
+# A crew document persisted before 0.1.9 has no scope: it is the default scope's.
+fn test_legacy_document_is_the_default_scope() {
+    test_group("tenancy/legacy");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var id = str_from("0e0e0e0e-1111-4222-8333-444444444444");
+    agnostic_crews_save(id, str_from("old"), AGNOSTIC_CREW_COMPLETED,
+      str_from("{\"crew_id\":\"0e0e0e0e-1111-4222-8333-444444444444\",\"status\":\"completed\",\"task_count\":0,\"results\":[]}"));
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(id, ""), "", 0)), HTTP_OK,
+      "with authentication off a legacy crew still reads");
+    assert_eq(bayan_json_v_arr_len(_t_listed(_t_list(a, 0, 0))), 0,
+      "but it has no index row, so it is not listed — said in the CHANGELOG");
+}
+
+fn test_idempotency_key() {
+    test_group("tenancy/idempotency");
+    _t_open();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var a = arena_allocator(4194304);
+
+    var r1 = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), _T_BODY, _t_ctx(a, 0, "retry-key-0001"));
+    assert_eq(agnostic_response_status(r1), AGNOSTIC_HTTP_ACCEPTED, "a keyed submit is accepted");
+    var id1 = agnostic_req_str(agnostic_response_body(r1), AGNOSTIC_JK_CREW_ID);
+    var r2 = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), _T_BODY, _t_ctx(a, 0, "retry-key-0001"));
+    assert_eq(agnostic_response_status(r2), AGNOSTIC_HTTP_ACCEPTED, "the same key and body is accepted again");
+    assert_eq(str_eq(agnostic_req_str(agnostic_response_body(r2), AGNOSTIC_JK_CREW_ID), id1), 1,
+      "⭐ as the SAME crew — the retry started nothing");
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(agnostic_response_body(r2), AGNOSTIC_JK_REPLAYED)), 1,
+      "and says it is a replay");
+    assert_eq(agnostic_ledger_count(), 1, "one crew in the ledger, not two");
+
+    var r3 = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), _T_BODY2, _t_ctx(a, 0, "retry-key-0001"));
+    assert_eq(agnostic_response_status(r3), AGNOSTIC_HTTP_UNPROCESSABLE, "the same key with another body is 422");
+    assert_eq(agnostic_ledger_count(), 1, "and starts nothing");
+
+    var r4 = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), _T_BODY, _t_ctx(a, 0, "short"));
+    assert_eq(agnostic_response_status(r4), AGNOSTIC_HTTP_UNPROCESSABLE, "a key under 8 characters is 422");
+    var r5 = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), _T_BODY, _t_ctx(a, 0, "bad key with spaces"));
+    assert_eq(agnostic_response_status(r5), AGNOSTIC_HTTP_UNPROCESSABLE, "a key with spaces is 422");
+
+    var r6 = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), _T_BODY, 0);
+    assert_eq(agnostic_response_status(r6), AGNOSTIC_HTTP_ACCEPTED, "without a key, a submit is a new crew");
+    assert_eq(agnostic_ledger_count(), 2, "every time");
+    assert_eq(bayan_json_v_obj_get_by_str(agnostic_response_body(r6), AGNOSTIC_JK_REPLAYED), 0,
+      "and is not a replay");
+
+    # Keys do not cross scopes: acme's key is acme's.
+    agnostic_argon_pool_init();
+    var k = alloc(32);
+    var i = 0;
+    while (i < 32) { store8(k + i, 90 + i); i = i + 1; }
+    agnostic_jwt_set_secret(k, 32);
+    var ua = agnostic_users_create_a(a, str_from("op2@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("acme"));
+    var ta = agnostic_jwt_issue_a(a, ua, AGNOSTIC_ROLE_OPERATOR, str_from("acme"), 600);
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    var r7 = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), _T_BODY, _t_ctx(a, ta, "retry-key-0001"));
+    assert_eq(agnostic_response_status(r7), AGNOSTIC_HTTP_ACCEPTED, "the same key in another tenant is accepted");
+    assert_eq(str_eq(agnostic_req_str(agnostic_response_body(r7), AGNOSTIC_JK_CREW_ID), id1), 0,
+      "⭐ as a new crew of its own — never the other tenant's");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    agnostic_crypto_main_init();
+    test_crews_belong_to_their_tenant();
+    test_listing_pages_by_cursor();
+    test_legacy_document_is_the_default_scope();
+    test_idempotency_key();
+    agnostic_store_close();
+    sys_unlink(_T_DB);
+    return assert_summary();
+}
+
+var _agnostic_crew_tenancy_test_exit = main();
+if (_agnostic_crew_tenancy_test_exit > 0) { _agnostic_crew_tenancy_test_exit = 1; }
+sys_exit_group(_agnostic_crew_tenancy_test_exit);

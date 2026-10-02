@@ -14,6 +14,12 @@ fn _t_status(a, method, path, body): i64 {
       agnostic_route_dispatch_a(a, method, str_from(path), str_from(body), 1048576, 0));
 }
 
+# `_t_status` for a path already built as a `Str`.
+fn _t_status_s(a, method, path): i64 {
+    return agnostic_response_status(
+      agnostic_route_dispatch_a(a, method, path, str_from(""), 1048576, 0));
+}
+
 fn _t_json(a, method, path, body): i64 {
     return agnostic_response_body(
       agnostic_route_dispatch_a(a, method, str_from(path), str_from(body), 1048576, 0));
@@ -57,11 +63,13 @@ fn test_method_mismatch_is_405() {
 
     var a = arena_allocator(65536);
 
-    # ⚠ `GET /api/v1/crews` has no arm, but the PATH is in the table — so it earns
-    # a 405 naming the mismatch rather than a 404 claiming the collection does
-    # not exist. The two say very different things to a client.
-    assert_eq(_t_status(a, AGNOSTIC_METHOD_GET, "/api/v1/crews", ""), HTTP_METHOD_NOT_ALLOWED,
-      "GET on the collection is 405, not 404");
+    # ⚠ A method the collection does not take earns a 405 naming the mismatch rather
+    # than a 404 claiming the collection does not exist. `GET` was that example until
+    # 0.1.9, when the listing arrived; `DELETE` is now.
+    assert_eq(_t_status(a, AGNOSTIC_METHOD_DELETE, "/api/v1/crews", ""), HTTP_METHOD_NOT_ALLOWED,
+      "DELETE on the collection is 405, not 404");
+    assert_eq(_t_status(a, AGNOSTIC_METHOD_GET, "/api/v1/crews", ""), HTTP_OK,
+      "and GET on it is the listing (0.1.9)");
     assert_eq(_t_status(a, AGNOSTIC_METHOD_DELETE, "/api/v1/crews/abc", ""), HTTP_METHOD_NOT_ALLOWED,
       "DELETE on a crew is 405");
     assert_eq(_t_status(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/abc/cancel", ""), HTTP_METHOD_NOT_ALLOWED,
@@ -371,6 +379,237 @@ fn test_events_route_status_is_current() {
       "ending with crew_completed");
 }
 
+# The `/events` URL for a crew, with an optional raw query (0 for none).
+fn _t_events_url(id, query): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/crews/");
+    str_builder_add(sb, id);
+    str_builder_add_cstr(sb, "/events");
+    if (query != 0) {
+        str_builder_add_cstr(sb, "?");
+        str_builder_add_cstr(sb, query);
+    }
+    return str_builder_build(sb);
+}
+
+# ⭐ `?after=N` is a cursor (0.1.9): every event carries `seq` and `at_ms`, `next` is
+# what to send back, and a reader that sends it reads each event exactly once.
+fn test_events_cursor() {
+    test_group("crews/events-cursor");
+
+    var a = arena_allocator(262144);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"),
+      str_from(_T_BODY), 1048576, 0);
+    var id = agnostic_req_str(agnostic_response_body(resp), AGNOSTIC_JK_CREW_ID);
+
+    # Read the whole run through the cursor, never asking for an event twice.
+    var after = 0;
+    var seen = 0;
+    var contiguous = 1;
+    var first_type = 0;
+    var last_type = 0;
+    var tries = 0;
+    var done = 0;
+    while (tries < 200 && done == 0) {
+        var q = str_builder_new();
+        str_builder_add_cstr(q, "after=");
+        str_builder_add_int(q, after);
+        var r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+          _t_events_url(id, str_data(str_builder_build(q))), str_from(""), 1048576, 0);
+        var body = agnostic_response_body(r);
+        var evs = bayan_json_v_obj_get_by_str(body, AGNOSTIC_JK_EVENTS);
+        var n = bayan_json_v_arr_len(evs);
+        var i = 0;
+        while (i < n) {
+            var ev = bayan_json_v_arr_get(evs, i);
+            var seq = agnostic_req_int(ev, AGNOSTIC_JK_SEQ, 0 - 1);
+            if (seq != after + 1) { contiguous = 0; }
+            if (agnostic_req_int(ev, AGNOSTIC_JK_AT_MS, 0 - 1) < 0) { contiguous = 0; }
+            if (seen == 0) { first_type = agnostic_req_str(ev, AGNOSTIC_JK_TYPE); }
+            last_type = agnostic_req_str(ev, AGNOSTIC_JK_TYPE);
+            after = seq;
+            seen = seen + 1;
+            i = i + 1;
+        }
+        assert_eq(agnostic_req_int(body, AGNOSTIC_JK_NEXT, 0 - 1) == after, 1,
+          "next is always the last number read");
+        if (str_eq_cstr(agnostic_req_str(body, AGNOSTIC_JK_STATUS), "completed") == 1) { done = 1; }
+        else { sleep_ms(10); }
+        tries = tries + 1;
+    }
+    assert_eq(done, 1, "the crew completes while it is read through the cursor");
+    assert_eq(contiguous, 1, "every event is numbered one past the last, with a time");
+    assert_eq(seen > 2, 1, "and the run produced several");
+    assert_eq(str_eq_cstr(first_type, "crew_started"), 1, "the first is crew_started");
+    assert_eq(str_eq_cstr(last_type, "crew_completed"), 1, "the last is crew_completed");
+
+    var q2 = str_builder_new();
+    str_builder_add_cstr(q2, "after=");
+    str_builder_add_int(q2, after);
+    var again = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+        _t_events_url(id, str_data(str_builder_build(q2))), str_from(""), 1048576, 0));
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(again, AGNOSTIC_JK_EVENTS)), 0,
+      "asking again from next reads nothing twice");
+    assert_eq(agnostic_req_int(again, AGNOSTIC_JK_MISSED, 0 - 1), 0, "and missed is reported, zero");
+    assert_eq(agnostic_req_int(again, AGNOSTIC_JK_LOST, 0 - 1) >= 0, 1, "lost_events is reported");
+
+    var whole = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+        _t_events_url(id, 0), str_from(""), 1048576, 0));
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(whole, AGNOSTIC_JK_EVENTS)), seen,
+      "without after, the whole window — as before 0.1.9");
+
+    # A cursor is a count; anything else is refused rather than read as 0.
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_events_url(id, "after=x")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "after=x is 422");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_events_url(id, "after=-1")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "after=-1 is 422");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_events_url(id, "after=")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "an empty after is 422");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_events_url(id, "t=1&after=2")),
+      HTTP_OK, "another parameter beside it is fine");
+}
+
+var _T_CREWDB = "/tmp/agnostic-crews-route-collector.patra";
+
+# ⭐ The collector (0.1.9): with no client polling at all, a finished crew's outcome is
+# latched and PERSISTED, and its events are collected and timed. Before 0.1.9 an outcome
+# was latched only by a poll, so a crew that finished unwatched did not survive a restart.
+fn test_collector_without_a_poller() {
+    test_group("crews/collector");
+
+    agnostic_store_close();
+    sys_unlink(_T_CREWDB);
+    patra_init();
+    agnostic_store_open(str_from(_T_CREWDB));
+    agnostic_crews_ensure();
+
+    var a = arena_allocator(262144);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"),
+      str_from(_T_BODY), 1048576, 0);
+    var id = agnostic_req_str(agnostic_response_body(resp), AGNOSTIC_JK_CREW_ID);
+    var entry = agnostic_ledger_entry(id);
+    assert_neq(entry, 0, "the crew is in the ledger");
+
+    # Only the collector's sweep — no route is called from here to the end.
+    var sa = arena_allocator(262144);
+    var sweeps = 0;
+    while (sweeps < 300 && agnostic_ledger_is_live(entry) == 1) {
+        agnostic_collector_sweep_a(sa);
+        reset_via(sa);
+        sleep_ms(10);
+        sweeps = sweeps + 1;
+    }
+    assert_eq(agnostic_ledger_is_live(entry), 0, "the sweep alone carries the crew to the end");
+    assert_eq(agnostic_ledger_status(entry), AGNOSTIC_CREW_COMPLETED, "and latches its outcome");
+    assert_neq(agnostic_crews_doc_a(a, id), 0, "which is PERSISTED without anyone polling");
+    assert_eq(agnostic_ledger_started_ms(entry) > 0, 1, "its crew_started was collected");
+    assert_eq(agnostic_ledger_finished_ms(entry) >= agnostic_ledger_started_ms(entry), 1,
+      "and it finished after it started");
+    assert_eq(agnostic_ledger_event_count(entry) > 2, 1, "with its events numbered");
+    assert_eq(vec_len(agnostic_ledger_live_entries_a(sa)), 0, "and nothing left to sweep");
+    assert_eq(agnostic_collector_sweep_a(sa), 0, "so a further sweep refreshes nothing");
+    agnostic_store_close();
+    sys_unlink(_T_CREWDB);
+}
+
+var _T_DAG = "{\"name\":\"plan\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"llm_model\":\"m1\"},{\"key\":\"a2\",\"role\":\"writer\",\"goal\":\"write it up\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\",\"priority\":\"high\"},{\"description\":\"three\",\"dependencies\":[0,1]}]}";
+
+fn _t_crew_url(id, tail): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/crews/");
+    str_builder_add(sb, id);
+    str_builder_add_cstr(sb, tail);
+    return str_builder_build(sb);
+}
+
+# ⭐ 0.1.9: the 202 names each task's engine id in request order, GET says how the crew
+# ran, and `/plan` describes any crew well enough to watch it without having submitted it.
+fn test_task_ids_and_plan() {
+    test_group("crews/plan");
+
+    var a = arena_allocator(262144);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"),
+      str_from(_T_DAG), 1048576, 0);
+    assert_eq(agnostic_response_status(resp), AGNOSTIC_HTTP_ACCEPTED, "the DAG crew is accepted");
+    var acc = agnostic_response_body(resp);
+    var id = agnostic_req_str(acc, AGNOSTIC_JK_CREW_ID);
+    var ids = bayan_json_v_obj_get_by_str(acc, AGNOSTIC_JK_TASK_IDS);
+    assert_eq(bayan_json_v_arr_len(ids), 3, "the 202 carries one task id per task");
+    var t0 = bayan_json_v_str(bayan_json_v_arr_get(ids, 0));
+    var t2 = bayan_json_v_str(bayan_json_v_arr_get(ids, 2));
+    assert_eq(agnosai_uuid_is_valid(t0), 1, "each an engine UUID");
+    assert_eq(str_eq(t0, t2), 0, "and distinct");
+    assert_eq(agnostic_req_int(acc, AGNOSTIC_JK_SUBMITTED_AT, 0 - 1) > 0, 1, "and when it was accepted");
+
+    var plan_r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan"),
+      str_from(""), 1048576, 0);
+    assert_eq(agnostic_response_status(plan_r), HTTP_OK, "the plan route answers 200");
+    var plan = agnostic_response_body(plan_r);
+    assert_eq(str_eq_cstr(agnostic_req_str(plan, AGNOSTIC_JK_PROCESS), "dag"), 1, "with the process");
+    var tasks = bayan_json_v_obj_get_by_str(plan, AGNOSTIC_JK_TASKS);
+    assert_eq(bayan_json_v_arr_len(tasks), 3, "and every task");
+    var pt0 = bayan_json_v_arr_get(tasks, 0);
+    var pt1 = bayan_json_v_arr_get(tasks, 1);
+    var pt2 = bayan_json_v_arr_get(tasks, 2);
+    assert_eq(str_eq(agnostic_req_str(pt0, AGNOSTIC_JK_TASK_ID), t0), 1, "in request order: task 0 is the 202's first id");
+    assert_eq(str_eq(agnostic_req_str(pt2, AGNOSTIC_JK_TASK_ID), t2), 1, "and task 2 its third");
+    assert_eq(str_eq_cstr(agnostic_req_str(pt1, AGNOSTIC_JK_DESCRIPTION), "two"), 1, "each with its description");
+    assert_eq(str_eq_cstr(agnostic_req_str(pt1, AGNOSTIC_JK_PRIORITY), "high"), 1, "and priority");
+    var deps = bayan_json_v_obj_get_by_str(pt2, AGNOSTIC_JK_DEPENDENCIES);
+    assert_eq(bayan_json_v_arr_len(deps), 2, "dependencies come back");
+    assert_eq(bayan_json_v_int(bayan_json_v_arr_get(deps, 0)) + bayan_json_v_int(bayan_json_v_arr_get(deps, 1)), 1,
+      "as the indices 0 and 1 they were sent as");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(pt0, AGNOSTIC_JK_DEPENDENCIES)), 0,
+      "and an empty array where there are none");
+    var agents = bayan_json_v_obj_get_by_str(plan, AGNOSTIC_JK_AGENTS);
+    assert_eq(bayan_json_v_arr_len(agents), 2, "the agents it was given");
+    var ag0 = bayan_json_v_arr_get(agents, 0);
+    assert_eq(str_eq_cstr(agnostic_req_str(ag0, AGNOSTIC_JK_KEY), "a1"), 1, "each by key");
+    assert_eq(str_eq_cstr(agnostic_req_str(ag0, AGNOSTIC_JK_LLM_MODEL), "m1"), 1, "with its model when it has one");
+
+    # The crew outcome now says how it ran — wait for it to finish first.
+    var tries = 0;
+    var body = 0;
+    while (tries < 200) {
+        body = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+            _t_crew_url(id, ""), str_from(""), 1048576, 0));
+        if (str_eq_cstr(agnostic_req_str(body, AGNOSTIC_JK_STATUS), "completed") == 1) { break; }
+        sleep_ms(10);
+        tries = tries + 1;
+    }
+    assert_eq(str_eq_cstr(agnostic_req_str(body, AGNOSTIC_JK_STATUS), "completed"), 1, "the crew completes");
+    assert_eq(str_eq_cstr(agnostic_req_str(body, AGNOSTIC_JK_NAME), "plan"), 1, "GET names it");
+    assert_eq(str_eq_cstr(agnostic_req_str(body, AGNOSTIC_JK_PROCESS), "dag"), 1, "says its process");
+    assert_eq(agnostic_req_int(body, AGNOSTIC_JK_TASKS_SUB, 0 - 1), 3, "how many tasks it was given");
+    var sub_at = agnostic_req_int(body, AGNOSTIC_JK_SUBMITTED_AT, 0 - 1);
+    var fin_at = agnostic_req_int(body, AGNOSTIC_JK_FINISHED_AT, 0 - 1);
+    assert_eq(sub_at > 0, 1, "when it was accepted");
+    assert_eq(fin_at >= sub_at, 1, "and when it finished, no earlier");
+    var usage = bayan_json_v_obj_get_by_str(body, AGNOSTIC_JK_USAGE);
+    assert_neq(usage, 0, "and its usage");
+    assert_eq(agnostic_req_int(usage, AGNOSTIC_JK_METERED, 0 - 1), 0,
+      "which, on the placeholder engine, metered nothing — no tokens invented for an echo");
+
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET,
+        str_from("/api/v1/crews/6ba7b810-9dad-11d1-80b4-00c04fd430c8/plan")), HTTP_NOT_FOUND,
+      "a crew never submitted has no plan: 404");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/crews/nope/plan")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a malformed id is 422");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_CREW_PLAN), AGNOSTIC_PERM_READ, "reading a plan is READ");
+}
+
 fn test_readiness_registers_the_engine() {
     test_group("crews/ready");
 
@@ -408,6 +647,9 @@ fn main() {
     test_cancel_a_live_crew_stops_it();
     test_events_route();
     test_events_route_status_is_current();
+    test_events_cursor();
+    test_collector_without_a_poller();
+    test_task_ids_and_plan();
     test_readiness_registers_the_engine();
     return assert_summary();
 }

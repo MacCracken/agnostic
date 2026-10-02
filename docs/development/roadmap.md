@@ -363,13 +363,47 @@ second driver. It is currently P2 / post-v1.0 with no date.
   and live runs — its tasks submitted as a crew, polled through the bridge, watched, cancelled,
   recorded on the swarm. `data: mixed`; every mission is labelled SIM or LIVE.
 
+**Grown at 0.1.9** — the plugin platform checked by the server, and a crew surface a UI can build on:
+
+- [x] One permission vocabulary (`src/webgui/permissions.json`), enforced by the server on every
+  bridged request — the plugin rung, before authentication (ADR 0007). The shell's gate is built
+  from the same file, answers only the page session that asked, and is tested under Node.
+- [x] Crews belong to their tenant (404 to every other), `GET /api/v1/crews` lists them by cursor,
+  and `Idempotency-Key` makes a submit safe to retry (ADR 0008).
+- [x] Crew progress collected by the server and read by cursor — numbered, timed events; outcomes
+  durable without a poller; RUNNING reported (ADR 0009). Real usage — tokens, cost, model — on every
+  result, and the plan route.
+- [x] Plugin documents have revisions (ETag, `If-Match`, `If-None-Match: *`, 412).
+- [x] Swarm Command 0.3.0: real cost beside the estimate, results, a Crews list that watches any
+  crew, safe submits, conflict-safe swarms, viewers read-only. `tests/webgui/` under Node in CI.
+
 Still owed for 1.0.0:
 
-- [ ] Views over the real surface: crews (a list needs pagination and tenancy — `GET
-  /api/v1/crews` is still 405), agent definitions, presets, the audit trail. They are the
-  reason M9 exists; the shell is only where they will live.
-- [ ] Streaming crew events (M7's transport) in place of the bridge's one-second poll.
+- [ ] Views over the real surface: crews — **half done**: the listing exists and Swarm Command
+  shows and watches it; a plain crews view in the shell (no map) is still owed — and agent
+  definitions, presets, the audit trail. They are the reason M9 exists; the shell is only where
+  they will live.
+- [ ] Streaming crew events (M7's transport) — the cursor replaced the window-matching poll at 0.1.9
+  (ADR 0009), but it is still a one-second poll. Needs a transport that does not hold a pooled
+  worker per watcher.
 - [ ] M8's reports, once they exist, as views or downloads from the shell.
+
+Found at 0.1.9, recorded rather than fixed:
+
+- [ ] **Cancelling a crew loses the results its finished tasks produced.** `agnostic_crew_cancel`
+  latches CANCELLED with no results, and the engine's later terminal state — with them — is refused
+  by the latch; outputs that came as events survive only in the window. The fix is a narrow latch
+  rule (a CANCELLED entry may take its results once, status unchanged) plus a crew store that may
+  then write the row — both deliberate exceptions to "a terminal outcome is written once", so they
+  want their own change and tests.
+- [ ] → **agnosai follow-ups** (release agnosai, then re-pin): a parallel or DAG crew publishes
+  `task_started` for a whole wave before it runs and `task_completed` only after every batch, and
+  sends no `token` events from its workers — a watcher cannot see which tasks of a wave are running
+  or done; `agent_cost_usd` in the crew profile is always empty (`metadata["agent"]` is never
+  written); `token` events carry `crew_id: "unknown"`; on a timeout `crew_completed` can say
+  `completed` while the orchestrator records FAILED; the registry never reports RUNNING.
+- [ ] → **sandhi**: `sandhi_server_send_chunk` discards `sock_send`'s result, so a streaming handler
+  cannot notice its client left. A prerequisite for any SSE here.
 
 ## Moving the cyrius pin to 6.6.13 (recorded 2026-10-02)
 

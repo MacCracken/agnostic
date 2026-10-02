@@ -93,6 +93,9 @@ include "src/engine/presets.cyr"
 # `presets`' tool union, so it follows it.
 include "src/engine/tools.cyr"
 include "src/engine/crew.cyr"
+# The thread that keeps every live crew's ledger entry current (0.1.9). Refreshes
+# through `crew.cyr`, so it follows it.
+include "src/engine/collector.cyr"
 include "src/engine/definitions.cyr"
 # The WebGUI's page table and plugin registry. Reads the generated data, the
 # settings store and `http/codec`'s field readers, so it follows all three.

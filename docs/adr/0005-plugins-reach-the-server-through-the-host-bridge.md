@@ -1,6 +1,6 @@
 # 0005 — Plugins reach the server only through the shell's host bridge, under their manifest's permissions
 
-**Status**: Accepted
+**Status**: Accepted — amended by [0007](0007-plugin-requests-are-checked-by-the-server.md): the server checks every bridged request too, and the permission table below now lives in one file, `src/webgui/permissions.json`
 **Date**: 2026-10-01
 
 ## Context

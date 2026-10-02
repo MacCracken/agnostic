@@ -202,6 +202,13 @@ fn agnostic_engine_crew_count(): i64 {
 #
 # See the module header for why the four steps are in this order.
 fn agnostic_crew_submit(r, out_entry): i64 {
+    return agnostic_crew_submit_owned(r, out_entry, AGNOSTIC_SCOPE_DEFAULT, 0, 0);
+}
+
+# `agnostic_crew_submit` for a crew that belongs to tenant scope `scope`, submitted with
+# `Idempotency-Key` `idem` over a body whose hex SHA-256 is `fprint` (both 0 without a
+# key) — 0.1.9. The ledger entry carries all three from the moment it exists.
+fn agnostic_crew_submit_owned(r, out_entry, scope: Str, idem: Str, fprint: Str): i64 {
     if (out_entry != 0) { store64(out_entry, 0); }
     if (_agnostic_orchestrator == 0) { return AGNOSTIC_SUBMIT_NO_ENGINE; }
 
@@ -220,7 +227,10 @@ fn agnostic_crew_submit(r, out_entry): i64 {
 
     var assigned = agnosai_orchestrator_submit_crew(_agnostic_orchestrator, spec);
 
-    var entry = agnostic_ledger_record(crew_id, agnostic_crew_req_name(r), sub);
+    var entry = agnostic_ledger_record_owned(crew_id, agnostic_crew_req_name(r), sub, scope, idem, fprint);
+    # What ran and how (0.1.9): the plan route, the 202's task ids and the persisted
+    # outcome all read the engine's spec from here, and the mode it was accepted under.
+    agnostic_ledger_set_plan(entry, spec, agnostic_engine_mode());
     if (out_entry != 0) { store64(out_entry, entry); }
 
     # 0 means the detached thread could not be created. The engine has already
@@ -276,6 +286,18 @@ fn agnostic_crew_poll_a(a, crew_id: Str): i64 {
     return agnostic_ledger_outcome_a(a, entry);
 }
 
+# The status to latch for what the engine reported, given when (if ever) the ledger
+# collected the crew's `crew_started` — epoch ms, or 0.
+#
+# ⚠ The engine's registry goes from PENDING straight to a terminal state; it never
+# says RUNNING. So a crew whose `crew_started` has been collected is RUNNING whatever
+# the registry says (0.1.9). Only PENDING is upgraded — a terminal observation, and an
+# UNKNOWN one, always stand as reported.
+fn agnostic_crew_live_status(observed, started_ms): i64 {
+    if (observed == AGNOSTIC_CREW_PENDING && started_ms != 0) { return AGNOSTIC_CREW_RUNNING; }
+    return observed;
+}
+
 # Bring a crew's ledger entry up to date — rungs 2 to 4 above — without building
 # a response. `a` holds the transient outcome the latch is computed from.
 #
@@ -294,8 +316,9 @@ fn agnostic_crew_refresh_a(a, entry, crew_id: Str): i64 {
         var state = agnosai_orchestrator_crew(_agnostic_orchestrator, crew_id);
         if (state != 0) {
             var observed = agnostic_outcome_from_state_a(a, state);
-            agnostic_ledger_latch(entry,
-              agnostic_outcome_status(observed),
+            var status = agnostic_crew_live_status(agnostic_outcome_status(observed),
+              agnostic_ledger_started_ms(entry));
+            agnostic_ledger_latch(entry, status,
               agnostic_outcome_error(observed),
               agnostic_outcome_results(observed));
         } else {

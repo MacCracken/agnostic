@@ -19,6 +19,16 @@
 # is refused the same way: it means the literal was damaged, and serving a damaged
 # page under a CSP built from the undamaged one would fail in the browser instead.
 #
+# ## What a plugin may ask for is checked HERE, not only in the shell (0.1.9, ADR 0007)
+#
+# A plugin reaches the API only through the shell's bridge, and every request the bridge
+# makes for it carries `X-Agnostic-Plugin: <id>`. The router hands such a request to
+# `agnostic_plugin_gate_a` before anything else looks at it: the plugin must be built in,
+# switched on, and granted the route by its manifest's `permissions` — the vocabulary in
+# `src/webgui/permissions.json`, embedded by the generator and parsed here once, at mount.
+# The shell checks the same table first (from `GET /api/v1/plugins`), so a refusal usually
+# never leaves the browser; this is the wall that does not depend on the shell being right.
+#
 # ## ⚠ The enabled flag is read lock-free and written under the store lock
 #
 # Every request to a plugin page reads its flag; that is an `atomic_load`, no lock.
@@ -37,7 +47,15 @@ enum AgnosticPluginOff {
     AGNOSTIC_PLUGIN_URL     = 56;
     AGNOSTIC_PLUGIN_SKEY    = 64;
     AGNOSTIC_PLUGIN_PERMS   = 72;
-    AGNOSTIC_PLUGIN_SIZE    = 80;
+    AGNOSTIC_PLUGIN_GRANTS  = 80;   # vec of grants: what its permissions let it call (0.1.9)
+    AGNOSTIC_PLUGIN_SIZE    = 88;
+}
+
+# One grant: a method and a route pattern, `:self` already replaced by the plugin's id.
+enum AgnosticGrantOff {
+    AGNOSTIC_GR_METHOD  = 0;
+    AGNOSTIC_GR_PATTERN = 8;    # a NUL-terminated pattern for `agnostic_path_matches_a`
+    AGNOSTIC_GR_SIZE    = 16;
 }
 
 # What `agnostic_plugin_set_enabled` reports.
@@ -70,10 +88,13 @@ var AGNOSTIC_JK_CHANGED = str_from("changed");
 var _AGNOSTIC_JK_ASSET  = str_from("asset");
 var _AGNOSTIC_JK_ENTRY  = str_from("entry");
 var AGNOSTIC_JK_PERMISSIONS = str_from("permissions");
+var AGNOSTIC_JK_CATALOGUE   = str_from("catalogue");
+var _AGNOSTIC_JK_ROUTES     = str_from("routes");
 
 # Built once by `agnostic_webgui_init`; read-only afterwards, so workers read them
 # without a lock.
 var _agnostic_plugins = 0;          # vec of plugin records, in generator order
+var _agnostic_perm_catalogue = 0;   # the permission vocabulary, parsed (0.1.9)
 var _agnostic_webgui_pages = 0;     # vec of `Str` page bodies, by asset index
 var _agnostic_webgui_headers = 0;   # vec of header blocks (C strings), by asset index
 
@@ -137,6 +158,10 @@ fn _agnostic_plugin_from_manifest(i): i64 {
     var perms = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_PERMISSIONS);
     if (perms == 0) { return 0; }
     if (bayan_json_v_is_arr(perms) != 1) { return 0; }
+    # What those permissions let it call (0.1.9). A name the vocabulary does not hold
+    # refuses the plugin — and so the server — rather than granting it nothing quietly.
+    var grants = _agnostic_plugin_grants(id, perms);
+    if (grants == 0) { return 0; }
 
     var p = alloc(AGNOSTIC_PLUGIN_SIZE);
     if (p == 0) { return 0; }
@@ -148,6 +173,7 @@ fn _agnostic_plugin_from_manifest(i): i64 {
     store64(p + AGNOSTIC_PLUGIN_ASSET, asset);
     store64(p + AGNOSTIC_PLUGIN_ENABLED, 0);
     store64(p + AGNOSTIC_PLUGIN_PERMS, perms);
+    store64(p + AGNOSTIC_PLUGIN_GRANTS, grants);
 
     var ub = str_builder_new();
     str_builder_add_cstr(ub, AGNOSTIC_WEBGUI_PLUGIN_PREFIX);
@@ -160,6 +186,78 @@ fn _agnostic_plugin_from_manifest(i): i64 {
     str_builder_add_cstr(kb, ".enabled");
     store64(p + AGNOSTIC_PLUGIN_SKEY, str_builder_build(kb));
     return p;
+}
+
+# The grants a plugin's `permissions` array confers, as a vec of grant records, or 0 when
+# it names a permission the vocabulary does not hold. Mount time only.
+fn _agnostic_plugin_grants(id: Str, perms): i64 {
+    if (_agnostic_perm_catalogue == 0) { return 0; }
+    var out = vec_new();
+    var n = bayan_json_v_arr_len(perms);
+    var i = 0;
+    while (i < n) {
+        var pv = bayan_json_v_arr_get(perms, i);
+        if (bayan_json_v_is_str(pv) != 1) { return 0; }
+        var entry = bayan_json_v_obj_get_by_str(_agnostic_perm_catalogue, bayan_json_v_str(pv));
+        if (entry == 0) {
+            agnostic_log_kv_str(SK_ERROR, "plugin names a permission the vocabulary does not hold", 54,
+              "plugin", 6, id);
+            return 0;
+        }
+        var routes = bayan_json_v_obj_get_by_str(entry, _AGNOSTIC_JK_ROUTES);
+        if (bayan_json_v_is_arr(routes) != 1) { return 0; }
+        var rn = bayan_json_v_arr_len(routes);
+        var j = 0;
+        while (j < rn) {
+            var g = _agnostic_grant_from(id, bayan_json_v_arr_get(routes, j));
+            if (g == 0) { return 0; }
+            vec_push(out, g);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+# One grant from a vocabulary route `"METHOD /path"`, `:self` replaced by `id`. 0 when the
+# route is not that shape — the generator refuses such a vocabulary, so this is a damaged one.
+fn _agnostic_grant_from(id: Str, rv): i64 {
+    if (bayan_json_v_is_str(rv) != 1) { return 0; }
+    var r = bayan_json_v_str(rv);
+    var d = str_data(r);
+    var n = str_len(r);
+    var sp = 0;
+    while (sp < n) {
+        if ((load8(d + sp) & 255) == 32) { break; }
+        sp = sp + 1;
+    }
+    if (sp == 0 || sp >= n - 1) { return 0; }
+    var method = agnostic_method_from(str_sub(r, 0, sp));
+    if (method == AGNOSTIC_METHOD_NONE) { return 0; }
+    # The pattern, with each `:self` segment replaced by the plugin's own id.
+    var sb = str_builder_new();
+    var i = sp + 1;
+    while (i < n) {
+        var seg_end = i + 1;
+        while (seg_end < n) {
+            if ((load8(d + seg_end) & 255) == 47) { break; }
+            seg_end = seg_end + 1;
+        }
+        # `d[i]` is a '/', and the segment runs from i + 1 to seg_end.
+        str_builder_add_cstr(sb, "/");
+        var seg_len = seg_end - i - 1;
+        if (seg_len == 5 && memeq(d + i + 1, ":self", 5) == 1) {
+            str_builder_add(sb, id);
+        } else {
+            str_builder_add(sb, str_sub(r, i + 1, seg_len));
+        }
+        i = seg_end;
+    }
+    var g = alloc(AGNOSTIC_GR_SIZE);
+    if (g == 0) { return 0; }
+    store64(g + AGNOSTIC_GR_METHOD, method);
+    store64(g + AGNOSTIC_GR_PATTERN, str_data(str_builder_build(sb)));
+    return g;
 }
 
 # Load the WebGUI: check every embedded page, build its header block, parse every
@@ -188,6 +286,15 @@ fn agnostic_webgui_init(): i64 {
         vec_push(headers, _agnostic_webgui_header_block(i));
         i = i + 1;
     }
+
+    # The permission vocabulary, before any manifest is read against it (0.1.9).
+    var cat_raw = agnostic_webgui_permissions_json();
+    var cat = bayan_json_v_parse_buf(cat_raw, strlen(cat_raw));
+    if (cat == 0 || bayan_json_v_is_obj(cat) != 1) {
+        sakshi_error("embedded plugin permission vocabulary does not parse", 52);
+        return 0 - 1;
+    }
+    _agnostic_perm_catalogue = cat;
 
     var plugins = vec_new();
     var a = arena_allocator(4096);
@@ -222,6 +329,7 @@ fn agnostic_webgui_init(): i64 {
 # a suite that reopens the store uses this to prove a switch survived the reopen.
 fn agnostic_webgui_reset(): i64 {
     _agnostic_plugins = 0;
+    _agnostic_perm_catalogue = 0;
     _agnostic_webgui_pages = 0;
     _agnostic_webgui_headers = 0;
     return 0;
@@ -336,4 +444,57 @@ fn agnostic_plugin_to_value_a(a, p): i64 {
     # Parsed once at mount and never mutated, so the response may point at it.
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_PERMISSIONS, load64(p + AGNOSTIC_PLUGIN_PERMS));
     return obj;
+}
+
+# The parsed permission vocabulary — `{name: {grants, routes[]}}` — or 0 before init.
+# `GET /api/v1/plugins` serves it, so the shell shows the same words and checks the same
+# routes the server enforces.
+fn agnostic_plugin_catalogue(): i64 {
+    return _agnostic_perm_catalogue;
+}
+
+# Whether plugin `p` may make `method path` — one of its grants matches. 1 or 0.
+fn agnostic_plugin_granted_a(a, p, method, path: Str): i64 {
+    if (p == 0) { return 0; }
+    var grants = load64(p + AGNOSTIC_PLUGIN_GRANTS);
+    if (grants == 0) { return 0; }
+    var clean = agnostic_path_only_a(a, path);
+    var n = vec_len(grants);
+    var i = 0;
+    while (i < n) {
+        var g = vec_get(grants, i);
+        if (load64(g + AGNOSTIC_GR_METHOD) == method) {
+            var param = 0;
+            if (agnostic_path_matches_a(a, clean, load64(g + AGNOSTIC_GR_PATTERN), &param) == 1) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The plugin rung (0.1.9, ADR 0007): a request the shell made FOR plugin `pid` — it carried
+# `X-Agnostic-Plugin` — is let through only when that plugin is built in, switched on, and
+# granted the route. Returns 0 to let it through, or the 403 that refuses it, with a `code`
+# the shell acts on: `plugin_unknown`, `plugin_off` (it leaves the view), `plugin_forbidden`.
+fn agnostic_plugin_gate_a(a, pid: Str, method, path: Str): i64 {
+    var p = 0;
+    if (agnostic_plugin_id_is_valid(pid) == 1) { p = agnostic_plugin_find(pid); }
+    if (p == 0) {
+        return agnostic_response_error_code_a(a, HTTP_FORBIDDEN, "plugin_unknown",
+          str_from_a(a, "no such plugin is built into this server"));
+    }
+    if (agnostic_plugin_enabled(p) == 0) {
+        return agnostic_response_error_code_a(a, HTTP_FORBIDDEN, "plugin_off",
+          str_from_a(a, "this plugin is switched off; an administrator can turn it on in Settings"));
+    }
+    if (agnostic_plugin_granted_a(a, p, method, path) == 0) {
+        agnostic_log_kv_str(SK_WARN, "plugin request outside its permissions refused", 46,
+          "plugin", 6, pid);
+        var sb = str_builder_new_a(a);
+        str_builder_add_a(a, sb, agnostic_plugin_name(p));
+        str_builder_add_cstr_a(a, sb, " is not permitted to make this request");
+        return agnostic_response_error_code_a(a, HTTP_FORBIDDEN, "plugin_forbidden",
+          str_builder_build_a(a, sb));
+    }
+    return 0;
 }

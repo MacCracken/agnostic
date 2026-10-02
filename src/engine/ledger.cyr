@@ -43,17 +43,89 @@
 # 1000** — a ledger that evicted first would lose exactly the latched outcomes it
 # exists to preserve, which is the one thing it must not do.
 
-# One submitted crew — 64 bytes.
+# ## The event window is a RING, and every event carries a sequence number (0.1.9)
+#
+# Until 0.1.9 the window was a vec, and once it held `AGNOSTIC_LEDGER_MAX_EVENTS` every
+# further event copied the other 255 into a NEW vec — an allocation per event that was
+# never freed, so a long crew leaked in proportion to its progress. It is now a fixed
+# ring allocated once per crew: slot `(seq - 1) % AGNOSTIC_LEDGER_MAX_EVENTS` holds event
+# `seq`, and a new event overwrites the oldest in place.
+#
+# Each event is numbered as it is taken off the bus — 1, 2, 3, … per crew, never reused
+# — and stamped with when it was taken, in milliseconds since the crew was accepted. The
+# number is what a reader passes back as `?after=` (`agnostic_ledger_snapshot_a`), so it
+# reads each event once instead of matching overlapping windows; the time is what a replay
+# plays against. ⚠ The time is when agnostic COLLECTED the event, not when the engine
+# published it — the engine's events carry no time — so its resolution is the collector's
+# interval (`src/engine/collector.cyr`), or the poll interval in a process without one.
+#
+# Two losses, counted apart because they mean different things: `LOST` events the bus
+# dropped before agnostic drained them (they never got a number, so a reader cannot place
+# them), and TRIMMED events that were numbered and later overwritten by the ring (a reader
+# that falls behind is told exactly how many it missed). `dropped_events` on the wire is
+# still their sum, as it has been since M2.
+
+# One submitted crew — 144 bytes.
 enum AgnosticLedgerEntryOff {
-    AGNOSTIC_LE_CREW_ID = 0;
-    AGNOSTIC_LE_NAME    = 8;
-    AGNOSTIC_LE_STATUS  = 16;
-    AGNOSTIC_LE_ERROR   = 24;
-    AGNOSTIC_LE_RESULTS = 32;
-    AGNOSTIC_LE_SUB     = 40;
-    AGNOSTIC_LE_EVENTS  = 48;
-    AGNOSTIC_LE_DROPPED = 56;
-    AGNOSTIC_LE_SIZE    = 64;
+    AGNOSTIC_LE_CREW_ID   = 0;
+    AGNOSTIC_LE_NAME      = 8;
+    AGNOSTIC_LE_STATUS    = 16;
+    AGNOSTIC_LE_ERROR     = 24;
+    AGNOSTIC_LE_RESULTS   = 32;
+    AGNOSTIC_LE_SUB       = 40;
+    AGNOSTIC_LE_RING      = 48;   # AGNOSTIC_LEDGER_MAX_EVENTS slots of (at_ms, event)
+    AGNOSTIC_LE_LOST      = 56;   # events the bus dropped before they were drained
+    AGNOSTIC_LE_NEXT_SEQ  = 64;   # the number the next event gets; events taken = NEXT_SEQ - 1
+    AGNOSTIC_LE_T0_MS     = 72;   # monotonic ms when the crew was accepted
+    AGNOSTIC_LE_SUBMITTED = 80;   # epoch ms when the crew was accepted
+    AGNOSTIC_LE_STARTED   = 88;   # epoch ms when `crew_started` was taken off the bus, or 0
+    AGNOSTIC_LE_FINISHED  = 96;   # epoch ms when the status latched terminal, or 0
+    AGNOSTIC_LE_SPEC      = 104;  # the engine's crew spec — its tasks and agents — or 0
+    AGNOSTIC_LE_MODE      = 112;  # "live" or "placeholder" when the crew was accepted, or 0
+    AGNOSTIC_LE_SCOPE     = 120;  # the tenant scope the crew belongs to — `_` for none (0.1.9)
+    AGNOSTIC_LE_IDEM      = 128;  # the `Idempotency-Key` it was submitted with, or 0
+    AGNOSTIC_LE_FPRINT    = 136;  # hex SHA-256 of the body that key came with, or 0
+    AGNOSTIC_LE_SIZE      = 144;
+}
+
+# The crew description `agnostic_ledger_describe_a` adds to an outcome (0.1.9).
+var AGNOSTIC_JK_PROCESS       = str_from("process");
+var AGNOSTIC_JK_TASKS_SUB     = str_from("tasks_submitted");
+var AGNOSTIC_JK_SUBMITTED_AT  = str_from("submitted_at");
+var AGNOSTIC_JK_STARTED_AT    = str_from("started_at");
+var AGNOSTIC_JK_FINISHED_AT   = str_from("finished_at");
+var AGNOSTIC_JK_CREW_SCOPE    = str_from("scope");
+var AGNOSTIC_JV_SEQUENTIAL    = str_from("sequential");
+var AGNOSTIC_JV_PARALLEL      = str_from("parallel");
+var AGNOSTIC_JV_DAG           = str_from("dag");
+var AGNOSTIC_JV_HIERARCHICAL  = str_from("hierarchical");
+
+# One ring slot — when the event was taken, and the event.
+enum AgnosticLedgerSlotOff {
+    AGNOSTIC_LS_AT   = 0;
+    AGNOSTIC_LS_EV   = 8;
+    AGNOSTIC_LS_SIZE = 16;
+}
+
+# One event as `agnostic_ledger_snapshot_a` hands it out — a copy, so the ring may move on.
+enum AgnosticLedgerEventOff {
+    AGNOSTIC_LEV_SEQ  = 0;
+    AGNOSTIC_LEV_AT   = 8;
+    AGNOSTIC_LEV_EV   = 16;
+    AGNOSTIC_LEV_SIZE = 24;
+}
+
+# What `agnostic_ledger_snapshot_a` reports beside the events.
+enum AgnosticLedgerSnapOff {
+    AGNOSTIC_LSN_EVENTS = 0;    # vec of AgnosticLedgerEventOff records, oldest first
+    AGNOSTIC_LSN_NEXT   = 8;    # the highest number taken so far — the next `after`
+    AGNOSTIC_LSN_MISSED = 16;   # numbered events after `after` the ring had already overwritten
+    AGNOSTIC_LSN_SIZE   = 24;
+}
+
+# Milliseconds since the epoch.
+fn agnostic_epoch_ms(): i64 {
+    return clock_epoch_ns() / 1000000;
 }
 
 # How many submitted crews the ledger retains.
@@ -79,10 +151,17 @@ var _agnostic_ledger = 0;
 # the engine never takes this one, so there is no cycle in either direction.
 var _agnostic_ledger_mutex = 0;
 
+# Serialises keyed crew submissions (0.1.9): looking up an `Idempotency-Key` and recording
+# the crew it starts are one step against a racing retry of the same key. Never held
+# with `_agnostic_ledger_mutex` — the submit path takes that inside, briefly — and only
+# a POST that carries a key takes it at all.
+var _agnostic_ledger_idem_mutex = 0;
+
 # Prepare the ledger. Mount time only, before any worker exists.
 fn agnostic_ledger_init(): i64 {
     if (_agnostic_ledger == 0) { _agnostic_ledger = map_new_str(); }
     if (_agnostic_ledger_mutex == 0) { _agnostic_ledger_mutex = mutex_new(); }
+    if (_agnostic_ledger_idem_mutex == 0) { _agnostic_ledger_idem_mutex = mutex_new(); }
     return 1;
 }
 
@@ -90,6 +169,20 @@ fn agnostic_ledger_init(): i64 {
 fn agnostic_ledger_reset(): i64 {
     _agnostic_ledger = map_new_str();
     if (_agnostic_ledger_mutex == 0) { _agnostic_ledger_mutex = mutex_new(); }
+    if (_agnostic_ledger_idem_mutex == 0) { _agnostic_ledger_idem_mutex = mutex_new(); }
+    return 0;
+}
+
+# Take the idempotency lock — see `_agnostic_ledger_idem_mutex`.
+fn agnostic_ledger_idem_lock(): i64 {
+    agnostic_ledger_init();
+    mutex_lock(_agnostic_ledger_idem_mutex);
+    return 0;
+}
+
+# Release the idempotency lock.
+fn agnostic_ledger_idem_unlock(): i64 {
+    mutex_unlock(_agnostic_ledger_idem_mutex);
     return 0;
 }
 
@@ -154,17 +247,44 @@ fn _agnostic_ledger_evict_locked(): i64 {
 # Global allocator, deliberately: the entry outlives the request that created it,
 # which is the entire premise of polling for it later.
 fn agnostic_ledger_record(crew_id: Str, name: Str, sub): i64 {
+    return agnostic_ledger_record_owned(crew_id, name, sub, AGNOSTIC_SCOPE_DEFAULT, 0, 0);
+}
+
+# `agnostic_ledger_record` for a crew that belongs to `scope` (0.1.9), submitted with the
+# `Idempotency-Key` `idem` and a body whose hex SHA-256 is `fprint` (both 0 without a key).
+#
+# ⚠ **The owner is set BEFORE the entry is published.** An entry that reached the map
+# first and learned its scope after would, for that instant, read as `_` — visible to
+# every tenantless caller. So everything a lookup filters on is in place before
+# `map_set`. All three strings are copied: they arrive in a request arena.
+fn agnostic_ledger_record_owned(crew_id: Str, name: Str, sub, scope: Str, idem: Str, fprint: Str): i64 {
     agnostic_ledger_init();
     var e = alloc(AGNOSTIC_LE_SIZE);
     if (e == 0) { return 0; }
+    # The ring, once, for the crew's whole life — see the header.
+    var ring = alloc(AGNOSTIC_LEDGER_MAX_EVENTS * AGNOSTIC_LS_SIZE);
+    if (ring == 0) { return 0; }
     store64(e + AGNOSTIC_LE_CREW_ID, crew_id);
     store64(e + AGNOSTIC_LE_NAME, name);
     store64(e + AGNOSTIC_LE_STATUS, AGNOSTIC_CREW_PENDING);
     store64(e + AGNOSTIC_LE_ERROR, 0);
     store64(e + AGNOSTIC_LE_RESULTS, 0);
     store64(e + AGNOSTIC_LE_SUB, sub);
-    store64(e + AGNOSTIC_LE_EVENTS, vec_new());
-    store64(e + AGNOSTIC_LE_DROPPED, 0);
+    store64(e + AGNOSTIC_LE_RING, ring);
+    store64(e + AGNOSTIC_LE_LOST, 0);
+    store64(e + AGNOSTIC_LE_NEXT_SEQ, 1);
+    store64(e + AGNOSTIC_LE_T0_MS, clock_now_ms());
+    store64(e + AGNOSTIC_LE_SUBMITTED, agnostic_epoch_ms());
+    store64(e + AGNOSTIC_LE_STARTED, 0);
+    store64(e + AGNOSTIC_LE_FINISHED, 0);
+    store64(e + AGNOSTIC_LE_SPEC, 0);
+    store64(e + AGNOSTIC_LE_MODE, 0);
+    if (scope == 0) { scope = AGNOSTIC_SCOPE_DEFAULT; }
+    store64(e + AGNOSTIC_LE_SCOPE, str_clone(scope));
+    store64(e + AGNOSTIC_LE_IDEM, 0);
+    store64(e + AGNOSTIC_LE_FPRINT, 0);
+    if (idem != 0) { store64(e + AGNOSTIC_LE_IDEM, str_clone(idem)); }
+    if (fprint != 0) { store64(e + AGNOSTIC_LE_FPRINT, str_clone(fprint)); }
 
     mutex_lock(_agnostic_ledger_mutex);
     _agnostic_ledger_evict_locked();
@@ -185,6 +305,85 @@ fn agnostic_ledger_entry(crew_id: Str): i64 {
     var e = map_get(_agnostic_ledger, crew_id);
     mutex_unlock(_agnostic_ledger_mutex);
     return e;
+}
+
+# The tenant scope an entry belongs to — `_` for none. Set before the entry was
+# published and never changed, so it is read without the lock.
+fn agnostic_ledger_scope(e): i64 {
+    if (e == 0) { return 0; }
+    return load64(e + AGNOSTIC_LE_SCOPE);
+}
+
+# The entry for a crew id IN `scope`, or 0 — for a crew of another tenant exactly as for
+# one never submitted, so a caller cannot learn that another tenant's crew exists.
+fn agnostic_ledger_entry_in(crew_id: Str, scope: Str): i64 {
+    var e = agnostic_ledger_entry(crew_id);
+    if (e == 0) { return 0; }
+    if (str_eq(agnostic_ledger_scope(e), scope) == 0) { return 0; }
+    return e;
+}
+
+# The `Idempotency-Key` an entry was submitted with, or 0.
+fn agnostic_ledger_idem(e): i64 {
+    if (e == 0) { return 0; }
+    return load64(e + AGNOSTIC_LE_IDEM);
+}
+
+# The hex SHA-256 of the body that key came with, or 0.
+fn agnostic_ledger_fprint(e): i64 {
+    if (e == 0) { return 0; }
+    return load64(e + AGNOSTIC_LE_FPRINT);
+}
+
+# The entry `scope` submitted with `Idempotency-Key` `idem`, or 0 (0.1.9). A key is only
+# ever looked up within its own scope: two tenants may use the same key for different
+# crews. Linear in the ledger's size (at most `AGNOSTIC_LEDGER_MAX` live entries), and only
+# a POST that carries a key pays it.
+fn agnostic_ledger_find_idem(scope: Str, idem: Str): i64 {
+    if (_agnostic_ledger == 0 || idem == 0) { return 0; }
+    var found = 0;
+    mutex_lock(_agnostic_ledger_mutex);
+    var slots = map_entries(_agnostic_ledger);
+    var cap = map_cap(_agnostic_ledger);
+    var i = 0;
+    while (i < cap && found == 0) {
+        var ep = slots + i * 24;
+        if (load64(ep + 16) == 1) {
+            var e = load64(ep + 8);
+            if (e != 0) {
+                var k = load64(e + AGNOSTIC_LE_IDEM);
+                if (k != 0) {
+                    if (str_eq(k, idem) == 1 && str_eq(load64(e + AGNOSTIC_LE_SCOPE), scope) == 1) { found = e; }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    mutex_unlock(_agnostic_ledger_mutex);
+    return found;
+}
+
+# Every entry in `scope`, as a vec in `a` — what the crew listing starts from. Walks the
+# map's slots, like `agnostic_ledger_live_entries_a`, without the global allocator.
+fn agnostic_ledger_entries_in_a(a, scope: Str): i64 {
+    var out = vec_new_a(a);
+    if (out == 0 || _agnostic_ledger == 0) { return out; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var slots = map_entries(_agnostic_ledger);
+    var cap = map_cap(_agnostic_ledger);
+    var i = 0;
+    while (i < cap) {
+        var ep = slots + i * 24;
+        if (load64(ep + 16) == 1) {
+            var e = load64(ep + 8);
+            if (e != 0) {
+                if (str_eq(load64(e + AGNOSTIC_LE_SCOPE), scope) == 1) { vec_push_a(a, out, e); }
+            }
+        }
+        i = i + 1;
+    }
+    mutex_unlock(_agnostic_ledger_mutex);
+    return out;
 }
 
 # The crew id an entry names.
@@ -217,22 +416,207 @@ fn agnostic_ledger_results(e): i64 {
     return load64(e + AGNOSTIC_LE_RESULTS);
 }
 
-# How many progress events the bus dropped for this crew.
+# How many progress events this crew's stream is missing.
 #
 # Two sources, summed: the event bus is lossy under back-pressure (reported by
-# `agnosai_event_sub_lagged`), and the retained window is capped. Both are real
-# gaps in the stream and a client is told about them rather than shown a
-# suspiciously tidy sequence.
+# `agnosai_event_sub_lagged`, `agnostic_ledger_lost`), and the ring keeps only the
+# newest `AGNOSTIC_LEDGER_MAX_EVENTS` (`agnostic_ledger_trimmed`). Both are real gaps
+# in the stream and a client is told about them rather than shown a suspiciously
+# tidy sequence.
 fn agnostic_ledger_dropped(e): i64 {
     if (e == 0) { return 0; }
-    return load64(e + AGNOSTIC_LE_DROPPED);
+    return agnostic_ledger_lost(e) + agnostic_ledger_trimmed(e);
 }
 
-# The retained progress events as a vec of engine crew events.
-fn agnostic_ledger_events(e): i64 {
+# How many events the bus dropped before they were drained. They were never numbered.
+fn agnostic_ledger_lost(e): i64 {
     if (e == 0) { return 0; }
-    return load64(e + AGNOSTIC_LE_EVENTS);
+    mutex_lock(_agnostic_ledger_mutex);
+    var n = load64(e + AGNOSTIC_LE_LOST);
+    mutex_unlock(_agnostic_ledger_mutex);
+    return n;
 }
+
+# How many events have been taken off the bus and numbered — the highest number so far.
+fn agnostic_ledger_event_count(e): i64 {
+    if (e == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var n = load64(e + AGNOSTIC_LE_NEXT_SEQ) - 1;
+    mutex_unlock(_agnostic_ledger_mutex);
+    return n;
+}
+
+# How many numbered events the ring has overwritten.
+fn agnostic_ledger_trimmed(e): i64 {
+    var n = agnostic_ledger_event_count(e);
+    if (n <= AGNOSTIC_LEDGER_MAX_EVENTS) { return 0; }
+    return n - AGNOSTIC_LEDGER_MAX_EVENTS;
+}
+
+# When the crew was accepted, in epoch milliseconds. 0 for a null entry.
+fn agnostic_ledger_submitted_ms(e): i64 {
+    if (e == 0) { return 0; }
+    return load64(e + AGNOSTIC_LE_SUBMITTED);
+}
+
+# When `crew_started` was taken off the bus, in epoch milliseconds, or 0 when it has
+# not been — the engine's registry never reports RUNNING, so this is how agnostic knows.
+fn agnostic_ledger_started_ms(e): i64 {
+    if (e == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var t = load64(e + AGNOSTIC_LE_STARTED);
+    mutex_unlock(_agnostic_ledger_mutex);
+    return t;
+}
+
+# When the status latched terminal, in epoch milliseconds, or 0 while it has not.
+fn agnostic_ledger_finished_ms(e): i64 {
+    if (e == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var t = load64(e + AGNOSTIC_LE_FINISHED);
+    mutex_unlock(_agnostic_ledger_mutex);
+    return t;
+}
+
+# Record what was submitted: the engine's crew spec (its tasks and agents, in request
+# order) and the engine mode it was accepted under. Called once, by the submit path,
+# right after `agnostic_ledger_record`. The spec is the engine's, global-allocated and
+# never freed; its task descriptions were copied out of the request when it was decoded.
+fn agnostic_ledger_set_plan(e, spec, mode: Str): i64 {
+    if (e == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    store64(e + AGNOSTIC_LE_SPEC, spec);
+    store64(e + AGNOSTIC_LE_MODE, mode);
+    mutex_unlock(_agnostic_ledger_mutex);
+    return e;
+}
+
+# The engine's crew spec, or 0 when none was recorded.
+fn agnostic_ledger_spec(e): i64 {
+    if (e == 0) { return 0; }
+    return load64(e + AGNOSTIC_LE_SPEC);
+}
+
+# The engine mode the crew was accepted under, or 0 when none was recorded.
+fn agnostic_ledger_mode(e): i64 {
+    if (e == 0) { return 0; }
+    return load64(e + AGNOSTIC_LE_MODE);
+}
+
+# The wire spelling of the ENGINE's process kind (`AGNOSAI_PROCESS_*`) — the request's own
+# vocabulary, plus `hierarchical`, which the request refuses but the engine names.
+# `agnostic_process_to_wire` (`request.cyr`) is the same for agnostic's request modes.
+fn agnostic_engine_process_to_wire(kind): i64 {
+    if (kind == AGNOSAI_PROCESS_PARALLEL) { return AGNOSTIC_JV_PARALLEL; }
+    if (kind == AGNOSAI_PROCESS_DAG) { return AGNOSTIC_JV_DAG; }
+    if (kind == AGNOSAI_PROCESS_HIERARCHICAL) { return AGNOSTIC_JV_HIERARCHICAL; }
+    return AGNOSTIC_JV_SEQUENTIAL;
+}
+
+# Add what the ledger knows about a crew to its outcome object `obj`, in `a` (0.1.9):
+# `name`, `scope`, `engine_mode` (the mode it RAN under), `process`, `tasks_submitted`, and
+# `submitted_at` / `started_at` / `finished_at` in epoch ms — the last two only once
+# they happened. The persisted document carries the same, so a crew read back after a
+# restart still says how it ran and how long it took.
+fn agnostic_ledger_describe_a(a, e, obj): i64 {
+    if (e == 0 || obj == 0) { return obj; }
+    var name = agnostic_ledger_name(e);
+    if (name != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_NAME, bayan_json_v_str_new_a(a, name)); }
+    # The tenant scope (0.1.9). On the wire it only ever tells a caller its own; in the
+    # persisted document it is what a read after a restart is checked against.
+    var scope = agnostic_ledger_scope(e);
+    if (scope != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREW_SCOPE, bayan_json_v_str_new_a(a, scope)); }
+    var mode = agnostic_ledger_mode(e);
+    if (mode != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_MODE, bayan_json_v_str_new_a(a, mode)); }
+    var spec = agnostic_ledger_spec(e);
+    if (spec != 0) {
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_PROCESS, bayan_json_v_str_new_a(a,
+            agnostic_engine_process_to_wire(agnosai_process_kind(agnosai_crew_process(spec)))));
+        var tasks = agnosai_crew_tasks(spec);
+        var tn = 0;
+        if (tasks != 0) { tn = vec_len(tasks); }
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TASKS_SUB, bayan_json_v_int_new_a(a, tn));
+    }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_SUBMITTED_AT,
+      bayan_json_v_int_new_a(a, agnostic_ledger_submitted_ms(e)));
+    var st = agnostic_ledger_started_ms(e);
+    if (st != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_STARTED_AT, bayan_json_v_int_new_a(a, st)); }
+    var fin = agnostic_ledger_finished_ms(e);
+    if (fin != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_FINISHED_AT, bayan_json_v_int_new_a(a, fin)); }
+    return obj;
+}
+
+# The events numbered after `after`, copied out of the ring in `a`, oldest first, with
+# the cursor to read from next and how many of the asked-for events were already gone.
+#
+# A COPY, taken under the ledger lock: the collector keeps writing the ring, and a
+# reader that held slot pointers past the lock could read an event overwritten by one
+# 256 numbers later. `after` below 0 reads as 0 (everything retained); `after` at or
+# past the newest number returns no events and `next` unchanged.
+#
+# Returns 0 for a null entry or an exhausted arena.
+fn agnostic_ledger_snapshot_a(a, e, after): i64 {
+    if (e == 0) { return 0; }
+    var snap = alloc_via(a, AGNOSTIC_LSN_SIZE);
+    if (snap == 0) { return 0; }
+    var out = vec_new_a(a);
+    if (out == 0) { return 0; }
+    if (after < 0) { after = 0; }
+
+    mutex_lock(_agnostic_ledger_mutex);
+    var newest = load64(e + AGNOSTIC_LE_NEXT_SEQ) - 1;
+    var oldest = 1;
+    if (newest > AGNOSTIC_LEDGER_MAX_EVENTS) { oldest = newest - AGNOSTIC_LEDGER_MAX_EVENTS + 1; }
+    var from = after + 1;
+    var missed = 0;
+    if (from < oldest) {
+        missed = oldest - from;
+        from = oldest;
+    }
+    var ring = load64(e + AGNOSTIC_LE_RING);
+    var seq = from;
+    var ok = 1;
+    while (seq <= newest && ok == 1) {
+        var slot = ring + ((seq - 1) % AGNOSTIC_LEDGER_MAX_EVENTS) * AGNOSTIC_LS_SIZE;
+        var rec = alloc_via(a, AGNOSTIC_LEV_SIZE);
+        if (rec == 0) {
+            ok = 0;
+        } else {
+            store64(rec + AGNOSTIC_LEV_SEQ, seq);
+            store64(rec + AGNOSTIC_LEV_AT, load64(slot + AGNOSTIC_LS_AT));
+            store64(rec + AGNOSTIC_LEV_EV, load64(slot + AGNOSTIC_LS_EV));
+            vec_push_a(a, out, rec);
+        }
+        seq = seq + 1;
+    }
+    mutex_unlock(_agnostic_ledger_mutex);
+    if (ok == 0) { return 0; }
+
+    var next = after;
+    if (newest > next) { next = newest; }
+    store64(snap + AGNOSTIC_LSN_EVENTS, out);
+    store64(snap + AGNOSTIC_LSN_NEXT, next);
+    store64(snap + AGNOSTIC_LSN_MISSED, missed);
+    return snap;
+}
+
+# A snapshot's events: a vec of records read with `agnostic_ledger_ev_*`.
+fn agnostic_ledger_snap_events(s): i64 { return load64(s + AGNOSTIC_LSN_EVENTS); }
+
+# The cursor to read from next: the highest event number taken so far (or `after`).
+fn agnostic_ledger_snap_next(s): i64 { return load64(s + AGNOSTIC_LSN_NEXT); }
+
+# How many events after `after` the ring had already overwritten.
+fn agnostic_ledger_snap_missed(s): i64 { return load64(s + AGNOSTIC_LSN_MISSED); }
+
+# A snapshot record's event number.
+fn agnostic_ledger_ev_seq(r): i64 { return load64(r + AGNOSTIC_LEV_SEQ); }
+
+# When the event was taken off the bus, in ms since the crew was accepted.
+fn agnostic_ledger_ev_at(r): i64 { return load64(r + AGNOSTIC_LEV_AT); }
+
+# The engine's event — read with `agnosai_crew_event_event_type` and `_data`.
+fn agnostic_ledger_ev_event(r): i64 { return load64(r + AGNOSTIC_LEV_EV); }
 
 # Latch an observed status onto an entry.
 #
@@ -252,6 +636,9 @@ fn agnostic_ledger_latch(e, status, error, results): i64 {
     store64(e + AGNOSTIC_LE_STATUS, status);
     if (error != 0) { store64(e + AGNOSTIC_LE_ERROR, error); }
     if (results != 0) { store64(e + AGNOSTIC_LE_RESULTS, results); }
+    if (agnostic_status_is_terminal(status) == 1) {
+        store64(e + AGNOSTIC_LE_FINISHED, agnostic_epoch_ms());
+    }
     mutex_unlock(_agnostic_ledger_mutex);
 
     # ⚠ **Persisted outside the lock, on the one transition that matters.** This
@@ -276,32 +663,84 @@ fn _agnostic_ledger_persist(e): i64 {
     if (agnostic_store_is_open() == 0) { return 0; }
     var o = agnostic_ledger_outcome_a(default_alloc(), e);
     if (o == 0) { return 0; }
-    var doc = bayan_json_v_build(agnostic_outcome_to_value_a(default_alloc(), o));
+    var ov = agnostic_outcome_to_value_a(default_alloc(), o);
+    if (ov == 0) { return 0; }
+    agnostic_ledger_describe_a(default_alloc(), e, ov);
+    var doc = bayan_json_v_build(ov);
     if (doc == 0) { return 0; }
-    return agnostic_crews_save(agnostic_ledger_crew_id(e), agnostic_ledger_name(e),
-      agnostic_outcome_status(o), doc);
+    # The outcome and its listing row, together (0.1.9).
+    var row = agnostic_ledger_row_a(default_alloc(), e);
+    if (row == 0) { return 0; }
+    return agnostic_crews_save_row(row, doc);
 }
 
-# Append one event to an entry's bounded window. The caller holds the lock.
-#
-# At the cap the **oldest** event is dropped and counted. Dropping the newest
-# would be cheaper and is wrong: the newest events are the ones describing what
-# the crew is doing now, which is what a progress reader is asking for.
-fn _agnostic_ledger_push_event_locked(e, ev): i64 {
-    var events = load64(e + AGNOSTIC_LE_EVENTS);
-    if (vec_len(events) >= AGNOSTIC_LEDGER_MAX_EVENTS) {
-        var trimmed = vec_new();
-        var i = 1;
-        while (i < vec_len(events)) {
-            vec_push(trimmed, vec_get(events, i));
-            i = i + 1;
-        }
-        store64(e + AGNOSTIC_LE_EVENTS, trimmed);
-        store64(e + AGNOSTIC_LE_DROPPED, load64(e + AGNOSTIC_LE_DROPPED) + 1);
-        events = trimmed;
+# An entry as a crew row (`src/engine/crewstore.cyr`), in `a` — what the listing shows and
+# what the durable index keeps: id, scope, name, status, times, task count, mode, and the
+# tokens and cost its results were metered for (-1 for each when nothing was). 0 on
+# exhaustion.
+fn agnostic_ledger_row_a(a, e): i64 {
+    if (e == 0) { return 0; }
+    var row = agnostic_crew_row_new_a(a);
+    if (row == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var status = load64(e + AGNOSTIC_LE_STATUS);
+    var results = load64(e + AGNOSTIC_LE_RESULTS);
+    var started = load64(e + AGNOSTIC_LE_STARTED);
+    var finished = load64(e + AGNOSTIC_LE_FINISHED);
+    mutex_unlock(_agnostic_ledger_mutex);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_CREW_ID, agnostic_ledger_crew_id(e));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_SCOPE, agnostic_ledger_scope(e));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_NAME, agnostic_ledger_name(e));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, status);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_SUBMITTED, agnostic_ledger_submitted_ms(e));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STARTED, started);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_FINISHED, finished);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_MODE, agnostic_ledger_mode(e));
+    var spec = agnostic_ledger_spec(e);
+    if (spec != 0) {
+        var tasks = agnosai_crew_tasks(spec);
+        if (tasks != 0) { agnostic_crew_row_set(row, AGNOSTIC_CR_NTASKS, vec_len(tasks)); }
     }
-    vec_push(events, ev);
-    return 0;
+    if (results != 0) {
+        var u = _agnostic_outcome_usage_a(a, results);
+        if (u != 0) {
+            if (agnostic_req_int(u, AGNOSTIC_JK_METERED, 0) > 0) {
+                agnostic_crew_row_set(row, AGNOSTIC_CR_TOKENS, agnostic_req_int(u, AGNOSTIC_JK_TOTAL_TOK, 0));
+            }
+            if (agnostic_req_int(u, AGNOSTIC_JK_COSTED, 0) > 0) {
+                agnostic_crew_row_set(row, AGNOSTIC_CR_COST, agnostic_req_int(u, AGNOSTIC_JK_COST_MICRO, 0));
+            }
+        }
+    }
+    return row;
+}
+
+# Number one event, stamp it, and put it in the ring. The caller holds the lock.
+#
+# At the cap the slot holding the **oldest** event is reused. Dropping the newest would
+# be cheaper and is wrong: the newest events are the ones describing what the crew is
+# doing now, which is what a progress reader is asking for. Nothing is allocated — the
+# ring was allocated with the entry — which is what fixed the per-event leak (0.1.9).
+#
+# `crew_started` is the one event the ledger reads: the engine's registry goes from
+# PENDING straight to a terminal state, so this is the only evidence a crew is RUNNING
+# (`agnostic_crew_refresh_a`).
+fn _agnostic_ledger_push_event_locked(e, ev, now_ms): i64 {
+    var seq = load64(e + AGNOSTIC_LE_NEXT_SEQ);
+    var slot = load64(e + AGNOSTIC_LE_RING)
+    + ((seq - 1) % AGNOSTIC_LEDGER_MAX_EVENTS) * AGNOSTIC_LS_SIZE;
+    store64(slot + AGNOSTIC_LS_AT, now_ms - load64(e + AGNOSTIC_LE_T0_MS));
+    store64(slot + AGNOSTIC_LS_EV, ev);
+    store64(e + AGNOSTIC_LE_NEXT_SEQ, seq + 1);
+    if (load64(e + AGNOSTIC_LE_STARTED) == 0) {
+        var t = agnosai_crew_event_event_type(ev);
+        if (t != 0) {
+            if (str_eq_cstr(t, "crew_started") == 1) {
+                store64(e + AGNOSTIC_LE_STARTED, agnostic_epoch_ms());
+            }
+        }
+    }
+    return seq;
 }
 
 # Drain whatever the event bus has queued for this crew into its window.
@@ -329,14 +768,16 @@ fn agnostic_ledger_drain(e): i64 {
 
     # Taken before the sweep: the count is cleared by the read, and a gap that
     # opened before these events is still a gap in what the client will see.
-    store64(e + AGNOSTIC_LE_DROPPED,
-      load64(e + AGNOSTIC_LE_DROPPED) + agnosai_event_sub_lagged(sub));
+    store64(e + AGNOSTIC_LE_LOST,
+      load64(e + AGNOSTIC_LE_LOST) + agnosai_event_sub_lagged(sub));
 
+    # One clock read per sweep: every event taken now was waiting since the last one.
+    var now = clock_now_ms();
     var taken = 0;
     while (1 == 1) {
         var ev = agnosai_event_sub_try_recv(sub);
         if (ev == 0) { break; }
-        _agnostic_ledger_push_event_locked(e, ev);
+        _agnostic_ledger_push_event_locked(e, ev, now);
         taken = taken + 1;
     }
 
@@ -345,6 +786,53 @@ fn agnostic_ledger_drain(e): i64 {
     if (agnosai_event_sub_closed(sub) == 1) { store64(e + AGNOSTIC_LE_SUB, 0); }
     mutex_unlock(_agnostic_ledger_mutex);
     return taken;
+}
+
+# Whether an entry still has anything to collect: its status is not terminal yet, or its
+# subscription is still open (the closing events of a crew that just finished). 1 or 0.
+fn agnostic_ledger_is_live(e): i64 {
+    if (e == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var live = 0;
+    if (agnostic_status_is_terminal(load64(e + AGNOSTIC_LE_STATUS)) == 0) { live = 1; }
+    if (load64(e + AGNOSTIC_LE_SUB) != 0) { live = 1; }
+    mutex_unlock(_agnostic_ledger_mutex);
+    return live;
+}
+
+# Every live entry (`agnostic_ledger_is_live`), as a vec in `a`.
+#
+# Walks the map's slots directly rather than through `map_keys`, which builds its vec
+# with the global allocator: the collector calls this five times a second for the life
+# of the process, and every byte that call allocated would be kept forever. Entries are
+# never freed, so a pointer taken here stays valid after the lock is released — even
+# for an entry evicted meanwhile, which the caller then refreshes harmlessly.
+#
+# ⚠ The slot is `{key, value, state}`, 24 bytes, `state == 1` occupied — the layout
+# `map_keys` and `map_iter` in `lib/hashmap.cyr` walk. `tests/ledger.tcyr` holds this to
+# `map_size`, so a stdlib that changes it fails a suite rather than this sweep.
+fn agnostic_ledger_live_entries_a(a): i64 {
+    var out = vec_new_a(a);
+    if (out == 0 || _agnostic_ledger == 0) { return out; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var slots = map_entries(_agnostic_ledger);
+    var cap = map_cap(_agnostic_ledger);
+    var i = 0;
+    while (i < cap) {
+        var ep = slots + i * 24;
+        if (load64(ep + 16) == 1) {
+            var e = load64(ep + 8);
+            if (e != 0) {
+                var live = 0;
+                if (agnostic_status_is_terminal(load64(e + AGNOSTIC_LE_STATUS)) == 0) { live = 1; }
+                if (load64(e + AGNOSTIC_LE_SUB) != 0) { live = 1; }
+                if (live == 1) { vec_push_a(a, out, e); }
+            }
+        }
+        i = i + 1;
+    }
+    mutex_unlock(_agnostic_ledger_mutex);
+    return out;
 }
 
 # Build an outcome from an entry's latched state, in `a`.

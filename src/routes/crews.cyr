@@ -13,7 +13,12 @@
 # | `GET /api/v1/crews/{id}` | 200 · 404 never submitted · 422 malformed id |
 # | `POST /api/v1/crews/{id}/cancel` | 200 cancelled · 404 never submitted |
 # |  | 409 already terminal · 422 malformed id · 503 engine does not know it |
-# | `GET /api/v1/crews/{id}/events` | 200 · 404 · 422 |
+# | `GET /api/v1/crews/{id}/events[?after=N]` | 200 · 404 · 422 (also a malformed `after`) |
+# | `GET /api/v1/crews/{id}/plan` | 200 · 404 not held (or never submitted) · 422 |
+# | `GET /api/v1/crews[?limit=&before=]` | 200 — the caller's tenant's crews, newest first · 422 |
+#
+# Every crew route answers 404 for a crew of ANOTHER tenant, exactly as for one never
+# submitted (0.1.9): a crew belongs to the scope it was submitted in.
 #
 # **202, not 200 and not 201.** The crew has been accepted and is not finished,
 # which is exactly what 202 means. 201 would claim a resource is complete; 200 is
@@ -43,6 +48,24 @@ var AGNOSTIC_JK_DROPPED = str_from("dropped_events");
 var AGNOSTIC_JK_TYPE    = str_from("type");
 var AGNOSTIC_JK_DATA    = str_from("data");
 var AGNOSTIC_JK_MODE    = str_from("engine_mode");
+
+# The event cursor (0.1.9).
+var AGNOSTIC_JK_SEQ     = str_from("seq");
+var AGNOSTIC_JK_AT_MS   = str_from("at_ms");
+var AGNOSTIC_JK_NEXT    = str_from("next");
+var AGNOSTIC_JK_MISSED  = str_from("missed");
+var AGNOSTIC_JK_LOST    = str_from("lost_events");
+
+# The 202's task ids and the plan route (0.1.9).
+var AGNOSTIC_JK_TASK_IDS     = str_from("task_ids");
+var AGNOSTIC_JK_REPLAYED     = str_from("replayed");
+var AGNOSTIC_JK_CREWS        = str_from("crews");
+var AGNOSTIC_JK_TASKS        = str_from("tasks");
+var AGNOSTIC_JK_INDEX        = str_from("index");
+var AGNOSTIC_JK_EXPECTED     = str_from("expected_output");
+var AGNOSTIC_JK_PRIORITY     = str_from("priority");
+var AGNOSTIC_JK_DEPENDENCIES = str_from("dependencies");
+var AGNOSTIC_JK_MAX_CONC     = str_from("max_concurrency");
 
 # Normalise a path-supplied crew id to the canonical form both registries key on.
 # Returns 0 when it is not a well-formed UUID.
@@ -106,12 +129,106 @@ fn _agnostic_crew_bad_id_a(a): i64 {
 # evicted from the engine registry has an entry with a latched outcome and
 # answers 200 — the two must not collapse into one 404, or a client cannot tell
 # "your results expired" from "you typo'd the id".
+# Whether a stored crew document belongs to `scope`: its `scope` field, or `_` when it
+# has none — every crew persisted before 0.1.9 was written without one.
+fn _agnostic_crew_doc_in_scope(v, scope: Str): i64 {
+    var ds = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_CREW_SCOPE);
+    if (bayan_json_v_is_str(ds) == 1) { return str_eq(bayan_json_v_str(ds), scope); }
+    return str_eq(scope, AGNOSTIC_SCOPE_DEFAULT);
+}
+
 fn _agnostic_crew_not_found_a(a): i64 {
     return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "crew not found"));
 }
 
+# The engine's task ids for `spec`, in request order, as a JSON array in `a`. An empty
+# array when there is no spec; 0 only when the arena is exhausted.
+fn _agnostic_crew_task_ids_a(a, spec): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0 || spec == 0) { return arr; }
+    var tasks = agnosai_crew_tasks(spec);
+    if (tasks == 0) { return arr; }
+    var n = vec_len(tasks);
+    var i = 0;
+    while (i < n) {
+        var v = bayan_json_v_str_new_a(a, agnosai_task_id(vec_get(tasks, i)));
+        if (v == 0) { return 0; }
+        bayan_json_v_arr_push_a(a, arr, v);
+        i = i + 1;
+    }
+    return arr;
+}
+
+# Whether `k` is an acceptable `Idempotency-Key`: 8 to 128 of `[A-Za-z0-9._:-]` — long
+# enough to be unguessable in practice, short enough to keep, and nothing that needs
+# escaping anywhere it is logged.
+fn agnostic_idem_key_valid(k: Str): i64 {
+    if (k == 0) { return 0; }
+    var n = str_len(k);
+    if (n < 8 || n > 128) { return 0; }
+    var d = str_data(k);
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        var ok = 0;
+        if (c >= 97 && c <= 122) { ok = 1; }
+        if (c >= 65 && c <= 90) { ok = 1; }
+        if (c >= 48 && c <= 57) { ok = 1; }
+        if (c == 46 || c == 95 || c == 58 || c == 45) { ok = 1; }
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
 # `POST /api/v1/crews` — submit a crew and return 202 with its id.
-fn agnostic_route_crew_submit_a(a, body: Str): i64 {
+#
+# ## The crew belongs to the caller's tenant (0.1.9)
+#
+# Its scope — the principal's tenant, or `_` — is recorded with it, and every crew route
+# answers 404 for a crew of another scope, exactly as for one never submitted.
+#
+# ## `Idempotency-Key` makes a retry safe (0.1.9)
+#
+# A client that never saw the 202 — a timeout, a dropped connection — cannot know whether
+# its crew exists, and resubmitting may pay for the work twice. Sent with a key, a POST
+# that repeats an earlier one IN THE SAME SCOPE answers that crew again (202,
+# `"replayed": true`) instead of starting another; the same key over a DIFFERENT body is
+# a 422. Keys are remembered as long as the ledger holds the crew — not across a restart.
+fn agnostic_route_crew_submit_a(a, body: Str, ctx): i64 {
+    var scope = agnostic_reqctx_scope(ctx);
+    var idem = agnostic_reqctx_idem(ctx);
+    if (idem == 0) { return _agnostic_crew_submit_a(a, body, scope, 0, 0, 0); }
+    if (agnostic_idem_key_valid(idem) == 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "an Idempotency-Key is 8 to 128 of [A-Za-z0-9._:-]"));
+    }
+    var fprint = agnostic_sha256_hex_a(a, body);
+    if (fprint == 0) { return 0; }
+    # One keyed submission at a time, so two racing retries of one key cannot both submit.
+    # Never held with the ledger lock or across anything slow but the submit itself.
+    agnostic_ledger_idem_lock();
+    var r = _agnostic_crew_submit_keyed_a(a, body, scope, idem, fprint);
+    agnostic_ledger_idem_unlock();
+    return r;
+}
+
+# The keyed half of submit: replay the crew this key already started, refuse the key
+# over a different body, or submit. The caller holds the idempotency lock.
+fn _agnostic_crew_submit_keyed_a(a, body: Str, scope: Str, idem: Str, fprint: Str): i64 {
+    var prior = agnostic_ledger_find_idem(scope, idem);
+    if (prior != 0) {
+        if (str_eq(agnostic_ledger_fprint(prior), fprint) == 0) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+              str_from_a(a, "this Idempotency-Key was already used with a different request"));
+        }
+    }
+    return _agnostic_crew_submit_a(a, body, scope, idem, fprint, prior);
+}
+
+# Decode and validate the body, then submit it — or, when `prior` is the crew this
+# request's key already started, answer that crew again without submitting.
+fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, prior): i64 {
     var v = agnostic_decode_a(a, body);
     if (v == 0) {
         return agnostic_response_error_a(a, HTTP_BAD_REQUEST,
@@ -127,34 +244,37 @@ fn agnostic_route_crew_submit_a(a, body: Str): i64 {
           agnostic_reject_message(rj));
     }
 
-    var entry: i64[1];
-    store64(&entry, 0);
-    var rc = agnostic_crew_submit(req, &entry);
+    var e = prior;
+    if (e == 0) {
+        var entry: i64[1];
+        store64(&entry, 0);
+        var rc = agnostic_crew_submit_owned(req, &entry, scope, idem, fprint);
 
-    if (rc == AGNOSTIC_SUBMIT_NO_ENGINE) {
-        return agnostic_response_error_a(a, HTTP_SERVICE_UNAVAILABLE,
-          str_from_a(a, "engine is not available"));
-    }
-    if (rc == AGNOSTIC_SUBMIT_SPEC_FAILED) {
-        return agnostic_response_error_a(a, HTTP_INTERNAL,
-          str_from_a(a, "could not build the crew specification"));
-    }
+        if (rc == AGNOSTIC_SUBMIT_NO_ENGINE) {
+            return agnostic_response_error_a(a, HTTP_SERVICE_UNAVAILABLE,
+              str_from_a(a, "engine is not available"));
+        }
+        if (rc == AGNOSTIC_SUBMIT_SPEC_FAILED) {
+            return agnostic_response_error_a(a, HTTP_INTERNAL,
+              str_from_a(a, "could not build the crew specification"));
+        }
 
-    var e = load64(&entry);
-    if (rc == AGNOSTIC_SUBMIT_START_FAILED) {
-        # ⚠ 503 with the crew id, not a bare 500. The crew was accepted, is
-        # registered, and has a latched FAILED outcome the client can poll — so
-        # the id is the useful half of this answer and withholding it would leave
-        # a record nobody can look up.
-        var obj = bayan_json_v_obj_new_a(a);
-        if (obj == 0) { return 0; }
-        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREW_ID,
-          bayan_json_v_str_new_a(a, agnostic_ledger_crew_id(e)));
-        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_STATUS,
-          bayan_json_v_str_new_a(a, AGNOSTIC_JV_FAILED));
-        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ERROR,
-          bayan_json_v_str_new_a(a, AGNOSTIC_CREW_START_MSG));
-        return agnostic_response_json_a(a, HTTP_SERVICE_UNAVAILABLE, obj);
+        e = load64(&entry);
+        if (rc == AGNOSTIC_SUBMIT_START_FAILED) {
+            # ⚠ 503 with the crew id, not a bare 500. The crew was accepted, is
+            # registered, and has a latched FAILED outcome the client can poll — so
+            # the id is the useful half of this answer and withholding it would leave
+            # a record nobody can look up.
+            var obj = bayan_json_v_obj_new_a(a);
+            if (obj == 0) { return 0; }
+            bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREW_ID,
+              bayan_json_v_str_new_a(a, agnostic_ledger_crew_id(e)));
+            bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_STATUS,
+              bayan_json_v_str_new_a(a, AGNOSTIC_JV_FAILED));
+            bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ERROR,
+              bayan_json_v_str_new_a(a, AGNOSTIC_CREW_START_MSG));
+            return agnostic_response_json_a(a, HTTP_SERVICE_UNAVAILABLE, obj);
+        }
     }
 
     var accepted = bayan_json_v_obj_new_a(a);
@@ -169,13 +289,27 @@ fn agnostic_route_crew_submit_a(a, body: Str): i64 {
     # ⚠ Disclosed on accept, not only on poll. A client that submits and never
     # polls should still learn its crew is about to be run with placeholder
     # output — see `agnostic_engine_init`.
-    bayan_json_v_obj_set_a(a, accepted, AGNOSTIC_JK_MODE,
-      bayan_json_v_str_new_a(a, agnostic_engine_mode()));
+    var mode = agnostic_ledger_mode(e);
+    if (mode == 0) { mode = agnostic_engine_mode(); }
+    bayan_json_v_obj_set_a(a, accepted, AGNOSTIC_JK_MODE, bayan_json_v_str_new_a(a, mode));
     # Additive at M3, when the crew and definition surfaces became one agent
     # model: `focus` and `allow_delegation` are accepted on a crew's agents and
     # shape nothing, so the caller is told rather than left to discover it.
     bayan_json_v_obj_set_a(a, accepted, AGNOSTIC_JK_UNFORWARDED,
       agnostic_crew_req_unforwarded_a(a, req));
+    # The engine's id for each task, in REQUEST order (0.1.9). Every progress event and
+    # every result names a task by this id, so a client binds them to its own tasks by
+    # position — never by matching descriptions, which two tasks may share.
+    var ids = _agnostic_crew_task_ids_a(a, agnostic_ledger_spec(e));
+    if (ids == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, accepted, AGNOSTIC_JK_TASK_IDS, ids);
+    bayan_json_v_obj_set_a(a, accepted, AGNOSTIC_JK_SUBMITTED_AT,
+      bayan_json_v_int_new_a(a, agnostic_ledger_submitted_ms(e)));
+    bayan_json_v_obj_set_a(a, accepted, AGNOSTIC_JK_CREW_SCOPE,
+      bayan_json_v_str_new_a(a, agnostic_ledger_scope(e)));
+    if (prior != 0) {
+        bayan_json_v_obj_set_a(a, accepted, AGNOSTIC_JK_REPLAYED, bayan_json_v_bool_new_a(a, 1));
+    }
     return agnostic_response_json_a(a, AGNOSTIC_HTTP_ACCEPTED, accepted);
 }
 
@@ -184,11 +318,15 @@ fn agnostic_route_crew_submit_a(a, body: Str): i64 {
 # The poll half of 202-then-poll. Answers 200 for every crew Agnostic submitted,
 # whatever state it is in — including one the engine has since forgotten, which
 # reports `unknown` rather than vanishing.
-fn agnostic_route_crew_get_a(a, id: Str): i64 {
+fn agnostic_route_crew_get_a(a, id: Str, ctx): i64 {
     var key = _agnostic_crew_key_a(a, id);
     if (key == 0) { return _agnostic_crew_bad_id_a(a); }
+    var scope = agnostic_reqctx_scope(ctx);
 
-    var outcome = agnostic_crew_poll_a(a, key);
+    # Another tenant's crew is answered exactly like one never submitted (0.1.9).
+    var outcome = 0;
+    if (agnostic_ledger_entry_in(key, scope) != 0) { outcome = agnostic_crew_poll_a(a, key); }
+    elif (agnostic_ledger_entry(key) != 0) { return _agnostic_crew_not_found_a(a); }
     if (outcome == 0) {
         # ⚠ **Not in this process's ledger — but it may be on disk from a
         # previous run.** Only terminal outcomes are ever persisted, so anything
@@ -198,7 +336,11 @@ fn agnostic_route_crew_get_a(a, id: Str): i64 {
         var stored = agnostic_crews_doc_a(a, key);
         if (stored != 0) {
             var v = bayan_json_v_parse_buf_a(a, str_data(stored), str_len(stored));
-            if (v != 0) { return agnostic_response_json_a(a, HTTP_OK, v); }
+            # The document carries the scope it was written in (0.1.9); one from an
+            # earlier release carries none, and belongs to `_`.
+            if (v != 0 && _agnostic_crew_doc_in_scope(v, scope) == 1) {
+                return agnostic_response_json_a(a, HTTP_OK, v);
+            }
         }
         return _agnostic_crew_not_found_a(a);
     }
@@ -211,6 +353,9 @@ fn agnostic_route_crew_get_a(a, id: Str): i64 {
     # output; nothing else in this body distinguishes it from real work.
     bayan_json_v_obj_set_a(a, body, AGNOSTIC_JK_MODE,
       bayan_json_v_str_new_a(a, agnostic_engine_mode()));
+    # Name, process, task count and timings — and the mode the crew RAN under, which
+    # replaces the line above whenever the ledger recorded one (0.1.9).
+    agnostic_ledger_describe_a(a, agnostic_ledger_entry(key), body);
     return agnostic_response_json_a(a, HTTP_OK, body);
 }
 
@@ -220,9 +365,13 @@ fn agnostic_route_crew_get_a(a, id: Str): i64 {
 # that cancellation could fail — it was that the failure was discarded and the
 # record relabelled anyway. There is no arm here that reports success without
 # `agnostic_crew_cancel` having returned OK.
-fn agnostic_route_crew_cancel_a(a, id: Str): i64 {
+fn agnostic_route_crew_cancel_a(a, id: Str, ctx): i64 {
     var key = _agnostic_crew_key_a(a, id);
     if (key == 0) { return _agnostic_crew_bad_id_a(a); }
+    # Only the crew's own tenant may cancel it; to anyone else it does not exist (0.1.9).
+    if (agnostic_ledger_entry_in(key, agnostic_reqctx_scope(ctx)) == 0) {
+        return _agnostic_crew_not_found_a(a);
+    }
 
     var rc = agnostic_crew_cancel(key);
 
@@ -266,15 +415,35 @@ fn agnostic_route_crew_cancel_a(a, id: Str): i64 {
 # bus is lossy under back-pressure and the retained window is capped, so a
 # non-zero count means the sequence has gaps. Reporting it beats showing a
 # suspiciously tidy stream.
-fn agnostic_route_crew_events_a(a, id: Str): i64 {
+#
+# ## `?after=N` — a cursor, not a window (0.1.9)
+#
+# Every event is numbered as agnostic collects it (`seq`, from 1, per crew) and
+# stamped with when (`at_ms`, since the crew was accepted). `?after=N` answers only
+# the events numbered above N, and `next` is the number to send next time, so a
+# poller reads each event once. Without `after` the whole retained window comes back,
+# as before. `missed` counts the events above N that the window had already
+# overwritten — a reader that fell more than 256 events behind is told exactly how
+# far, instead of matching overlapping windows to guess. `lost_events` is the other
+# kind of gap: events the bus dropped before agnostic collected them, which were never
+# numbered and so cannot be placed.
+fn agnostic_route_crew_events_a(a, id: Str, path: Str, ctx): i64 {
     var key = _agnostic_crew_key_a(a, id);
     if (key == 0) { return _agnostic_crew_bad_id_a(a); }
+    var after = agnostic_query_uint_a(a, path, "after", 0);
+    if (after < 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'after' must be a non-negative integer — the 'next' of an earlier answer"));
+    }
 
-    var entry = agnostic_ledger_entry(key);
+    var entry = agnostic_ledger_entry_in(key, agnostic_reqctx_scope(ctx));
     if (entry == 0) { return _agnostic_crew_not_found_a(a); }
     # Drains the bus AND refreshes the latched status, so `status` below is the
     # crew's current one — not whatever the last `GET /crews/{id}` saw.
     agnostic_crew_refresh_a(a, entry, key);
+
+    var snap = agnostic_ledger_snapshot_a(a, entry, after);
+    if (snap == 0) { return 0; }
 
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }
@@ -284,24 +453,375 @@ fn agnostic_route_crew_events_a(a, id: Str): i64 {
 
     var arr = bayan_json_v_arr_new_a(a);
     if (arr == 0) { return 0; }
-    var events = agnostic_ledger_events(entry);
-    if (events != 0) {
-        var n = vec_len(events);
-        var i = 0;
-        while (i < n) {
-            var ev = vec_get(events, i);
-            var eo = bayan_json_v_obj_new_a(a);
-            if (eo == 0) { return 0; }
-            bayan_json_v_obj_set_a(a, eo, AGNOSTIC_JK_TYPE,
-              bayan_json_v_str_new_a(a, agnosai_crew_event_event_type(ev)));
-            var data = agnosai_crew_event_data(ev);
-            if (data != 0) { bayan_json_v_obj_set_a(a, eo, AGNOSTIC_JK_DATA, data); }
-            bayan_json_v_arr_push_a(a, arr, eo);
-            i = i + 1;
-        }
+    var events = agnostic_ledger_snap_events(snap);
+    var n = vec_len(events);
+    var i = 0;
+    while (i < n) {
+        var rec = vec_get(events, i);
+        var ev = agnostic_ledger_ev_event(rec);
+        var eo = bayan_json_v_obj_new_a(a);
+        if (eo == 0) { return 0; }
+        bayan_json_v_obj_set_a(a, eo, AGNOSTIC_JK_SEQ,
+          bayan_json_v_int_new_a(a, agnostic_ledger_ev_seq(rec)));
+        bayan_json_v_obj_set_a(a, eo, AGNOSTIC_JK_AT_MS,
+          bayan_json_v_int_new_a(a, agnostic_ledger_ev_at(rec)));
+        bayan_json_v_obj_set_a(a, eo, AGNOSTIC_JK_TYPE,
+          bayan_json_v_str_new_a(a, agnosai_crew_event_event_type(ev)));
+        var data = agnosai_crew_event_data(ev);
+        if (data != 0) { bayan_json_v_obj_set_a(a, eo, AGNOSTIC_JK_DATA, data); }
+        bayan_json_v_arr_push_a(a, arr, eo);
+        i = i + 1;
     }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_EVENTS, arr);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_NEXT,
+      bayan_json_v_int_new_a(a, agnostic_ledger_snap_next(snap)));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_MISSED,
+      bayan_json_v_int_new_a(a, agnostic_ledger_snap_missed(snap)));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_LOST,
+      bayan_json_v_int_new_a(a, agnostic_ledger_lost(entry)));
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_DROPPED,
       bayan_json_v_int_new_a(a, agnostic_ledger_dropped(entry)));
     return agnostic_response_json_a(a, HTTP_OK, obj);
+}
+
+# `GET /api/v1/crews/{id}/plan` — what a crew was asked to do (0.1.9).
+#
+# `{crew_id, name, process, max_concurrency?, agents[], tasks[]}`: the crew as the engine
+# holds it — the agents it was given (`key, name, role, llm_model?`) and its tasks in
+# REQUEST order (`task_id, index, description, expected_output?, priority,
+# dependencies[]`), each dependency an index into `tasks`. `task_id` is the engine's id,
+# the one every progress event and result names, so a watcher binds the events of ANY
+# crew to its tasks by id — without having submitted it, and without matching
+# descriptions, which two tasks may share.
+#
+# Read from the ledger, which holds the engine's spec in memory only: a crew from before
+# the last restart answers 404 here while `GET /crews/{id}` still answers its outcome.
+fn agnostic_route_crew_plan_a(a, id: Str, ctx): i64 {
+    var key = _agnostic_crew_key_a(a, id);
+    if (key == 0) { return _agnostic_crew_bad_id_a(a); }
+    var entry = agnostic_ledger_entry_in(key, agnostic_reqctx_scope(ctx));
+    if (entry == 0) { return _agnostic_crew_not_found_a(a); }
+    var spec = agnostic_ledger_spec(entry);
+    if (spec == 0) {
+        return agnostic_response_error_a(a, HTTP_NOT_FOUND,
+          str_from_a(a, "this crew's plan is not held; its outcome is at GET /api/v1/crews/{id}"));
+    }
+
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREW_ID, bayan_json_v_str_new_a(a, key));
+    var name = agnostic_ledger_name(entry);
+    if (name != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_NAME, bayan_json_v_str_new_a(a, name)); }
+    var proc = agnosai_crew_process(spec);
+    var kind = agnosai_process_kind(proc);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_PROCESS,
+      bayan_json_v_str_new_a(a, agnostic_engine_process_to_wire(kind)));
+    if (kind == AGNOSAI_PROCESS_PARALLEL) {
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_MAX_CONC,
+          bayan_json_v_int_new_a(a, agnosai_process_max_concurrency(proc)));
+    }
+
+    var agents = bayan_json_v_arr_new_a(a);
+    if (agents == 0) { return 0; }
+    var av = agnosai_crew_agents(spec);
+    var an = 0;
+    if (av != 0) { an = vec_len(av); }
+    var i = 0;
+    while (i < an) {
+        var ag = vec_get(av, i);
+        var ao = bayan_json_v_obj_new_a(a);
+        if (ao == 0) { return 0; }
+        bayan_json_v_obj_set_a(a, ao, AGNOSTIC_JK_KEY, bayan_json_v_str_new_a(a, agnosai_agent_key(ag)));
+        if (agnosai_agent_name(ag) != 0) {
+            bayan_json_v_obj_set_a(a, ao, AGNOSTIC_JK_NAME, bayan_json_v_str_new_a(a, agnosai_agent_name(ag)));
+        }
+        if (agnosai_agent_role(ag) != 0) {
+            bayan_json_v_obj_set_a(a, ao, AGNOSTIC_JK_ROLE, bayan_json_v_str_new_a(a, agnosai_agent_role(ag)));
+        }
+        if (agnosai_agent_llm_model(ag) != 0) {
+            bayan_json_v_obj_set_a(a, ao, AGNOSTIC_JK_LLM_MODEL,
+              bayan_json_v_str_new_a(a, agnosai_agent_llm_model(ag)));
+        }
+        bayan_json_v_arr_push_a(a, agents, ao);
+        i = i + 1;
+    }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_AGENTS, agents);
+
+    # Dependencies are engine task ids; the wire carries indices, the request's own form.
+    var tv = agnosai_crew_tasks(spec);
+    var tn = 0;
+    if (tv != 0) { tn = vec_len(tv); }
+    var pos = map_new_str_a(a);
+    if (pos == 0) { return 0; }
+    var k = 0;
+    while (k < tn) {
+        map_set_a(a, pos, agnosai_task_id(vec_get(tv, k)), k + 1);
+        k = k + 1;
+    }
+    var tasks = bayan_json_v_arr_new_a(a);
+    if (tasks == 0) { return 0; }
+    var j = 0;
+    while (j < tn) {
+        var t = vec_get(tv, j);
+        var to = bayan_json_v_obj_new_a(a);
+        if (to == 0) { return 0; }
+        bayan_json_v_obj_set_a(a, to, AGNOSTIC_JK_TASK_ID, bayan_json_v_str_new_a(a, agnosai_task_id(t)));
+        bayan_json_v_obj_set_a(a, to, AGNOSTIC_JK_INDEX, bayan_json_v_int_new_a(a, j));
+        bayan_json_v_obj_set_a(a, to, AGNOSTIC_JK_DESCRIPTION,
+          bayan_json_v_str_new_a(a, agnosai_task_description(t)));
+        if (agnosai_task_expected_output(t) != 0) {
+            bayan_json_v_obj_set_a(a, to, AGNOSTIC_JK_EXPECTED,
+              bayan_json_v_str_new_a(a, agnosai_task_expected_output(t)));
+        }
+        bayan_json_v_obj_set_a(a, to, AGNOSTIC_JK_PRIORITY,
+          bayan_json_v_str_new_a(a, agnosai_task_priority_to_wire_a(a, agnosai_task_priority(t))));
+        var deps = bayan_json_v_arr_new_a(a);
+        if (deps == 0) { return 0; }
+        var dv = agnosai_task_dependencies(t);
+        var dn = 0;
+        if (dv != 0) { dn = vec_len(dv); }
+        var d = 0;
+        while (d < dn) {
+            var at = map_get(pos, vec_get(dv, d));
+            if (at > 0) { bayan_json_v_arr_push_a(a, deps, bayan_json_v_int_new_a(a, at - 1)); }
+            d = d + 1;
+        }
+        bayan_json_v_obj_set_a(a, to, AGNOSTIC_JK_DEPENDENCIES, deps);
+        bayan_json_v_arr_push_a(a, tasks, to);
+        j = j + 1;
+    }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TASKS, tasks);
+    return agnostic_response_json_a(a, HTTP_OK, obj);
+}
+
+# `GET /api/v1/crews[?limit=N&before=CURSOR]` — the caller's crews, newest first (0.1.9).
+#
+# `{crews: [...], scope, next?}`. Each crew is `{crew_id, name, status, submitted_at,
+# started_at?, finished_at?, tasks_submitted?, engine_mode?, total_tokens?,
+# cost_micro_usd?}` — the last two only when the crew's tasks were metered, or priced.
+#
+# **Only the caller's tenant.** A crew belongs to the scope it was submitted in, and no
+# listing crosses scopes — there is no admin view across tenants here.
+#
+# **Two sources, one order.** Crews this process holds (running ones, and finished ones
+# the ledger still keeps) come from the ledger; finished crews from before come from the
+# durable index (`src/engine/crewstore.cyr`). A crew in both is the ledger's, which is
+# never staler. Sorted by `submitted_at`, newest first, then by id.
+#
+# **`next` is a cursor, not a page number.** It names the last crew on this page; sending
+# it back as `?before=` continues strictly after it, so crews submitted between two pages
+# never shift one into the next or out of both. Absent on the last page. `limit` is 1 to
+# 200, default 50.
+fn agnostic_route_crews_list_a(a, path: Str, ctx): i64 {
+    var scope = agnostic_reqctx_scope(ctx);
+    var limit = agnostic_query_uint_a(a, path, "limit", 50);
+    if (limit < 1 || limit > 200) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'limit' is a number from 1 to 200"));
+    }
+    var cur_ms = 0 - 1;
+    var cur_id = 0;
+    var before = agnostic_query_get_a(a, path, "before");
+    if (before != 0) {
+        var ok = _agnostic_crews_cursor_parse_a(a, before, &cur_ms, &cur_id);
+        if (ok == 0) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+              str_from_a(a, "'before' is the 'next' of an earlier page"));
+        }
+    }
+
+    # Gather: the ledger's crews in scope, then the durable ones it no longer holds.
+    var rows = vec_new_a(a);
+    if (rows == 0) { return 0; }
+    var held = map_new_str_a(a);
+    if (held == 0) { return 0; }
+    var live = agnostic_ledger_entries_in_a(a, scope);
+    var i = 0;
+    while (i < vec_len(live)) {
+        var e = vec_get(live, i);
+        var row = agnostic_ledger_row_a(a, e);
+        if (row == 0) { return 0; }
+        vec_push_a(a, rows, row);
+        map_set_a(a, held, agnostic_ledger_crew_id(e), 1);
+        i = i + 1;
+    }
+    var durable = agnostic_crews_index_in_a(a, scope);
+    var j = 0;
+    while (j < vec_len(durable)) {
+        var dr = vec_get(durable, j);
+        if (map_get(held, agnostic_crew_row_get(dr, AGNOSTIC_CR_CREW_ID)) == 0) { vec_push_a(a, rows, dr); }
+        j = j + 1;
+    }
+
+    # The page: the `limit` newest rows strictly older than the cursor, kept in order in a
+    # small sorted vec — one pass, without sorting everything the tenant ever ran.
+    var page = vec_new_a(a);
+    if (page == 0) { return 0; }
+    var more = 0;
+    var k = 0;
+    while (k < vec_len(rows)) {
+        var r = vec_get(rows, k);
+        var after_cursor = 1;
+        if (cur_ms >= 0) {
+            if (_agnostic_crews_row_before(r, cur_ms, cur_id) == 0) { after_cursor = 0; }
+        }
+        if (after_cursor == 1) {
+            var placed = _agnostic_crews_page_insert_a(a, page, r, limit);
+            if (placed == 2) { more = 1; }
+        }
+        k = k + 1;
+    }
+
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0) { return 0; }
+    var p = 0;
+    while (p < vec_len(page)) {
+        var item = _agnostic_crews_row_to_value_a(a, vec_get(page, p));
+        if (item == 0) { return 0; }
+        bayan_json_v_arr_push_a(a, arr, item);
+        p = p + 1;
+    }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREWS, arr);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREW_SCOPE, bayan_json_v_str_new_a(a, scope));
+    if (more == 1 && vec_len(page) > 0) {
+        var cur = _agnostic_crews_cursor_a(a, vec_get(page, vec_len(page) - 1));
+        if (cur == 0) { return 0; }
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_NEXT, bayan_json_v_str_new_a(a, cur));
+    }
+    return agnostic_response_json_a(a, HTTP_OK, obj);
+}
+
+# Byte-wise order of two Strs: -1, 0 or 1.
+fn _agnostic_str_order(x: Str, y: Str): i64 {
+    var xn = str_len(x);
+    var yn = str_len(y);
+    var n = xn;
+    if (yn < n) { n = yn; }
+    var xd = str_data(x);
+    var yd = str_data(y);
+    var i = 0;
+    while (i < n) {
+        var cx = load8(xd + i) & 255;
+        var cy = load8(yd + i) & 255;
+        if (cx < cy) { return 0 - 1; }
+        if (cx > cy) { return 1; }
+        i = i + 1;
+    }
+    if (xn < yn) { return 0 - 1; }
+    if (xn > yn) { return 1; }
+    return 0;
+}
+
+# Whether row `x` lists before row `y`: newer `submitted_at` first, then the higher id.
+fn _agnostic_crews_row_newer(x, y): i64 {
+    var xs = agnostic_crew_row_get(x, AGNOSTIC_CR_SUBMITTED);
+    var ys = agnostic_crew_row_get(y, AGNOSTIC_CR_SUBMITTED);
+    if (xs != ys) {
+        if (xs > ys) { return 1; }
+        return 0;
+    }
+    if (_agnostic_str_order(agnostic_crew_row_get(x, AGNOSTIC_CR_CREW_ID),
+        agnostic_crew_row_get(y, AGNOSTIC_CR_CREW_ID)) > 0) { return 1; }
+    return 0;
+}
+
+# Whether row `r` lists strictly after the cursor `(ms, id)` — i.e. is older than it.
+fn _agnostic_crews_row_before(r, ms, id: Str): i64 {
+    var rs = agnostic_crew_row_get(r, AGNOSTIC_CR_SUBMITTED);
+    if (rs < ms) { return 1; }
+    if (rs > ms) { return 0; }
+    if (id == 0) { return 0; }
+    if (_agnostic_str_order(agnostic_crew_row_get(r, AGNOSTIC_CR_CREW_ID), id) < 0) { return 1; }
+    return 0;
+}
+
+# Insert `r` into the sorted `page` of at most `limit` rows. Returns 1 when it was placed,
+# 0 when it ranked below a full page, 2 when placing it pushed another row off — the two
+# cases that mean the listing has more beyond this page.
+fn _agnostic_crews_page_insert_a(a, page, r, limit): i64 {
+    var n = vec_len(page);
+    var at = n;
+    var i = 0;
+    while (i < n) {
+        if (_agnostic_crews_row_newer(r, vec_get(page, i)) == 1) { at = i; break; }
+        i = i + 1;
+    }
+    if (at >= limit) { return 2; }
+    vec_push_a(a, page, r);
+    var j = vec_len(page) - 1;
+    while (j > at) {
+        vec_set(page, j, vec_get(page, j - 1));
+        j = j - 1;
+    }
+    vec_set(page, at, r);
+    if (vec_len(page) > limit) {
+        vec_pop(page);
+        return 2;
+    }
+    return 1;
+}
+
+# The cursor naming row `r`: `<submitted_at>.<crew_id>`, in `a`.
+fn _agnostic_crews_cursor_a(a, r): i64 {
+    var sb = str_builder_new_a(a);
+    str_builder_add_int_a(a, sb, agnostic_crew_row_get(r, AGNOSTIC_CR_SUBMITTED));
+    str_builder_add_cstr_a(a, sb, ".");
+    str_builder_add_a(a, sb, agnostic_crew_row_get(r, AGNOSTIC_CR_CREW_ID));
+    return str_builder_build_a(a, sb);
+}
+
+# Parse a cursor `<ms>.<crew_id>` into `out_ms` and `out_id`. 1 when it is well-formed.
+fn _agnostic_crews_cursor_parse_a(a, s: Str, out_ms, out_id): i64 {
+    var n = str_len(s);
+    var d = str_data(s);
+    var dot = 0 - 1;
+    var i = 0;
+    while (i < n) {
+        if ((load8(d + i) & 255) == 46) { dot = i; break; }
+        i = i + 1;
+    }
+    if (dot < 1 || dot > 18) { return 0; }
+    var ms = 0;
+    var k = 0;
+    while (k < dot) {
+        var c = load8(d + k) & 255;
+        if (c < 48 || c > 57) { return 0; }
+        ms = ms * 10 + (c - 48);
+        k = k + 1;
+    }
+    var id = str_sub_a(a, s, dot + 1, n - dot - 1);
+    if (id == 0) { return 0; }
+    if (agnosai_uuid_is_valid(id) == 0) { return 0; }
+    store64(out_ms, ms);
+    store64(out_id, id);
+    return 1;
+}
+
+# One listed crew as the wire shows it.
+fn _agnostic_crews_row_to_value_a(a, r): i64 {
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_CREW_ID,
+      bayan_json_v_str_new_a(a, agnostic_crew_row_get(r, AGNOSTIC_CR_CREW_ID)));
+    var nm = agnostic_crew_row_get(r, AGNOSTIC_CR_NAME);
+    if (nm != 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_NAME, bayan_json_v_str_new_a(a, nm)); }
+    bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_STATUS, bayan_json_v_str_new_a(a,
+        agnostic_crew_status_to_wire(agnostic_crew_row_get(r, AGNOSTIC_CR_STATUS))));
+    bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_SUBMITTED_AT,
+      bayan_json_v_int_new_a(a, agnostic_crew_row_get(r, AGNOSTIC_CR_SUBMITTED)));
+    var st = agnostic_crew_row_get(r, AGNOSTIC_CR_STARTED);
+    if (st > 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_STARTED_AT, bayan_json_v_int_new_a(a, st)); }
+    var fin = agnostic_crew_row_get(r, AGNOSTIC_CR_FINISHED);
+    if (fin > 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_FINISHED_AT, bayan_json_v_int_new_a(a, fin)); }
+    var nt = agnostic_crew_row_get(r, AGNOSTIC_CR_NTASKS);
+    if (nt >= 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_TASKS_SUB, bayan_json_v_int_new_a(a, nt)); }
+    var mode = agnostic_crew_row_get(r, AGNOSTIC_CR_MODE);
+    if (mode != 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_MODE, bayan_json_v_str_new_a(a, mode)); }
+    var tok = agnostic_crew_row_get(r, AGNOSTIC_CR_TOKENS);
+    if (tok >= 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_TOTAL_TOK, bayan_json_v_int_new_a(a, tok)); }
+    var cost = agnostic_crew_row_get(r, AGNOSTIC_CR_COST);
+    if (cost >= 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_COST_MICRO, bayan_json_v_int_new_a(a, cost)); }
+    return o;
 }
