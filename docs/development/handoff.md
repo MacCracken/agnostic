@@ -7,7 +7,8 @@
 > gained the store-lock rules at 0.1.4, the borrow/TLS rules at 0.1.5, the
 > dependency and embedding rules at 0.1.7, the transport and plugin rules at 0.1.8, the
 > crew-surface and plugin-rung rules at 0.1.9, and the view, kit and toolchain rules at 0.1.10.
-> §6 was refreshed again at 0.1.11, for the re-pin to agnosai 2.1.3 and libro 2.10.6.
+> §6 was refreshed again at 0.1.11, for the re-pin to agnosai 2.1.3 and libro 2.10.6, and at
+> 0.1.12, for agnosai 2.1.4 (kavach 3.13.2, ai-hwaccel 2.4.1).
 > §1 notes the WebGUI (0.1.7), its plugin platform (0.1.8), the server-checked plugins and
 > tenant-scoped crews of 0.1.9, and the views of 0.1.10; §2 and §6 moved to cyrius 6.6.14 then.
 
@@ -432,10 +433,10 @@ already filed from this port.
 
 | Repo | Version | How it arrives |
 |---|---|---|
-| `agnosai` | **2.1.3** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below at its latest |
+| `agnosai` | **2.1.4** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below at its latest |
 | `libro` | **2.10.6** | direct since 0.1.7 (`modules`, after agnosai) — the audit chain |
-| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.3 |
-| `ai-hwaccel` / `tyche` / `kavach` | **2.4.0** / **1.1.0** / **3.13.1** | transitive via agnosai 2.1.3 |
+| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.4 |
+| `ai-hwaccel` / `tyche` / `kavach` | **2.4.1** / **1.1.0** / **3.13.2** | transitive via agnosai 2.1.4 |
 | `sigil` | **3.13.7** | folded into the 6.6.14 stdlib; agnosai and libro declare the same 3.13.7 |
 | `patra` | **1.15.1** | folded into the 6.6.14 stdlib; libro declares the same version |
 
@@ -445,8 +446,8 @@ this section used to describe — a tag pushed as a commit only, resolved from a
 locally seeded cache — is closed. The check that caught it still applies to every
 bump: a pushed *commit* is not a pushed *tag*.
 
-⚠ **To move a dep agnosai owns, release agnosai** — as 2.1.2 did for bote and majra, and 2.1.3
-for bote 3.3.16 (which brought libro 2.10.6).
+⚠ **To move a dep agnosai owns, release agnosai** — as 2.1.2 did for bote and majra, 2.1.3
+for bote 3.3.16 (which brought libro 2.10.6), and 2.1.4 for kavach 3.13.2 and ai-hwaccel 2.4.1.
 A root block "ahead of" agnosai works only if it lists `modules` (§5), and it then has
 to be kept in step by hand; the four that existed through 0.1.6 never took effect.
 
@@ -460,7 +461,8 @@ Do not add it back.
 ### ✅ No `[deps.patra]` hold at this pin
 
 6.6.14 folds patra 1.15.1 and sigil 3.13.7, and since 0.1.11 the deps declare exactly those:
-libro 2.10.6 declares patra 1.15.1 and sigil 3.13.7, and agnosai 2.1.3 declares sigil 3.13.7.
+libro 2.10.6 declares patra 1.15.1 and sigil 3.13.7, and agnosai 2.1.4 declares sigil 3.13.7 (so,
+since 0.1.12, does kavach 3.13.2).
 `cyrius deps` refuses to overwrite a folded leaf ("refusing to overwrite stdlib leaf"), so
 `lib/sigil.cyr` and `lib/patra.cyr` are the fold's bytes and `lib/` matches the snapshot with
 **zero** files differing — and the lock's sigil and patra lines now name those same versions. At
@@ -482,8 +484,9 @@ change.
 - **Duplicate-`fn` warnings: 19 → 1 at 0.1.3** (measured; the "20" once recorded
   here included libro ↔ majra `_sub_new`, which was already gone by 0.1.2). All 19
   were kavach's: the `syserr_*` / `agnosys_*` copies it shared with sigil and
-  bote-core, which 3.13.1 dropped. The one left is `uname_release` in
-  `lib/sys.cyr` and `lib/sigil.cyr`, with identical bodies. All are `fn`, so they announce
+  bote-core, which 3.13.1 dropped. The one left was `uname_release` in
+  `lib/sys.cyr` and `lib/sigil.cyr`, with identical bodies; sigil 3.13.x no longer defines it,
+  and the 0.1.12 build prints no `duplicate fn` at all. All are `fn`, so they announce
   themselves — unlike the `var` case, which does not. `scripts/check-lib-symbols.py`
   (Rule 4 of `check-symbols.sh`) is what catches the silent kind.
 

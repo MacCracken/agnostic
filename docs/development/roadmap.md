@@ -277,11 +277,38 @@ struck from the presets that name them. A registry miss must be an error, not a 
 
 **Prerequisite:** `yantra` needs `Page.captureScreenshot` on its CDP surface.
 
+**Prerequisite (recorded 2026-10-03): agnosai must run a tool-calling loop.** `execute_task` is
+one chat completion plus the output-schema retry. Nothing in `crew_runner.cyr` or `src/llm/`
+handles a `tool_call`, so a resolved tool is never invoked by the model. That makes the
+viability gate necessary but not sufficient: every name can resolve and still no tool runs.
+This is agnosai **F1**. Settle the tool-registry seam (`handoff.md`) together with it.
+
+- [ ] **A reviewer preset — the QA shape of the most robust multi-agent pattern.** One task does
+  the work, and a dependent review task with a clean context and an `output_schema` verdict
+  checks it. This is Cognition's single writer plus reviewer, and Claude's adversarial
+  verification. It is expressible as a DAG today, so it needs no engine change: ship it as a
+  preset and document it. Why it is here: landscape review §5 B2.
+
 ### M7 — MCP surface + A2A (v0.8.0)
 
 - JSON-RPC 2.0 MCP at `/mcp`, on `bote`
 - REST tool invocation at `/api/v1/mcp/invoke`
 - A2A callback endpoint
+
+**Target spec revisions (recorded 2026-10-03; settle in an ADR when M7 starts):**
+
+- [ ] **MCP 2026-07-28, the stateless core.** It has no `initialize` handshake and no
+  `Mcp-Session-Id`, and it adds the `Mcp-Method` / `Mcp-Name` routing headers. No session means
+  nothing to hold on a pooled worker, which is the constraint ADR 0009 is built on.
+- [ ] **The MCP Tasks extension, mapped onto crews.** A tool call that submits a crew returns a
+  task handle, and the client polls it. That is the 202-then-poll shape agnostic already has,
+  so no new transport is needed.
+- [ ] **Do not build on Sampling, Roots or Logging.** All three are deprecated in 2026-07-28,
+  with a 12-month removal window.
+- [ ] **A2A v1.0.x**, with signed Agent Cards. agnosai's callback POST is still unsent (agnosai
+  F8).
+- [ ] `skills/agnostic/SKILL.md` (0.1.13, below) is the non-MCP route for coding agents and
+  complements this surface.
 
 **Both MCP shapes stand (D5), on their own merit.** The original justification was preserving
 SecureYeoman's live client; that is gone (see below), but the decision is unchanged — JSON-RPC is
@@ -395,6 +422,10 @@ Still owed for 1.0.0:
   (ADR 0009), but it is still a one-second poll. Needs a transport that does not hold a pooled
   worker per watcher.
 - [ ] M8's reports, once they exist, as views or downloads from the shell.
+- [ ] **"Which crew needs me?"** Once agnosai F3 ships, show `awaiting_approval` as a crew
+  status and in its events. Roll it up as a badge from task to crew to tenant in Crews and
+  Swarm Command, with an approve/reject action behind a permission. This is the HITL surface
+  agnostic has none of today. The model is herdr's `blocked` roll-up (landscape review H2).
 
 Found at 0.1.9, recorded rather than fixed:
 
@@ -406,9 +437,12 @@ Found at 0.1.9, recorded rather than fixed:
   sends no `token` events from its workers — a watcher cannot see which tasks of a wave are running
   or done; `agent_cost_usd` in the crew profile is always empty (`metadata["agent"]` is never
   written); `token` events carry `crew_id: "unknown"`; on a timeout `crew_completed` can say
-  `completed` while the orchestrator records FAILED; the registry never reports RUNNING.
+  `completed` while the orchestrator records FAILED; the registry never reports RUNNING. Recorded
+  in agnosai's roadmap as **B17** (agnosai 2.1.4); 2.1.4 does not change them.
 - [ ] → **sandhi**: `sandhi_server_send_chunk` discards `sock_send`'s result, so a streaming handler
-  cannot notice its client left. A prerequisite for any SSE here.
+  cannot notice its client left. A prerequisite for any SSE here. Filed with sandhi 2026-10-03
+  (`docs/development/issues/2026-10-03-chunked-response-verbs-discard-send-result.md`, reproduced on
+  cyrius 6.6.14); a fix reaches agnostic only through a cyrius release that refolds sandhi.
 
 Found at 0.1.10, recorded rather than fixed:
 
@@ -418,20 +452,91 @@ Found at 0.1.10, recorded rather than fixed:
   lock's sigil line names the 3.13.7 `lib/` holds. 2.1.3 did not carry the 0.1.9 items above, which
   stay open.
 - [ ] The audit route serves only the newest 1024 entries (ADR 0011). A ranged, allocator-aware read
-  in libro would let it page the whole trail — file it with libro when a deployment needs that.
+  in libro would let it page the whole trail. Recorded in libro's roadmap ("Ideas", 2026-10-03), not
+  slotted until a deployment needs more than the newest 1024 entries.
 - [ ] Library edits a definition with a last-writer-wins `PUT`: two editors of one definition do not
   find out about each other, as plugin documents do since 0.1.9 (revisions). Definitions want an ETag
   and `If-Match` the same way.
 
 Found at 0.1.11, recorded rather than fixed:
 
-- [ ] Five warnings on code remain, none new, beside the toolchain's notes about folded leaves and
-  static data. Three are ai-hwaccel 2.4.0's own deprecated
-  `bayan_json_v_obj_get` calls, which go away when agnosai takes an ai-hwaccel release that renames
-  them. Two are in `src/server/serve.cyr` ("assigning non-pointer to typed pointer"):
-  `body` is typed `Str` by its initializer and later takes `agnostic_response_body(resp)` and
-  `rendered`, which return an untyped `i64`. agnosai 2.1.3 fixed the same shape by declaring the
-  local `: i64`.
+- [x] ~~Five warnings on code remain, none new, beside the toolchain's notes about folded leaves and
+  static data.~~ **Fixed at 0.1.12.** The two in `src/server/serve.cyr` ("assigning non-pointer to
+  typed pointer": `body`, typed `Str` by its initializer, took `agnostic_response_body(resp)` and
+  `rendered`) by declaring the local `: i64`, as agnosai 2.1.3 did. ai-hwaccel 2.4.0's three
+  deprecated `bayan_json_v_obj_get` calls by the re-pin to agnosai 2.1.4, which takes ai-hwaccel
+  2.4.1. The build prints no warning on code.
+
+Found at 0.1.12, recorded rather than fixed:
+
+- [ ] → **kavach**, through agnosai's sandbox: on a host whose coreutils are uutils (Ubuntu's default
+  from 25.10), kavach's pinned exec cannot run them, so a sandboxed `/bin/echo` or `cat` exits 1.
+  Filed with kavach (`docs/development/issues/2026-10-03-pinned-exec-breaks-uutils-coreutils.md`)
+  and recorded in agnosai's roadmap C. It matters to a deployment on such a host.
+
+## Recorded 2026-10-03 — from the herdr and multi-agent landscape review
+
+Source: [`research/2026-10-03-herdr-and-multi-agent-landscape.md`](research/2026-10-03-herdr-and-multi-agent-landscape.md).
+The H and B numbers below are that note's. Items that belong to a milestone were added to it:
+M6 (the reviewer preset and the tool-loop prerequisite), M7 (the target spec revisions) and M9
+(the approval roll-up). This section holds the rest.
+
+### Next release — 0.1.13 (cheap, agnostic-only, nothing waits on agnosai)
+
+Planned as 0.1.12; renumbered when 0.1.12 went out as the re-pin to agnosai 2.1.4.
+
+- [ ] **H3 — an explicit gap signal on the event cursor.** The ledger keeps 256 events per crew.
+  When `GET /api/v1/crews/{id}/events?since=` asks for a cursor older than the oldest event
+  kept, answer `events_lost: true` along with the oldest cursor still available. The client then
+  re-reads `GET /api/v1/crews/{id}`. Today that gap is silent. Small: one comparison in the
+  events handler, one response field, a test, and a note in ADR 0009.
+- [ ] **H4 — an interrupted crew is `interrupted`, not 404.** Write the crew row at submit. At
+  start-up, before `/ready`, rewrite every non-terminal row to a terminal `interrupted`, keeping
+  any finished-task results under ADR 0012's rule. Also add a "what survives a restart" table to
+  `docs/architecture/`.
+  - ⚠ **This revisits the M4 note** ("a crew interrupted mid-flight 404s after a restart"). The
+    objection M4 raised was a stale RUNNING loaded and latched on restart. That is met because
+    no non-terminal row survives start-up, and `interrupted` is itself terminal. It still needs
+    an ADR, and the user's sign-off on the revisit.
+  - Resuming a crew is **not** part of this; it waits on agnosai F4.
+- [ ] **H5 — `agnostic api schema`.** The binary prints its route table, methods, request and
+  response field lists, and error-code catalogue as JSON. A test diffs that output against a
+  checked-in snapshot, which turns the v1.0 criterion "public API frozen" into a mechanical
+  check.
+- [ ] **H6 — `skills/agnostic/SKILL.md`.** Teaches Claude Code, Codex or any SKILL.md-aware agent
+  to drive agnostic: submit, poll by cursor, cancel, read usage and cost, and the refusal
+  semantics (a 422 per refused field, `hierarchical` refused, placeholder `engine_mode`).
+  Guardrails modelled on herdr's: never cancel a crew it did not submit, and stop when
+  `/ready` fails. Documentation only.
+- [ ] **B3 — a single-agent baseline in the Swarm Command estimator.** Beside each swarm's
+  estimate, show a one-agent run at an **equal token budget**. Client-side only (`index.html`'s
+  headless estimator). The evidence: Tran & Kiela 2026 (a single agent matches or beats a
+  multi-agent system at equal budget) and Anthropic (80% of variance is token spend). Labelled
+  SIM like every other estimate.
+
+### Waiting on agnosai (release agnosai, then re-pin)
+
+Each of these is filed on agnosai's roadmap under **F** ("Past parity").
+- **F1 — tool loop:** M6's prerequisite.
+- **F2 — hierarchical wired:** agnostic then drops its `hierarchical` refusal (`src/engine/request.cyr:108-112`).
+- **F3 — approvals plus a lifecycle contract with `seq`:** absorbs the 0.1.9 agnosai follow-ups above (agnosai's B17), and
+  feeds M9's roll-up.
+- **F4 — durable crew log:** turns H4's `interrupted` into resumable.
+- **F5 — budgets and caps:** brings back an `AGNOSTIC_CREW_MAX_CONCURRENT_TASKS` that is actually
+  enforced.
+- **F6 — OTel GenAI span names and inbound trace context:** agnostic passes its sakshi W3C trace
+  id in, so one trace covers request → crew → task → tool.
+- **F7 — selection-score explain:** surfaced through `/api/v1/crews/{id}/plan`.
+
+### Later — recorded, not scheduled
+
+- **MAST failure tags** (specification / inter-agent misalignment / verification) on failed crews
+  in events and audit. Worth doing once F1–F3 make failures richer.
+- **External coding agents as crew members over ACP.** Claude Code or Codex would be driven as
+  structured JSON-RPC peers, not by scraping a PTY. This is a strategic option, not a
+  commitment, and it only makes sense after F1.
+- **Not adopted from herdr:** coordinating by screen-scraping, and unsandboxed out-of-process
+  plugins. agnostic's plugin model (ADRs 0004/0005/0007/0010) is already stronger.
 
 ## ~~Moving the cyrius pin to 6.6.13~~ (recorded 2026-10-02) — ✅ done at 0.1.10, at 6.6.14
 

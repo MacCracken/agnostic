@@ -4,6 +4,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.12] — 2026-10-03
+
+**Re-pin to agnosai 2.1.4.** The build prints no warning on code, down from five at 0.1.11:
+agnosai 2.1.4 brings ai-hwaccel 2.4.1, which renames the three deprecated getter calls, and
+`src/server/serve.cyr` declares its `body` local `: i64`. agnosai 2.1.4 also brings kavach 3.13.2,
+whose sandbox behaviour changes reach agnostic's crews through agnosai. The one agnostic source
+change is two lines in `serve.cyr`.
+
+**29 suites, 1,885 assertions, 0 failed**, on x86_64 under the 6.6.14 pin and **natively on
+aarch64** (a Raspberry Pi, Ubuntu 26.04).
+
+### Changed
+
+- **`[deps.agnosai]` 2.1.3 → 2.1.4.** It moves agnosai to kavach 3.13.2 and ai-hwaccel 2.4.1, both
+  on cyrius 6.6.14, and changes no agnosai source but its version literal. Through it:
+  - wasmtime runs under kavach's exec seccomp filter;
+  - the process capture cuts a payload off at 1 MiB of stdout with SIGPIPE, keeps each result's
+    stderr, and takes its payload down with it;
+  - OCI runs take the config's deadline and stdin.
+- **`src/server/serve.cyr`: `var body: i64 = str_from("")`.** `body` was typed `Str` by its
+  initializer, then took `agnostic_response_body(resp)` and `rendered`, which return an untyped
+  `i64` ("assigning non-pointer to typed pointer", twice). The values stored are the same; agnosai
+  2.1.3 made the same fix.
+- `lib/agnosai.cyr`, `lib/kavach.cyr` and `lib/ai-hwaccel.cyr` are byte-identical to their tags'
+  dists, and nothing else in `lib/` moved. `cyrius.lock` holds 119 files and 9 commit pins:
+  agnosai 2.1.4, kavach 3.13.2 and ai-hwaccel 2.4.1 are new, and libro stays at 2.10.6, its
+  latest. The binary is 6,136,064 B, 4,144 B more than 0.1.11, which is kavach's new code.
+- **Certified the CI way:** in a replica with no sibling checkouts and an empty dep cache,
+  `lib sync --full` + `deps` from an empty `lib/` reproduced `lib/` and `cyrius.lock` byte for
+  byte, and every CI step passed there.
+
+### Docs
+
+- **Roadmap.**
+  - The five warnings found at 0.1.11 are fixed.
+  - The 0.1.9 agnosai follow-ups point to agnosai's roadmap B17, and the sandhi chunk-send item
+    to its filing with sandhi.
+  - The libro ranged read points to libro's roadmap.
+  - "Found at 0.1.12" records the kavach issue that reaches crews on a uutils host: Ubuntu's
+    pinned exec of coreutils exits 1.
+- **The 2026-10-03 review of directions and gaps.**
+  - It adds `docs/development/research/2026-10-03-herdr-and-multi-agent-landscape.md` and the
+    roadmap items it recorded: M6, M7, M9 and a section of its own.
+  - Its next release, planned as 0.1.12, is renumbered 0.1.13, since 0.1.12 is this re-pin.
+
 ## [0.1.11] — 2026-10-03
 
 **Re-pin to agnosai 2.1.3 and libro 2.10.6.** The 161 warnings agnosai's bundle printed in every

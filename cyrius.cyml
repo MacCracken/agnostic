@@ -99,7 +99,7 @@ stdlib = [
 # ai-hwaccel or tyche arrives with an agnosai release that pins it.
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
-tag = "2.1.3"
+tag = "2.1.4"
 modules = ["dist/agnosai.cyr"]
 
 # libro — the audit chain `src/engine/audit.cyr` calls directly. Through 0.1.6 it

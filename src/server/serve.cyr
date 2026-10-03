@@ -122,7 +122,9 @@ fn _agnostic_serve_send(a, cfd, resp): i64 {
     var reason = agnostic_http_reason(status);
 
     var ctype = "application/json";
-    var body = str_from("");
+    # `: i64`, not the `Str` `str_from` would infer: `body` later takes
+    # `agnostic_response_body(resp)` and `rendered`, which are untyped.
+    var body: i64 = str_from("");
     # Extra header lines, CRLF-terminated, or 0. Only a `Str` body carries any —
     # the WebGUI's pages, whose Content-Security-Policy travels with them.
     var extra = 0;

@@ -2,9 +2,11 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-10-03, at **0.1.11** — the re-pin to **agnosai 2.1.3** and **libro 2.10.6**
-> (Version, Toolchain, Dependencies, the dependency layout and Tests were refreshed then). Before
-> that, 2026-10-02 at **0.1.10** — the views over the real surface (**Crews**, **Library**,
+> Last refreshed: 2026-10-03, at **0.1.12** — the re-pin to **agnosai 2.1.4** (kavach 3.13.2,
+> ai-hwaccel 2.4.1) and the two `serve.cyr` warnings, so the build prints no warning on code; every
+> suite passed natively on the Pi again (Version, Toolchain, Dependencies, the dependency layout and
+> Tests were refreshed then). Before that, 2026-10-03 at **0.1.11** — the re-pin to **agnosai
+> 2.1.3** and **libro 2.10.6**. Before that, 2026-10-02 at **0.1.10** — the views over the real surface (**Crews**, **Library**,
 > **Audit trail**) as plugins that link to each other through the shell, **one bridge client** every
 > plugin carries (ADR 0010), audit entries read from a bounded copy (ADR 0011), a **cancelled crew
 > keeps its finished results** (ADR 0012), **Cyrius 6.6.14**, and the **aarch64 artifact restored**
@@ -18,7 +20,7 @@
 
 ## Version
 
-**0.1.11** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.12** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -27,14 +29,14 @@ line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
   `lib/` (112) is byte-identical to `git show 6.6.14:lib/<mod>` in the cyrius repo, and a
   sibling-free replica with an **empty** dep cache (`lib sync --full` + `deps` from an empty `lib/`)
   reproduced `lib/` and the lock byte for byte; CI's gates and both DCE builds passed there —
-  at 0.1.10 and again at 0.1.11.
+  at 0.1.10, 0.1.11 and 0.1.12.
 
 ✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.14 folds **sigil 3.13.7** and
-**patra 1.15.1**. Since 0.1.11 the deps declare exactly those: agnosai 2.1.3 declares sigil 3.13.7,
+**patra 1.15.1**. Since 0.1.11 the deps declare exactly those: agnosai (2.1.4 now) declares sigil 3.13.7,
 and libro 2.10.6 declares sigil 3.13.7 and patra 1.15.1. So every commit pin the lock records on a
 folded module names the bytes `lib/` holds; at 0.1.10 the sigil line named agnosai 2.1.2's 3.13.5
-while `lib/sigil.cyr` was the fold's 3.13.7. kavach 3.13.1 declares sigil 3.12.18, and
-closest-wins skips it.
+while `lib/sigil.cyr` was the fold's 3.13.7. Since 0.1.12 no dep pins a module off the fold: kavach
+3.13.2 declares sigil 3.13.7 (3.13.1 declared 3.12.18), and ai-hwaccel 2.4.1 declares bayan 1.5.11.
 
 ⚠ **The pin and the dep tags move TOGETHER.** `cyrius deps` resolves a declared
   dep's dist on top of the `lib sync --full` snapshot, and `check-clean.sh` allows
@@ -70,18 +72,18 @@ block is therefore an override pin, which this repo does not carry.
 
 | dep | pin | how it arrives |
 |---|---|---|
-| `agnosai` | **2.1.3** | direct, `git` + `tag` + `modules` — pins every dep below at its latest |
+| `agnosai` | **2.1.4** | direct, `git` + `tag` + `modules` — pins every dep below at its latest |
 | `libro` | **2.10.6** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
-| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.3 |
-| `ai-hwaccel` / `tyche` / `kavach` | **2.4.0** / **1.1.0** / **3.13.1** | transitive via agnosai 2.1.3 |
+| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.4 |
+| `ai-hwaccel` / `tyche` / `kavach` | **2.4.1** / **1.1.0** / **3.13.2** | transitive via agnosai 2.1.4 |
 | `sigil` | **3.13.7** (folded) | folded stdlib (`[deps].stdlib`); agnosai and libro declare the same 3.13.7 |
 | `patra` | **1.15.1** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.15.1 |
 
-`cyrius.lock` — **119 files locked, 9 commit pins** (every dep above; agnosai, libro, sigil and
-bote moved at 0.1.11), plus a trailing `cyrius 6.6.14` line recording the toolchain that wrote it.
-agnosai 2.1.3 — and libro 2.10.6 and bote 3.3.16 before it — was certified the same way before
-its tag: its full CI steps in a sibling-free replica against an empty dep cache (agnosai: 99
-suites, 8,077 assertions). Every tag was confirmed on the GitHub remote before the lock was
+`cyrius.lock` — **119 files locked, 9 commit pins** (every dep above; agnosai, kavach and
+ai-hwaccel moved at 0.1.12), plus a trailing `cyrius 6.6.14` line recording the toolchain that wrote it.
+agnosai 2.1.4 — and ai-hwaccel 2.4.1, samay 1.1.6 and kavach 3.13.2 before it — was certified the
+same way before its tag: its full CI steps in a sibling-free replica against an empty dep cache
+(agnosai: 99 suites, 8,065 assertions). Every tag was confirmed on the GitHub remote before the lock was
 written, and a sibling-free resolution from an empty dep cache reproduced `lib/` and the lock
 byte for byte.
 
@@ -366,8 +368,9 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**29 suites, 1,885 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin; unchanged at 0.1.11,
-whose re-pin was not re-run natively — at 0.1.10 every suite also passed natively on aarch64), and
+**29 suites, 1,885 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin; unchanged at 0.1.11
+and 0.1.12, and at 0.1.12 every suite also passed natively on aarch64 on the Pi, Ubuntu 26.04 — 0.1.11's
+re-pin was not re-run there), and
 **61 JavaScript tests** (`./scripts/check-webgui-js.sh`). 0.1.10's additions:
 `tests/ledger.tcyr` (a cancelled crew takes its results once — including over the engine's empty
 vec), `tests/crewstore.tcyr` (the stored outcome rewritten once, across a reopen),
@@ -425,7 +428,7 @@ in this repo (`222`) and in agnosai (`8,038`) double-counted it.
 
 ## Dependency layout
 
-**agnosai 2.1.3** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
+**agnosai 2.1.4** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
 than called over HTTP. Everything crew/task/agent/scheduling-shaped lives there;
 Agnostic owns the product tier. Versions and pins: see the table under
 [Dependencies](#dependencies) above.
