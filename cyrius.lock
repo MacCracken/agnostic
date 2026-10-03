@@ -1,13 +1,13 @@
-commit	ddf0ba4ec0f025b9df80013584f0adea40371b06	agnosai	https://github.com/MacCracken/agnosai.git	2.1.2
-commit	1631e83314c0dd74c4a9c6e03d66b820a60caa27	libro	https://github.com/MacCracken/libro.git	2.10.5
-commit	497ac4b2c1ea4f929e7b15bc0a038d0362e8c7a4	sigil	https://github.com/MacCracken/sigil.git	3.13.5
-commit	3a6979e0c3f0ceca341dc6352dec077beb92da67	bote	https://github.com/MacCracken/bote.git	3.3.15
+commit	4ef7223c092af291f21d64a60b2f97dac37f54b8	agnosai	https://github.com/MacCracken/agnosai.git	2.1.3
+commit	3273fdef3475d41f9d691a75db59a46d691e782a	libro	https://github.com/MacCracken/libro.git	2.10.6
+commit	2c8edf810ad3d686e269d98f808896795b9cda50	sigil	https://github.com/MacCracken/sigil.git	3.13.7
+commit	b705b274bc2502eee53a94ec10e020f46794d137	bote	https://github.com/MacCracken/bote.git	3.3.16
 commit	fdd7d5994c2a65228c6b6e67ed73624ddb455b6b	majra	https://github.com/MacCracken/majra.git	2.9.2
 commit	472d6ca7be8be40d53be242a311b69245e4a9d7d	kavach	https://github.com/MacCracken/kavach.git	3.13.1
 commit	ae4f9a15d77d088b3bb6f7027521713784bde28a	ai-hwaccel	https://github.com/MacCracken/ai-hwaccel.git	2.4.0
 commit	f416ab68e510af8a3e117e0bb8abda21ca02f58f	tyche	https://github.com/MacCracken/tyche.git	1.1.0
 commit	c10965683a53b847313962b2f4a573974bfa3fd5	patra	https://github.com/MacCracken/patra.git	1.15.1
-c4fdb58b33e0fdba6eec6cc2364faeec74aa1dec57f14d7891c8491329954849  lib/agnosai.cyr
+607859eb7a722cff55a8b3810eb4a169df2cd9e776fbf80d370721c82a2442cf  lib/agnosai.cyr
 8b8d93a378faf91ceaa84e9a30a3ea962e3748b0fc269eba5bf03e0efead9963  lib/ai-hwaccel.cyr
 b1593105548307531c309458f9b701acae223eea8878cf1b2197f07fc260f591  lib/alloc.cyr
 69e92cc4b67f1a936f94c92ce8a4c66673758b84dba385e96fbeaa46fa692b4c  lib/alloc_agnos.cyr
@@ -27,7 +27,7 @@ a31cbf049f4611a63fffbc022826d69b03d71b0a29b18bdb5ea00b6cd88823b8  lib/atomic.cyr
 b8c0baf10ef9bd4a3ad2458e22f126bf28533ad00759c0eecb41f9f0655408e0  lib/audit_walk.cyr
 414f432bd35e0414960adaec8a172aa446dccc70bd6fa08545b8628755772d9f  lib/bayan.cyr
 39519f50cd35d21ec5ef2ebba5fade7b3d2fe8ddfe7644e3395c8da4d631e0a0  lib/bench.cyr
-408abffd856a6fa999afa47ce5b589de7d00e1ac32a7ba396d5908d33a9d07d0  lib/bote-core.cyr
+c5758af389457583b635a8d509947b7f81d18f27a81176f786427f7811336dc5  lib/bote-core.cyr
 d3106568aba674ffa99ad15542ba2accd648707e4c3172d4e5ca3bf8f49b765b  lib/bounds.cyr
 62f742477123341be50be74d09d16f80de08534061bc3e82fd99040df9708fc7  lib/boxed.cyr
 563bc5059e0a9c206884fb92a42c5b2c2cca06cd3f9448920239c8b5966119dc  lib/callback.cyr
@@ -52,7 +52,7 @@ cee5e0ea4197f991c8f7e6dcde2aaeb3a367f22fb43312c630fb19d2d43909a5  lib/http.cyr
 08f362cf55b61688e0893aefae51d5088f5e373519bfd0e2e6c443eba25305b6  lib/io.cyr
 a0504d17e4565ca28a7fc2ba42f7ee678ab862aad3b8fce6e029bbc8785a6648  lib/kavach.cyr
 f38092748e5a9197f7a526e54801fd15fab70d2a04d1c23f4f71003f564fb3d6  lib/keccak.cyr
-32150048602b57b6a670c698342fdde847647494f07422bb4e078eae41d8fafb  lib/libro.cyr
+671fe19ade6102149f1bf669cd5f50b3850233e9a48bc618dbe1cc8e9b8496e8  lib/libro.cyr
 bdb407c198b153d39d87b7150de278a785f67c130ff459ef87d018d9a8a70ffe  lib/log.cyr
 3bb673105e03e3181b6cd40cfb94e37eac4045b827e5e79d1fe45e13f15c0040  lib/mabda.cyr
 18e28c4001138d82a4608bb168ba57d4f2d1193f8544cea23bc5e08b2ad2e583  lib/majra.cyr

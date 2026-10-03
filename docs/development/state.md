@@ -2,7 +2,9 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-10-02, at **0.1.10** — the views over the real surface (**Crews**, **Library**,
+> Last refreshed: 2026-10-03, at **0.1.11** — the re-pin to **agnosai 2.1.3** and **libro 2.10.6**
+> (Version, Toolchain, Dependencies, the dependency layout and Tests were refreshed then). Before
+> that, 2026-10-02 at **0.1.10** — the views over the real surface (**Crews**, **Library**,
 > **Audit trail**) as plugins that link to each other through the shell, **one bridge client** every
 > plugin carries (ADR 0010), audit entries read from a bounded copy (ADR 0011), a **cancelled crew
 > keeps its finished results** (ADR 0012), **Cyrius 6.6.14**, and the **aarch64 artifact restored**
@@ -16,7 +18,7 @@
 
 ## Version
 
-**0.1.10** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.11** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -24,15 +26,15 @@ line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 - **Cyrius pin**: `6.6.14` (`cyrius.cyml [package].cyrius`), since 0.1.10. Every stdlib file in
   `lib/` (112) is byte-identical to `git show 6.6.14:lib/<mod>` in the cyrius repo, and a
   sibling-free replica with an **empty** dep cache (`lib sync --full` + `deps` from an empty `lib/`)
-  reproduced `lib/` and the lock byte for byte; CI's gates and both DCE builds passed there.
+  reproduced `lib/` and the lock byte for byte; CI's gates and both DCE builds passed there —
+  at 0.1.10 and again at 0.1.11.
 
 ✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.14 folds **sigil 3.13.7** and
-**patra 1.15.1**. libro 2.10.5 declares patra 1.15.1, the fold's own. agnosai 2.1.2 declares sigil
-**3.13.5** — the 6.6.12 fold, not 6.6.14's — so the sigil artifact `cyrius deps` skips ("refusing to
-overwrite stdlib leaf") is older than the folded copy it keeps; `lib/sigil.cyr` is the fold's bytes
-either way, and only the lock's sigil commit line names 3.13.5. An agnosai that declares 3.13.7
-makes them agree (recorded as an agnosai follow-up). kavach 3.13.1 declares sigil 3.12.18 and libro
-2.10.5 declares 3.13.4; closest-wins skips both.
+**patra 1.15.1**. Since 0.1.11 the deps declare exactly those: agnosai 2.1.3 declares sigil 3.13.7,
+and libro 2.10.6 declares sigil 3.13.7 and patra 1.15.1. So every commit pin the lock records on a
+folded module names the bytes `lib/` holds; at 0.1.10 the sigil line named agnosai 2.1.2's 3.13.5
+while `lib/sigil.cyr` was the fold's 3.13.7. kavach 3.13.1 declares sigil 3.12.18, and
+closest-wins skips it.
 
 ⚠ **The pin and the dep tags move TOGETHER.** `cyrius deps` resolves a declared
   dep's dist on top of the `lib sync --full` snapshot, and `check-clean.sh` allows
@@ -41,8 +43,8 @@ makes them agree (recorded as an agnosai follow-up). kavach 3.13.1 declares sigi
   agnosai's `main` red before its 2.0.5). ⛔ The wrong fixes, both tried and
   rejected: a `[deps.patra]` hold in this manifest, and a `check-clean` allowance.
 - `cyrius deps` prints `refusing to overwrite stdlib leaf 'sigil'` / `'patra'` on
-  every resolve. At 6.6.12 the skipped artifacts were the folded copies' own bytes; at 6.6.14
-  patra's still are, and sigil's (3.13.5) is older than the fold (3.13.7) — harmless, see above.
+  every resolve. Since 0.1.11 both skipped artifacts are the folded copies' own bytes again (at
+  0.1.10 sigil's was 3.13.5, older than the 3.13.7 fold — harmless, the fold won).
 - ✅ **The wrapper pins `cycc` now** — fixed upstream at v6.5.42, and the installed
   `cyrius` re-execs the toolchain the manifest pins. The `CYRIUS_HOME` shim this
   section used to prescribe is no longer needed; confirm with `cyrius --version`
@@ -68,19 +70,20 @@ block is therefore an override pin, which this repo does not carry.
 
 | dep | pin | how it arrives |
 |---|---|---|
-| `agnosai` | **2.1.2** | direct, `git` + `tag` + `modules` — pins every dep below at its latest |
-| `libro` | **2.10.5** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
-| `bote` / `majra` | **3.3.15** / **2.9.2** | transitive via agnosai 2.1.2 |
-| `ai-hwaccel` / `tyche` / `kavach` | **2.4.0** / **1.1.0** / **3.13.1** | transitive via agnosai 2.1.2 |
-| `sigil` | **3.13.7** (folded) | folded stdlib (`[deps].stdlib`); agnosai declares 3.13.5 (the fold wins) |
+| `agnosai` | **2.1.3** | direct, `git` + `tag` + `modules` — pins every dep below at its latest |
+| `libro` | **2.10.6** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
+| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.3 |
+| `ai-hwaccel` / `tyche` / `kavach` | **2.4.0** / **1.1.0** / **3.13.1** | transitive via agnosai 2.1.3 |
+| `sigil` | **3.13.7** (folded) | folded stdlib (`[deps].stdlib`); agnosai and libro declare the same 3.13.7 |
 | `patra` | **1.15.1** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.15.1 |
 
-`cyrius.lock` — **119 files locked, 9 commit pins** (every dep above; the pins did not move at
-0.1.10), plus a trailing `cyrius 6.6.14` line recording the toolchain that wrote it. agnosai 2.1.2 was prepared
-alongside this release and certified the same way: its full CI steps in a clean copy
-against an empty dep cache with no sibling checkouts (99 suites, 8,058 assertions). Every
-tag was confirmed on the GitHub remote before the lock was written, and a sibling-free
-resolution from an empty dep cache reproduced `lib/` and the lock byte for byte.
+`cyrius.lock` — **119 files locked, 9 commit pins** (every dep above; agnosai, libro, sigil and
+bote moved at 0.1.11), plus a trailing `cyrius 6.6.14` line recording the toolchain that wrote it.
+agnosai 2.1.3 — and libro 2.10.6 and bote 3.3.16 before it — was certified the same way before
+its tag: its full CI steps in a sibling-free replica against an empty dep cache (agnosai: 99
+suites, 8,077 assertions). Every tag was confirmed on the GitHub remote before the lock was
+written, and a sibling-free resolution from an empty dep cache reproduced `lib/` and the lock
+byte for byte.
 
 ✅ **Both sibling work-arounds are REMOVED** (2026-08-22). patra 1.13.10 stopped
 `patra_init` clobbering the host log level, and libro 2.8.9 stopped a `PatraStore`
@@ -363,8 +366,9 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**29 suites, 1,885 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin — and natively
-on aarch64), and **61 JavaScript tests** (`./scripts/check-webgui-js.sh`). 0.1.10's additions:
+**29 suites, 1,885 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin; unchanged at 0.1.11,
+whose re-pin was not re-run natively — at 0.1.10 every suite also passed natively on aarch64), and
+**61 JavaScript tests** (`./scripts/check-webgui-js.sh`). 0.1.10's additions:
 `tests/ledger.tcyr` (a cancelled crew takes its results once — including over the engine's empty
 vec), `tests/crewstore.tcyr` (the stored outcome rewritten once, across a reopen),
 `tests/crew_tenancy.tcyr` (the status filter, across pages), `tests/audit.tcyr` (the ring: newest
@@ -421,7 +425,7 @@ in this repo (`222`) and in agnosai (`8,038`) double-counted it.
 
 ## Dependency layout
 
-**agnosai 2.1.2** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
+**agnosai 2.1.3** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
 than called over HTTP. Everything crew/task/agent/scheduling-shaped lives there;
 Agnostic owns the product tier. Versions and pins: see the table under
 [Dependencies](#dependencies) above.

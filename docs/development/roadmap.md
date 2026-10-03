@@ -412,16 +412,26 @@ Found at 0.1.9, recorded rather than fixed:
 
 Found at 0.1.10, recorded rather than fixed:
 
-- [ ] → **agnosai follow-ups**, with the ones above (release agnosai, then re-pin): its dist calls the
-  deprecated `bayan_json_v_obj_get` (bayan 1.5.11) and passes `Str`s where cyrius 6.6.14 wants a
-  `cstring` (`file_open(str_data(...))`), warning in every build here; and it declares sigil 3.13.5
-  where 6.6.14 folds 3.13.7 — harmless, the fold wins, but the lock's sigil line then names a commit
-  `lib/` does not hold.
+- [x] ~~**agnosai follow-ups**: its dist calls the deprecated `bayan_json_v_obj_get`, passes `Str`s
+  where 6.6.14 wants a `cstring`, and declares sigil 3.13.5 where 6.6.14 folds 3.13.7.~~ **Fixed at
+  0.1.11** by the re-pin to agnosai 2.1.3: its 161 warnings are gone from every build here, and the
+  lock's sigil line names the 3.13.7 `lib/` holds. 2.1.3 did not carry the 0.1.9 items above, which
+  stay open.
 - [ ] The audit route serves only the newest 1024 entries (ADR 0011). A ranged, allocator-aware read
   in libro would let it page the whole trail — file it with libro when a deployment needs that.
 - [ ] Library edits a definition with a last-writer-wins `PUT`: two editors of one definition do not
   find out about each other, as plugin documents do since 0.1.9 (revisions). Definitions want an ETag
   and `If-Match` the same way.
+
+Found at 0.1.11, recorded rather than fixed:
+
+- [ ] Five warnings on code remain, none new, beside the toolchain's notes about folded leaves and
+  static data. Three are ai-hwaccel 2.4.0's own deprecated
+  `bayan_json_v_obj_get` calls, which go away when agnosai takes an ai-hwaccel release that renames
+  them. Two are in `src/server/serve.cyr` ("assigning non-pointer to typed pointer"):
+  `body` is typed `Str` by its initializer and later takes `agnostic_response_body(resp)` and
+  `rendered`, which return an untyped `i64`. agnosai 2.1.3 fixed the same shape by declaring the
+  local `: i64`.
 
 ## ~~Moving the cyrius pin to 6.6.13~~ (recorded 2026-10-02) — ✅ done at 0.1.10, at 6.6.14
 

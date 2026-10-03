@@ -4,6 +4,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.11] — 2026-10-03
+
+**Re-pin to agnosai 2.1.3 and libro 2.10.6.** The 161 warnings agnosai's bundle printed in every
+build here are gone, and every commit pin the lock records on a folded module now names the
+bytes `lib/` holds. No agnostic source change.
+
+**29 suites, 1,885 assertions, 0 failed** (x86_64, under the 6.6.14 pin).
+
+### Changed
+
+- **`[deps.agnosai]` 2.1.2 → 2.1.3**, which closes the three agnosai follow-ups recorded at
+  0.1.10. Its bundle no longer calls the deprecated `bayan_json_v_obj_get` (153 sites). It no
+  longer passes `str_data(path)` to `file_open`'s `cstring` (2 sites, where a path cut from a
+  longer one opened the longer file). And it no longer assigns untyped values to `Str`-typed
+  locals (6 sites). It declares sigil 3.13.7, the 6.6.14 fold, so the lock's sigil line now names
+  the commit `lib/sigil.cyr` holds; at 0.1.10 it named 3.13.5. bote arrives through it at 3.3.16.
+- **`[deps.libro]` 2.10.5 → 2.10.6**, libro's latest: sigil 3.13.7 and cyrius 6.6.14, with no
+  source change. `dist/libro.cyr` differs from 2.10.5's only in its version header.
+- `lib/agnosai.cyr`, `lib/bote-core.cyr` and `lib/libro.cyr` are byte-identical to their tags'
+  dists, and nothing else in `lib/` moved. `cyrius.lock` holds 119 files and 9 commit pins.
+- The build prints five warnings on code, none new: ai-hwaccel 2.4.0's three deprecated getter
+  calls (in its own bundle) and two in `src/server/serve.cyr`, now recorded on the roadmap. The
+  binary is 6,131,920 B, as at 0.1.10. The aarch64 cross-build compiles; the suites were not
+  re-run natively on the Pi for this re-pin.
+- **Certified the CI way**: in a replica with no sibling checkouts and an empty dep cache,
+  `lib sync --full` + `deps` from an empty `lib/` reproduced `lib/` and `cyrius.lock` byte for
+  byte, and every CI step passed there.
+
 ## [0.1.10] — 2026-10-02
 
 **Views over the real surface, and aarch64 is back** — Crews, Library and Audit trail as first-party
