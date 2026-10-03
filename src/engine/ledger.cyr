@@ -279,8 +279,9 @@ fn agnostic_ledger_record_owned(crew_id: Str, name: Str, sub, scope: Str, idem: 
     store64(e + AGNOSTIC_LE_FINISHED, 0);
     store64(e + AGNOSTIC_LE_SPEC, 0);
     store64(e + AGNOSTIC_LE_MODE, 0);
-    if (scope == 0) { scope = AGNOSTIC_SCOPE_DEFAULT; }
-    store64(e + AGNOSTIC_LE_SCOPE, str_clone(scope));
+    var sc = scope;
+    if (sc == 0) { sc = AGNOSTIC_SCOPE_DEFAULT; }
+    store64(e + AGNOSTIC_LE_SCOPE, str_clone(sc));
     store64(e + AGNOSTIC_LE_IDEM, 0);
     store64(e + AGNOSTIC_LE_FPRINT, 0);
     if (idem != 0) { store64(e + AGNOSTIC_LE_IDEM, str_clone(idem)); }
@@ -625,13 +626,41 @@ fn agnostic_ledger_ev_event(r): i64 { return load64(r + AGNOSTIC_LEV_EV); }
 # without writing anything — a later observation cannot move a `failed` to
 # `completed`, because there is no code path that does.
 #
-# Returns 1 when the write happened, 0 when it was refused.
+# ## The one exception: a cancelled crew takes its results, once (0.1.10)
+#
+# `agnostic_crew_cancel` latches CANCELLED the moment the engine accepts the cancel —
+# with no results, because the engine has none yet: cancelling stops new tasks, and
+# the ones in flight run on. When they finish, the engine records the crew CANCELLED
+# again, now WITH the results its finished tasks produced (the registry's state holds
+# no results until the crew ends). Until 0.1.10 the guard refused that observation and
+# the work was lost. So a stored CANCELLED holding no results takes the results of a
+# terminal observation that has some — ONCE (it holds them afterwards), and the status,
+# its reason and when it finished stay exactly as latched: the crew was cancelled, and
+# that is the answer. Nothing else about a terminal entry can change.
+#
+# ⚠ "No results" is a null OR an EMPTY vec. While a crew runs, the engine's registry
+# state carries an empty results vec, and every refresh latches it — so a crew cancelled
+# after a refresh holds an empty vec, not 0. Testing for 0 alone never fired live.
+#
+# Returns 1 when the status was written, 2 when a cancelled crew took its results, 0
+# when the observation was refused.
 fn agnostic_ledger_latch(e, status, error, results): i64 {
     if (e == 0) { return 0; }
     mutex_lock(_agnostic_ledger_mutex);
-    if (agnostic_status_is_terminal(load64(e + AGNOSTIC_LE_STATUS)) == 1) {
+    var stored = load64(e + AGNOSTIC_LE_STATUS);
+    if (agnostic_status_is_terminal(stored) == 1) {
+        var took = 0;
+        if (stored == AGNOSTIC_CREW_CANCELLED && agnostic_status_is_terminal(status) == 1) {
+            if (_agnostic_results_count(load64(e + AGNOSTIC_LE_RESULTS)) == 0 && _agnostic_results_count(results) > 0) {
+                store64(e + AGNOSTIC_LE_RESULTS, results);
+                took = 1;
+            }
+        }
         mutex_unlock(_agnostic_ledger_mutex);
-        return 0;
+        if (took == 0) { return 0; }
+        # Rewrite what was persisted when the cancel latched — outside the lock, as below.
+        _agnostic_ledger_persist_again(e);
+        return 2;
     }
     store64(e + AGNOSTIC_LE_STATUS, status);
     if (error != 0) { store64(e + AGNOSTIC_LE_ERROR, error); }
@@ -672,6 +701,28 @@ fn _agnostic_ledger_persist(e): i64 {
     var row = agnostic_ledger_row_a(default_alloc(), e);
     if (row == 0) { return 0; }
     return agnostic_crews_save_row(row, doc);
+}
+
+# How many task results a results vec holds: 0 for none at all.
+fn _agnostic_results_count(results): i64 {
+    if (results == 0) { return 0; }
+    return vec_len(results);
+}
+
+# Rewrite a cancelled entry's durable outcome once it has taken its results (0.1.10) —
+# the one stored outcome that is ever written twice. See `agnostic_ledger_latch`.
+fn _agnostic_ledger_persist_again(e): i64 {
+    if (agnostic_store_is_open() == 0) { return 0; }
+    var o = agnostic_ledger_outcome_a(default_alloc(), e);
+    if (o == 0) { return 0; }
+    var ov = agnostic_outcome_to_value_a(default_alloc(), o);
+    if (ov == 0) { return 0; }
+    agnostic_ledger_describe_a(default_alloc(), e, ov);
+    var doc = bayan_json_v_build(ov);
+    if (doc == 0) { return 0; }
+    var row = agnostic_ledger_row_a(default_alloc(), e);
+    if (row == 0) { return 0; }
+    return agnostic_crews_resave_row(row, doc);
 }
 
 # An entry as a crew row (`src/engine/crewstore.cyr`), in `a` — what the listing shows and

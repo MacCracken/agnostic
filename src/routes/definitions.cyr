@@ -53,6 +53,17 @@ var AGNOSTIC_JV_AT_OPEN     = str_from("open");
 # ⚠ Its own key, not the crew-events `dropped_events`. Reusing a key named for a
 # different concept reads as the same number twice.
 var AGNOSTIC_JK_AUDIT_DROP  = str_from("dropped");
+# The audit entries route (0.1.10).
+var AGNOSTIC_JK_ENTRIES     = str_from("entries");
+var AGNOSTIC_JK_TIMESTAMP   = str_from("timestamp");
+var AGNOSTIC_JK_SEVERITY    = str_from("severity");
+var AGNOSTIC_JK_SOURCE      = str_from("source");
+var AGNOSTIC_JK_ACTION      = str_from("action");
+var AGNOSTIC_JK_DETAILS     = str_from("details");
+var AGNOSTIC_JK_HASH        = str_from("hash");
+var AGNOSTIC_JK_PREV_HASH   = str_from("prev_hash");
+var AGNOSTIC_JK_CUT         = str_from("cut");
+var AGNOSTIC_JK_OLDEST_HELD = str_from("oldest_held");
 
 # Where definitions live. One literal, so M4 has one thing to change.
 fn agnostic_definitions_storage(): i64 {
@@ -289,4 +300,75 @@ fn agnostic_route_audit_a(a): i64 {
     # is the finding; a 500 would make a tamper report indistinguishable from a
     # server fault, and an operator polling this needs to tell those apart.
     return agnostic_response_json_a(a, HTTP_OK, _agnostic_def_stamp(a, obj));
+}
+
+# `GET /api/v1/audit/entries[?limit=&before=]` — the trail's newest entries (0.1.10).
+#
+# `{entries: [...], total, oldest_held, next?}`, newest first. Each entry is `{index,
+# timestamp, severity, source, action, details, hash, prev_hash, cut?}`: `index` is its
+# position in the chain from 0, `hash` and `prev_hash` its links — so a reader can see the
+# chain hold from one entry to the next — and `cut: true` marks a field too long for the
+# kept copy (the stored entry is whole). `total` is how many entries the chain holds.
+#
+# **Read from what this process keeps, not from the store** — the newest 1024 entries
+# (`AGNOSTIC_AUDIT_RING`, `src/engine/audit.cyr`, which says why). `oldest_held` is the
+# lowest index this route can answer; older entries are in the store and verified at open,
+# and are not served here. `next` is the index to send back as `?before=` for the page
+# after this one; absent when this page reached `oldest_held`. `limit` is 1 to 200,
+# default 50. ADMIN, as the trail's summary is: it records every user's actions.
+fn agnostic_route_audit_entries_a(a, path: Str): i64 {
+    var limit = agnostic_query_uint_a(a, path, "limit", 50);
+    if (limit < 1 || limit > 200) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'limit' is a number from 1 to 200"));
+    }
+    var total = agnostic_audit_next_index();
+    var before = agnostic_query_uint_a(a, path, "before", total);
+    if (before < 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'before' is an entry index — the 'next' of an earlier page"));
+    }
+    var rows = agnostic_audit_entries_a(a, before, limit);
+    if (rows == 0) { return 0; }
+    var lo = agnostic_audit_oldest_held();
+
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0) { return 0; }
+    var i = 0;
+    var last = 0 - 1;
+    while (i < vec_len(rows)) {
+        var r = vec_get(rows, i);
+        var o = bayan_json_v_obj_new_a(a);
+        if (o == 0) { return 0; }
+        last = agnostic_audit_read_get(r, AGNOSTIC_AR_INDEX);
+        bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_INDEX, bayan_json_v_int_new_a(a, last));
+        bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_TIMESTAMP,
+          bayan_json_v_str_new_a(a, agnostic_audit_read_get(r, AGNOSTIC_AR_TS)));
+        bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_SEVERITY, bayan_json_v_str_new_a(a,
+            str_from_a(a, agnostic_audit_severity_wire(agnostic_audit_read_get(r, AGNOSTIC_AR_SEV)))));
+        bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_SOURCE,
+          bayan_json_v_str_new_a(a, agnostic_audit_read_get(r, AGNOSTIC_AR_SRC)));
+        bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_ACTION,
+          bayan_json_v_str_new_a(a, agnostic_audit_read_get(r, AGNOSTIC_AR_ACTION)));
+        bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_DETAILS,
+          bayan_json_v_str_new_a(a, agnostic_audit_read_get(r, AGNOSTIC_AR_DETAILS)));
+        bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_HASH,
+          bayan_json_v_str_new_a(a, agnostic_audit_read_get(r, AGNOSTIC_AR_HASH)));
+        bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_PREV_HASH,
+          bayan_json_v_str_new_a(a, agnostic_audit_read_get(r, AGNOSTIC_AR_PREV)));
+        if (agnostic_audit_read_get(r, AGNOSTIC_AR_CUT) != 0) {
+            bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_CUT, bayan_json_v_bool_new_a(a, 1));
+        }
+        bayan_json_v_arr_push_a(a, arr, o);
+        i = i + 1;
+    }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ENTRIES, arr);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOTAL, bayan_json_v_int_new_a(a, total));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_OLDEST_HELD, bayan_json_v_int_new_a(a, lo));
+    if (last > lo) {
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_NEXT, bayan_json_v_int_new_a(a, last));
+    }
+    return agnostic_response_json_a(a, HTTP_OK, obj);
 }

@@ -18,7 +18,7 @@ const UUID = '6ba7b810-9dad-41d1-80b4-00c04fd430c8';
 const req = (method, path, extra) => Object.assign({ type: 'agnostic:request', id: 'q1', method, path }, extra || {});
 
 test('the gate is pure: it loads without a DOM, and exports what the app uses', () => {
-  for (const k of ['METHODS', 'MAX_BODY', 'MAX_INFLIGHT', 'compileRoute', 'grantsFor', 'granted', 'check']) assert.ok(k in B, k);
+  for (const k of ['METHODS', 'MAX_BODY', 'MAX_INFLIGHT', 'compileRoute', 'grantsFor', 'granted', 'check', 'parseRoute', 'checkNavigate']) assert.ok(k in B, k);
   assert.equal(B.MAX_INFLIGHT, 16);
   assert.ok(Object.isFrozen(B), 'and cannot be changed from outside');
 });
@@ -111,4 +111,39 @@ test('revisions and idempotency keys become headers — only on the methods they
   assert.equal(B.check(req('POST', '/api/v1/crews', { body: {}, idempotencyKey: 'short' }), swarm, grants).status, 400);
   assert.equal(B.check(req('POST', '/api/v1/crews', { body: {}, idempotencyKey: 'has spaces in it' }), swarm, grants).status, 400);
   assert.equal(B.check(req('GET', '/api/v1/crews', { idempotencyKey: 'sw-run-abc12345' }), swarm, grants).status, 400, 'only a POST');
+});
+
+test('the route is read from the hash: a view, and a plugin with params', () => {
+  const r = (h) => { const x = B.parseRoute(h); return [x.view, x.id, x.params]; };
+  assert.deepEqual(r(''), ['overview', '', '']);
+  assert.deepEqual(r('#overview'), ['overview', '', '']);
+  assert.deepEqual(r('#settings'), ['settings', '', '']);
+  assert.deepEqual(r('#nonsense'), ['overview', '', ''], 'anything else is the overview');
+  assert.deepEqual(r('#plugin/swarm'), ['plugin', 'swarm', '']);
+  assert.deepEqual(r('#plugin/crews?crew=' + UUID), ['plugin', 'crews', 'crew=' + UUID], 'the id stops at the ?');
+  assert.deepEqual(r('#plugin/crews?status=running&crew=a%2Fb'), ['plugin', 'crews', 'status=running&crew=a%2Fb']);
+  assert.deepEqual(r('#plugin/crews?crew=<script>'), ['plugin', 'crews', ''], 'params outside the charset are dropped, not passed on');
+  assert.deepEqual(r('#plugin/crews?' + 'a'.repeat(257)), ['plugin', 'crews', ''], 'and so are params over 256 characters');
+});
+
+test('navigate opens only a view that is switched on, with params only for a plugin', () => {
+  const on = ['swarm', 'crews'];
+  const nav = (to, params) => B.checkNavigate({ type: 'agnostic:navigate', to, params }, on);
+  assert.deepEqual({ ...nav('crews', 'crew=' + UUID) }, { ok: true, hash: 'plugin/crews?crew=' + UUID });
+  assert.deepEqual({ ...nav('swarm') }, { ok: true, hash: 'plugin/swarm' }, 'params are optional');
+  assert.deepEqual({ ...nav('swarm', '') }, { ok: true, hash: 'plugin/swarm' });
+  assert.deepEqual({ ...nav('overview', 'x=1') }, { ok: true, hash: 'overview' }, 'the shell\'s own views take no params');
+  assert.deepEqual({ ...nav('settings') }, { ok: true, hash: 'settings' });
+  assert.equal(nav('library').ok, false, 'a plugin that is off (or absent) is refused');
+  assert.equal(nav('Crews').ok, false, 'ids are matched exactly');
+  assert.equal(nav('../ui').ok, false);
+  assert.equal(nav('crews', 'crew=a b').ok, false, 'params keep to the charset');
+  assert.equal(nav('crews', 'x'.repeat(257)).ok, false, 'and to 256 characters');
+  assert.equal(nav('crews', 42).ok, false, 'and are a string');
+  assert.equal(B.checkNavigate({ type: 'agnostic:navigate' }, on).ok, false, 'a navigate names its view');
+  for (const p of ['crew=' + UUID, 'status=running&after=1759400000000.' + UUID, 'q=a%20b']) {
+    const n = nav('crews', p);
+    assert.equal(n.ok, true, p);
+    assert.equal(B.parseRoute('#' + n.hash).params, p, 'and what it allows survives the round trip through the URL');
+  }
 });

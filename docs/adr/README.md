@@ -30,3 +30,6 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0007](0007-plugin-requests-are-checked-by-the-server.md) | Plugin requests are checked by the server, against one permission vocabulary |
 | [0008](0008-crews-belong-to-the-submitting-tenant.md) | Crews belong to the tenant that submitted them, are listed by cursor, and a keyed submit is idempotent |
 | [0009](0009-crew-progress-is-collected-by-the-server.md) | Crew progress is collected by the server and read by cursor, not streamed |
+| [0010](0010-views-link-through-the-shell-and-share-one-bridge-client.md) | Views link to each other through the shell, and every plugin carries one bridge client |
+| [0011](0011-audit-entries-are-read-from-a-bounded-copy.md) | The audit trail's newest entries are read from a bounded copy, not the store |
+| [0012](0012-a-cancelled-crew-keeps-its-finished-results.md) | A cancelled crew keeps the results its finished tasks produced |

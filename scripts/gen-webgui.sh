@@ -6,6 +6,17 @@
 #
 #   ./scripts/gen-webgui.sh            regenerate src/webgui_data.cyr
 #   ./scripts/gen-webgui.sh --check    fail if the checked-in file has drifted
+#   ./scripts/gen-webgui.sh --sync-kit rewrite every plugin page's copy of the bridge client
+#                                      from src/webgui/kit/host.js, then regenerate
+#
+# ## One bridge client, carried verbatim by every plugin (0.1.10)
+#
+# A plugin page is one self-contained file (ADR 0004), so the client side of the host bridge —
+# `class Host` — cannot be shared by reference: each page carries a copy. Copies drift. So the
+# canonical source is `src/webgui/kit/host.js`, each page carries it between its
+# `agnostic-kit:host begin` / `end` markers, and this script refuses a page whose copy differs
+# from the canonical one by a single byte — and a page that asks the server for anything
+# (non-empty `permissions`) without carrying it. `--sync-kit` rewrites the copies.
 #
 # The generated file IS committed, so a clone builds without running this, and
 # `scripts/check-clean.sh` runs `--check` so an edited page cannot ship stale.
@@ -43,7 +54,7 @@ tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/gen-webgui.XXXXXX") || exit 2
 trap 'rm -rf "$tmpdir"' EXIT
 gen="$tmpdir/webgui_data.cyr"
 
-python3 - "$gen" <<'PY' || { echo "gen-webgui: generation failed" >&2; exit 1; }
+python3 - "$gen" "$MODE" <<'PY' || { echo "gen-webgui: generation failed" >&2; exit 1; }
 import base64
 import hashlib
 import json
@@ -52,10 +63,16 @@ import re
 import sys
 
 OUT = sys.argv[1]
+MODE = sys.argv[2] if len(sys.argv) > 2 else "generate"
+
+# The bridge client every plugin carries (0.1.10) — see the header.
+KIT_FILE = "src/webgui/kit/host.js"
+KIT_BEGIN = "/* agnostic-kit:host begin"
+KIT_END = "/* agnostic-kit:host end */"
 
 # The plugins, in listing order. Each is src/webgui/plugins/<id>/ holding a
 # `plugin.json` manifest and the page it names.
-PLUGINS = ["swarm"]
+PLUGINS = ["swarm", "crews", "library", "audit"]
 
 # A manifest carries exactly these keys — the allow-list rule the API's request
 # decoders follow (src/http/codec.cyr): an unknown key is an error, never ignored.
@@ -122,6 +139,37 @@ if on_disk != sorted(PLUGINS):
          "  on disk but not listed: %s\n  listed but not on disk: %s"
          % (", ".join(sorted(set(on_disk) - set(PLUGINS))) or "none",
             ", ".join(sorted(set(PLUGINS) - set(on_disk))) or "none"))
+
+def kit_span(text):
+    """(start, end) of the kit block in `text`, or None when it carries none."""
+    b = text.find(KIT_BEGIN)
+    if b < 0:
+        return None
+    e = text.find(KIT_END, b)
+    if e < 0:
+        fail("a page opens the bridge client block (%r) and never closes it (%r)" % (KIT_BEGIN, KIT_END))
+    return (b, e + len(KIT_END))
+
+try:
+    KIT = open(KIT_FILE, encoding="utf-8").read()
+except OSError as e:
+    fail("%s: %s" % (KIT_FILE, e))
+_ks = kit_span(KIT)
+if _ks is None or _ks != (0, len(KIT.rstrip("\n"))):
+    fail("%s: must be exactly one bridge client block, from %r to %r" % (KIT_FILE, KIT_BEGIN, KIT_END))
+KIT = KIT[_ks[0]:_ks[1]]
+
+def check_kit(path, text, permissions):
+    span = kit_span(text)
+    if span is None:
+        if permissions:
+            fail("%s: asks the server for something (permissions %s) but carries no bridge client — "
+                 "paste %s between the agnostic-kit:host markers, or run --sync-kit"
+                 % (path, ", ".join(permissions), KIT_FILE))
+        return
+    if text[span[0]:span[1]] != KIT:
+        fail("%s: its copy of the bridge client differs from %s — run "
+             "./scripts/gen-webgui.sh --sync-kit" % (path, KIT_FILE))
 
 def check_page(path, text):
     """Refuse what the page's CSP would block, and what the src/ gates would misread."""
@@ -248,6 +296,14 @@ for pid in PLUGINS:
     if m["entry"] != "index.html":
         fail("%s: `entry` must be index.html — a plugin is one self-contained page" % mpath)
     doc = {k: m[k] for k in MANIFEST_KEYS}
+    page = "%s/%s/index.html" % (root, pid)
+    if MODE == "--sync-kit":
+        text = open(page, encoding="utf-8").read()
+        span = kit_span(text)
+        if span is not None and text[span[0]:span[1]] != KIT:
+            open(page, "w", encoding="utf-8").write(text[:span[0]] + KIT + text[span[1]:])
+            sys.stderr.write("gen-webgui: synced the bridge client into %s\n" % page)
+    check_kit(page, open(page, encoding="utf-8").read(), perms)
     doc["asset"] = add_page("plugins/%s/index.html" % pid, False)
     manifests.append(doc)
 

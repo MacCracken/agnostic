@@ -59,13 +59,13 @@ fn test_login_happy_path() {
     var rendered = agnostic_encode_a(a, agnostic_response_body(r));
     assert_eq(load8(str_data(rendered)) & 255, 123,
       "the rendered body starts with '{' — not double-encoded into a string");
-    var tok = bayan_json_v_str(bayan_json_v_obj_get(v, "token"));
+    var tok = bayan_json_v_str(bayan_json_v_obj_get_by_cstr(v, "token"));
     assert_neq(tok, 0, "and carries a token");
-    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get(v, "token_type")), "Bearer"), 1,
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_cstr(v, "token_type")), "Bearer"), 1,
       "typed Bearer");
-    assert_eq(bayan_json_v_int(bayan_json_v_obj_get(v, "expires_in")), AGNOSTIC_TOKEN_TTL_SECS,
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_cstr(v, "expires_in")), AGNOSTIC_TOKEN_TTL_SECS,
       "with the TTL stated");
-    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get(v, "role")), "operator"), 1,
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_cstr(v, "role")), "operator"), 1,
       "and the role named");
 
     # ⭐ The token is not decoration: it authenticates.

@@ -113,6 +113,66 @@ fn test_terminal_states_stay_terminal() {
     assert_eq(agnostic_ledger_status(x), AGNOSTIC_CREW_CANCELLED, "still cancelled");
 }
 
+# ⭐ 0.1.10: cancelling a crew no longer loses what its finished tasks produced. The
+# cancel latches CANCELLED with no results — the engine has none yet — and when the
+# tasks in flight finish, the engine's final state brings them. The latch takes them
+# ONCE, and nothing else about the terminal entry moves.
+fn test_a_cancelled_crew_takes_its_results_once() {
+    test_group("ledger/cancel-results");
+
+    agnostic_ledger_reset();
+    var e = agnostic_ledger_record(_t_id(40), str_from("c"), 0);
+    assert_eq(agnostic_ledger_latch(e, AGNOSTIC_CREW_CANCELLED, 0, 0), 1,
+      "the cancel latches, with no results");
+    var fin = agnostic_ledger_finished_ms(e);
+    assert_neq(fin, 0, "and the crew is finished");
+
+    var results = vec_new();
+    vec_push(results, agnosai_task_result_new(str_from("t1"), str_from("done before the cancel"), AGNOSAI_STATUS_COMPLETED));
+    assert_eq(agnostic_ledger_latch(e, AGNOSTIC_CREW_RUNNING, 0, results), 0,
+      "a non-terminal observation still changes nothing");
+    assert_eq(agnostic_ledger_results(e), 0, "not even the results");
+
+    assert_eq(agnostic_ledger_latch(e, AGNOSTIC_CREW_CANCELLED, str_from("engine words"), results), 2,
+      "the engine's final state brings the finished tasks' results, and they are taken");
+    assert_eq(agnostic_ledger_results(e), results, "attached to the entry");
+    assert_eq(agnostic_ledger_status(e), AGNOSTIC_CREW_CANCELLED, "the status stays cancelled");
+    assert_eq(agnostic_ledger_error(e), 0, "the observation's reason is not taken");
+    assert_eq(agnostic_ledger_finished_ms(e), fin, "nor is a new finishing time");
+    var o = agnostic_ledger_outcome_a(default_alloc(), e);
+    assert_eq(agnostic_outcome_results(o), results, "and the outcome reports them");
+
+    # ⭐ What the engine really does (found live): while the crew runs, every refresh
+    # latches the registry's state, whose results vec is EMPTY but not null — so the entry
+    # a cancel lands on holds an empty vec, not 0. It must still take its results.
+    var r2 = agnostic_ledger_record(_t_id(43), str_from("c"), 0);
+    agnostic_ledger_latch(r2, AGNOSTIC_CREW_RUNNING, 0, vec_new());
+    assert_neq(agnostic_ledger_results(r2), 0, "a running crew holds the engine's empty results vec");
+    agnostic_ledger_latch(r2, AGNOSTIC_CREW_CANCELLED, 0, 0);
+    assert_eq(agnostic_ledger_latch(r2, AGNOSTIC_CREW_CANCELLED, 0, vec_new()), 0,
+      "an empty set of results is nothing to take");
+    assert_eq(agnostic_ledger_latch(r2, AGNOSTIC_CREW_CANCELLED, 0, results), 2,
+      "and the real results are taken over the empty vec");
+    assert_eq(agnostic_ledger_results(r2), results, "attached");
+
+    var later = vec_new();
+    vec_push(later, agnosai_task_result_new(str_from("t1"), str_from("a second answer"), AGNOSAI_STATUS_COMPLETED));
+    assert_eq(agnostic_ledger_latch(e, AGNOSTIC_CREW_COMPLETED, 0, later), 0,
+      "ONCE: a later set of results is refused");
+    assert_eq(agnostic_ledger_results(e), results, "the first set stands");
+    assert_eq(agnostic_ledger_status(e), AGNOSTIC_CREW_CANCELLED, "and a 'completed' does not move the status");
+
+    # The exception is for a cancelled crew only: any other terminal state keeps
+    # refusing everything, results included.
+    var f = agnostic_ledger_record(_t_id(41), str_from("c"), 0);
+    agnostic_ledger_latch(f, AGNOSTIC_CREW_FAILED, str_from("it broke"), 0);
+    assert_eq(agnostic_ledger_latch(f, AGNOSTIC_CREW_FAILED, 0, results), 0, "a failed crew takes no late results");
+    assert_eq(agnostic_ledger_results(f), 0, "none");
+    var c = agnostic_ledger_record(_t_id(42), str_from("c"), 0);
+    agnostic_ledger_latch(c, AGNOSTIC_CREW_COMPLETED, 0, 0);
+    assert_eq(agnostic_ledger_latch(c, AGNOSTIC_CREW_COMPLETED, 0, results), 0, "nor does a completed one");
+}
+
 fn test_unknown_does_not_latch_permanently() {
     test_group("ledger/unknown-open");
 
@@ -441,6 +501,7 @@ fn main() {
     test_unknown_id_is_distinct_from_finished();
     test_latch_accepts_while_non_terminal();
     test_terminal_states_stay_terminal();
+    test_a_cancelled_crew_takes_its_results_once();
     test_unknown_does_not_latch_permanently();
     test_latch_preserves_what_it_is_not_given();
     test_outcome_reads_the_latch();

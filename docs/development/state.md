@@ -2,13 +2,13 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-10-02, at **0.1.9** — plugin requests **checked by the server** against one
-> permission vocabulary (ADR 0007), crews that **belong to their tenant**, a crew **listing** and
-> **idempotent submits** (ADR 0008), crew progress **collected by the server** and read by
-> **cursor** (ADR 0009), **real usage** (tokens, cost) on every result, document **revisions**, and
-> **Swarm Command 0.3.0** on all of it. Toolchain and dependencies are unchanged from 0.1.7. (Version,
-> Source, the route table, the WebGUI section, Persistence, Tests, Hardening and the gate counts were
-> refreshed then; the milestone narrative below is as of M6 part 1 and did not move.)
+> Last refreshed: 2026-10-02, at **0.1.10** — the views over the real surface (**Crews**, **Library**,
+> **Audit trail**) as plugins that link to each other through the shell, **one bridge client** every
+> plugin carries (ADR 0010), audit entries read from a bounded copy (ADR 0011), a **cancelled crew
+> keeps its finished results** (ADR 0012), **Cyrius 6.6.14**, and the **aarch64 artifact restored**
+> after every suite and the server ran natively on a Pi 4. (Version, Toolchain, Dependencies, Source,
+> the route table, the WebGUI section, Tests, Hardening and the gate counts were refreshed then; the
+> milestone narrative below is as of M6 part 1 and did not move.)
 >
 > **Picking this port up?** Start at [`handoff.md`](handoff.md) — orientation,
 > the build procedure that avoids an unreproducible lock, and what M6 must decide.
@@ -16,22 +16,23 @@
 
 ## Version
 
-**0.1.9** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.10** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
 
-- **Cyrius pin**: `6.6.12` (`cyrius.cyml [package].cyrius`). Every stdlib file in
-  `lib/` is byte-identical to `git show 6.6.12:lib/<mod>` in the cyrius repo, and a
-  clean-copy CI run (fresh dep cache, `lib sync --full` + `deps`) reproduced `lib/`
-  and the lock.
+- **Cyrius pin**: `6.6.14` (`cyrius.cyml [package].cyrius`), since 0.1.10. Every stdlib file in
+  `lib/` (112) is byte-identical to `git show 6.6.14:lib/<mod>` in the cyrius repo, and a
+  sibling-free replica with an **empty** dep cache (`lib sync --full` + `deps` from an empty `lib/`)
+  reproduced `lib/` and the lock byte for byte; CI's gates and both DCE builds passed there.
 
-✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin, and nothing is skewed.**
-6.6.12 folds **sigil 3.13.5** and **patra 1.15.1**. agnosai 2.1.2 declares sigil
-3.13.5 and libro 2.10.5 declares patra 1.15.1 — the fold's own versions — so the two
-artifacts `cyrius deps` skips ("refusing to overwrite stdlib leaf") are byte-identical
-to the folded copies it keeps (checked at 0.1.7). kavach 3.13.1 still declares sigil
-3.12.18, and libro 2.10.5 declares sigil 3.13.4; closest-wins skips both.
+✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.14 folds **sigil 3.13.7** and
+**patra 1.15.1**. libro 2.10.5 declares patra 1.15.1, the fold's own. agnosai 2.1.2 declares sigil
+**3.13.5** — the 6.6.12 fold, not 6.6.14's — so the sigil artifact `cyrius deps` skips ("refusing to
+overwrite stdlib leaf") is older than the folded copy it keeps; `lib/sigil.cyr` is the fold's bytes
+either way, and only the lock's sigil commit line names 3.13.5. An agnosai that declares 3.13.7
+makes them agree (recorded as an agnosai follow-up). kavach 3.13.1 declares sigil 3.12.18 and libro
+2.10.5 declares 3.13.4; closest-wins skips both.
 
 ⚠ **The pin and the dep tags move TOGETHER.** `cyrius deps` resolves a declared
   dep's dist on top of the `lib sync --full` snapshot, and `check-clean.sh` allows
@@ -40,9 +41,8 @@ to the folded copies it keeps (checked at 0.1.7). kavach 3.13.1 still declares s
   agnosai's `main` red before its 2.0.5). ⛔ The wrong fixes, both tried and
   rejected: a `[deps.patra]` hold in this manifest, and a `check-clean` allowance.
 - `cyrius deps` prints `refusing to overwrite stdlib leaf 'sigil'` / `'patra'` on
-  every resolve. At 6.6.11 the skipped artifacts (3.12.18 / 1.14.3) differed from the
-  folded copies; **at 6.6.12 they are the same bytes again**, because agnosai 2.1.2 and
-  the directly-declared libro 2.10.5 pin the fold's own versions.
+  every resolve. At 6.6.12 the skipped artifacts were the folded copies' own bytes; at 6.6.14
+  patra's still are, and sigil's (3.13.5) is older than the fold (3.13.7) — harmless, see above.
 - ✅ **The wrapper pins `cycc` now** — fixed upstream at v6.5.42, and the installed
   `cyrius` re-execs the toolchain the manifest pins. The `CYRIUS_HOME` shim this
   section used to prescribe is no longer needed; confirm with `cyrius --version`
@@ -59,12 +59,12 @@ present, so a local resolve silently vendors the sibling's work-in-progress into
 `lib/` and the lock: content matching no tag, which CI cannot fetch. Deleting it
 took the lock from **1 commit pin to 9**.
 
-**Two root blocks, both with `modules`.** `cyrius deps` clones a `[deps.X]` only when it
-lists `modules`; a block with `git` + `tag` alone is never visited and resolves nothing.
-That is why the four "pre-pins" this manifest carried through 0.1.6 (bote, majra,
-ai-hwaccel, tyche) never took effect — agnosai's own declarations resolved all four —
-and why 0.1.7 removed them rather than moving them. Filed upstream:
-`cyrius/docs/development/issues/2026-10-01-git-dep-without-modules-silently-inert.md`.
+**Two root blocks, both with `modules`.** Before cyrius 6.6.13 `cyrius deps` cloned a `[deps.X]`
+only when it listed `modules`, so the four "pre-pins" this manifest carried through 0.1.6 (bote,
+majra, ai-hwaccel, tyche) never took effect, and 0.1.7 removed them. Filed upstream from here
+(`2026-10-01-git-dep-without-modules-silently-inert.md`) and fixed in 6.6.13 (I10): a block without
+`modules` now means `dist/X.cyr` — and the root's tag wins — or `cyrius deps` warns by name. Such a
+block is therefore an override pin, which this repo does not carry.
 
 | dep | pin | how it arrives |
 |---|---|---|
@@ -72,11 +72,11 @@ and why 0.1.7 removed them rather than moving them. Filed upstream:
 | `libro` | **2.10.5** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
 | `bote` / `majra` | **3.3.15** / **2.9.2** | transitive via agnosai 2.1.2 |
 | `ai-hwaccel` / `tyche` / `kavach` | **2.4.0** / **1.1.0** / **3.13.1** | transitive via agnosai 2.1.2 |
-| `sigil` | **3.13.5** (folded) | folded stdlib (`[deps].stdlib`); agnosai declares the same 3.13.5 |
+| `sigil` | **3.13.7** (folded) | folded stdlib (`[deps].stdlib`); agnosai declares 3.13.5 (the fold wins) |
 | `patra` | **1.15.1** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.15.1 |
 
-`cyrius.lock` — **118 files locked, 9 commit pins** (every dep above), plus a trailing
-`cyrius 6.6.12` line recording the toolchain that wrote it. agnosai 2.1.2 was prepared
+`cyrius.lock` — **119 files locked, 9 commit pins** (every dep above; the pins did not move at
+0.1.10), plus a trailing `cyrius 6.6.14` line recording the toolchain that wrote it. agnosai 2.1.2 was prepared
 alongside this release and certified the same way: its full CI steps in a clean copy
 against an empty dep cache with no sibling checkouts (99 suites, 8,058 assertions). Every
 tag was confirmed on the GitHub remote before the lock was written, and a sibling-free
@@ -94,15 +94,17 @@ a process kill with no diagnostic).
 ## Source
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
-(0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9)** — 48 files,
-22,814 lines, 927 top-level definitions, all `agnostic_*`-prefixed. 9,075 of those lines are
-generated: `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (8,238 — two embedded pages and
-the plugin permission vocabulary).
+(0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
+the real surface (0.1.10)** — 48 files, 25,570 lines, 965 top-level definitions, all
+`agnostic_*`-prefixed. 11,392 of those lines are generated: `src/presets_data.cyr` (837) and
+`src/webgui_data.cyr` (10,555 — five embedded pages and the plugin permission vocabulary).
 
-**Tests: 29 suites, 1,749 assertions, 0 failed** (`cyrius test`), plus **30 JavaScript
-tests** (`scripts/check-webgui-js.sh`, Node 20+). Gates green: `check-symbols.sh` (4 rules — Rule 4,
-the `lib/`↔`lib/` constant check, is evaluated per shipped target since 0.1.7), `check-clean.sh`
-(also `gen-webgui.sh --check` and, since 0.1.9, the WebGUI's JavaScript), `deps --verify` 118/0.
+**Tests: 29 suites, 1,885 assertions, 0 failed** (`cyrius test`), plus **61 JavaScript
+tests** (`scripts/check-webgui-js.sh`, Node 20+) — **and the same 29 suites natively on aarch64**
+(Raspberry Pi 4). Gates green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant
+check, is evaluated per shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
+which since 0.1.10 verifies every plugin's copy of the bridge client, and the WebGUI's JavaScript),
+`deps --verify` 119/0.
 
 **M5 — identity and tenancy — is done.** `src/auth/` holds credential primitives
 (`crypto`), users and API keys (`store`), HS256 tokens (`jwt`), the static
@@ -172,13 +174,14 @@ refactor of any of it.
 | `src/engine/rlock.cyr` | the re-entrant lock the store and the audit trail serialize under |
 | `src/engine/store.cyr` | the one patra handle the durable tables share — **handed out only under the store lock** |
 | `src/engine/crewstore.cyr` | terminal crew outcomes, durable; the crew index the listing reads (0.1.9) |
-| `src/engine/audit.cyr` | the tamper-evident trail, libro over patra |
+| `src/engine/audit.cyr` | the tamper-evident trail, libro over patra; its newest 1024 entries kept for reading (0.1.10) |
 | `src/engine/presets.cyr` | the canonical preset library, parsed once at mount |
 | `src/presets_data.cyr` | **generated** — the 18 documents as Cyrius literals |
 | `src/engine/settings.cyr` | deployment-wide settings, durable — the plugin switches (0.1.7) |
 | `src/engine/plugindata.cyr` | each plugin's own documents, per tenant, durable (0.1.8) |
 | `src/webgui/plugins.cyr` | the WebGUI's page table and plugin registry, loaded once at mount (0.1.7); the permission vocabulary and the plugin rung (0.1.9) |
 | `src/webgui/permissions.json` | the plugin permission vocabulary — the one source the generator, server and shell read (0.1.9) |
+| `src/webgui/kit/host.js` | the bridge client every plugin page carries verbatim (0.1.10, ADR 0010) |
 | `src/webgui_data.cyr` | **generated** — the shell and each plugin page, verbatim, with SHA-256 and CSP (0.1.7) |
 | `src/routes/health.cyr` | `/health` and `/ready` |
 | `src/routes/crews.cyr` | the crew surface |
@@ -204,7 +207,7 @@ The crew surface, and what each code means:
 | route | codes |
 |---|---|
 | `POST /api/v1/crews` | **202** accepted (`task_ids`; `replayed` for a repeated `Idempotency-Key`) · 400 semantic · 422 shape or key reused over another body · 503 engine down |
-| `GET /api/v1/crews` | 200 — the caller's tenant's crews, newest first; `?limit=` `?before=` (0.1.9) · 422 |
+| `GET /api/v1/crews` | 200 — the caller's tenant's crews, newest first; `?limit=` `?before=` (0.1.9), `?status=` (0.1.10) · 422 |
 | `GET /api/v1/crews/{id}` | 200 (with `usage`, times, `scope`) · 404 never submitted **or another tenant's** · 422 malformed id |
 | `POST /api/v1/crews/{id}/cancel` | 200 · 404 · **409 already terminal** · 422 · 503 |
 | `GET /api/v1/crews/{id}/events` | 200 — refreshed first (0.1.8); `?after=N` cursor, `seq`/`at_ms`, `next`, `missed`, `lost_events` (0.1.9) · 404 · 422 |
@@ -216,6 +219,8 @@ The crew surface, and what each code means:
 | `GET /api/v1/agents/definitions/{key}` | 200 · 404 · 422 |
 | `PUT /api/v1/agents/definitions/{key}` | 200 · 400 · 404 · 422 |
 | `DELETE /api/v1/agents/definitions/{key}` | 200 · 404 · 422 |
+| `GET /api/v1/audit` | 200 — count, the chain's verdict at open, appended, dropped — **ADMIN** |
+| `GET /api/v1/audit/entries` | 200 — the newest entries by index; `?limit=` `?before=` (0.1.10, ADR 0011) · 422 — **ADMIN** |
 | `GET /api/v1/plugins` | 200 — with the permission `catalogue` (0.1.9) — READ |
 | `PUT /api/v1/plugins/{id}` | 200 (`changed` true/false) · 400 · 404 · 422 · 500 — **ADMIN** |
 | `GET /api/v1/plugins/{id}/data` | 200 — keys, times, sizes, `scope` · 404 · 422 — READ |
@@ -225,11 +230,13 @@ The crew surface, and what each code means:
 | `GET /ui` · `/ui/` | 200 — the shell, **public** |
 | `GET /ui/plugins/{id}` | 200 · **404 while switched off** · 422 — **public** |
 
-The table is a flat scan of 19 paths (20 patterns). Measured at 0.1.9 (`tests/agnostic.bcyr`): ~0.10 µs
-to resolve the first entry, ~0.87 µs the last, ~0.73 µs for a miss that tries every pattern,
-~2.0 µs for the two-capture document path — against ~48 µs for the per-request user lookup. A request
-a plugin makes also pays the plugin rung, ~1.2 µs; a cursor poll copies one new event out of the ring
-in ~0.12 µs (a whole 256-event window ~5.7 µs). (0.1.8, 18 paths: 0.12 / 0.93 / 0.78 / 2.1 µs.)
+The table is a flat scan of 20 paths (21 patterns). Measured at 0.1.10 (`tests/agnostic.bcyr`, with a
+suite running beside it): ~0.11 µs to resolve the first entry, ~0.93 µs the last, ~0.79 µs for a miss
+that tries every pattern, ~2.2 µs for the two-capture document path — against ~48 µs for the
+per-request user lookup. A request a plugin makes also pays the plugin rung, ~1.2 µs; a cursor poll
+copies one new event out of the ring in ~0.13 µs (a whole 256-event window ~5.9 µs); a 50-entry page
+of the audit trail is copied out of its ring in ~28 µs. (0.1.9, 19 paths: 0.10 / 0.87 / 0.73 / 2.0 µs;
+0.1.8, 18 paths: 0.12 / 0.93 / 0.78 / 2.1 µs.)
 Still not worth an index. (0.1.7, 16 paths — once miscounted as 15: 0.11 / 0.81 / 0.65 µs.) The 0.1.8 transport rules
 cost ~0.15 µs each per socket request; validating a full 32 KiB plugin document ~0.2 ms.
 ⚠ The machine was under heavy load from other work during the 0.1.8 runs — successive runs
@@ -245,13 +252,23 @@ paginated (a cursor) and scoped (crews belong to their tenant, ADR 0008). ⚠ A 
 **404 to every other tenant** on every crew route; a crew stored before 0.1.9 belongs to `_`
 and is not listed.
 
-## WebGUI and plugins (0.1.7, 0.1.8, 0.1.9)
+## WebGUI and plugins (0.1.7 – 0.1.10)
 
-**M9's first slice (0.1.7), its plugin platform (0.1.8), checked by the server (0.1.9).** Why
+**M9's first slice (0.1.7), its plugin platform (0.1.8), checked by the server (0.1.9), its views over
+the real surface (0.1.10).** Why
 compiled-in plugins switched at run time is [ADR 0004](../adr/0004-webgui-plugins-compiled-in-switched-at-run-time.md);
 how a plugin reaches the server is [ADR 0005](../adr/0005-plugins-reach-the-server-through-the-host-bridge.md),
 and why the server checks it too, against one vocabulary, is [ADR 0007](../adr/0007-plugin-requests-are-checked-by-the-server.md);
+how views link to each other and share one client is [ADR 0010](../adr/0010-views-link-through-the-shell-and-share-one-bridge-client.md);
 how to add one is [`guides/webgui-plugins.md`](../guides/webgui-plugins.md).
+
+**0.1.10, in one paragraph.** Three views over the real surface — **Crews**, **Library**, **Audit
+trail** — as plugins beside Swarm Command, starting OFF. A view's state is in the shell's URL
+(`#plugin/<id>?<params>`); `init` carries `params` and the `views` switched on; a plugin opens another
+view with `agnostic:navigate` (checked by the shell's pure `checkNavigate`) and hears its own params
+change with `agnostic:params` (feature `navigate`). Every plugin carries `src/webgui/kit/host.js`
+verbatim, and the generator refuses a copy that differs (`--sync-kit` rewrites them). Two permissions
+joined the vocabulary: `definitions:write`, `audit:read`.
 
 **0.1.9, in one paragraph.** Plugin permissions live in `src/webgui/permissions.json` and are enforced
 by the server on every request the shell makes for a plugin (`X-Agnostic-Plugin` → the plugin rung,
@@ -261,20 +278,31 @@ session that asked, takes messages only from an opaque origin, caps a plugin at 
 and carries query strings, revisions and idempotency keys. Plugin documents have ETags; `If-Match` /
 `If-None-Match: *` answer 412. Swarm Command 0.3.0 runs on real crews and real numbers — see below.
 
-- **`/ui`** — the shell (30,931 B): Overview (`/ready`, the views), a tab per plugin that
+- **`/ui`** — the shell (39,929 B): Overview (`/ready`, the views), a tab per plugin that
   is switched on, Settings (the switches with each plugin's permissions and stored
   documents, the session). With `AGNOSTIC_AUTH=required` it signs in through
   `POST /api/v1/auth/login` and keeps the token per tab (`sessionStorage`). It is also the
   **host bridge**: it answers a plugin's `postMessage` requests that its manifest permits,
   with the user's token, which the plugin never sees.
-- **Swarm Command 0.3.0** (`swarm`, 429,829 B, `data: mixed`, permissions `storage`,
+- **Crews 0.1.0** (`crews`, 48,612 B, `data: live`, `crews:read`, `crews:write`) — the tenant's
+  crews by status, a page at a time; a crew's plan, progress by cursor, each task's result with its
+  tokens, cost and time, the totals (tokens only when metered, cost only when priced); cancel, asked
+  inline; a cancelled crew followed until its finished tasks' results arrive; links to Swarm Command.
+- **Library 0.1.0** (`library`, 38,876 B, `data: live`, `presets:read`, `definitions:read`,
+  `definitions:write`) — the presets and their agents; definitions listed, created, edited (key
+  fixed), deleted; a preset's agent saved as a definition.
+- **Audit trail 0.1.0** (`audit`, 26,068 B, `data: live`, `audit:read`) — the chain's verdict at
+  start-up, its count and dropped appends, and its newest entries by index (severity and text
+  filters; each entry's hash and whether it names the one before it, as sent). ADMIN routes.
+- **Swarm Command 0.4.0** (`swarm`, 434,017 B, `data: mixed`, permissions `storage`,
   `presets:read`, `crews:read`, `crews:write`) — a launcher of saved swarms (plugin
   documents `swarm-<id>`, per tenant, written with their revision), an editor for every
   capability with defaults, a headless cost estimate over eight seeds, the simulator driven by
   the spec, live runs — submitted with an idempotency key and recorded before they start, read by
   cursor, bound by engine task id, ended with the tokens and cost agnostic metered beside the
-  estimate, outputs under Results — and a **Crews** list that watches any crew of the tenant. Every
-  mission is labelled SIM or LIVE; a live cost the gateway did not report is n/a, never simulated.
+  estimate, outputs under Results — and a **Crews** list that watches any crew of the tenant (and
+  links it to the Crews view). It follows `#plugin/swarm?crew=<uuid>` (0.4.0). Every mission is
+  labelled SIM or LIVE; a live cost the gateway did not report is n/a, never simulated.
 - **Every plugin starts OFF.** The switch is `plugin.<id>.enabled` in the settings table;
   it survives a restart, flipping it is ADMIN, and only a real change is audited. A plugin's
   documents survive it being switched off.
@@ -290,8 +318,9 @@ generation. `style-src 'unsafe-inline'` is accepted (the view styles from script
 markup); scripts are never inline-unsafe.
 
 ⚠ **Plugins run sandboxed** (`allow-scripts allow-downloads`, no `allow-same-origin`): an
-opaque origin, so a plugin cannot read the shell's token, reach the network, or open a
-modal dialog. Opened in its own tab, Swarm Command finds no shell, keeps swarms in that
+opaque origin, so a plugin cannot read the shell's token, reach the network, open a
+modal dialog — or submit a form: without `allow-forms` the `submit` event never fires (found live
+at 0.1.10; the Library saves on a click). Opened in its own tab, Swarm Command finds no shell, keeps swarms in that
 browser and disables live runs.
 
 ✅ **Permissions are ONE list since 0.1.9** — `src/webgui/permissions.json`, read by the generator
@@ -305,9 +334,19 @@ the source file's SHA-256, and `check-clean.sh` runs `gen-webgui.sh --check`. A
 `\`-continued literal would have been wrong: `cyrius fmt` indents continuation lines,
 and the spaces land inside the string.
 
-⚠ **Verified in headless Chromium at 0.1.9** (CDP; the plugin frame is in-process there, reached
-through its execution context), against scratch servers running real crews through a stand-in
-gateway that prices calls: auth off — 29 checks, from the bridge features through a live crew's
+⚠ **Verified in headless Chromium at 0.1.10** against a scratch server running real crews through a
+stand-in gateway that prices calls: **31 checks** with auth off — the Crews list, filter and detail, a
+crew's metered tokens and cost, deep links, a crew cancelled mid-run keeping its finished task's
+result (on screen and on the server), Watch in Swarm Command, Library create / edit / delete, the Audit
+trail's verdict, entries and links, a reload keeping the open crew, a navigate to a view that is off
+refused — and **10** with auth required (sign-in through the shell, the ADMIN audit routes through the
+bridge, sign-out leaving the view). No uncaught exception. It found two bugs the Node tests could not:
+the cancel rule read an empty results vec as "has results", and a sandboxed form never submits.
+Chromium now isolates sandboxed frames in their own process; the driver runs with
+`--disable-features=IsolateSandboxedIframes` to reach the frame's context.
+
+At 0.1.9 (CDP; the plugin frame was in-process, reached through its execution context), against
+scratch servers running real crews through a stand-in gateway that prices calls: auth off — 29 checks, from the bridge features through a live crew's
 metered cost, results, the run record, watching, the Crews list, a crew from a script, a two-tab
 conflict and switching the plugin off under an open view; auth required — 13, including a session
 invalidated mid-crew pausing and resuming the watch; the standalone page — 7. No uncaught exception
@@ -324,8 +363,16 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**29 suites, 1,749 assertions, 0 failed** (`cyrius test`, under the 6.6.12 pin), and
-**30 JavaScript tests** (`./scripts/check-webgui-js.sh`). 0.1.9's additions:
+**29 suites, 1,885 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin — and natively
+on aarch64), and **61 JavaScript tests** (`./scripts/check-webgui-js.sh`). 0.1.10's additions:
+`tests/ledger.tcyr` (a cancelled crew takes its results once — including over the engine's empty
+vec), `tests/crewstore.tcyr` (the stored outcome rewritten once, across a reopen),
+`tests/crew_tenancy.tcyr` (the status filter, across pages), `tests/audit.tcyr` (the ring: newest
+first, seeded at open, bounded at 1024, a UTF-8-safe cut, the route and its cursor), `tests/webgui.tcyr`
+(four plugins, each OFF at start, the new permissions on the rung), `tests/serve_mount.tcyr` (sigil
+3.13.6's crypto contract); under Node, `kit.test.mjs` (the bridge client every plugin carries),
+`crews`, `library` and `audit` against fakes, and the shell's route parser and navigate gate.
+0.1.9's additions:
 `tests/ledger.tcyr` (the ring, the cursor, a drain that allocates nothing, lost vs trimmed),
 `tests/crews_route.tcyr` (the cursor over HTTP, the collector carrying an unpolled crew to a persisted
 outcome, task ids and the plan), `tests/outcome.tcyr` (usage, per task and per crew), the new
@@ -379,9 +426,9 @@ than called over HTTP. Everything crew/task/agent/scheduling-shaped lives there;
 Agnostic owns the product tier. Versions and pins: see the table under
 [Dependencies](#dependencies) above.
 
-`lib/` holds **118** `.cyr`: **111** from the 6.6.12 stdlib snapshot plus 7 dep
+`lib/` holds **119** `.cyr`: **112** from the 6.6.14 stdlib snapshot (`unicode/` included) plus 7 dep
 dists (`agnosai`, `bote-core`, `majra`, `ai-hwaccel`, `tyche`, `kavach`, `libro`).
-`deps --verify` 118/0. The compile set `check-lib-symbols.py` resolves is **53**
+`deps --verify` 119/0. The compile set `check-lib-symbols.py` resolves is **53**
 modules — `sys` joined at 0.1.3, because sigil 3.12.18 calls `sys_uname`.
 
 ⚠ **`check-lib-symbols.py` evaluates `#ifdef` per target since 0.1.7.** sigil 3.13.5
@@ -409,7 +456,9 @@ Agnostic is built to stand on its own, not as a required layer.
 | plugins (0.1.9) | [ADR 0007](../adr/0007-plugin-requests-are-checked-by-the-server.md): every bridged request is checked by the server against `permissions.json`; mutation-checked in `tests/webgui.tcyr` and, for the shell's gate, `tests/webgui/shell.test.mjs` |
 | crew tenancy (0.1.9) | [ADR 0008](../adr/0008-crews-belong-to-the-submitting-tenant.md): another tenant's crew is 404 on every route; mutation-checked in `tests/crew_tenancy.tcyr` |
 | webgui js (0.1.9) | `scripts/check-webgui-js.sh` in `check-clean.sh` — Node 20+, a test-time dependency only |
-| symbols | `check-symbols.sh` OK — 927 top-level definitions across 48 files, no duplicates, all prefixed |
+| views (0.1.10) | [ADR 0010](../adr/0010-views-link-through-the-shell-and-share-one-bridge-client.md): a navigate only to a view that is switched on, params in a fixed alphabet (`shell.test.mjs`); every plugin's bridge client verified byte for byte by the generator |
+| aarch64 (0.1.10) | every suite and the server run natively on a Raspberry Pi 4 before an aarch64 artifact ships |
+| symbols | `check-symbols.sh` OK — 965 top-level definitions across 48 files, no duplicates, all prefixed |
 | security | CI `security` job clean |
 | baseline benches | `bench-history.csv` seeded — `noop` 2 ns @ `830216c` |
 | documented | `BENCHMARKS.md` generated |

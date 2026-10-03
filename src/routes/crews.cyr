@@ -15,7 +15,7 @@
 # |  | 409 already terminal · 422 malformed id · 503 engine does not know it |
 # | `GET /api/v1/crews/{id}/events[?after=N]` | 200 · 404 · 422 (also a malformed `after`) |
 # | `GET /api/v1/crews/{id}/plan` | 200 · 404 not held (or never submitted) · 422 |
-# | `GET /api/v1/crews[?limit=&before=]` | 200 — the caller's tenant's crews, newest first · 422 |
+# | `GET /api/v1/crews[?limit=&before=&status=]` | 200 — the caller's tenant's crews, newest first · 422 |
 #
 # Every crew route answers 404 for a crew of ANOTHER tenant, exactly as for one never
 # submitted (0.1.9): a crew belongs to the scope it was submitted in.
@@ -612,12 +612,25 @@ fn agnostic_route_crew_plan_a(a, id: Str, ctx): i64 {
 # it back as `?before=` continues strictly after it, so crews submitted between two pages
 # never shift one into the next or out of both. Absent on the last page. `limit` is 1 to
 # 200, default 50.
+#
+# **`status` filters before the page is cut (0.1.10)** — one wire status (`pending`,
+# `running`, `completed`, `failed`, `cancelled`, `unknown`) or `active` (pending or
+# running) — so a filtered page is full, and its `next` continues the same filter.
 fn agnostic_route_crews_list_a(a, path: Str, ctx): i64 {
     var scope = agnostic_reqctx_scope(ctx);
     var limit = agnostic_query_uint_a(a, path, "limit", 50);
     if (limit < 1 || limit > 200) {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "'limit' is a number from 1 to 200"));
+    }
+    var want = AGNOSTIC_CREWS_ANY;
+    var sq = agnostic_query_get_a(a, path, "status");
+    if (sq != 0) {
+        want = agnostic_crews_status_mask(sq);
+        if (want == 0) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+              str_from_a(a, "'status' is pending, running, completed, failed, cancelled, unknown or active"));
+        }
     }
     var cur_ms = 0 - 1;
     var cur_id = 0;
@@ -641,15 +654,18 @@ fn agnostic_route_crews_list_a(a, path: Str, ctx): i64 {
         var e = vec_get(live, i);
         var row = agnostic_ledger_row_a(a, e);
         if (row == 0) { return 0; }
-        vec_push_a(a, rows, row);
+        # Held, whatever its status: a crew the ledger holds is never answered from disk.
         map_set_a(a, held, agnostic_ledger_crew_id(e), 1);
+        if (_agnostic_crews_row_wanted(row, want) == 1) { vec_push_a(a, rows, row); }
         i = i + 1;
     }
     var durable = agnostic_crews_index_in_a(a, scope);
     var j = 0;
     while (j < vec_len(durable)) {
         var dr = vec_get(durable, j);
-        if (map_get(held, agnostic_crew_row_get(dr, AGNOSTIC_CR_CREW_ID)) == 0) { vec_push_a(a, rows, dr); }
+        if (map_get(held, agnostic_crew_row_get(dr, AGNOSTIC_CR_CREW_ID)) == 0) {
+            if (_agnostic_crews_row_wanted(dr, want) == 1) { vec_push_a(a, rows, dr); }
+        }
         j = j + 1;
     }
 
@@ -691,6 +707,30 @@ fn agnostic_route_crews_list_a(a, path: Str, ctx): i64 {
         bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_NEXT, bayan_json_v_str_new_a(a, cur));
     }
     return agnostic_response_json_a(a, HTTP_OK, obj);
+}
+
+# Every status, as a listing filter (0.1.10): bit `1 << status` for each.
+var AGNOSTIC_CREWS_ANY = 63;
+
+# The filter a `status` query value names — `1 << status` for one wire status, pending and
+# running together for `active` — or 0 when it names nothing.
+fn agnostic_crews_status_mask(v: Str): i64 {
+    if (str_eq_cstr(v, "pending") == 1)   { return 1 << AGNOSTIC_CREW_PENDING; }
+    if (str_eq_cstr(v, "running") == 1)   { return 1 << AGNOSTIC_CREW_RUNNING; }
+    if (str_eq_cstr(v, "completed") == 1) { return 1 << AGNOSTIC_CREW_COMPLETED; }
+    if (str_eq_cstr(v, "failed") == 1)    { return 1 << AGNOSTIC_CREW_FAILED; }
+    if (str_eq_cstr(v, "cancelled") == 1) { return 1 << AGNOSTIC_CREW_CANCELLED; }
+    if (str_eq_cstr(v, "unknown") == 1)   { return 1 << AGNOSTIC_CREW_UNKNOWN; }
+    if (str_eq_cstr(v, "active") == 1)    { return (1 << AGNOSTIC_CREW_PENDING) | (1 << AGNOSTIC_CREW_RUNNING); }
+    return 0;
+}
+
+# Whether crew row `r` passes the filter `want`. 1 or 0.
+fn _agnostic_crews_row_wanted(r, want): i64 {
+    var st = agnostic_crew_row_get(r, AGNOSTIC_CR_STATUS);
+    if (st < 0 || st > AGNOSTIC_CREW_UNKNOWN) { return 0; }
+    if ((want & (1 << st)) != 0) { return 1; }
+    return 0;
 }
 
 # Byte-wise order of two Strs: -1, 0 or 1.

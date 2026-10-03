@@ -215,6 +215,66 @@ fn test_listing_pages_by_cursor() {
     assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_CREW_LIST), AGNOSTIC_PERM_READ, "listing is READ");
 }
 
+# How many crews a listing query answers, as `ctx`.
+fn _t_count(a, query, ctx) {
+    return bayan_json_v_arr_len(_t_listed(_t_list(a, query, ctx)));
+}
+
+# ⭐ 0.1.10: `?status=` filters before the page is cut, so a filtered page is full and its
+# cursor continues the same filter.
+fn test_listing_filters_by_status() {
+    test_group("tenancy/list-status");
+    _t_open();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var a = arena_allocator(4194304);
+
+    var done = _t_submit(a, 0, _T_BODY);
+    assert_eq(_t_wait(a, done, 0), 1, "a crew completes");
+    # Four more, in the states a placeholder engine never leaves a crew in.
+    var sc = AGNOSTIC_SCOPE_DEFAULT;
+    var f = agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000001"), str_from("broke"), 0, sc, 0, 0);
+    agnostic_ledger_latch(f, AGNOSTIC_CREW_FAILED, str_from("it broke"), 0);
+    agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000002"), str_from("waiting"), 0, sc, 0, 0);
+    var r = agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000003"), str_from("busy"), 0, sc, 0, 0);
+    agnostic_ledger_latch(r, AGNOSTIC_CREW_RUNNING, 0, 0);
+    var c = agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000004"), str_from("stopped"), 0, sc, 0, 0);
+    agnostic_ledger_latch(c, AGNOSTIC_CREW_CANCELLED, 0, 0);
+
+    assert_eq(_t_count(a, 0, 0), 5, "unfiltered, all five");
+    assert_eq(_t_count(a, "status=completed", 0), 1, "one completed");
+    var only = bayan_json_v_arr_get(_t_listed(_t_list(a, "status=completed", 0)), 0);
+    assert_eq(str_eq(agnostic_req_str(only, AGNOSTIC_JK_CREW_ID), done), 1, "and it is the one that ran");
+    assert_eq(_t_count(a, "status=failed", 0), 1, "one failed");
+    assert_eq(_t_count(a, "status=cancelled", 0), 1, "one cancelled");
+    assert_eq(_t_count(a, "status=pending", 0), 1, "one pending");
+    assert_eq(_t_count(a, "status=running", 0), 1, "one running");
+    assert_eq(_t_count(a, "status=active", 0), 2, "active is pending and running together");
+    assert_eq(_t_count(a, "status=unknown", 0), 0, "and nothing is unknown");
+
+    # The filter holds across pages.
+    var p1 = _t_list(a, "status=active&limit=1", 0);
+    assert_eq(bayan_json_v_arr_len(_t_listed(p1)), 1, "a filtered page of one");
+    var cur = agnostic_req_str(agnostic_response_body(p1), AGNOSTIC_JK_NEXT);
+    assert_neq(cur, 0, "with a next");
+    var q = str_builder_new();
+    str_builder_add_cstr(q, "status=active&limit=1&before=");
+    str_builder_add(q, cur);
+    var p2 = _t_list(a, str_data(str_builder_build(q)), 0);
+    var second = bayan_json_v_arr_get(_t_listed(p2), 0);
+    assert_eq(str_eq_cstr(agnostic_req_str(second, AGNOSTIC_JK_STATUS), "pending") == 1
+      || str_eq_cstr(agnostic_req_str(second, AGNOSTIC_JK_STATUS), "running") == 1, 1,
+      "the next page is still the filter's");
+    assert_eq(agnostic_req_str(agnostic_response_body(p2), AGNOSTIC_JK_NEXT), 0, "and the last");
+
+    assert_eq(agnostic_response_status(_t_list(a, "status=bogus", 0)), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "a status that is not one is 422");
+    assert_eq(agnostic_response_status(_t_list(a, "status=", 0)), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "and so is an empty one");
+    assert_eq(agnostic_response_status(_t_list(a, "status=Completed", 0)), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "status names are lowercase, as the wire spells them");
+    agnostic_ledger_reset();
+}
+
 # A crew document persisted before 0.1.9 has no scope: it is the default scope's.
 fn test_legacy_document_is_the_default_scope() {
     test_group("tenancy/legacy");
@@ -284,6 +344,7 @@ fn main() {
     agnostic_crypto_main_init();
     test_crews_belong_to_their_tenant();
     test_listing_pages_by_cursor();
+    test_listing_filters_by_status();
     test_legacy_document_is_the_default_scope();
     test_idempotency_key();
     agnostic_store_close();

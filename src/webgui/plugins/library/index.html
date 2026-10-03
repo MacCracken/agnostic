@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Library · agnostic</title>
+<style>
+:root {
+  --bg: #060a0f;
+  --panel: #0c131c;
+  --panel-2: #111b27;
+  --line: #1c2a38;
+  --line-2: #2a3d50;
+  --text: #d4e4f1;
+  --dim: #7d93a8;
+  --faint: #4b6075;
+  --accent: #39d0ff;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --err: #ef4444;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans); }
+body { display: flex; flex-direction: column; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.muted { color: var(--dim); }
+.btn { background: #0f1823; border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 11px; font: 600 12px var(--sans); }
+.btn:hover { border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: #0e3346; border-color: var(--accent); color: var(--accent); }
+.btn.danger { color: var(--err); border-color: rgba(239, 68, 68, .5); }
+
+.bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line-2); background: var(--panel-2); flex-wrap: wrap; }
+.chip { background: none; border: 1px solid var(--line-2); border-radius: 12px; padding: 2px 11px; color: var(--dim); font-weight: 600; font-size: 12px; }
+.chip:hover { color: var(--text); }
+.chip[aria-pressed="true"] { color: var(--text); border-color: var(--accent); background: #0e3346; }
+.spacer { flex: 1; }
+
+.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 340px) 1fr; }
+.list { border-right: 1px solid var(--line-2); overflow: auto; }
+.detail { overflow: auto; padding: 18px 22px 48px; min-width: 0; }
+.row { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 9px 12px; }
+.row:hover { background: #0b141e; }
+.row[aria-current="true"] { background: #0e2433; box-shadow: inset 3px 0 0 var(--accent); }
+.row .top { display: flex; gap: 8px; align-items: center; }
+.row .nm { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.foot { padding: 12px; color: var(--dim); font-size: 12px; }
+.pill { font: 600 10px var(--mono); letter-spacing: .06em; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line-2); color: var(--dim); text-transform: uppercase; white-space: nowrap; }
+
+h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+h2 { font-size: 12px; margin: 22px 0 8px; letter-spacing: .14em; color: var(--dim); text-transform: uppercase; }
+.lede { color: var(--dim); margin: 6px 0 0; max-width: 75ch; }
+.actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+.box { border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 11px; margin-top: 12px; color: var(--dim); }
+.box.ok { border-color: rgba(34, 197, 94, .5); color: var(--ok); }
+.box.bad { border-color: rgba(239, 68, 68, .5); color: var(--err); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+.card h3 { font-size: 14px; margin: 0; }
+.card .role { color: var(--accent); font-size: 12px; margin-top: 1px; }
+.card p { margin: 8px 0 0; }
+.card details { margin-top: 8px; }
+.card summary { color: var(--accent); cursor: pointer; font-size: 12px; }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; margin-top: 14px; }
+.kv dt { color: var(--dim); }
+.kv dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+.tag { font: 11px var(--mono); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 6px; color: var(--dim); }
+form.edit { display: grid; grid-template-columns: 170px 1fr; gap: 10px 14px; margin-top: 16px; max-width: 900px; align-items: start; }
+form.edit label { color: var(--dim); padding-top: 6px; }
+form.edit .hint { grid-column: 2; color: var(--faint); font-size: 11.5px; margin-top: -6px; }
+form.edit input[type="text"], form.edit input[type="number"], form.edit textarea, form.edit select { width: 100%; background: #0b131c; border: 1px solid var(--line-2); border-radius: 5px; padding: 6px 9px; }
+form.edit textarea { min-height: 76px; resize: vertical; }
+form.edit .checks { display: flex; gap: 18px; flex-wrap: wrap; padding-top: 6px; }
+form.edit .checks label { padding: 0; color: var(--text); }
+form.edit .row-actions { grid-column: 2; display: flex; gap: 8px; }
+.empty { color: var(--dim); padding: 48px 20px; text-align: center; max-width: 60ch; margin: 0 auto; }
+@media (max-width: 720px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: minmax(140px, 35%) 1fr; }
+  .list { border-right: 0; border-bottom: 1px solid var(--line-2); }
+  form.edit { grid-template-columns: 1fr; }
+  form.edit .hint, form.edit .row-actions { grid-column: 1; }
+  .kv { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header class="bar">
+  <div id="tabs" role="group" aria-label="Show"></div>
+  <span class="spacer"></span>
+  <button class="btn primary" id="new-def" type="button" hidden>New definition</button>
+</header>
+<div class="layout" id="layout">
+  <nav class="list" aria-label="Items"><div id="list"></div><div class="foot" id="list-foot"></div></nav>
+  <main class="detail" id="detail"></main>
+</div>
+<script>
+'use strict';
+/* agnostic-kit:host begin — DO NOT EDIT A COPY: the canonical source is src/webgui/kit/host.js,
+ * and scripts/gen-webgui.sh refuses a plugin page whose copy differs (`--sync-kit` rewrites them).
+ *
+ *  Host — the plugin side of agnostic's host bridge (ADR 0005, 0007, 0010).
+ *
+ *  Framed by the agnostic shell, a plugin page runs in an opaque origin with connect-src 'none': it
+ *  cannot reach the API. It asks the shell by postMessage, and the shell answers only what this
+ *  plugin's manifest permits, with the signed-in user's own credential (which the page never sees)
+ *  — and the server checks the same permissions, and that user's role, again. Protocol 1:
+ *
+ *     page  → shell   {type:'agnostic:hello', protocol}
+ *     shell → page    {type:'agnostic:init', protocol, features[], plugin:{id,name,version},
+ *                      permissions[], user:{auth, signedIn, role}, params, views[{id,name}]}
+ *     page  → shell   {type:'agnostic:request', id, method, path, body?, ifMatch?, ifNoneMatch?,
+ *                      idempotencyKey?}
+ *     shell → page    {type:'agnostic:response', id, status, data, etag?}  status 0 = never reached it
+ *     page  → shell   {type:'agnostic:navigate', to, params?}             open another view (0.1.10)
+ *     shell → page    {type:'agnostic:params', params}                    this view's params changed
+ *
+ *  The shell re-sends init after a sign-in or sign-out. `params` is the part of the shell's URL after
+ *  `#plugin/<id>?` — a deep link into this view, e.g. `crew=<uuid>`. `views` lists the views switched
+ *  on, so a page offers a link only to one that will open. Opened on its own (a new tab) there is no
+ *  shell: `mode` is 'standalone', and the page must degrade.
+ */
+class Host {
+  constructor({ helloMs = 3000, timeoutMs = 30000 } = {}) {
+    this.mode = 'connecting';  // 'connecting' | 'connected' | 'standalone'
+    this.info = null;          // the latest agnostic:init
+    this.params = '';          // this view's params, from init or agnostic:params
+    this.pending = new Map();  // request id → {resolve, timer}
+    this.seq = 0;
+    this.timeoutMs = timeoutMs;
+    // A random prefix per page load: request ids restart with every load, and a reply the shell
+    // sends after a reload must never match a request of this page that happens to share a number.
+    this.prefix = 'q' + Host.token(6) + '-';
+    this.listeners = new Set();
+    this.paramListeners = new Set();
+    let framed = false;
+    try { framed = window.parent !== window; } catch (err) { framed = true; }
+    if (!framed) { this.mode = 'standalone'; return; }
+    window.addEventListener('message', (e) => this.onMessage(e));
+    try { window.parent.postMessage({ type: 'agnostic:hello', protocol: 1 }, '*'); } catch (err) { /* detached */ }
+    // A parent that never answers is not the agnostic shell (or is an older one): stand alone.
+    this.timer = setTimeout(() => { if (this.mode === 'connecting') this.setMode('standalone'); }, helloMs);
+  }
+  /** `n` random characters of [a-z0-9]. */
+  static token(n) {
+    const b = new Uint8Array(n);
+    try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
+    let s = '';
+    for (const x of b) s += (x % 36).toString(36);
+    return s;
+  }
+  onMessage(e) {
+    if (e.source !== window.parent) return;
+    const m = e.data;
+    if (!m || typeof m !== 'object' || typeof m.type !== 'string') return;
+    if (m.type === 'agnostic:init') {
+      const u = m.user && typeof m.user === 'object' ? m.user : {};
+      this.info = {
+        plugin: m.plugin && typeof m.plugin === 'object' ? m.plugin : {},
+        permissions: Array.isArray(m.permissions) ? m.permissions.filter((x) => typeof x === 'string') : [],
+        features: Array.isArray(m.features) ? m.features.filter((x) => typeof x === 'string') : [],
+        user: { auth: typeof u.auth === 'string' ? u.auth : 'unknown', signedIn: !!u.signedIn, role: typeof u.role === 'string' ? u.role : null },
+        views: Array.isArray(m.views) ? m.views.filter((v) => v && typeof v.id === 'string' && typeof v.name === 'string') : [],
+      };
+      clearTimeout(this.timer);
+      const params = typeof m.params === 'string' ? m.params : '';
+      const changed = params !== this.params;
+      this.params = params;
+      this.setMode('connected');
+      if (changed) this.emitParams();
+    } else if (m.type === 'agnostic:params') {
+      this.params = typeof m.params === 'string' ? m.params : '';
+      this.emitParams();
+    } else if (m.type === 'agnostic:response') {
+      const r = this.pending.get(m.id);
+      if (!r) return;
+      this.pending.delete(m.id);
+      clearTimeout(r.timer);
+      r.resolve({ status: Number.isInteger(m.status) ? m.status : 0, data: m.data === undefined ? null : m.data, etag: typeof m.etag === 'string' ? m.etag : null });
+    }
+  }
+  setMode(mode) { this.mode = mode; for (const fn of this.listeners) fn(this); }
+  /** Called on every init (and the fall back to standalone); returns an unsubscribe. */
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  /** Called when this view's params change — a deep link followed while it is open. */
+  onParams(fn) { this.paramListeners.add(fn); return () => this.paramListeners.delete(fn); }
+  emitParams() { for (const fn of this.paramListeners) fn(this.params); }
+  /** One param of this view: `param('crew')` for `crew=<uuid>`; '' when absent. */
+  param(name) {
+    for (const pair of this.params.split('&')) {
+      const i = pair.indexOf('=');
+      const k = i < 0 ? pair : pair.slice(0, i);
+      if (k === name) { try { return decodeURIComponent(i < 0 ? '' : pair.slice(i + 1)); } catch (err) { return ''; } }
+    }
+    return '';
+  }
+  can(permission) { return this.mode === 'connected' && this.info.permissions.includes(permission); }
+  /** Whether the shell's bridge carries `feature` ('query' | 'revisions' | 'idempotency' | 'navigate'). */
+  has(feature) { return this.mode === 'connected' && this.info.features.includes(feature); }
+  pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || ''; }
+  /** The user's role when the server enforces roles; null when auth is off or unknown. */
+  role() { return this.info && this.info.user.auth === 'required' ? this.info.user.role : null; }
+  /** Whether the user may write at all: any role but viewer. */
+  mayWrite() { return this.mode === 'connected' && this.role() !== 'viewer'; }
+  /** Whether view `id` is switched on — so a link to it will open. */
+  hasView(id) { return this.mode === 'connected' && this.info.views.some((v) => v.id === id); }
+  /** Open another view (or 'overview' / 'settings'), with params for it. Resolves false when it cannot. */
+  navigate(to, params) {
+    if (!this.has('navigate')) return false;
+    try { window.parent.postMessage({ type: 'agnostic:navigate', to: String(to), params: params ? String(params) : '' }, '*'); } catch (err) { return false; }
+    return true;
+  }
+  /** `opts`: {ifMatch, ifNoneMatch, idempotencyKey}, each sent only when the shell carries it. */
+  request(method, path, body, opts) {
+    if (this.mode !== 'connected') return Promise.resolve({ status: 0, data: { error: 'not connected to agnostic' }, etag: null });
+    const id = this.prefix + ++this.seq;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' }, etag: null }); }, this.timeoutMs);
+      this.pending.set(id, { resolve, timer });
+      const msg = { type: 'agnostic:request', id, method, path };
+      if (body !== undefined) msg.body = body;
+      const o = opts || {};
+      if (o.ifMatch && this.has('revisions')) msg.ifMatch = o.ifMatch;
+      if (o.ifNoneMatch && this.has('revisions')) msg.ifNoneMatch = o.ifNoneMatch;
+      if (o.idempotencyKey && this.has('idempotency')) msg.idempotencyKey = o.idempotencyKey;
+      try { window.parent.postMessage(msg, '*'); } catch (err) { this.pending.delete(id); clearTimeout(timer); resolve({ status: 0, data: { error: 'the shell is gone' }, etag: null }); }
+    });
+  }
+}
+/** The error text of a bridge response. */
+function errOf(r) {
+  if (r && r.data && typeof r.data.error === 'string') return r.data.error;
+  return r && r.status ? 'HTTP ' + r.status : 'the server is unreachable';
+}
+/* agnostic-kit:host end */
+
+/* =====================================================================================
+ *  LIBRARY — the preset crews built into this server, and its agent definitions (0.1.10)
+ *
+ *  Presets are compiled in and read-only (GET /api/v1/presets[/{name}]). Definitions are the
+ *  server's stored agents (/api/v1/agents/definitions[/{key}]): created with POST — a key that
+ *  exists is 409 — replaced with PUT, deleted with DELETE, each audited by the server. A preset's
+ *  agent can be saved as a definition. The tab and the item open are in the URL
+ *  (`#plugin/library?tab=definitions&item=<key>`).
+ *
+ *  Everything above the VIEW section is plain logic with no DOM — tests/webgui/library.test.mjs
+ *  runs it in Node against a fake agnostic.
+ * ===================================================================================== */
+const TABS = Object.freeze(['presets', 'definitions']);
+const RE_DEF_KEY = /^[a-z0-9][a-z0-9-]{0,99}$/;
+const RE_PRESET = /^[a-z0-9][a-z0-9-]{0,99}$/;
+const COMPLEXITY = Object.freeze(['', 'low', 'medium', 'high']);
+// The fields a definition carries, in the order the editor shows them (src/engine/agentdef.cyr).
+const DEF_STRINGS = Object.freeze(['name', 'role', 'goal', 'backstory', 'domain', 'complexity', 'llm_model', 'focus']);
+
+/** A list of tool names from text: commas or newlines, trimmed, without repeats. */
+function parseTools(text) {
+  const out = [];
+  for (const t of String(text || '').split(/[,\n]/)) {
+    const v = t.trim();
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+/**
+ * A definition body from editor fields: required strings always, the rest only when given —
+ * an empty optional field is absent, never "". Returns {def} or {error}.
+ */
+function definitionFromFields(f) {
+  const key = String(f.key || '').trim();
+  if (!RE_DEF_KEY.test(key)) return { error: 'A key is 1–100 of a–z, 0–9 and -, starting with a letter or digit.' };
+  const role = String(f.role || '').trim(), goal = String(f.goal || '').trim();
+  if (!role) return { error: 'A definition needs a role.' };
+  if (!goal) return { error: 'A definition needs a goal.' };
+  const def = { key, role, goal };
+  for (const k of DEF_STRINGS) {
+    if (k === 'role' || k === 'goal') continue;
+    const v = String(f[k] === undefined || f[k] === null ? '' : f[k]).trim();
+    if (v) def[k] = v;
+  }
+  const tools = Array.isArray(f.tools) ? f.tools.filter((t) => typeof t === 'string' && t) : parseTools(f.tools);
+  if (tools.length) def.tools = tools;
+  if (f.gpu_required) def.gpu_required = true;
+  if (f.gpu_preferred) def.gpu_preferred = true;
+  if (f.gpu_memory_min_mb !== undefined && f.gpu_memory_min_mb !== null && String(f.gpu_memory_min_mb).trim() !== '') {
+    const mb = Number(f.gpu_memory_min_mb);
+    if (!Number.isInteger(mb) || mb < 0) return { error: 'GPU memory is a whole number of megabytes.' };
+    def.gpu_memory_min_mb = mb;
+  }
+  if (f.allow_delegation) def.allow_delegation = true;
+  return { def };
+}
+/** Editor fields from a stored definition. */
+function fieldsFromDefinition(d) {
+  const f = { key: d.key || '', tools: Array.isArray(d.tools) ? d.tools.join(', ') : '' };
+  for (const k of DEF_STRINGS) f[k] = typeof d[k] === 'string' ? d[k] : '';
+  f.gpu_required = d.gpu_required === true;
+  f.gpu_preferred = d.gpu_preferred === true;
+  f.gpu_memory_min_mb = Number.isInteger(d.gpu_memory_min_mb) ? String(d.gpu_memory_min_mb) : '';
+  f.allow_delegation = d.allow_delegation === true;
+  return f;
+}
+/**
+ * A preset's agent as a definition. The preset spells the key `agent_key` and carries fields a
+ * definition refuses (`celery_queue`, `redis_prefix` — the oracle's broker tier); those stay behind.
+ */
+function definitionFromPresetAgent(agent) {
+  return definitionFromFields({
+    key: agent.agent_key, name: agent.name, role: agent.role, goal: agent.goal, backstory: agent.backstory,
+    domain: agent.domain, complexity: agent.complexity, llm_model: agent.llm_model, focus: agent.focus,
+    tools: Array.isArray(agent.tools) ? agent.tools : [], allow_delegation: agent.allow_delegation === true,
+  });
+}
+/** `?tab=…&item=…`, leaving out the defaults. */
+function paramsFor(tab, item) {
+  const p = [];
+  if (tab && tab !== 'presets') p.push('tab=' + tab);
+  if (item) p.push('item=' + encodeURIComponent(item));
+  return p.join('&');
+}
+
+/** The presets, and the one open. Read-only. */
+class PresetShelf {
+  constructor(host) { this.host = host; this.items = []; this.loaded = false; this.error = ''; this.open = null; this.openError = ''; }
+  async load() {
+    const r = await this.host.request('GET', '/api/v1/presets');
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.presets)) { this.error = 'Could not list presets: ' + errOf(r); return false; }
+    this.items = r.data.presets.filter((p) => p && typeof p.name === 'string' && RE_PRESET.test(p.name));
+    this.error = '';
+    this.loaded = true;
+    return true;
+  }
+  async read(name) {
+    this.open = null;
+    this.openError = '';
+    if (!RE_PRESET.test(name)) { this.openError = 'There is no such preset.'; return null; }
+    const r = await this.host.request('GET', '/api/v1/presets/' + name);
+    if (r.status !== 200 || !r.data || typeof r.data !== 'object') { this.openError = r.status === 404 ? 'There is no such preset.' : 'Could not read it: ' + errOf(r); return null; }
+    this.open = r.data;
+    return r.data;
+  }
+}
+
+/** The stored definitions, the one open, and the writes. */
+class DefinitionShelf {
+  constructor(host) { this.host = host; this.items = []; this.loaded = false; this.error = ''; this.open = null; this.unforwarded = []; this.openError = ''; }
+  async load() {
+    const r = await this.host.request('GET', '/api/v1/agents/definitions');
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.definitions)) { this.error = r.status === 403 ? 'Your role cannot read definitions.' : 'Could not list definitions: ' + errOf(r); return false; }
+    this.items = r.data.definitions.filter((d) => d && typeof d.key === 'string').sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    this.error = '';
+    this.loaded = true;
+    return true;
+  }
+  async read(key) {
+    this.open = null;
+    this.unforwarded = [];
+    this.openError = '';
+    if (!RE_DEF_KEY.test(key)) { this.openError = 'There is no such definition.'; return null; }
+    const r = await this.host.request('GET', '/api/v1/agents/definitions/' + key);
+    if (r.status !== 200 || !r.data || !r.data.definition) { this.openError = r.status === 404 ? 'There is no such definition — it may have been deleted.' : 'Could not read it: ' + errOf(r); return null; }
+    this.open = r.data.definition;
+    this.unforwarded = Array.isArray(r.data.unforwarded) ? r.data.unforwarded.filter((x) => typeof x === 'string') : [];
+    return this.open;
+  }
+  /** Create (`isNew`) or replace a definition. Resolves {ok, message, definition?}. */
+  async save(def, isNew) {
+    const r = isNew
+      ? await this.host.request('POST', '/api/v1/agents/definitions', def)
+      : await this.host.request('PUT', '/api/v1/agents/definitions/' + def.key, def);
+    if ((r.status === 201 || r.status === 200) && r.data && r.data.definition) {
+      this.open = r.data.definition;
+      this.unforwarded = Array.isArray(r.data.unforwarded) ? r.data.unforwarded : [];
+      await this.load();
+      return { ok: true, message: isNew ? 'Created ' + def.key + '.' : 'Saved ' + def.key + '.', definition: r.data.definition };
+    }
+    if (r.status === 409) return { ok: false, message: 'A definition with the key ' + def.key + ' already exists.' };
+    if (r.status === 404) return { ok: false, message: def.key + ' no longer exists — someone deleted it.' };
+    if (r.status === 403) return { ok: false, message: 'Your role cannot change definitions.' };
+    if (r.status === 507) return { ok: false, message: 'The definition store is full: delete one first.' };
+    return { ok: false, message: errOf(r) };
+  }
+  async remove(key) {
+    const r = await this.host.request('DELETE', '/api/v1/agents/definitions/' + key);
+    if (r.status === 200 || r.status === 404) { this.open = null; await this.load(); return { ok: true, message: 'Deleted ' + key + '.' }; }
+    if (r.status === 403) return { ok: false, message: 'Your role cannot delete definitions.' };
+    return { ok: false, message: 'Could not delete: ' + errOf(r) };
+  }
+}
+
+/** The view's state — which tab, which item — kept in the URL through the shell. */
+class LibraryApp {
+  constructor(host) {
+    this.host = host;
+    this.presets = new PresetShelf(host);
+    this.defs = new DefinitionShelf(host);
+    this.tab = 'presets';
+    this.item = '';
+    this.editing = null;       // {isNew, fields} while the editor is open
+    this.message = null;       // {ok, text}, the last write's answer
+    this.gen = 0;
+    this.listeners = new Set();
+    host.onChange(() => this.onHost());
+    host.onParams(() => this.applyParams(false));
+  }
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit() { for (const fn of this.listeners) fn(this); }
+  state() {
+    if (this.host.mode !== 'connected') return this.host.mode;
+    return this.host.can('presets:read') || this.host.can('definitions:read') ? 'ready' : 'forbidden';
+  }
+  /** Whether this user may change definitions here: the permission, and a role that may write. */
+  mayWrite() { return this.host.can('definitions:write') && this.host.mayWrite(); }
+  onHost() { if (this.state() === 'ready') this.applyParams(true); else this.emit(); }
+  async applyParams(force) {
+    if (this.state() !== 'ready') return;
+    const t = this.host.param('tab');
+    const tab = TABS.includes(t) ? t : 'presets';
+    const item = this.host.param('item');
+    const gen = ++this.gen;
+    if (force || tab !== this.tab) { this.tab = tab; this.editing = null; }
+    if (force || item !== this.item) { this.item = item; this.editing = null; }
+    this.emit();
+    const shelf = this.tab === 'presets' ? this.presets : this.defs;
+    if (force || !shelf.loaded) await shelf.load();
+    if (gen !== this.gen) return;
+    if (this.item) await shelf.read(this.item);
+    else { shelf.open = null; shelf.openError = ''; }
+    if (gen !== this.gen) return;
+    this.emit();
+  }
+  go(tab, item) {
+    this.message = null;
+    const params = paramsFor(tab, item);
+    if (this.host.navigate(this.host.pluginId() || 'library', params)) return;
+    this.host.params = params;
+    this.applyParams(false);
+  }
+  edit(isNew) {
+    if (!this.mayWrite()) return;
+    this.message = null;
+    this.editing = { isNew, fields: isNew ? fieldsFromDefinition({}) : fieldsFromDefinition(this.defs.open || {}) };
+    this.emit();
+  }
+  cancelEdit() { this.editing = null; this.emit(); }
+  /** Save the editor's fields. Resolves {ok, message}. */
+  async saveEdit(fields) {
+    if (!this.editing) return { ok: false, message: 'Nothing is being edited.' };
+    const isNew = this.editing.isNew;
+    const built = definitionFromFields(isNew ? fields : Object.assign({}, fields, { key: this.defs.open ? this.defs.open.key : fields.key }));
+    if (built.error) { this.message = { ok: false, text: built.error }; this.emit(); return { ok: false, message: built.error }; }
+    const r = await this.defs.save(built.def, isNew);
+    this.message = { ok: r.ok, text: r.message };
+    if (r.ok) {
+      this.editing = null;
+      if (isNew) { this.go('definitions', built.def.key); this.message = { ok: true, text: r.message }; }
+    } else {
+      this.editing.fields = fields;
+    }
+    this.emit();
+    return r;
+  }
+  async remove(key) {
+    const r = await this.defs.remove(key);
+    this.message = { ok: r.ok, text: r.message };
+    if (r.ok) this.go('definitions', '');
+    this.emit();
+    return r;
+  }
+  /** Save a preset's agent as a definition. */
+  async adopt(agent) {
+    const built = definitionFromPresetAgent(agent);
+    if (built.error) { this.message = { ok: false, text: built.error }; this.emit(); return { ok: false, message: built.error }; }
+    const r = await this.defs.save(built.def, true);
+    this.message = { ok: r.ok, text: r.ok ? 'Saved ' + built.def.key + ' as a definition.' : r.message };
+    this.emit();
+    return r;
+  }
+}
+
+/* =====================================================================================
+ *  VIEW — the DOM. Every value from the server is written with textContent.
+ * ===================================================================================== */
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+
+class LibraryView {
+  constructor(app) {
+    this.app = app;
+    this.$ = (id) => document.getElementById(id);
+    this.confirmDelete = '';
+    const tabs = this.$('tabs');
+    for (const [id, label] of [['presets', 'Presets'], ['definitions', 'Agent definitions']]) {
+      const b = el('button', 'chip', label);
+      b.type = 'button';
+      b.dataset.tab = id;
+      b.addEventListener('click', () => this.app.go(id, ''));
+      tabs.append(b);
+    }
+    this.$('new-def').addEventListener('click', () => { this.app.edit(true); });
+    app.onChange(() => this.render());
+    this.render();
+  }
+  render() {
+    const a = this.app;
+    const st = a.state();
+    for (const b of this.$('tabs').children) b.setAttribute('aria-pressed', String(b.dataset.tab === a.tab));
+    this.$('layout').hidden = st !== 'ready';
+    this.$('tabs').hidden = st !== 'ready';
+    this.$('new-def').hidden = !(st === 'ready' && a.tab === 'definitions' && a.mayWrite());
+    let msg = this.$('message');
+    if (st !== 'ready') {
+      if (!msg) { msg = el('div', 'empty'); msg.id = 'message'; document.body.append(msg); }
+      msg.textContent = st === 'standalone' ? 'This view shows an agnostic server’s presets and agent definitions. Open it from agnostic’s WebGUI (/ui).'
+        : st === 'forbidden' ? 'This build of the Library view was granted neither presets:read nor definitions:read.' : 'Connecting to agnostic…';
+      return;
+    }
+    if (msg) msg.remove();
+    this.renderList();
+    this.renderDetail();
+  }
+  renderList() {
+    const a = this.app;
+    const shelf = a.tab === 'presets' ? a.presets : a.defs;
+    const box = this.$('list');
+    box.replaceChildren();
+    for (const it of shelf.items) {
+      const id = a.tab === 'presets' ? it.name : it.key;
+      const b = el('button', 'row');
+      b.type = 'button';
+      if (id === a.item) b.setAttribute('aria-current', 'true');
+      const top = el('div', 'top');
+      top.append(el('span', 'nm', a.tab === 'presets' ? it.name : (it.name || it.key)));
+      if (a.tab === 'presets' && it.size) top.append(el('span', 'pill', it.size));
+      b.append(top);
+      const sub = a.tab === 'presets'
+        ? [it.domain, Number.isInteger(it.agent_count) ? it.agent_count + ' agents' : '', it.workflow_mode].filter(Boolean).join(' · ')
+        : [it.key !== it.name ? it.key : '', it.role, it.domain].filter(Boolean).join(' · ');
+      b.append(el('div', 'sub', sub));
+      b.addEventListener('click', () => a.go(a.tab, id));
+      box.append(b);
+    }
+    const foot = this.$('list-foot');
+    foot.replaceChildren();
+    if (shelf.error) foot.append(el('div', 'box bad', shelf.error));
+    else if (!shelf.loaded) foot.textContent = 'Loading…';
+    else if (!shelf.items.length) foot.textContent = a.tab === 'presets' ? 'This build has no presets.' : 'No definitions yet.' + (a.mayWrite() ? ' Create one, or save a preset’s agent as one.' : '');
+  }
+  renderDetail() {
+    const a = this.app;
+    const box = this.$('detail');
+    const keep = box.scrollTop;
+    box.replaceChildren();
+    if (a.message) box.append(el('div', 'box ' + (a.message.ok ? 'ok' : 'bad'), a.message.text));
+    if (a.editing) this.fillEditor(box);
+    else if (a.tab === 'presets') this.fillPreset(box);
+    else this.fillDefinition(box);
+    box.scrollTop = keep;
+  }
+  fillPreset(box) {
+    const a = this.app;
+    const p = a.presets.open;
+    if (!a.item) { box.append(el('div', 'empty', 'Choose a preset to see its agents. Presets are built into this server; Swarm Command can run one as a crew.')); return; }
+    if (a.presets.openError) { box.append(el('div', 'box bad', a.presets.openError)); return; }
+    if (!p) { box.append(el('div', 'muted', 'Loading…')); return; }
+    const h = el('h1');
+    h.append(el('span', null, p.name));
+    if (p.size) h.append(el('span', 'pill', p.size));
+    if (p.version) h.append(el('span', 'pill', 'v' + p.version));
+    box.append(h);
+    if (p.description) box.append(el('p', 'lede', p.description));
+    const meta = [p.domain && 'domain ' + p.domain, p.workflow_mode && p.workflow_mode + ' workflow'].filter(Boolean).join(' · ');
+    if (meta) box.append(el('div', 'muted', meta));
+    box.append(el('h2', null, 'Agents'));
+    const cards = el('div', 'cards');
+    for (const ag of Array.isArray(p.agents) ? p.agents : []) {
+      if (!ag || typeof ag !== 'object') continue;
+      const c = el('div', 'card');
+      c.append(el('h3', null, ag.name || ag.agent_key || 'agent'), el('div', 'role', ag.role || ''));
+      if (ag.goal) c.append(el('p', null, ag.goal));
+      if (ag.focus) c.append(el('p', 'muted', 'Focus: ' + ag.focus));
+      const tags = el('div', 'tags');
+      for (const t of [ag.complexity && 'complexity ' + ag.complexity, ag.allow_delegation && 'delegates'].concat(Array.isArray(ag.tools) ? ag.tools : []).filter(Boolean)) tags.append(el('span', 'tag', t));
+      if (tags.childElementCount) c.append(tags);
+      if (ag.backstory) { const d = el('details'); d.append(el('summary', null, 'Backstory'), el('p', null, ag.backstory)); c.append(d); }
+      if (a.mayWrite() && a.host.can('definitions:read')) {
+        const act = el('div', 'actions');
+        const b = el('button', 'btn', 'Save as a definition');
+        b.type = 'button';
+        b.title = 'Store this agent as definition ' + (ag.agent_key || '');
+        b.addEventListener('click', async () => { b.disabled = true; await a.adopt(ag); });
+        act.append(b);
+        c.append(act);
+      }
+      cards.append(c);
+    }
+    box.append(cards);
+  }
+  fillDefinition(box) {
+    const a = this.app;
+    const d = a.defs.open;
+    if (!a.item) { box.append(el('div', 'empty', 'Choose a definition to see it' + (a.mayWrite() ? ', or create one.' : '.'))); return; }
+    if (a.defs.openError) { box.append(el('div', 'box bad', a.defs.openError)); return; }
+    if (!d) { box.append(el('div', 'muted', 'Loading…')); return; }
+    const h = el('h1');
+    h.append(el('span', null, d.name || d.key));
+    box.append(h, el('div', 'muted', d.key));
+    if (a.mayWrite()) {
+      const act = el('div', 'actions');
+      const edit = el('button', 'btn', 'Edit');
+      edit.type = 'button';
+      edit.addEventListener('click', () => a.edit(false));
+      act.append(edit);
+      if (this.confirmDelete === d.key) {
+        const yes = el('button', 'btn danger', 'Yes, delete it');
+        yes.type = 'button';
+        yes.addEventListener('click', () => { this.confirmDelete = ''; a.remove(d.key); });
+        const no = el('button', 'btn', 'Keep it');
+        no.type = 'button';
+        no.addEventListener('click', () => { this.confirmDelete = ''; this.renderDetail(); });
+        act.append(el('span', 'muted', 'Delete ' + d.key + '? Crews that name it by key will no longer find it.'), yes, no);
+      } else {
+        const del = el('button', 'btn danger', 'Delete');
+        del.type = 'button';
+        del.addEventListener('click', () => { this.confirmDelete = d.key; this.renderDetail(); });
+        act.append(del);
+      }
+      box.append(act);
+    }
+    const kv = el('dl', 'kv');
+    const row = (k, v) => { if (v === undefined || v === null || v === '') return; kv.append(el('dt', null, k), el('dd', null, v)); };
+    row('Role', d.role);
+    row('Goal', d.goal);
+    row('Backstory', d.backstory);
+    row('Domain', d.domain);
+    row('Tools', Array.isArray(d.tools) && d.tools.length ? d.tools.join(', ') : '');
+    row('Complexity', d.complexity);
+    row('LLM model', d.llm_model);
+    row('GPU', [d.gpu_required && 'required', d.gpu_preferred && 'preferred', Number.isInteger(d.gpu_memory_min_mb) && d.gpu_memory_min_mb + ' MB minimum'].filter(Boolean).join(' · '));
+    row('Focus', d.focus);
+    row('Delegation', d.allow_delegation === true ? 'allowed' : '');
+    box.append(kv);
+    if (a.defs.unforwarded.length) {
+      box.append(el('div', 'box', 'Kept but not used by the engine: ' + a.defs.unforwarded.join(', ') + '. They round-trip with the definition and shape nothing.'));
+    }
+  }
+  fillEditor(box) {
+    const a = this.app;
+    const ed = a.editing;
+    const f = ed.fields;
+    box.append(el('h1', null, ed.isNew ? 'New agent definition' : 'Edit ' + f.key));
+    const form = el('form', 'edit');
+    form.noValidate = true;
+    const input = (name, label, hint, opts = {}) => {
+      const id = 'f-' + name;
+      const l = el('label', null, label);
+      l.htmlFor = id;
+      let i;
+      if (opts.area) i = el('textarea');
+      else if (opts.select) { i = el('select'); for (const o of opts.select) { const op = el('option', null, o || '—'); op.value = o; i.append(op); } }
+      else { i = el('input'); i.type = opts.number ? 'number' : 'text'; }
+      i.id = id;
+      i.name = name;
+      i.value = f[name] === undefined || f[name] === null ? '' : String(f[name]);
+      if (opts.readOnly) i.readOnly = true;
+      i.spellcheck = false;
+      form.append(l, i);
+      if (hint) form.append(el('div', 'hint', hint));
+    };
+    input('key', 'Key', ed.isNew ? 'How crews name this agent: a–z, 0–9 and -. It cannot change once created.' : 'Fixed once created.', { readOnly: !ed.isNew });
+    input('name', 'Name');
+    input('role', 'Role *');
+    input('goal', 'Goal *', null, { area: true });
+    input('backstory', 'Backstory', null, { area: true });
+    input('domain', 'Domain');
+    input('tools', 'Tools', 'Tool names, separated by commas.');
+    input('complexity', 'Complexity', null, { select: COMPLEXITY.includes(f.complexity) ? COMPLEXITY : COMPLEXITY.concat([f.complexity]) });
+    input('llm_model', 'LLM model', 'Leave empty to use the server’s default.');
+    input('gpu_memory_min_mb', 'GPU memory (MB)', null, { number: true });
+    input('focus', 'Focus', 'Kept with the definition; the engine does not use it.');
+    const checks = el('div', 'checks');
+    for (const [name, label] of [['gpu_required', 'Needs a GPU'], ['gpu_preferred', 'Prefers a GPU'], ['allow_delegation', 'May delegate']]) {
+      const l = el('label');
+      const c = el('input');
+      c.type = 'checkbox';
+      c.name = name;
+      c.checked = !!f[name];
+      l.append(c, document.createTextNode(' ' + label));
+      checks.append(l);
+    }
+    form.append(el('label', null, 'Options'), checks);
+    const acts = el('div', 'row-actions');
+    // ⚠ Not a submit: the shell frames this page without `allow-forms`, and a sandboxed form
+    // never fires `submit` at all. Save on a click, and on Enter in a one-line field.
+    const save = el('button', 'btn primary', ed.isNew ? 'Create' : 'Save');
+    save.type = 'button';
+    const cancel = el('button', 'btn', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => a.cancelEdit());
+    acts.append(save, cancel);
+    form.append(acts);
+    const submit = async () => {
+      if (save.disabled) return;
+      const fields = {};
+      for (const n of form.elements) {
+        if (!n.name) continue;
+        fields[n.name] = n.type === 'checkbox' ? n.checked : n.value;
+      }
+      save.disabled = true;
+      await a.saveEdit(fields);
+      save.disabled = false;
+    };
+    save.addEventListener('click', submit);
+    form.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') { e.preventDefault(); submit(); }
+    });
+    box.append(form);
+  }
+}
+
+if (typeof document !== 'undefined' && document.getElementById('detail')) {
+  const app = new LibraryApp(new Host());
+  window.library = { app, view: new LibraryView(app) };
+}
+</script>
+</body>
+</html>

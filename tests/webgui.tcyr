@@ -71,7 +71,7 @@ fn _t_field(r, key) {
 fn test_pages_are_the_source_files() {
     test_group("webgui/pages");
     var a = arena_allocator(262144);
-    assert_eq(AGNOSTIC_WEBGUI_ASSET_COUNT, 2, "two pages: the shell and the swarm plugin");
+    assert_eq(AGNOSTIC_WEBGUI_ASSET_COUNT, 5, "five pages: the shell and four plugins");
     assert_eq(str_eq_cstr(str_from(agnostic_webgui_asset_path(0)), "index.html"), 1,
       "page 0 is the shell");
     assert_eq(str_eq_cstr(str_from(agnostic_webgui_asset_path(1)), "plugins/swarm/index.html"), 1,
@@ -103,7 +103,7 @@ fn test_pages_are_the_source_files() {
       "a plugin page may open no connection of its own");
     assert_eq(_t_has(str_from(agnostic_webgui_asset_csp(0)), "connect-src 'self'"), 1,
       "while the shell, which holds the token, talks to its own origin");
-    assert_eq(agnostic_webgui_asset_bytes(2), 0, "out of range is 0");
+    assert_eq(agnostic_webgui_asset_bytes(5), 0, "out of range is 0");
     assert_eq(agnostic_webgui_asset_bytes(0 - 1), 0, "and so is negative");
 }
 
@@ -114,10 +114,21 @@ fn test_init() {
     assert_eq(agnostic_webgui_page(0), 0, "and no page is served");
     var n = agnostic_webgui_init();
     assert_eq(n, AGNOSTIC_WEBGUI_PLUGIN_COUNT, "every compiled-in plugin loads");
-    assert_eq(n, 1, "which is one: swarm");
+    assert_eq(n, 4, "which is four");
     var p = agnostic_plugin_find(str_from("swarm"));
     assert_neq(p, 0, "swarm is found by id");
     assert_eq(agnostic_plugin_at(0), p, "and is first in the listing");
+    # ⭐ 0.1.10: the views over the real surface, in the order scripts/gen-webgui.sh lists them.
+    assert_eq(agnostic_plugin_at(1), agnostic_plugin_find(str_from("crews")), "then Crews");
+    assert_eq(agnostic_plugin_at(2), agnostic_plugin_find(str_from("library")), "then Library");
+    assert_eq(agnostic_plugin_at(3), agnostic_plugin_find(str_from("audit")), "then the Audit trail");
+    var k = 0;
+    var all_off = 1;
+    while (k < n) {
+        if (agnostic_plugin_enabled(agnostic_plugin_at(k)) != 0) { all_off = 0; }
+        k = k + 1;
+    }
+    assert_eq(all_off, 1, "and every one of them starts OFF, as ADR 0004 says");
     assert_eq(agnostic_plugin_find(str_from("nope")), 0, "an unknown id is not");
     assert_eq(agnostic_plugin_enabled(p), 0, "⭐ a plugin starts OFF");
     assert_eq(agnostic_plugin_asset(p), 1, "swarm serves page 1");
@@ -190,7 +201,7 @@ fn test_switch_is_durable() {
     agnostic_webgui_reset();
     agnostic_store_close();
     agnostic_store_open(str_from(_T_WEBDB));
-    assert_eq(agnostic_webgui_init(), 1, "the WebGUI reloads");
+    assert_eq(agnostic_webgui_init(), 4, "the WebGUI reloads");
     p = agnostic_plugin_find(str_from("swarm"));
     assert_eq(agnostic_plugin_enabled(p), 1, "⭐ and the switch survived the reopen");
 
@@ -258,9 +269,14 @@ fn test_plugin_api() {
     var a = arena_allocator(262144);
     var r = _t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins", "");
     assert_eq(agnostic_response_status(r), HTTP_OK, "the listing");
-    assert_eq(bayan_json_v_int(_t_field(r, "total")), 1, "counts one plugin");
+    assert_eq(bayan_json_v_int(_t_field(r, "total")), 4, "counts four plugins");
     var arr = _t_field(r, "plugins");
-    assert_eq(bayan_json_v_arr_len(arr), 1, "and lists it");
+    assert_eq(bayan_json_v_arr_len(arr), 4, "and lists them");
+    var p3 = bayan_json_v_arr_get(arr, 3);
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(p3, str_from("id"))), "audit"), 1,
+      "the last is the Audit trail");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(p3, str_from("data"))), "live"), 1,
+      "and the views over the real surface say their data is live");
     var p0 = bayan_json_v_arr_get(arr, 0);
     assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(p0, str_from("id"))), "swarm"), 1,
       "by id");
@@ -407,6 +423,7 @@ fn test_plugin_rung() {
     _t_open();
     agnostic_plugindata_ensure();
     agnostic_crews_ensure();
+    agnostic_definitions_open(str_from(_T_WEBDB));
     agnostic_webgui_init();
     agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
     var a = arena_allocator(1048576);
@@ -459,6 +476,35 @@ fn test_plugin_rung() {
     assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/audit", "")), HTTP_OK,
       "a request WITHOUT the header is not a plugin's, and passes as before");
     _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":false}");
+
+    # ⭐ 0.1.10: the new views get exactly what their manifests ask for.
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/library", "{\"enabled\":true}");
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions",
+          "{\"key\":\"lib-probe\",\"role\":\"r\",\"goal\":\"g\"}")), AGNOSTIC_HTTP_CREATED,
+      "Library may create a definition (definitions:write)");
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/lib-probe",
+          "{\"key\":\"lib-probe\",\"role\":\"r\",\"goal\":\"g2\"}")), HTTP_OK, "replace one");
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_DELETE, "/api/v1/agents/definitions/lib-probe", "")),
+      HTTP_OK, "and delete one");
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/crews", "")), HTTP_FORBIDDEN,
+      "but not read crews");
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "")), HTTP_FORBIDDEN,
+      "nor the audit trail");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/audit", "{\"enabled\":true}");
+    assert_eq(agnostic_response_status(_t_req_for(a, "audit", AGNOSTIC_METHOD_GET, "/api/v1/audit", "")), HTTP_OK,
+      "the Audit view reads the summary (audit:read)");
+    assert_eq(agnostic_response_status(_t_req_for(a, "audit", AGNOSTIC_METHOD_GET, "/api/v1/audit/entries?limit=5", "")), HTTP_OK,
+      "and the entries, by cursor");
+    assert_eq(agnostic_response_status(_t_req_for(a, "audit", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", "{}")), HTTP_FORBIDDEN,
+      "and nothing it does not ask for");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/crews", "{\"enabled\":true}");
+    assert_eq(agnostic_response_status(_t_req_for(a, "crews", AGNOSTIC_METHOD_GET, "/api/v1/crews?status=active", "")), HTTP_OK,
+      "Crews lists crews, filtered");
+    assert_eq(agnostic_response_status(_t_req_for(a, "crews", AGNOSTIC_METHOD_PUT, "/api/v1/plugins/crews/data/k", "{}")), HTTP_FORBIDDEN,
+      "and keeps no documents: it did not ask for storage");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/library", "{\"enabled\":false}");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/audit", "{\"enabled\":false}");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/crews", "{\"enabled\":false}");
 }
 
 fn main() {

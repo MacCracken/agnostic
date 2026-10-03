@@ -163,6 +163,139 @@ fn test_gaps_are_counted_because_verification_cannot_see_them() {
 # `lib/thread.cyr` receive their TLS block through `CLONE_SETTLS` and must not
 # re-install it. That is what makes a sandhi pool worker able to touch the store
 # at all.
+# The read entry `i` of a vec from `agnostic_audit_entries_a`.
+fn _t_entry(rows, i) { return vec_get(rows, i); }
+fn _t_action(rows, i) { return agnostic_audit_read_get(_t_entry(rows, i), AGNOSTIC_AR_ACTION); }
+fn _t_index(rows, i) { return agnostic_audit_read_get(_t_entry(rows, i), AGNOSTIC_AR_INDEX); }
+
+# ⭐ 0.1.10: the newest entries are kept for reading — copied as they are persisted, and
+# seeded from the store at open — so a page costs no load of the whole trail.
+fn test_the_newest_entries_are_kept_for_reading() {
+    test_group("audit/ring");
+
+    assert_eq(_t_fresh(), 1, "fresh store");
+    var a = arena_allocator(1048576);
+    assert_eq(vec_len(agnostic_audit_entries_a(a, 1000000, 50)), 0, "nothing to read yet");
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("crew.submit"), str_from("crew_id=one"));
+    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from("crew.cancel"), str_from("crew_id=one"));
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("definition.create"), str_from("key=alpha"));
+
+    var rows = agnostic_audit_entries_a(a, 1000000, 50);
+    assert_eq(vec_len(rows), 3, "three entries read back");
+    assert_eq(str_eq_cstr(_t_action(rows, 0), "definition.create"), 1, "newest first");
+    assert_eq(_t_index(rows, 0), 2, "numbered by position in the chain");
+    assert_eq(_t_index(rows, 2), 0, "from 0");
+    var cancel = _t_entry(rows, 1);
+    assert_eq(agnostic_audit_read_get(cancel, AGNOSTIC_AR_SEV), SEV_WARNING, "with its severity");
+    assert_eq(str_eq_cstr(agnostic_audit_read_get(cancel, AGNOSTIC_AR_DETAILS), "crew_id=one"), 1, "its details");
+    assert_eq(str_eq_cstr(agnostic_audit_read_get(cancel, AGNOSTIC_AR_SRC), "agnostic"), 1, "and its source");
+    assert_eq(str_len(agnostic_audit_read_get(cancel, AGNOSTIC_AR_TS)) >= 20, 1, "and when");
+    assert_eq(str_len(agnostic_audit_read_get(cancel, AGNOSTIC_AR_HASH)), 64, "its hash");
+    assert_eq(str_eq(agnostic_audit_read_get(_t_entry(rows, 0), AGNOSTIC_AR_PREV),
+        agnostic_audit_read_get(cancel, AGNOSTIC_AR_HASH)), 1,
+      "and each entry links to the one before it — the chain, as stored");
+
+    var older = agnostic_audit_entries_a(a, 2, 1);
+    assert_eq(vec_len(older), 1, "a page before index 2, of one");
+    assert_eq(_t_index(older, 0), 1, "is index 1");
+
+    # ⭐ Reopened, the ring is seeded from the store: the same entries, the same indexes.
+    agnostic_audit_close();
+    patra_init();
+    assert_eq(agnostic_audit_open(str_from(_T_AUDIT)), 1, "reopened");
+    var again = agnostic_audit_entries_a(a, 1000000, 50);
+    assert_eq(vec_len(again), 3, "the three entries are read from the store at open");
+    assert_eq(str_eq_cstr(_t_action(again, 0), "definition.create"), 1, "in the same order");
+    assert_eq(agnostic_audit_next_index(), 3, "and the next entry is index 3");
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("crew.submit"), str_from("crew_id=two"));
+    assert_eq(_t_index(agnostic_audit_entries_a(a, 1000000, 1), 0), 3, "which it is");
+}
+
+# Past the ring's size the oldest entries are no longer served — they stay in the store.
+fn test_the_ring_is_bounded() {
+    test_group("audit/ring-bound");
+
+    assert_eq(_t_fresh(), 1, "fresh store");
+    var n = 0;
+    while (n < AGNOSTIC_AUDIT_RING + 6) {
+        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("tick"), agnostic_audit_detail("n", str_from_int(n)));
+        n = n + 1;
+    }
+    assert_eq(agnostic_audit_next_index(), AGNOSTIC_AUDIT_RING + 6, "every entry is numbered");
+    assert_eq(agnostic_audit_oldest_held(), 6, "the six oldest are no longer held");
+    var a = arena_allocator(4194304);
+    var tail = agnostic_audit_entries_a(a, 8, 50);
+    assert_eq(vec_len(tail), 2, "a page that reaches past the ring stops at its floor");
+    assert_eq(_t_index(tail, 1), 6, "the oldest held");
+    assert_eq(str_eq_cstr(agnostic_audit_read_get(_t_entry(tail, 1), AGNOSTIC_AR_DETAILS), "n=6"), 1,
+      "and it is the right entry, not an overwritten slot");
+    assert_eq(agnostic_audit_count(), AGNOSTIC_AUDIT_RING + 6, "the store holds them all");
+
+    # Reopened past the size, the ring is seeded with the newest it can hold.
+    agnostic_audit_close();
+    patra_init();
+    agnostic_audit_open(str_from(_T_AUDIT));
+    assert_eq(agnostic_audit_oldest_held(), 6, "seeded with the newest 1024");
+    assert_eq(agnostic_audit_is_intact(), 1, "from a chain that verifies");
+}
+
+# The route: newest first, paged by `next`, ADMIN.
+fn test_the_entries_route() {
+    test_group("audit/route");
+
+    assert_eq(_t_fresh(), 1, "fresh store");
+    var i = 0;
+    while (i < 5) {
+        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("crew.submit"), agnostic_audit_detail("n", str_from_int(i)));
+        i = i + 1;
+    }
+    var a = arena_allocator(1048576);
+    var r1 = agnostic_route_audit_entries_a(a, str_from("/api/v1/audit/entries?limit=2"));
+    assert_eq(agnostic_response_status(r1), HTTP_OK, "200");
+    var b1 = agnostic_response_body(r1);
+    var e1 = bayan_json_v_obj_get_by_str(b1, AGNOSTIC_JK_ENTRIES);
+    assert_eq(bayan_json_v_arr_len(e1), 2, "a page of two");
+    assert_eq(agnostic_req_int(bayan_json_v_arr_get(e1, 0), AGNOSTIC_JK_INDEX, 0 - 1), 4, "the newest is index 4");
+    assert_eq(str_eq_cstr(agnostic_req_str(bayan_json_v_arr_get(e1, 0), AGNOSTIC_JK_SEVERITY), "info"), 1,
+      "severity by its lowercase name");
+    assert_eq(agnostic_req_int(b1, AGNOSTIC_JK_TOTAL, 0), 5, "total is the chain's length");
+    assert_eq(agnostic_req_int(b1, AGNOSTIC_JK_OLDEST_HELD, 0 - 1), 0, "and all of it is held");
+    var nx = agnostic_req_int(b1, AGNOSTIC_JK_NEXT, 0 - 1);
+    assert_eq(nx, 3, "next is the lowest index on the page");
+
+    var r2 = agnostic_route_audit_entries_a(a, str_from("/api/v1/audit/entries?limit=5&before=3"));
+    var b2 = agnostic_response_body(r2);
+    var e2 = bayan_json_v_obj_get_by_str(b2, AGNOSTIC_JK_ENTRIES);
+    assert_eq(bayan_json_v_arr_len(e2), 3, "the rest");
+    assert_eq(agnostic_req_int(bayan_json_v_arr_get(e2, 0), AGNOSTIC_JK_INDEX, 0 - 1), 2, "from index 2");
+    assert_eq(agnostic_req_int(b2, AGNOSTIC_JK_NEXT, 0 - 1), 0 - 1, "and the last page has no next");
+
+    assert_eq(agnostic_response_status(agnostic_route_audit_entries_a(a, str_from("/api/v1/audit/entries?limit=0"))),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "limit=0 is 422");
+    assert_eq(agnostic_response_status(agnostic_route_audit_entries_a(a, str_from("/api/v1/audit/entries?before=x"))),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a cursor that is not an index is 422");
+    var m = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/audit/entries"));
+    assert_eq(agnostic_route_match_id(m), AGNOSTIC_ROUTE_AUDIT_ENTRIES, "the router finds it");
+    assert_eq(agnostic_route_match_id(agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/audit"))),
+      AGNOSTIC_ROUTE_AUDIT, "beside the summary, unchanged");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_AUDIT_ENTRIES), AGNOSTIC_PERM_ADMIN,
+      "and it is ADMIN: the trail records every user's actions");
+}
+
+# A field too long for its slot is cut at a character boundary, never inside one.
+fn test_a_kept_copy_is_cut_on_a_character() {
+    test_group("audit/ring-utf8");
+
+    # "aé" is 61 c3 a9: a cut at 2 would split the é.
+    var s = "a\xc3\xa9b";
+    assert_eq(_agnostic_audit_fit_utf8(s, 4, 8), 4, "what fits is kept whole");
+    assert_eq(_agnostic_audit_fit_utf8(s, 4, 2), 1, "a cut inside a character backs off to before it");
+    assert_eq(_agnostic_audit_fit_utf8(s, 4, 3), 3, "a cut after one is exact");
+    var buf = alloc(80);
+    assert_eq(_agnostic_audit_slot_text(buf, 2, str_from(s)), 1, "and the copy says it was cut");
+    assert_eq(load64(buf), 1, "keeping the one whole character");
+}
+
 var _t_audit_off_count = 0 - 1;
 var _t_audit_off_verify = 0 - 1;
 
@@ -212,6 +345,10 @@ fn main() {
     test_survives_a_reopen();
     test_tampering_is_detected();
     test_gaps_are_counted_because_verification_cannot_see_them();
+    test_the_newest_entries_are_kept_for_reading();
+    test_the_ring_is_bounded();
+    test_the_entries_route();
+    test_a_kept_copy_is_cut_on_a_character();
     agnostic_audit_close();
     test_reads_from_a_worker_thread();
     return assert_summary();

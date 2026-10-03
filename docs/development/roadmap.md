@@ -377,12 +377,20 @@ second driver. It is currently P2 / post-v1.0 with no date.
 - [x] Swarm Command 0.3.0: real cost beside the estimate, results, a Crews list that watches any
   crew, safe submits, conflict-safe swarms, viewers read-only. `tests/webgui/` under Node in CI.
 
+**Grown at 0.1.10** — the views over the real surface, and the platform they needed:
+
+- [x] **Crews**, **Library** (presets + agent definitions, which it can write) and **Audit trail** as
+  first-party plugins, starting OFF (ADR 0004). New server surface for them: `GET /api/v1/crews?status=`,
+  `GET /api/v1/audit/entries` (ADR 0011), and the `definitions:write` / `audit:read` permissions.
+- [x] Views link to each other through the shell: `#plugin/<id>?<params>`, `agnostic:navigate`,
+  `agnostic:params`, `views` in `init` (ADR 0010). Swarm Command follows `crew=<uuid>`.
+- [x] One bridge client, `src/webgui/kit/host.js`, carried byte for byte by every plugin and verified
+  by the generator (ADR 0010).
+
 Still owed for 1.0.0:
 
-- [ ] Views over the real surface: crews — **half done**: the listing exists and Swarm Command
-  shows and watches it; a plain crews view in the shell (no map) is still owed — and agent
-  definitions, presets, the audit trail. They are the reason M9 exists; the shell is only where
-  they will live.
+- [x] ~~Views over the real surface~~ — **done at 0.1.10**: crews, agent definitions, presets and the
+  audit trail each have a view.
 - [ ] Streaming crew events (M7's transport) — the cursor replaced the window-matching poll at 0.1.9
   (ADR 0009), but it is still a one-second poll. Needs a transport that does not hold a pooled
   worker per watcher.
@@ -390,12 +398,9 @@ Still owed for 1.0.0:
 
 Found at 0.1.9, recorded rather than fixed:
 
-- [ ] **Cancelling a crew loses the results its finished tasks produced.** `agnostic_crew_cancel`
-  latches CANCELLED with no results, and the engine's later terminal state — with them — is refused
-  by the latch; outputs that came as events survive only in the window. The fix is a narrow latch
-  rule (a CANCELLED entry may take its results once, status unchanged) plus a crew store that may
-  then write the row — both deliberate exceptions to "a terminal outcome is written once", so they
-  want their own change and tests.
+- [x] ~~**Cancelling a crew loses the results its finished tasks produced.**~~ **Fixed at 0.1.10**
+  (ADR 0012): a stored CANCELLED with no results takes a terminal observation's results once, status
+  unchanged, and the stored outcome is rewritten once.
 - [ ] → **agnosai follow-ups** (release agnosai, then re-pin): a parallel or DAG crew publishes
   `task_started` for a whole wave before it runs and `task_completed` only after every batch, and
   sends no `token` events from its workers — a watcher cannot see which tasks of a wave are running
@@ -405,7 +410,25 @@ Found at 0.1.9, recorded rather than fixed:
 - [ ] → **sandhi**: `sandhi_server_send_chunk` discards `sock_send`'s result, so a streaming handler
   cannot notice its client left. A prerequisite for any SSE here.
 
-## Moving the cyrius pin to 6.6.13 (recorded 2026-10-02)
+Found at 0.1.10, recorded rather than fixed:
+
+- [ ] → **agnosai follow-ups**, with the ones above (release agnosai, then re-pin): its dist calls the
+  deprecated `bayan_json_v_obj_get` (bayan 1.5.11) and passes `Str`s where cyrius 6.6.14 wants a
+  `cstring` (`file_open(str_data(...))`), warning in every build here; and it declares sigil 3.13.5
+  where 6.6.14 folds 3.13.7 — harmless, the fold wins, but the lock's sigil line then names a commit
+  `lib/` does not hold.
+- [ ] The audit route serves only the newest 1024 entries (ADR 0011). A ranged, allocator-aware read
+  in libro would let it page the whole trail — file it with libro when a deployment needs that.
+- [ ] Library edits a definition with a last-writer-wins `PUT`: two editors of one definition do not
+  find out about each other, as plugin documents do since 0.1.9 (revisions). Definitions want an ETag
+  and `If-Match` the same way.
+
+## ~~Moving the cyrius pin to 6.6.13~~ (recorded 2026-10-02) — ✅ done at 0.1.10, at 6.6.14
+
+All three below landed with the 6.6.14 pin: every suite and the server ran natively on the Pi and the
+aarch64 artifact is released again; the `cyrius.cyml` note says what a modules-less block means now;
+`lib/math.cyr` was re-vendored by the same `cyrius deps`.
+
 
 - **The aarch64 SIGBUS is fixed upstream** (cyrius 6.6.13, I9, filed by 0.1.7): every global now starts at
   its natural alignment, so sankoch's odd-sized `u8` arrays no longer misalign sigil's atomic init flags or

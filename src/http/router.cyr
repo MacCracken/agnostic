@@ -62,6 +62,7 @@ enum AgnosticRouteId {
     AGNOSTIC_ROUTE_PDATA_DELETE = 23;
     AGNOSTIC_ROUTE_CREW_PLAN    = 24;
     AGNOSTIC_ROUTE_CREW_LIST    = 25;
+    AGNOSTIC_ROUTE_AUDIT_ENTRIES = 26;
 }
 
 var AGNOSTIC_METHOD_NONE   = 0;
@@ -378,6 +379,13 @@ fn agnostic_route_resolve_a(a, method, path: Str): i64 {
             return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_AUDIT, param, 0);
         }
     }
+    # Its newest entries (0.1.10), by cursor.
+    if (agnostic_path_matches_a(a, clean, "/api/v1/audit/entries", &param) == 1) {
+        path_hit = 1;
+        if (method == AGNOSTIC_METHOD_GET) {
+            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_AUDIT_ENTRIES, param, 0);
+        }
+    }
 
     # WebGUI plugins (0.1.7). The collection is GET only — the set of plugins is
     # fixed by the build, so there is nothing to POST — and one plugin is PUT only:
@@ -616,6 +624,10 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return agnostic_route_login_a(a, body, ctx); }
 
     if (id == AGNOSTIC_ROUTE_AUDIT) { return agnostic_route_audit_a(a); }
+    if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) {
+        # The raw path, query and all: `?limit=` and `?before=` (0.1.10).
+        return agnostic_route_audit_entries_a(a, path);
+    }
 
     if (id == AGNOSTIC_ROUTE_PRESET_LIST) { return agnostic_route_presets_list_a(a); }
     if (id == AGNOSTIC_ROUTE_PRESET_GET) {

@@ -3,7 +3,20 @@
 The WebGUI is served at **`/ui`** (`http://127.0.0.1:8000/ui` on the default bind). It has an
 Overview, a tab for each plugin that is switched on, and Settings. Why plugins are compiled in rather
 than loaded is [ADR 0004](../adr/0004-webgui-plugins-compiled-in-switched-at-run-time.md); how they
-reach the server is [ADR 0005](../adr/0005-plugins-reach-the-server-through-the-host-bridge.md).
+reach the server is [ADR 0005](../adr/0005-plugins-reach-the-server-through-the-host-bridge.md); how
+they link to each other is [ADR 0010](../adr/0010-views-link-through-the-shell-and-share-one-bridge-client.md).
+
+This build carries four:
+
+| Plugin | Shows | `data` |
+|---|---|---|
+| **Swarm Command** (`swarm`) | an RTS-style map of a swarm — simulated, estimated, or a live crew | `mixed` |
+| **Crews** (`crews`) | every crew in your tenant: filter by status, a crew's plan, live progress, results and cost; cancel | `live` |
+| **Library** (`library`) | the preset crews built in, and the agent definitions stored here — create, edit, delete, or save a preset's agent as one | `live` |
+| **Audit trail** (`audit`) | whether the audit chain verified, what was dropped, and its newest entries — administrators only | `live` |
+
+A view's state is in the URL — `/ui#plugin/crews?crew=<uuid>` opens that crew — so a link to it can
+be bookmarked or shared; it opens only where that view is switched on.
 
 ## Switch a plugin on
 
@@ -64,15 +77,26 @@ mission itself — Swarm Command is `mixed`: SIM on a simulation, LIVE on a real
    - LF line endings, and no NUL bytes;
    - no line that starts with `fn`, `var`, `enum`, `struct` or `include` at column 0 — the gates
      that scan `src/` read such a line as a Cyrius definition. Indent it.
-4. **Add the id to `PLUGINS` in `scripts/gen-webgui.sh`.** The list is the order plugins are listed
+4. **Carry the bridge client.** If `permissions` is not empty, the page must carry
+   `src/webgui/kit/host.js` — put an empty pair of markers at the top of an inline script and let
+   the generator fill it (step 6):
+
+   ```js
+   /* agnostic-kit:host begin */
+   /* agnostic-kit:host end */
+   ```
+
+   The copy is verified byte for byte on every build: edit `src/webgui/kit/host.js`, never a page's
+   copy, and run `--sync-kit` again.
+5. **Add the id to `PLUGINS` in `scripts/gen-webgui.sh`.** The list is the order plugins are listed
    and tabbed in; a directory missing from it fails the generator.
-5. **Regenerate, build, test:**
+6. **Fill in the client, regenerate, build, test:**
 
 ```bash
-./scripts/gen-webgui.sh && cyrius build src/main.cyr build/agnostic && cyrius test
+./scripts/gen-webgui.sh --sync-kit && cyrius build src/main.cyr build/agnostic && cyrius test
 ```
 
-6. **Test the page's logic under Node.** Put `tests/webgui/<id>.test.mjs` beside Swarm Command's:
+7. **Test the page's logic under Node.** Put `tests/webgui/<id>.test.mjs` beside the others:
    `tests/webgui/harness.mjs` evaluates your page's inline scripts in a `vm` context, so a test calls
    your own functions on the exact bytes that are embedded and served. Keep top-level code free of
    DOM access (start the app behind a `document` check) so it loads there.
@@ -89,7 +113,8 @@ The shell frames a plugin in `<iframe sandbox="allow-scripts allow-downloads">`.
 - it **can** run scripts, draw, take keyboard and mouse input, and save files the user downloads;
 - it **cannot** read the shell's session token, reach the network, or touch the shell's DOM —
   `localStorage` and `sessionStorage` throw, so wrap them in `try`/`catch`; `window.confirm()` and
-  `alert()` are blocked too (no `allow-modals`), so draw your own dialogs;
+  `alert()` are blocked too (no `allow-modals`), so draw your own dialogs; and a `<form>` never fires
+  `submit` (no `allow-forms`) — save on a button's click instead;
 - it **can ask the shell** to call the API for it, within its `permissions` — below — with at most
   16 requests in flight (the 17th is answered 429 by the shell);
 - opened directly at `/ui/plugins/<id>` (the shell's "Open in a new tab"), it runs unsandboxed, under
@@ -114,8 +139,10 @@ server enforces it, and the shell reads it from `GET /api/v1/plugins` (`catalogu
 | `storage` | `GET /api/v1/plugins/<own id>/data` · `GET`, `PUT`, `DELETE /api/v1/plugins/<own id>/data/<key>` |
 | `presets:read` | `GET /api/v1/presets` · `GET /api/v1/presets/<name>` |
 | `definitions:read` | `GET /api/v1/agents/definitions` · `GET /api/v1/agents/definitions/<key>` |
+| `definitions:write` | `POST /api/v1/agents/definitions` · `PUT`, `DELETE /api/v1/agents/definitions/<key>` |
 | `crews:read` | `GET /api/v1/crews` · `GET /api/v1/crews/<uuid>` · `…/events` · `…/plan` |
 | `crews:write` | `POST /api/v1/crews` · `POST /api/v1/crews/<uuid>/cancel` |
+| `audit:read` | `GET /api/v1/audit` · `GET /api/v1/audit/entries` — ADMIN routes: the user must be an administrator too |
 
 Anything else is answered **403 by the shell** without reaching the network; a malformed path (`..`,
 `//`, characters outside `[A-Za-z0-9/._-]`, or a query string outside `[A-Za-z0-9._~=&%-]`) or a body
@@ -127,9 +154,11 @@ The protocol (version 1), from the page's side:
 ```js
 // 1. Say hello; the shell answers with who the user is — never their token — and what its bridge carries.
 window.parent.postMessage({ type: 'agnostic:hello', protocol: 1 }, '*');
-// ← { type: 'agnostic:init', protocol: 1, features: ['query', 'revisions', 'idempotency'],
+// ← { type: 'agnostic:init', protocol: 1, features: ['query', 'revisions', 'idempotency', 'navigate'],
 //     plugin: { id, name, version }, permissions: [...],
-//     user: { auth: 'off' | 'required' | 'unknown', signedIn, role } }   — re-sent on sign-in/out
+//     user: { auth: 'off' | 'required' | 'unknown', signedIn, role },
+//     params: 'crew=…',                  — this view's part of the URL: #plugin/<id>?<params>
+//     views: [{ id, name }] }            — the plugins switched on   — init is re-sent on sign-in/out
 
 // 2. Ask. `id` correlates the answer (a short string or a number); `body` is JSON (≤ 256 KB), never
 //    on GET or DELETE. The path may carry a query string ('query').
@@ -138,13 +167,21 @@ window.parent.postMessage({ type: 'agnostic:request', id: 'q1', method: 'GET', p
 
 // Optional, by feature: `ifMatch` (an etag) on a PUT or DELETE and `ifNoneMatch: '*'` on a PUT
 // ('revisions' — the answer then carries `etag`); `idempotencyKey` on a POST ('idempotency').
+
+// 3. Navigate ('navigate', 0.1.10): open 'overview', 'settings' or a plugin that is switched on, with
+//    params for it — or this view itself, to put its own state in the URL.
+window.parent.postMessage({ type: 'agnostic:navigate', to: 'crews', params: 'crew=6ba7b810-…' }, '*');
+// ← { type: 'agnostic:params', params }   — when THIS view's params change while it is open
 ```
 
-Accept messages only from `window.parent` (`event.source === window.parent`). Give request ids a
-random prefix per page load: **the shell answers only the page that asked** — a reply that arrives
-after the page reloaded, or after another plugin took the frame, is dropped — but a page that reuses
-`q1` across loads should not rely on that alone. Swarm Command's `Host` class
-(`src/webgui/plugins/swarm/index.html`, section 1b) is a complete client to copy.
+Params are at most 256 of `[A-Za-z0-9._~=&%:-]` (percent-encode a value); the shell drops any
+others. A navigate the shell refuses — a view that is off — is told to the user, not the page.
+
+You do not write this by hand: **`src/webgui/kit/host.js`** is the client every plugin carries
+(`class Host` — `request`, `can`, `has`, `role`, `mayWrite`, `param`, `onParams`, `hasView`,
+`navigate` — and `errOf`). It accepts messages only from `window.parent`, gives request ids a random
+prefix per page load (the shell also answers only the page that asked), times out a request the shell
+never answers, and falls back to `mode: 'standalone'` when no shell answers its hello.
 
 ### Keeping documents: `storage`
 
@@ -185,7 +222,8 @@ caps and per-second prices, the budget, and the failure model. From a swarm's ca
 - **Watch** an earlier crew again, at its real pace.
 
 The **Crews** section lists every crew of your tenant — run from a swarm, from a script, from
-anywhere — and can watch any of them on the map.
+anywhere — and can watch any of them on the map, or open one in the Crews view (**DETAILS**, when that
+view is switched on). A link to `#plugin/swarm?crew=<uuid>` watches that crew on the map.
 
 A live run is recorded on its swarm **before** its crew is submitted, with the `Idempotency-Key` the
 submission carries, so closing the tab, a dropped answer or a timeout never loses track of a crew that
@@ -196,3 +234,40 @@ Swarms are this plugin's documents (`swarm-<id>`), so they are per tenant, and e
 swarm's revision: if another tab saved it first, you are asked whether to overwrite it, keep both, or
 keep editing. A **viewer** can open, simulate and estimate swarms but not change them. Opened in its
 own tab, Swarm Command keeps swarms in that browser instead, and cannot run live crews.
+
+## Crews
+
+Every crew in your tenant, newest first, a page at a time: **All**, **Active** (pending or running),
+**Completed**, **Failed**, **Cancelled** — the filter is applied by the server
+(`GET /api/v1/crews?status=`), so every page is full. Running crews are re-listed every few seconds.
+
+Open one to see its **plan** (the tasks in request order, what each waits for), its **progress** as
+it happens (read by cursor — each event once, and any gap said out loud), each task's **result** with
+the tokens, cost and time it used, and the crew's totals. Tokens are shown only when the engine
+metered a task, and cost only when the gateway priced one — an unpriced crew says *not priced*, never
+$0. A placeholder run (no LLM configured) says so above everything.
+
+**Cancel** stops new tasks starting; tasks already running finish, and since 0.1.10 their results are
+kept on the cancelled crew ([ADR 0012](../adr/0012-a-cancelled-crew-keeps-its-finished-results.md)) —
+the view stays on the crew until they arrive. Cancelling needs `crews:write` and a role that may
+write; a viewer sees everything else. **Watch in Swarm Command** opens the same crew on the map.
+
+## Library
+
+**Presets** are the crews compiled into the server (read-only): a preset's agents, with their roles,
+goals, tools and backstories. **Save as a definition** stores one of those agents as an agent
+definition, under its own key.
+
+**Agent definitions** are the agents stored on this server: create one, edit it (its key is fixed
+once created), or delete it — each audited by the server. A key that exists is refused rather than
+overwritten; a field the engine keeps but does not use (`focus`, `allow_delegation`) is labelled so.
+Changing definitions needs `definitions:write` and a role that may write.
+
+## Audit trail
+
+Whether the hash-linked trail **verified when the server started**, how many entries it holds, and how
+many appends **failed** — the one gap verification cannot see. Below, its newest entries (the server
+keeps the newest 1024 for reading — [ADR 0011](../adr/0011-audit-entries-are-read-from-a-bounded-copy.md)),
+filterable by severity and text, with each entry's hash and whether it names the entry before it. The
+routes are ADMIN: the trail records every user's actions, so other roles are told it is for
+administrators.

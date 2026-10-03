@@ -22,6 +22,14 @@
       "GET /api/v1/agents/definitions/:key"
     ]
   },
+  "definitions:write": {
+    "grants": "create, change and delete agent definitions",
+    "routes": [
+      "POST /api/v1/agents/definitions",
+      "PUT /api/v1/agents/definitions/:key",
+      "DELETE /api/v1/agents/definitions/:key"
+    ]
+  },
   "crews:read": {
     "grants": "list crews and read their plans, progress and results",
     "routes": [
@@ -36,6 +44,13 @@
     "routes": [
       "POST /api/v1/crews",
       "POST /api/v1/crews/:id/cancel"
+    ]
+  },
+  "audit:read": {
+    "grants": "read the audit trail, which records every user's actions",
+    "routes": [
+      "GET /api/v1/audit",
+      "GET /api/v1/audit/entries"
     ]
   }
 }

@@ -156,6 +156,37 @@ fn _agnostic_bench_ledger_snapshot(): i64 {
     return n;
 }
 
+# 0.1.10 — what `GET /api/v1/audit/entries` pays to copy a page of 50 entries out of the
+# kept ring under the audit lock (ADR 0011), with the ring full: no store read, no global
+# allocation, whatever the trail's size.
+fn _agnostic_bench_audit_entries(): i64 {
+    var path = "/tmp/agnostic-bench-audit.patra";
+    sys_unlink(path);
+    patra_init();
+    if (agnostic_audit_open(str_from(path)) == 0) { return 0; }
+    var k = 0;
+    while (k < AGNOSTIC_AUDIT_RING) {
+        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("crew.submit"),
+          str_from("crew_id=6ba7b810-9dad-41d1-80b4-00c04fd430c8"));
+        k = k + 1;
+    }
+    var a = arena_allocator(1048576);
+    var n = 0;
+    var be = bench_new("audit_entries_page_50");
+    bench_batch_start(be);
+    var i = 0;
+    while (i < 10000) {
+        n = n + vec_len(agnostic_audit_entries_a(a, AGNOSTIC_AUDIT_RING, 50));
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(be, 10000);
+    bench_report(be);
+    agnostic_audit_close();
+    sys_unlink(path);
+    return n;
+}
+
 fn main(): i64 {
     alloc_init();
     var b = bench_new("noop");
@@ -215,6 +246,7 @@ fn main(): i64 {
     _agnostic_bench_json_kind();
     _agnostic_bench_plugin_gate();
     _agnostic_bench_ledger_snapshot();
+    _agnostic_bench_audit_entries();
     return 0;
 }
 

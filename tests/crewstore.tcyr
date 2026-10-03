@@ -109,6 +109,66 @@ fn test_outcomes_survive_a_reopen() {
     assert_eq(agnostic_crews_count(), 1, "and is counted");
 }
 
+# A task result the engine metered: `prompt` + `compl` tokens.
+fn _t_metered(id, output, prompt, compl): i64 {
+    var r = agnosai_task_result_new(str_from(id), str_from(output), AGNOSAI_STATUS_COMPLETED);
+    var tok = bayan_json_v_obj_new();
+    bayan_json_v_obj_set(tok, str_from("prompt"), bayan_json_v_int_new(prompt));
+    bayan_json_v_obj_set(tok, str_from("completion"), bayan_json_v_int_new(compl));
+    bayan_json_v_obj_set(tok, str_from("total"), bayan_json_v_int_new(prompt + compl));
+    agnosai_task_result_with_metadata(r, str_from("tokens"), tok);
+    return r;
+}
+
+# ⭐ 0.1.10: a crew cancelled while tasks ran is persisted the moment the cancel
+# latches — with no results — and rewritten ONCE when they arrive, its status kept.
+fn test_a_cancelled_crew_is_rewritten_with_its_results() {
+    test_group("crewstore/cancel-results");
+
+    _t_open();
+    agnostic_ledger_reset();
+    var id = str_from("55555555-5555-4555-8555-555555555555");
+    var scope = str_from("acme");
+    var e = agnostic_ledger_record_owned(id, str_from("cut short"), 0, scope, 0, 0);
+    agnostic_ledger_latch(e, AGNOSTIC_CREW_CANCELLED, 0, 0);
+
+    var a = arena_allocator(262144);
+    var first = agnostic_crews_doc_a(a, id);
+    assert_neq(first, 0, "the cancel is persisted at once");
+    assert_eq(str_contains(first, str_from("kept output")), 0, "with no results — there are none yet");
+
+    var results = vec_new();
+    vec_push(results, _t_metered("t1", "kept output", 100, 20));
+    assert_eq(agnostic_ledger_latch(e, AGNOSTIC_CREW_CANCELLED, 0, results), 2, "the results arrive");
+
+    var second = agnostic_crews_doc_a(a, id);
+    assert_eq(str_contains(second, str_from("kept output")), 1, "and the stored outcome now carries them");
+    assert_eq(str_contains(second, str_from("\"status\":\"cancelled\"")), 1, "still cancelled");
+    assert_eq(agnostic_crews_count(), 1, "rewritten in place: one outcome");
+    var rows = agnostic_crews_index_in_a(a, scope);
+    assert_eq(vec_len(rows), 1, "and one listing row");
+    var row = vec_get(rows, 0);
+    assert_eq(agnostic_crew_row_get(row, AGNOSTIC_CR_STATUS), AGNOSTIC_CREW_CANCELLED, "listed as cancelled");
+    assert_eq(agnostic_crew_row_get(row, AGNOSTIC_CR_TOKENS), 120, "with the tokens its finished task used");
+
+    # The rewrite is for a cancelled crew only — any other row stands as first written.
+    var done = agnostic_crew_row_new_a(a);
+    agnostic_crew_row_set(done, AGNOSTIC_CR_CREW_ID, id);
+    agnostic_crew_row_set(done, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_COMPLETED);
+    assert_eq(agnostic_crews_resave_row(done, str_from("{\"status\":\"completed\"}")), 0,
+      "a resave that is not a cancelled crew is refused");
+    assert_eq(str_contains(agnostic_crews_doc_a(a, id), str_from("kept output")), 1, "and changes nothing");
+
+    # Across a reopen, the rewritten outcome is what is on disk.
+    agnostic_store_close();
+    patra_init();
+    agnostic_store_open(str_from(_T_CREWDB));
+    agnostic_crews_ensure();
+    assert_eq(str_contains(agnostic_crews_doc_a(a, id), str_from("kept output")), 1,
+      "the results survive a restart");
+    agnostic_ledger_reset();
+}
+
 fn test_no_database_is_not_a_silent_success() {
     test_group("crewstore/no-db");
 
@@ -155,6 +215,7 @@ fn main() {
     test_non_terminal_is_refused();
     test_a_row_is_written_once();
     test_outcomes_survive_a_reopen();
+    test_a_cancelled_crew_is_rewritten_with_its_results();
     test_no_database_is_not_a_silent_success();
     agnostic_store_close();
     test_patra_init_leaves_the_log_level_alone();

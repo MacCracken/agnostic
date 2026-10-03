@@ -14,12 +14,12 @@
 # ==============================================================================
 
 # How many pages are embedded. Page 0 is the shell.
-var AGNOSTIC_WEBGUI_ASSET_COUNT = 2;
+var AGNOSTIC_WEBGUI_ASSET_COUNT = 5;
 
 # How many plugin manifests are embedded.
-var AGNOSTIC_WEBGUI_PLUGIN_COUNT = 1;
+var AGNOSTIC_WEBGUI_PLUGIN_COUNT = 4;
 
-# --- src/webgui/index.html — 36729 bytes -------------------------------------
+# --- src/webgui/index.html — 39929 bytes -------------------------------------
 var _AGNOSTIC_WEBGUI_ASSET_00 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -209,6 +209,10 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     const RE_ID = /^[A-Za-z0-9._:-]{1,64}$/;
     const RE_ETAG = /^\"[0-9a-f]{16}\"$/;
     const RE_IDEM = /^[A-Za-z0-9._:-]{8,128}$/;
+    const RE_PLUGIN_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+    // A view's params — the part of `#plugin/<id>?<params>` after the `?` (0.1.10). Kept to
+    // characters that need no escaping in a URL fragment; a value is percent-encoded.
+    const RE_PARAMS = /^[A-Za-z0-9._~=&%:-]{0,256}$/;
     const reEscape = (s) => String(s).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
 
     /** One catalogue route (\"GET /api/v1/crews/:id\") as a matcher for plugin `pluginId`. */
@@ -283,7 +287,39 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       }
       return { ok: true, method, path, body, headers };
     }
-    return Object.freeze({ METHODS, MAX_BODY, MAX_INFLIGHT, compileRoute, grantsFor, granted, check });
+    /**
+     * The shell's route from its URL hash: `#overview`, `#settings` or `#plugin/<id>[?<params>]`.
+     * Params outside RE_PARAMS are dropped, never passed on: a link is input like any other.
+     */
+    function parseRoute(hash) {
+      const h = String(hash || '').replace(/^#/, '');
+      if (h === 'settings') return { view: 'settings', id: '', params: '' };
+      if (h.startsWith('plugin/')) {
+        const rest = h.slice(7);
+        const q = rest.indexOf('?');
+        const params = q < 0 ? '' : rest.slice(q + 1);
+        return { view: 'plugin', id: q < 0 ? rest : rest.slice(0, q), params: RE_PARAMS.test(params) ? params : '' };
+      }
+      return { view: 'overview', id: '', params: '' };
+    }
+    /**
+     * Check one `agnostic:navigate` (0.1.10) against the plugins switched on. Returns
+     * `{ok: true, hash}` — where to go — or `{ok: false, error}`. `to` is 'overview', 'settings'
+     * or the id of a plugin in `enabledIds`; `params` go only to a plugin.
+     */
+    function checkNavigate(msg, enabledIds) {
+      const to = typeof msg.to === 'string' ? msg.to : '';
+      const params = msg.params === undefined || msg.params === null ? '' : msg.params;
+      if (typeof params !== 'string' || !RE_PARAMS.test(params)) {
+        return { ok: false, error: 'a view\\u2019s params are up to 256 of [A-Za-z0-9._~=&%:-]' };
+      }
+      if (to === 'overview' || to === 'settings') return { ok: true, hash: to };
+      if (!RE_PLUGIN_ID.test(to) || !enabledIds.includes(to)) {
+        return { ok: false, error: 'that view is not switched on' };
+      }
+      return { ok: true, hash: 'plugin/' + to + (params ? '?' + params : '') };
+    }
+    return Object.freeze({ METHODS, MAX_BODY, MAX_INFLIGHT, compileRoute, grantsFor, granted, check, parseRoute, checkNavigate });
   })();
 </script>
 <script>
@@ -367,13 +403,8 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     const enabledPlugins = () => (state.plugins || []).filter((p) => p.enabled);
     const findPlugin = (id) => (state.plugins || []).find((p) => p.id === id) || null;
 
-    // --- routing: #overview, #settings, #plugin/<id> ---------------------------------
-    function parseRoute() {
-      const h = location.hash.replace(/^#/, '');
-      if (h === 'settings') return { view: 'settings' };
-      if (h.startsWith('plugin/')) return { view: 'plugin', id: h.slice(7) };
-      return { view: 'overview' };
-    }
+    // --- routing: #overview, #settings, #plugin/<id>[?<params>] ------------------------
+    const parseRoute = () => window.AgnosticBridge.parseRoute(location.hash);
     function go(hash) { if (location.hash !== '#' + hash) location.hash = hash; else render(); }
 
     // --- the plugin host bridge (0.1.8, ADR 0005; checked by the server since 0.1.9, ADR 0007)
@@ -389,7 +420,11 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     // object stays the same, so `e.source` cannot tell two pages apart. A reply is posted
     // only into the session that asked; anything answered after the page changed is
     // dropped, so a late answer can never resolve the next page's request of the same id.
-    const bridge = { plugin: null, grants: [], gen: 0, inflight: 0 };
+    //
+    // A plugin may also ask to open another view, with params for it (`agnostic:navigate`,
+    // 0.1.10) — only one that is switched on — and is told when its own params change
+    // (`agnostic:params`): the URL `#plugin/<id>?<params>` is a deep link into a view.
+    const bridge = { plugin: null, grants: [], gen: 0, inflight: 0, params: '' };
     const permissionWords = (name) => {
       const c = state.catalogue && state.catalogue[name];
       return c && typeof c.grants === 'string' ? c.grants : name;
@@ -407,7 +442,9 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
         // What this shell's bridge carries beyond protocol 1's first form (0.1.9): query
         // strings in a path, `ifMatch`/`ifNoneMatch` with an `etag` on the answer, and an
         // `idempotencyKey` on a POST. A plugin checks for a feature before relying on it.
-        features: ['query', 'revisions', 'idempotency'],
+        // 0.1.10 adds `navigate`: `agnostic:navigate`, `params` and `views` here, and
+        // `agnostic:params` when they change.
+        features: ['query', 'revisions', 'idempotency', 'navigate'],
         plugin: { id: bridge.plugin.id, name: bridge.plugin.name, version: bridge.plugin.version },
         permissions: (bridge.plugin.permissions || []).slice(),
         // `off`: every route is open (loopback). `required`: the server enforces roles,
@@ -416,6 +453,9 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
           auth: state.auth === 'off' ? 'off' : state.auth === 'unknown' ? 'unknown' : 'required',
           signedIn: !!store.get(TOKEN_KEY), role: store.get(ROLE_KEY) || null,
         },
+        params: bridge.params,
+        // The views switched on, so a page offers a link only to one that will open.
+        views: enabledPlugins().map((p) => ({ id: p.id, name: p.name })),
       }, '*');
     }
     window.addEventListener('message', async (e) => {
@@ -428,6 +468,12 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       const msg = e.data;
       if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
       if (msg.type === 'agnostic:hello') { newSession(); sendInit(); return; }
+      if (msg.type === 'agnostic:navigate') {
+        const n = window.AgnosticBridge.checkNavigate(msg, enabledPlugins().map((p) => p.id));
+        if (n.ok) go(n.hash);
+        else toast(bridge.plugin.name + ' tried to open a view: ' + n.error + '.', true);
+        return;
+      }
       if (msg.type !== 'agnostic:request') return;
       const p = bridge.plugin;
       const gen = bridge.gen;
@@ -651,7 +697,17 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       frame.title = p.name;
       bridge.plugin = p;
       bridge.grants = window.AgnosticBridge.grantsFor(p, state.catalogue);
-      if (frame.getAttribute('src') !== p.url) { newSession(); frame.setAttribute('src', p.url); }
+      const params = parseRoute().params;
+      if (frame.getAttribute('src') !== p.url) {
+        // A new page: its init carries the params.
+        bridge.params = params;
+        newSession();
+        frame.setAttribute('src', p.url);
+      } else if (params !== bridge.params) {
+        // The same page, followed by a deep link (or its own navigate): tell it, don't reload it.
+        bridge.params = params;
+        try { frame.contentWindow.postMessage({ type: 'agnostic:params', params }, '*'); } catch (err) { /* frame gone */ }
+      }
     }
 
     function render() {
@@ -660,7 +716,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       renderTabs(route);
       renderWho();
       for (const v of ['overview', 'settings', 'plugin']) $('view-' + v).hidden = v !== route.view;
-      if (route.view !== 'plugin') { $('plugin-frame').removeAttribute('src'); bridge.plugin = null; bridge.grants = []; newSession(); }
+      if (route.view !== 'plugin') { $('plugin-frame').removeAttribute('src'); bridge.plugin = null; bridge.grants = []; bridge.params = ''; newSession(); }
       if (route.view === 'overview') renderOverview();
       else if (route.view === 'settings') renderSettings();
       else renderPlugin(route.id);
@@ -740,7 +796,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
 </html>
 ";
 
-# --- src/webgui/plugins/swarm/index.html — 429829 bytes ----------------------
+# --- src/webgui/plugins/swarm/index.html — 434017 bytes ----------------------
 var _AGNOSTIC_WEBGUI_ASSET_01 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -1019,7 +1075,7 @@ canvas.timeline { width: 100%; height: 16px; display: block; border-radius: 3px;
 .lsec-title { display: flex; align-items: center; gap: 8px; }
 .lsec-title .spacer { flex: 1; }
 .crew-list { display: flex; flex-direction: column; gap: 4px; }
-.crew-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; gap: 10px; align-items: center; padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 6px; background: rgba(12,19,28,.85); font-size: 12px; }
+.crew-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto auto; gap: 10px; align-items: center; padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 6px; background: rgba(12,19,28,.85); font-size: 12px; }
 .crew-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crew-row .nm small { color: var(--dim); margin-left: 6px; font: 11px var(--mono); }
 .crew-row .st { font: 600 10.5px var(--mono); letter-spacing: .05em; }
@@ -1372,14 +1428,6 @@ function oneLine(s, n) {
 }
 const deepCopy = (x) => JSON.parse(JSON.stringify(x));
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
-/** `n` random characters of [a-z0-9] — request-id prefixes, idempotency keys. */
-function randomToken(n) {
-  const b = new Uint8Array(n);
-  try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
-  let s = '';
-  for (const x of b) s += (x % 36).toString(36);
-  return s;
-}
 /** Median / quantile of a numeric array (copied, not sorted in place). */
 function quantile(xs, q) {
   if (!xs.length) return 0;
@@ -1528,43 +1576,63 @@ function makeCommand(type, agentIds, target, payload) {
 }
 
 /* =====================================================================================
- *  SECTION 1b · HOST — the plugin side of agnostic's host bridge (ADR 0005)
+ *  SECTION 1b · HOST — the plugin side of agnostic's host bridge, carried verbatim from
+ *  src/webgui/kit/host.js: scripts/gen-webgui.sh refuses a copy that differs by a byte, and
+ *  `./scripts/gen-webgui.sh --sync-kit` rewrites it. Opened on its own (a new tab) there is no
+ *  shell: `mode` is 'standalone', and this page keeps its swarms in this browser instead.
+ * ===================================================================================== */
+/* agnostic-kit:host begin — DO NOT EDIT A COPY: the canonical source is src/webgui/kit/host.js,
+ * and scripts/gen-webgui.sh refuses a plugin page whose copy differs (`--sync-kit` rewrites them).
  *
- *  Framed by the agnostic shell, this page runs in an opaque origin with connect-src 'none': it
+ *  Host — the plugin side of agnostic's host bridge (ADR 0005, 0007, 0010).
+ *
+ *  Framed by the agnostic shell, a plugin page runs in an opaque origin with connect-src 'none': it
  *  cannot reach the API. It asks the shell by postMessage, and the shell answers only what this
- *  plugin's manifest permits, with the signed-in user's own credential (which the page never
- *  sees) — and the server still checks that user's role. Protocol 1:
+ *  plugin's manifest permits, with the signed-in user's own credential (which the page never sees)
+ *  — and the server checks the same permissions, and that user's role, again. Protocol 1:
  *
  *     page  → shell   {type:'agnostic:hello', protocol}
- *     shell → page    {type:'agnostic:init', protocol, plugin:{id,name,version}, permissions[], user:{auth, signedIn, role}}
- *     page  → shell   {type:'agnostic:request', id, method, path, body?}
- *     shell → page    {type:'agnostic:response', id, status, data}     status 0 = never reached the server
+ *     shell → page    {type:'agnostic:init', protocol, features[], plugin:{id,name,version},
+ *                      permissions[], user:{auth, signedIn, role}, params, views[{id,name}]}
+ *     page  → shell   {type:'agnostic:request', id, method, path, body?, ifMatch?, ifNoneMatch?,
+ *                      idempotencyKey?}
+ *     shell → page    {type:'agnostic:response', id, status, data, etag?}  status 0 = never reached it
+ *     page  → shell   {type:'agnostic:navigate', to, params?}             open another view (0.1.10)
+ *     shell → page    {type:'agnostic:params', params}                    this view's params changed
  *
- *  The shell re-sends init after a sign-in or sign-out. Opened on its own (a new tab) there is no
- *  shell: `mode` is 'standalone', and the page keeps its swarms in this browser instead.
- *
- *  Since agnostic 0.1.9 a request may carry `ifMatch` / `ifNoneMatch` (a document's revision, which
- *  comes back as `etag`) and `idempotencyKey` (a POST that is safe to retry), and its path may
- *  carry a query string — each when the shell lists the feature in `init.features`. The server
- *  checks every bridged request against this plugin's permissions too, not only the shell.
- * ===================================================================================== */
+ *  The shell re-sends init after a sign-in or sign-out. `params` is the part of the shell's URL after
+ *  `#plugin/<id>?` — a deep link into this view, e.g. `crew=<uuid>`. `views` lists the views switched
+ *  on, so a page offers a link only to one that will open. Opened on its own (a new tab) there is no
+ *  shell: `mode` is 'standalone', and the page must degrade.
+ */
 class Host {
-  constructor() {
+  constructor({ helloMs = 3000, timeoutMs = 30000 } = {}) {
     this.mode = 'connecting';  // 'connecting' | 'connected' | 'standalone'
     this.info = null;          // the latest agnostic:init
+    this.params = '';          // this view's params, from init or agnostic:params
     this.pending = new Map();  // request id → {resolve, timer}
     this.seq = 0;
+    this.timeoutMs = timeoutMs;
     // A random prefix per page load: request ids restart with every load, and a reply the shell
     // sends after a reload must never match a request of this page that happens to share a number.
-    this.prefix = 'q' + randomToken(6) + '-';
+    this.prefix = 'q' + Host.token(6) + '-';
     this.listeners = new Set();
+    this.paramListeners = new Set();
     let framed = false;
     try { framed = window.parent !== window; } catch (err) { framed = true; }
     if (!framed) { this.mode = 'standalone'; return; }
     window.addEventListener('message', (e) => this.onMessage(e));
     try { window.parent.postMessage({ type: 'agnostic:hello', protocol: 1 }, '*'); } catch (err) { /* detached */ }
     // A parent that never answers is not the agnostic shell (or is an older one): stand alone.
-    this.timer = setTimeout(() => { if (this.mode === 'connecting') this.setMode('standalone'); }, 3000);
+    this.timer = setTimeout(() => { if (this.mode === 'connecting') this.setMode('standalone'); }, helloMs);
+  }
+  /** `n` random characters of [a-z0-9]. */
+  static token(n) {
+    const b = new Uint8Array(n);
+    try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
+    let s = '';
+    for (const x of b) s += (x % 36).toString(36);
+    return s;
   }
   onMessage(e) {
     if (e.source !== window.parent) return;
@@ -1577,9 +1645,17 @@ class Host {
         permissions: Array.isArray(m.permissions) ? m.permissions.filter((x) => typeof x === 'string') : [],
         features: Array.isArray(m.features) ? m.features.filter((x) => typeof x === 'string') : [],
         user: { auth: typeof u.auth === 'string' ? u.auth : 'unknown', signedIn: !!u.signedIn, role: typeof u.role === 'string' ? u.role : null },
+        views: Array.isArray(m.views) ? m.views.filter((v) => v && typeof v.id === 'string' && typeof v.name === 'string') : [],
       };
       clearTimeout(this.timer);
+      const params = typeof m.params === 'string' ? m.params : '';
+      const changed = params !== this.params;
+      this.params = params;
       this.setMode('connected');
+      if (changed) this.emitParams();
+    } else if (m.type === 'agnostic:params') {
+      this.params = typeof m.params === 'string' ? m.params : '';
+      this.emitParams();
     } else if (m.type === 'agnostic:response') {
       const r = this.pending.get(m.id);
       if (!r) return;
@@ -1589,21 +1665,42 @@ class Host {
     }
   }
   setMode(mode) { this.mode = mode; for (const fn of this.listeners) fn(this); }
+  /** Called on every init (and the fall back to standalone); returns an unsubscribe. */
   onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  /** Called when this view's params change — a deep link followed while it is open. */
+  onParams(fn) { this.paramListeners.add(fn); return () => this.paramListeners.delete(fn); }
+  emitParams() { for (const fn of this.paramListeners) fn(this.params); }
+  /** One param of this view: `param('crew')` for `crew=<uuid>`; '' when absent. */
+  param(name) {
+    for (const pair of this.params.split('&')) {
+      const i = pair.indexOf('=');
+      const k = i < 0 ? pair : pair.slice(0, i);
+      if (k === name) { try { return decodeURIComponent(i < 0 ? '' : pair.slice(i + 1)); } catch (err) { return ''; } }
+    }
+    return '';
+  }
   can(permission) { return this.mode === 'connected' && this.info.permissions.includes(permission); }
-  /** Whether the shell's bridge carries `feature` ('query' | 'revisions' | 'idempotency'). */
+  /** Whether the shell's bridge carries `feature` ('query' | 'revisions' | 'idempotency' | 'navigate'). */
   has(feature) { return this.mode === 'connected' && this.info.features.includes(feature); }
-  pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || 'swarm'; }
+  pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || ''; }
   /** The user's role when the server enforces roles; null when auth is off or unknown. */
   role() { return this.info && this.info.user.auth === 'required' ? this.info.user.role : null; }
-  /** Whether the user may write at all (start crews, save swarms): any role but viewer. */
+  /** Whether the user may write at all: any role but viewer. */
   mayWrite() { return this.mode === 'connected' && this.role() !== 'viewer'; }
+  /** Whether view `id` is switched on — so a link to it will open. */
+  hasView(id) { return this.mode === 'connected' && this.info.views.some((v) => v.id === id); }
+  /** Open another view (or 'overview' / 'settings'), with params for it. Resolves false when it cannot. */
+  navigate(to, params) {
+    if (!this.has('navigate')) return false;
+    try { window.parent.postMessage({ type: 'agnostic:navigate', to: String(to), params: params ? String(params) : '' }, '*'); } catch (err) { return false; }
+    return true;
+  }
   /** `opts`: {ifMatch, ifNoneMatch, idempotencyKey}, each sent only when the shell carries it. */
   request(method, path, body, opts) {
     if (this.mode !== 'connected') return Promise.resolve({ status: 0, data: { error: 'not connected to agnostic' }, etag: null });
     const id = this.prefix + ++this.seq;
     return new Promise((resolve) => {
-      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' }, etag: null }); }, 30000);
+      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' }, etag: null }); }, this.timeoutMs);
       this.pending.set(id, { resolve, timer });
       const msg = { type: 'agnostic:request', id, method, path };
       if (body !== undefined) msg.body = body;
@@ -1620,6 +1717,7 @@ function errOf(r) {
   if (r && r.data && typeof r.data.error === 'string') return r.data.error;
   return r && r.status ? 'HTTP ' + r.status : 'the server is unreachable';
 }
+/* agnostic-kit:host end */
 
 /* =====================================================================================
  *  SECTION 2 · SIM — world, scenarios and the deterministic simulator
@@ -6457,7 +6555,7 @@ class SwarmLibrary {
   }
   get(id) { return this.specs.get(id) || null; }
   list() { return [...this.specs.values()].sort((a, b) => b.updated - a.updated); }
-  docPath(key) { return '/api/v1/plugins/' + this.host.pluginId() + '/data' + (key ? '/' + key : ''); }
+  docPath(key) { return '/api/v1/plugins/' + (this.host.pluginId() || 'swarm') + '/data' + (key ? '/' + key : ''); }
   async load() {
     const seq = ++this.seq, be = this.backend();
     this.error = '';
@@ -6655,6 +6753,8 @@ class Launcher {
     this.host.onChange(() => { this.lib.load(); this.render(); this.loadCrews(); });
     $('crews-refresh').addEventListener('click', () => this.loadCrews(true));
     $('crews-list').addEventListener('click', (e) => {
+      const v = e.target.closest('button[data-view-crew]');
+      if (v) { this.host.navigate('crews', 'crew=' + v.dataset.viewCrew); return; }
       const b = e.target.closest('button[data-crew]');
       const c = b && this.crews.find((x) => x.crew_id === b.dataset.crew);
       if (c) this.app.watchCrew(c);
@@ -6735,6 +6835,7 @@ class Launcher {
         + '<span class=\"st ' + cls + '\">' + escapeHtml(st.toUpperCase()) + '</span>'
         + '<span class=\"mt\">' + (Number.isInteger(c.tasks_submitted) ? c.tasks_submitted + ' tasks' : '') + (took ? ' · ' + took : '') + '</span>'
         + '<span class=\"mt\" title=\"what agnostic metered\">' + escapeHtml(meter || when) + '</span>'
+        + (this.host.hasView('crews') ? '<button class=\"lbtn\" type=\"button\" data-view-crew=\"' + escapeHtml(c.crew_id) + '\" title=\"Its plan, progress and results, in the Crews view\">DETAILS</button>' : '')
         + '<button class=\"lbtn\" type=\"button\" data-crew=\"' + escapeHtml(c.crew_id) + '\" title=\"Watch it on the map\">WATCH ▸</button></div>';
     }).join('');
   }
@@ -7613,6 +7714,10 @@ class App {
     this.attract = false;
     this.host = new Host();
     this.library = new SwarmLibrary(this.host);
+    // A deep link — `#plugin/swarm?crew=<uuid>`, from the Crews view — watches that crew (0.1.10).
+    this.linkedCrew = '';
+    this.host.onParams(() => this.openFromParams());
+    this.library.onChange(() => { if (this.library.state === 'ready' && this.linkedCrew) this.openFromParams(); });
     this.presetCache = new Map();
     this.store = new Store();
     this.layout = new Layout();
@@ -7773,6 +7878,22 @@ class App {
     // The swarm's current plan lends its titles and roles only if the crew's tasks are the same.
     this.startCrew(spec, specToCrewRequest(spec, preset), crewId.toLowerCase());
   }
+  /**
+   * Follow a deep link to a crew: watch it, as the Crews list's WATCH does. Waits for the
+   * library, so a crew one of these swarms started opens as that swarm's run; reads the crew's
+   * name first, so one it did not opens under its own name. Once per link.
+   */
+  async openFromParams() {
+    const id = this.host.param('crew').toLowerCase();
+    if (!RE_CREW_ID.test(id)) { this.linkedCrew = ''; return; }
+    this.linkedCrew = id;
+    if (this.library.state !== 'ready' || !this.host.can('crews:read')) return;
+    this.linkedCrew = '';
+    if (this.live && this.live.source && this.live.source.crewId === id) return;
+    const r = await this.host.request('GET', '/api/v1/crews/' + id);
+    if (r.status !== 200 || !r.data) { this.hud.toast('Could not open that crew: ' + errOf(r), 'bad'); return; }
+    this.watchCrew({ crew_id: id, name: typeof r.data.name === 'string' ? r.data.name : '' });
+  }
   /** Watch any crew of this tenant — from the Crews list — whether or not one of these swarms started it. */
   watchCrew(crew) {
     const id = String(crew && crew.crew_id || '').toLowerCase();
@@ -7796,7 +7917,7 @@ class App {
     this.recording = [];
     this.store.reset();
     this.resetUI();
-    const key = crewId ? null : 'sw-' + s.id + '-' + randomToken(12);
+    const key = crewId ? null : 'sw-' + s.id + '-' + Host.token(12);
     const at = Date.now();
     if (!crewId && saved) {
       this.library.patch(s.id, (x) => { x.runs.push({ kind: 'live', at, status: 'submitting', key, engine: '' }); }, { touch: false });
@@ -8185,6 +8306,2184 @@ if (typeof document !== 'undefined' && document.getElementById('map')) {
 </html>
 ";
 
+# --- src/webgui/plugins/crews/index.html — 48612 bytes -----------------------
+var _AGNOSTIC_WEBGUI_ASSET_02 = "<!doctype html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\">
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+<meta name=\"referrer\" content=\"no-referrer\">
+<title>Crews · agnostic</title>
+<style>
+:root {
+  --bg: #060a0f;
+  --panel: #0c131c;
+  --panel-2: #111b27;
+  --line: #1c2a38;
+  --line-2: #2a3d50;
+  --text: #d4e4f1;
+  --dim: #7d93a8;
+  --faint: #4b6075;
+  --accent: #39d0ff;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --err: #ef4444;
+  --mono: ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans); }
+body { display: flex; flex-direction: column; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.muted { color: var(--dim); }
+.mono { font-family: var(--mono); }
+.btn { background: #0f1823; border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 11px; font: 600 12px var(--sans); }
+.btn:hover { border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.danger { color: var(--err); border-color: rgba(239, 68, 68, .5); }
+.btn.link { color: var(--accent); }
+
+.bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line-2); background: var(--panel-2); flex-wrap: wrap; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { background: none; border: 1px solid var(--line-2); border-radius: 12px; padding: 2px 11px; color: var(--dim); font-weight: 600; font-size: 12px; }
+.chip:hover { color: var(--text); }
+.chip[aria-pressed=\"true\"] { color: var(--text); border-color: var(--accent); background: #0e3346; }
+.spacer { flex: 1; }
+
+.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 360px) 1fr; }
+.list { border-right: 1px solid var(--line-2); overflow: auto; }
+.detail { overflow: auto; padding: 18px 22px 48px; min-width: 0; }
+.row { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 9px 12px; }
+.row:hover { background: #0b141e; }
+.row[aria-current=\"true\"] { background: #0e2433; box-shadow: inset 3px 0 0 var(--accent); }
+.row .top { display: flex; gap: 8px; align-items: center; }
+.row .nm { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub { color: var(--dim); font-size: 11.5px; display: flex; gap: 10px; margin-top: 2px; flex-wrap: wrap; }
+.foot { padding: 12px; color: var(--dim); font-size: 12px; }
+.pill { font: 600 10px var(--mono); letter-spacing: .06em; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line-2); color: var(--dim); text-transform: uppercase; white-space: nowrap; }
+.pill.running, .pill.pending { color: var(--accent); border-color: rgba(57, 208, 255, .45); }
+.pill.completed { color: var(--ok); border-color: rgba(34, 197, 94, .45); }
+.pill.failed, .pill.unknown { color: var(--err); border-color: rgba(239, 68, 68, .45); }
+.pill.cancelled, .pill.queued { color: var(--warn); border-color: rgba(245, 158, 11, .45); }
+.pill.notrun { color: var(--faint); border-style: dashed; }
+
+h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+h2 { font-size: 12px; margin: 22px 0 8px; letter-spacing: .14em; color: var(--dim); text-transform: uppercase; }
+.id { color: var(--faint); font: 12px var(--mono); user-select: all; margin-top: 2px; }
+.actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 14px; }
+.fact { background: var(--panel); border: 1px solid var(--line-2); border-radius: 6px; padding: 7px 10px; min-width: 0; }
+.fact .k { color: var(--dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; }
+.fact .v { font-family: var(--mono); font-size: 13px; margin-top: 1px; overflow-wrap: anywhere; }
+.box { border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 11px; margin-top: 12px; color: var(--dim); }
+.box.warn { border-color: rgba(245, 158, 11, .5); color: var(--warn); }
+.box.bad { border-color: rgba(239, 68, 68, .5); color: var(--err); }
+.tasks { width: 100%; border-collapse: collapse; }
+.tasks th { text-align: left; color: var(--dim); font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; padding: 4px 8px; border-bottom: 1px solid var(--line-2); }
+.tasks td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.tasks td.n { color: var(--faint); font-family: var(--mono); width: 2.5em; }
+.tasks .ttl { font-weight: 600; }
+.tasks .use { color: var(--dim); font: 11.5px var(--mono); white-space: nowrap; }
+.tasks details { margin-top: 4px; }
+.tasks summary { color: var(--accent); cursor: pointer; font-size: 12px; }
+.tasks pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 8px; font: 12px/1.45 var(--mono); max-height: 360px; overflow: auto; }
+.tasks .err { color: var(--err); font-size: 12px; margin-top: 3px; }
+.feed { list-style: none; margin: 0; padding: 0; font: 12px/1.5 var(--mono); max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.feed li { padding: 3px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; }
+.feed li:last-child { border-bottom: 0; }
+.feed .t { color: var(--faint); min-width: 5.5em; text-align: right; }
+.empty { color: var(--dim); padding: 48px 20px; text-align: center; max-width: 60ch; margin: 0 auto; }
+@media (max-width: 720px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 40%) 1fr; }
+  .list { border-right: 0; border-bottom: 1px solid var(--line-2); }
+}
+</style>
+</head>
+<body>
+<header class=\"bar\">
+  <div class=\"chips\" id=\"filters\" role=\"group\" aria-label=\"Show crews\"></div>
+  <span class=\"spacer\"></span>
+  <span class=\"muted\" id=\"scope\"></span>
+  <button class=\"btn\" id=\"refresh\" type=\"button\">Refresh</button>
+</header>
+<div class=\"layout\" id=\"layout\">
+  <nav class=\"list\" aria-label=\"Crews\"><div id=\"list\"></div><div class=\"foot\" id=\"list-foot\"></div></nav>
+  <main class=\"detail\" id=\"detail\"></main>
+</div>
+<script>
+'use strict';
+/* agnostic-kit:host begin — DO NOT EDIT A COPY: the canonical source is src/webgui/kit/host.js,
+ * and scripts/gen-webgui.sh refuses a plugin page whose copy differs (`--sync-kit` rewrites them).
+ *
+ *  Host — the plugin side of agnostic's host bridge (ADR 0005, 0007, 0010).
+ *
+ *  Framed by the agnostic shell, a plugin page runs in an opaque origin with connect-src 'none': it
+ *  cannot reach the API. It asks the shell by postMessage, and the shell answers only what this
+ *  plugin's manifest permits, with the signed-in user's own credential (which the page never sees)
+ *  — and the server checks the same permissions, and that user's role, again. Protocol 1:
+ *
+ *     page  → shell   {type:'agnostic:hello', protocol}
+ *     shell → page    {type:'agnostic:init', protocol, features[], plugin:{id,name,version},
+ *                      permissions[], user:{auth, signedIn, role}, params, views[{id,name}]}
+ *     page  → shell   {type:'agnostic:request', id, method, path, body?, ifMatch?, ifNoneMatch?,
+ *                      idempotencyKey?}
+ *     shell → page    {type:'agnostic:response', id, status, data, etag?}  status 0 = never reached it
+ *     page  → shell   {type:'agnostic:navigate', to, params?}             open another view (0.1.10)
+ *     shell → page    {type:'agnostic:params', params}                    this view's params changed
+ *
+ *  The shell re-sends init after a sign-in or sign-out. `params` is the part of the shell's URL after
+ *  `#plugin/<id>?` — a deep link into this view, e.g. `crew=<uuid>`. `views` lists the views switched
+ *  on, so a page offers a link only to one that will open. Opened on its own (a new tab) there is no
+ *  shell: `mode` is 'standalone', and the page must degrade.
+ */
+class Host {
+  constructor({ helloMs = 3000, timeoutMs = 30000 } = {}) {
+    this.mode = 'connecting';  // 'connecting' | 'connected' | 'standalone'
+    this.info = null;          // the latest agnostic:init
+    this.params = '';          // this view's params, from init or agnostic:params
+    this.pending = new Map();  // request id → {resolve, timer}
+    this.seq = 0;
+    this.timeoutMs = timeoutMs;
+    // A random prefix per page load: request ids restart with every load, and a reply the shell
+    // sends after a reload must never match a request of this page that happens to share a number.
+    this.prefix = 'q' + Host.token(6) + '-';
+    this.listeners = new Set();
+    this.paramListeners = new Set();
+    let framed = false;
+    try { framed = window.parent !== window; } catch (err) { framed = true; }
+    if (!framed) { this.mode = 'standalone'; return; }
+    window.addEventListener('message', (e) => this.onMessage(e));
+    try { window.parent.postMessage({ type: 'agnostic:hello', protocol: 1 }, '*'); } catch (err) { /* detached */ }
+    // A parent that never answers is not the agnostic shell (or is an older one): stand alone.
+    this.timer = setTimeout(() => { if (this.mode === 'connecting') this.setMode('standalone'); }, helloMs);
+  }
+  /** `n` random characters of [a-z0-9]. */
+  static token(n) {
+    const b = new Uint8Array(n);
+    try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
+    let s = '';
+    for (const x of b) s += (x % 36).toString(36);
+    return s;
+  }
+  onMessage(e) {
+    if (e.source !== window.parent) return;
+    const m = e.data;
+    if (!m || typeof m !== 'object' || typeof m.type !== 'string') return;
+    if (m.type === 'agnostic:init') {
+      const u = m.user && typeof m.user === 'object' ? m.user : {};
+      this.info = {
+        plugin: m.plugin && typeof m.plugin === 'object' ? m.plugin : {},
+        permissions: Array.isArray(m.permissions) ? m.permissions.filter((x) => typeof x === 'string') : [],
+        features: Array.isArray(m.features) ? m.features.filter((x) => typeof x === 'string') : [],
+        user: { auth: typeof u.auth === 'string' ? u.auth : 'unknown', signedIn: !!u.signedIn, role: typeof u.role === 'string' ? u.role : null },
+        views: Array.isArray(m.views) ? m.views.filter((v) => v && typeof v.id === 'string' && typeof v.name === 'string') : [],
+      };
+      clearTimeout(this.timer);
+      const params = typeof m.params === 'string' ? m.params : '';
+      const changed = params !== this.params;
+      this.params = params;
+      this.setMode('connected');
+      if (changed) this.emitParams();
+    } else if (m.type === 'agnostic:params') {
+      this.params = typeof m.params === 'string' ? m.params : '';
+      this.emitParams();
+    } else if (m.type === 'agnostic:response') {
+      const r = this.pending.get(m.id);
+      if (!r) return;
+      this.pending.delete(m.id);
+      clearTimeout(r.timer);
+      r.resolve({ status: Number.isInteger(m.status) ? m.status : 0, data: m.data === undefined ? null : m.data, etag: typeof m.etag === 'string' ? m.etag : null });
+    }
+  }
+  setMode(mode) { this.mode = mode; for (const fn of this.listeners) fn(this); }
+  /** Called on every init (and the fall back to standalone); returns an unsubscribe. */
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  /** Called when this view's params change — a deep link followed while it is open. */
+  onParams(fn) { this.paramListeners.add(fn); return () => this.paramListeners.delete(fn); }
+  emitParams() { for (const fn of this.paramListeners) fn(this.params); }
+  /** One param of this view: `param('crew')` for `crew=<uuid>`; '' when absent. */
+  param(name) {
+    for (const pair of this.params.split('&')) {
+      const i = pair.indexOf('=');
+      const k = i < 0 ? pair : pair.slice(0, i);
+      if (k === name) { try { return decodeURIComponent(i < 0 ? '' : pair.slice(i + 1)); } catch (err) { return ''; } }
+    }
+    return '';
+  }
+  can(permission) { return this.mode === 'connected' && this.info.permissions.includes(permission); }
+  /** Whether the shell's bridge carries `feature` ('query' | 'revisions' | 'idempotency' | 'navigate'). */
+  has(feature) { return this.mode === 'connected' && this.info.features.includes(feature); }
+  pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || ''; }
+  /** The user's role when the server enforces roles; null when auth is off or unknown. */
+  role() { return this.info && this.info.user.auth === 'required' ? this.info.user.role : null; }
+  /** Whether the user may write at all: any role but viewer. */
+  mayWrite() { return this.mode === 'connected' && this.role() !== 'viewer'; }
+  /** Whether view `id` is switched on — so a link to it will open. */
+  hasView(id) { return this.mode === 'connected' && this.info.views.some((v) => v.id === id); }
+  /** Open another view (or 'overview' / 'settings'), with params for it. Resolves false when it cannot. */
+  navigate(to, params) {
+    if (!this.has('navigate')) return false;
+    try { window.parent.postMessage({ type: 'agnostic:navigate', to: String(to), params: params ? String(params) : '' }, '*'); } catch (err) { return false; }
+    return true;
+  }
+  /** `opts`: {ifMatch, ifNoneMatch, idempotencyKey}, each sent only when the shell carries it. */
+  request(method, path, body, opts) {
+    if (this.mode !== 'connected') return Promise.resolve({ status: 0, data: { error: 'not connected to agnostic' }, etag: null });
+    const id = this.prefix + ++this.seq;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' }, etag: null }); }, this.timeoutMs);
+      this.pending.set(id, { resolve, timer });
+      const msg = { type: 'agnostic:request', id, method, path };
+      if (body !== undefined) msg.body = body;
+      const o = opts || {};
+      if (o.ifMatch && this.has('revisions')) msg.ifMatch = o.ifMatch;
+      if (o.ifNoneMatch && this.has('revisions')) msg.ifNoneMatch = o.ifNoneMatch;
+      if (o.idempotencyKey && this.has('idempotency')) msg.idempotencyKey = o.idempotencyKey;
+      try { window.parent.postMessage(msg, '*'); } catch (err) { this.pending.delete(id); clearTimeout(timer); resolve({ status: 0, data: { error: 'the shell is gone' }, etag: null }); }
+    });
+  }
+}
+/** The error text of a bridge response. */
+function errOf(r) {
+  if (r && r.data && typeof r.data.error === 'string') return r.data.error;
+  return r && r.status ? 'HTTP ' + r.status : 'the server is unreachable';
+}
+/* agnostic-kit:host end */
+
+/* =====================================================================================
+ *  CREWS — every crew in this tenant, live (0.1.10)
+ *
+ *  The list is GET /api/v1/crews, a page at a time by its cursor, filtered by status on the
+ *  server. A crew opened is GET /crews/{id} (its outcome), /plan (its tasks, in request order)
+ *  and — while it runs — /events?after=N, which reads each event once. Tasks are the plan's,
+ *  bound to events and results by the engine's task id. What is open is in the URL
+ *  (`#plugin/crews?crew=<uuid>&status=<filter>`), so it is a link anyone can follow.
+ *
+ *  Everything above the VIEW section is plain logic with no DOM — tests/webgui/crews.test.mjs
+ *  runs it in Node against a fake agnostic.
+ * ===================================================================================== */
+const FILTERS = Object.freeze([
+  Object.freeze({ id: 'all', label: 'All', status: '' }),
+  Object.freeze({ id: 'active', label: 'Active', status: 'active' }),
+  Object.freeze({ id: 'completed', label: 'Completed', status: 'completed' }),
+  Object.freeze({ id: 'failed', label: 'Failed', status: 'failed' }),
+  Object.freeze({ id: 'cancelled', label: 'Cancelled', status: 'cancelled' }),
+]);
+const ACTIVE = Object.freeze(['pending', 'running']);
+const PAGE_SIZE = 50;
+const MAX_EVENTS = 400;              // events kept for the feed, newest
+const MAX_TAIL_POLLS = 120;          // polls of a cancelled crew waiting for its last results
+const RE_CREW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const isActive = (s) => ACTIVE.includes(s);
+const filterOf = (id) => FILTERS.find((f) => f.id === id) || FILTERS[0];
+const int = (v) => (Number.isInteger(v) ? v : null);
+
+/** First line of `s`, squeezed to at most `n` characters. */
+function oneLine(s, n) {
+  const t = String(s || '').replace(/\\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n - 1) + '…' : t;
+}
+function taskTitle(description, i) { return oneLine(description, 90) || 'Task ' + (i + 1); }
+function fmtTokens(n) {
+  if (!Number.isFinite(n)) return '—';
+  if (n < 1000) return String(n);
+  if (n < 1e6) return (n / 1000).toFixed(n < 1e4 ? 1 : 0) + 'k';
+  return (n / 1e6).toFixed(1) + 'M';
+}
+/** Micro-USD as dollars. An absent cost is not a zero cost: callers pass only a real one. */
+function fmtMicro(m) {
+  if (!Number.isFinite(m)) return '—';
+  const usd = m / 1e6;
+  if (usd === 0) return '$0';
+  return '$' + usd.toFixed(usd < 0.01 ? 4 : 2);
+}
+function fmtDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  if (ms < 1000) return Math.round(ms) + ' ms';
+  const s = ms / 1000;
+  if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + ' s';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + ' min ' + Math.round(s - m * 60) + ' s';
+  return Math.floor(m / 60) + ' h ' + (m % 60) + ' min';
+}
+function fmtAgo(ms, now) {
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  const d = Math.max(0, (now || Date.now()) - ms);
+  if (d < 45e3) return 'just now';
+  if (d < 3600e3) return Math.round(d / 60e3) + ' min ago';
+  if (d < 86400e3) return Math.round(d / 3600e3) + ' h ago';
+  return new Date(ms).toISOString().slice(0, 10);
+}
+/** A listing row worth showing: a crew id and a status. */
+function validRow(c) {
+  return !!c && typeof c === 'object' && typeof c.crew_id === 'string' && RE_CREW_ID.test(c.crew_id) && typeof c.status === 'string';
+}
+/** Whether listing row `x` comes before `y` — the server's order: newer `submitted_at` first, then the higher id. */
+function listsBefore(x, y) {
+  const xs = int(x.submitted_at) || 0, ys = int(y.submitted_at) || 0;
+  if (xs !== ys) return xs > ys;
+  return String(x.crew_id) > String(y.crew_id);
+}
+/**
+ * A refreshed first page merged into the list held. The fresh page replaces every crew it
+ * covers — new ones appear, finished ones change, ones that left the filter go — and the crews
+ * held from LATER pages (listed after the fresh page's last) stay after it, with the cursor
+ * that continues past them.
+ */
+function mergeFirstPage(held, heldNext, fresh, freshNext) {
+  if (!freshNext || !fresh.length) return { crews: fresh.slice(), next: freshNext || null };
+  const last = fresh[fresh.length - 1];
+  const ids = new Set(fresh.map((c) => c.crew_id));
+  const tail = held.filter((c) => !ids.has(c.crew_id) && listsBefore(last, c));
+  return { crews: fresh.concat(tail), next: tail.length ? heldNext : freshNext };
+}
+/** `?status=<filter>&crew=<id>` for a view state, leaving out the defaults. */
+function paramsFor(filter, crew) {
+  const p = [];
+  if (filter && filter !== 'all') p.push('status=' + filter);
+  if (crew) p.push('crew=' + crew);
+  return p.join('&');
+}
+
+/** The crews list: a page at a time, one filter at a time. */
+class CrewList {
+  constructor(host) {
+    this.host = host;
+    this.filter = 'all';
+    this.crews = [];
+    this.next = null;
+    this.loaded = false;
+    this.loading = false;
+    this.error = '';
+    this.scope = '';
+    this.gen = 0;              // a load answered after a newer one began is dropped
+    this.listeners = new Set();
+  }
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit() { for (const fn of this.listeners) fn(this); }
+  path(before) {
+    const f = filterOf(this.filter);
+    let p = '/api/v1/crews?limit=' + PAGE_SIZE;
+    if (f.status) p += '&status=' + f.status;
+    if (before) p += '&before=' + encodeURIComponent(before);
+    return p;
+  }
+  errorText(r) {
+    if (r.status === 401) return 'Sign in to see your crews.';
+    if (r.status === 403 && !(r.data && typeof r.data.code === 'string' && r.data.code.startsWith('plugin_'))) return 'Your role cannot list crews.';
+    return 'Could not list crews: ' + errOf(r);
+  }
+  page(r) {
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.crews)) return null;
+    return { crews: r.data.crews.filter(validRow), next: typeof r.data.next === 'string' && r.data.next ? r.data.next : null };
+  }
+  /** The first page under `filter` (or the current one), replacing what is held. */
+  async load(filter) {
+    if (filter !== undefined) this.filter = filterOf(filter).id;
+    const gen = ++this.gen;
+    this.loading = true;
+    this.emit();
+    const r = await this.host.request('GET', this.path(null));
+    if (gen !== this.gen) return false;
+    this.loading = false;
+    const p = this.page(r);
+    if (!p) { this.error = this.errorText(r); this.emit(); return false; }
+    this.error = '';
+    this.crews = p.crews;
+    this.next = p.next;
+    this.scope = typeof r.data.scope === 'string' ? r.data.scope : '';
+    this.loaded = true;
+    this.emit();
+    return true;
+  }
+  /** The next page, appended. */
+  async more() {
+    if (!this.next || this.loading) return false;
+    const gen = this.gen;
+    this.loading = true;
+    this.emit();
+    const r = await this.host.request('GET', this.path(this.next));
+    if (gen !== this.gen) return false;
+    this.loading = false;
+    const p = this.page(r);
+    if (!p) { this.error = this.errorText(r); this.emit(); return false; }
+    this.error = '';
+    const have = new Set(this.crews.map((c) => c.crew_id));
+    for (const c of p.crews) if (!have.has(c.crew_id)) this.crews.push(c);
+    this.next = p.next;
+    this.emit();
+    return true;
+  }
+  /** Re-read the first page, keeping the later pages already loaded (`mergeFirstPage`). */
+  async refresh() {
+    if (this.loading || !this.loaded) return false;
+    const gen = this.gen;
+    const r = await this.host.request('GET', this.path(null));
+    if (gen !== this.gen || this.loading) return false;
+    const p = this.page(r);
+    if (!p) { this.error = this.errorText(r); this.emit(); return false; }
+    this.error = '';
+    const m = mergeFirstPage(this.crews, this.next, p.crews, p.next);
+    this.crews = m.crews;
+    this.next = m.next;
+    this.emit();
+    return true;
+  }
+  /** What an open crew learned since the list was read — its status, times, usage. */
+  patch(id, fields) {
+    const c = this.crews.find((x) => x.crew_id === id);
+    if (!c) return;
+    let changed = false;
+    for (const [k, v] of Object.entries(fields)) if (v !== undefined && v !== null && c[k] !== v) { c[k] = v; changed = true; }
+    if (changed) this.emit();
+  }
+  hasActive() { return this.crews.some((c) => isActive(c.status)); }
+}
+
+/**
+ * One crew, opened: its outcome, its plan, and — while it runs — its progress, read by cursor.
+ *
+ * A cancelled crew is followed a little past its cancel: the tasks that were running finish,
+ * and the engine's last word brings their results (agnostic keeps them since 0.1.10), so the
+ * view waits for the crew's `crew_completed` before its final read.
+ */
+class CrewDetail {
+  constructor(host, crewId, opts = {}) {
+    this.host = host;
+    this.id = crewId;
+    this.pollMs = opts.pollMs || 1000;
+    this.hiddenPollMs = opts.hiddenPollMs || 5000;
+    this.isHidden = opts.isHidden || (() => false);
+    this.doc = null;           // the latest GET /crews/{id}
+    this.plan = null;
+    this.planNote = '';        // why there is no plan
+    this.tasks = [];           // {task_id, index, title, description, deps, priority, status, output, usage, error, agent}
+    this.byId = new Map();
+    this.events = [];          // {seq, at, type, text}
+    this.after = 0;
+    this.missed = 0;
+    this.lost = 0;
+    this.dropped = 0;
+    this.tokens = 0;           // `token` events seen
+    this.status = '';
+    this.sawEnd = false;
+    this.finalRead = false;
+    this.tailPolls = 0;
+    this.error = '';
+    this.pollError = '';
+    this.notFound = false;
+    this.loaded = false;
+    this.cancelling = false;
+    this.timer = 0;
+    this.stopped = false;
+    this.listeners = new Set();
+  }
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit() { for (const fn of this.listeners) fn(this); }
+  stop() { this.stopped = true; clearTimeout(this.timer); this.timer = 0; }
+  url(tail) { return '/api/v1/crews/' + this.id + (tail || ''); }
+  async start() {
+    const [g, p] = await Promise.all([this.host.request('GET', this.url()), this.host.request('GET', this.url('/plan'))]);
+    if (this.stopped) return;
+    if (g.status === 404) { this.notFound = true; this.error = 'There is no such crew in your tenant.'; this.emit(); return; }
+    if (g.status !== 200 || !g.data || typeof g.data !== 'object') { this.error = 'Could not read this crew: ' + errOf(g); this.emit(); return; }
+    if (p.status === 200 && p.data && Array.isArray(p.data.tasks)) this.adoptPlan(p.data);
+    else this.planNote = p.status === 404 ? 'Its plan is no longer held: this crew ran before the server last started.' : 'Could not read its plan: ' + errOf(p);
+    this.adoptDoc(g.data);
+    this.finalRead = !this.waiting();
+    this.loaded = true;
+    this.emit();
+    await this.poll();
+  }
+  adoptPlan(plan) {
+    this.plan = plan;
+    plan.tasks.forEach((t, i) => {
+      if (!t || typeof t.task_id !== 'string' || this.byId.has(t.task_id)) return;
+      const desc = typeof t.description === 'string' ? t.description : '';
+      this.addTask({ task_id: t.task_id, index: int(t.index) ?? i, description: desc, title: taskTitle(desc, i),
+        deps: Array.isArray(t.dependencies) ? t.dependencies.filter(Number.isInteger) : [],
+        priority: typeof t.priority === 'string' ? t.priority : '' });
+    });
+  }
+  addTask(t) {
+    const row = Object.assign({ status: 'pending', output: '', usage: null, error: '', agent: '', deps: [], priority: '' }, t);
+    this.tasks.push(row);
+    this.byId.set(row.task_id, row);
+    return row;
+  }
+  /** The task with engine id `id` — one the plan does not hold (no plan, or not this crew's) is added. */
+  task(id, description) {
+    if (!id) return null;
+    const t = this.byId.get(id);
+    if (t) return t;
+    const i = this.tasks.length;
+    return this.addTask({ task_id: id, index: i, description: description || '', title: taskTitle(description, i) });
+  }
+  adoptDoc(d) {
+    this.doc = d;
+    if (typeof d.status === 'string') this.status = d.status;
+    for (const r of Array.isArray(d.results) ? d.results : []) {
+      if (!r || typeof r.task_id !== 'string') continue;
+      const t = this.task(r.task_id, '');
+      if (typeof r.status === 'string') t.status = r.status;
+      if (typeof r.output === 'string') t.output = r.output;
+      if (r.usage && typeof r.usage === 'object') t.usage = r.usage;
+      if (typeof r.error === 'string') t.error = r.error;
+    }
+  }
+  /** One engine event, applied to the tasks, as a feed line — or null for one not shown. */
+  map(ev) {
+    const d = ev.data && typeof ev.data === 'object' && !Array.isArray(ev.data) ? ev.data : {};
+    const tid = typeof d.task_id === 'string' ? d.task_id : '';
+    let text;
+    switch (ev.type) {
+      case 'crew_started': text = 'crew started' + (int(d.task_count) !== null ? ' · ' + d.task_count + ' tasks' : ''); break;
+      case 'task_started': {
+        const t = this.task(tid, typeof d.description === 'string' ? d.description : '');
+        if (t && t.status === 'pending') { t.status = 'running'; if (typeof d.agent === 'string') t.agent = d.agent; }
+        text = 'started · ' + (t ? t.title : 'a task');
+        break;
+      }
+      case 'task_completed': {
+        const t = this.task(tid, '');
+        const st = typeof d.status === 'string' ? d.status : 'completed';
+        if (t && (t.status === 'pending' || t.status === 'running')) t.status = st;
+        text = st + ' · ' + (t ? t.title : 'a task');
+        break;
+      }
+      case 'token': this.tokens++; return null;
+      case 'crew_completed':
+        this.sawEnd = true;
+        text = 'crew ' + (typeof d.status === 'string' ? d.status : 'finished') + (int(d.wall_ms) !== null ? ' · ' + fmtDuration(d.wall_ms) : '');
+        break;
+      default: {
+        const why = typeof d.message === 'string' ? d.message : typeof d.error === 'string' ? d.error : '';
+        text = String(ev.type) + (why ? ': ' + oneLine(why, 160) : '');
+      }
+    }
+    return { seq: ev.seq, at: int(ev.at_ms) ?? 0, type: String(ev.type), text };
+  }
+  /** Whether there is more to wait for: it runs, or it was cancelled and its last results have not come. */
+  waiting() {
+    if (isActive(this.status)) return true;
+    return this.status === 'cancelled' && !this.sawEnd && this.tailPolls < MAX_TAIL_POLLS;
+  }
+  async poll() {
+    if (this.stopped) return;
+    clearTimeout(this.timer);
+    this.timer = 0;
+    const r = await this.host.request('GET', this.url('/events?after=' + this.after));
+    if (this.stopped) return;
+    let gone = false;
+    if (r.status === 200 && r.data && Array.isArray(r.data.events)) {
+      this.pollError = '';
+      for (const ev of r.data.events) {
+        if (!ev || typeof ev !== 'object' || !Number.isInteger(ev.seq) || ev.seq <= this.after) continue;
+        const row = this.map(ev);
+        if (row) this.events.push(row);
+      }
+      if (this.events.length > MAX_EVENTS) this.events.splice(0, this.events.length - MAX_EVENTS);
+      if (int(r.data.next) !== null && r.data.next > this.after) this.after = r.data.next;
+      if (int(r.data.missed) !== null) this.missed += r.data.missed;
+      if (int(r.data.lost_events) !== null) this.lost = r.data.lost_events;
+      if (int(r.data.dropped_events) !== null) this.dropped = r.data.dropped_events;
+      if (typeof r.data.status === 'string') this.status = r.data.status;
+    } else if (r.status === 404) {
+      gone = true;   // the ledger no longer holds it: what was read is all there is
+    } else {
+      this.pollError = 'Progress unavailable: ' + errOf(r);
+    }
+    if (!isActive(this.status)) this.tailPolls++;
+    if (gone || !this.waiting()) {
+      if (!this.finalRead) {
+        this.finalRead = true;
+        const g = await this.host.request('GET', this.url());
+        if (this.stopped) return;
+        if (g.status === 200 && g.data && typeof g.data === 'object') this.adoptDoc(g.data);
+      }
+      this.emit();
+      return;
+    }
+    this.emit();
+    this.timer = setTimeout(() => this.poll(), this.isHidden() ? this.hiddenPollMs : this.pollMs);
+  }
+  /** Cancel it. Resolves {ok, message}. */
+  async cancel() {
+    if (this.cancelling || !isActive(this.status)) return { ok: false, message: 'This crew is not running.' };
+    this.cancelling = true;
+    this.emit();
+    const r = await this.host.request('POST', this.url('/cancel'));
+    this.cancelling = false;
+    let out;
+    if (r.status === 200) { this.status = 'cancelled'; out = { ok: true, message: 'Cancelled. Tasks already running finish; their results will appear here.' }; }
+    else if (r.status === 409) out = { ok: false, message: 'It had already finished.' };
+    else if (r.status === 503) out = { ok: false, message: 'The engine no longer holds this crew, so it was not cancelled.' };
+    else if (r.status === 403) out = { ok: false, message: 'Your role cannot cancel crews.' };
+    else out = { ok: false, message: 'Could not cancel: ' + errOf(r) };
+    this.emit();
+    if (!this.stopped) this.poll();
+    return out;
+  }
+  /** The numbers worth showing, from the outcome and the plan. */
+  summary() {
+    const d = this.doc || {};
+    const u = d.usage && typeof d.usage === 'object' ? d.usage : {};
+    const count = (st) => this.tasks.filter((t) => t.status === st).length;
+    const submitted = int(d.submitted_at), started = int(d.started_at), finished = int(d.finished_at);
+    return {
+      name: typeof d.name === 'string' && d.name ? d.name : '',
+      status: this.status || 'unknown',
+      submitted, started, finished,
+      took: finished !== null ? finished - (started ?? submitted ?? finished) : null,
+      process: this.plan && typeof this.plan.process === 'string' ? this.plan.process : typeof d.process === 'string' ? d.process : '',
+      maxConcurrency: this.plan ? int(this.plan.max_concurrency) : null,
+      tasks: this.tasks.length || int(d.tasks_submitted) || int(d.task_count) || 0,
+      done: count('completed'), failed: count('failed'), running: count('running'),
+      // Tokens only when the engine metered a task; cost only when one was priced — never a made-up zero.
+      tokens: int(u.metered_tasks) > 0 ? int(u.total_tokens) : null,
+      cost: int(u.cost_micro_usd),
+      mode: typeof d.engine_mode === 'string' ? d.engine_mode : '',
+      error: typeof d.error === 'string' ? d.error : '',
+    };
+  }
+  /** What the list should now say about this crew. */
+  listFields() {
+    const s = this.summary();
+    return { status: s.status, started_at: s.started ?? undefined, finished_at: s.finished ?? undefined,
+      total_tokens: s.tokens ?? undefined, cost_micro_usd: s.cost ?? undefined };
+  }
+}
+
+/** The view's state: which filter, which crew — kept in the URL through the shell. */
+class CrewsApp {
+  constructor(host, opts = {}) {
+    this.host = host;
+    this.opts = opts;
+    this.list = new CrewList(host);
+    this.detail = null;
+    this.selected = '';
+    this.listeners = new Set();
+    this.detailListeners = new Set();
+    host.onChange(() => this.onHost());
+    host.onParams(() => this.applyParams(false));
+  }
+  /** The state changed: connected, a filter, a crew opened. */
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit() { for (const fn of this.listeners) fn(this); }
+  /** The open crew learned something. */
+  onDetail(fn) { this.detailListeners.add(fn); return () => this.detailListeners.delete(fn); }
+  emitDetail() { for (const fn of this.detailListeners) fn(this.detail); }
+  /** 'connecting' | 'standalone' | 'forbidden' | 'ready'. */
+  state() {
+    if (this.host.mode !== 'connected') return this.host.mode;
+    return this.host.can('crews:read') ? 'ready' : 'forbidden';
+  }
+  onHost() {
+    if (this.state() === 'ready') this.applyParams(true);
+    else { this.open(''); this.emit(); }
+  }
+  applyParams(force) {
+    if (this.state() !== 'ready') return;
+    const filter = filterOf(this.host.param('status')).id;
+    const c = this.host.param('crew').toLowerCase();
+    const crew = RE_CREW_ID.test(c) ? c : '';
+    if (force || filter !== this.list.filter || (!this.list.loaded && !this.list.loading)) this.list.load(filter);
+    if (force || crew !== this.selected) this.open(crew);
+    this.emit();
+  }
+  /** Change the filter or the crew — through the shell when it can, so the URL is a link to it. */
+  go(filter, crew) {
+    const params = paramsFor(filter, crew);
+    if (this.host.navigate(this.host.pluginId() || 'crews', params)) return;
+    this.host.params = params;
+    this.applyParams(false);
+  }
+  open(id) {
+    if (this.detail) { this.detail.stop(); this.detail = null; }
+    this.selected = id;
+    if (!id) return;
+    const d = new CrewDetail(this.host, id, this.opts);
+    this.detail = d;
+    d.onChange(() => { if (this.detail === d) { this.list.patch(id, d.listFields()); this.emitDetail(); } });
+    d.start();
+  }
+  mayCancel() { return this.host.can('crews:write') && this.host.mayWrite(); }
+}
+
+/* =====================================================================================
+ *  VIEW — the DOM. Every value from the server is written with textContent.
+ * ===================================================================================== */
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+function pill(status) { return el('span', 'pill ' + String(status).replace(/[^a-z]/g, ''), status); }
+
+class CrewsView {
+  constructor(app) {
+    this.app = app;
+    this.$ = (id) => document.getElementById(id);
+    this.note = '';               // the last action's answer, shown on the open crew
+    this.noteFor = '';
+    this.confirming = false;      // the cancel button asked \"really?\"
+    this.openOutputs = new Set(); // task ids whose output is unfolded — kept across re-renders
+    this.renderFilters();
+    this.$('refresh').addEventListener('click', () => { this.app.list.refresh(); if (this.app.detail) this.app.detail.poll(); });
+    app.onChange(() => this.render());
+    app.onDetail(() => this.renderDetail());
+    app.list.onChange(() => this.renderList());
+    // Running crews are re-listed every few seconds, others now and then — less when hidden.
+    setInterval(() => {
+      if (this.app.state() !== 'ready' || document.hidden) return;
+      const now = Date.now();
+      const every = this.app.list.hasActive() ? 4000 : 30000;
+      if (now - (this.listedAt || 0) >= every) { this.listedAt = now; this.app.list.refresh(); }
+    }, 1000);
+    this.render();
+  }
+  renderFilters() {
+    const box = this.$('filters');
+    box.replaceChildren();
+    for (const f of FILTERS) {
+      const b = el('button', 'chip', f.label);
+      b.type = 'button';
+      b.dataset.filter = f.id;
+      b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', () => this.app.go(f.id, this.app.selected));
+      box.append(b);
+    }
+  }
+  render() {
+    for (const b of this.$('filters').children) b.setAttribute('aria-pressed', String(b.dataset.filter === this.app.list.filter));
+    const st = this.app.state();
+    this.$('layout').hidden = st !== 'ready';
+    this.$('filters').hidden = st !== 'ready';
+    this.$('refresh').disabled = st !== 'ready';
+    let msg = this.$('message');
+    if (st !== 'ready') {
+      if (!msg) { msg = el('div', 'empty'); msg.id = 'message'; document.body.append(msg); }
+      msg.textContent = st === 'standalone' ? 'This view shows the crews on an agnostic server. Open it from agnostic’s WebGUI (/ui), where it runs as the signed-in user.'
+        : st === 'forbidden' ? 'This build of the Crews view was not granted crews:read.' : 'Connecting to agnostic…';
+      return;
+    }
+    if (msg) msg.remove();
+    this.renderList();
+    this.renderDetail();
+  }
+  renderList() {
+    const l = this.app.list;
+    const box = this.$('list');
+    const nav = box.parentElement;
+    const keep = nav.scrollTop;
+    box.replaceChildren();
+    const scope = l.scope && l.scope !== '_' ? 'tenant ' + l.scope : '';
+    this.$('scope').textContent = scope;
+    for (const c of l.crews) {
+      const b = el('button', 'row');
+      b.type = 'button';
+      if (c.crew_id === this.app.selected) b.setAttribute('aria-current', 'true');
+      const top = el('div', 'top');
+      top.append(el('span', 'nm', c.name || 'Crew ' + c.crew_id.slice(0, 8)), pill(c.status));
+      const sub = el('div', 'sub');
+      sub.append(el('span', null, fmtAgo(c.submitted_at)));
+      if (int(c.tasks_submitted) !== null) sub.append(el('span', null, c.tasks_submitted + ' tasks'));
+      if (int(c.finished_at) !== null && int(c.submitted_at) !== null) sub.append(el('span', null, fmtDuration(c.finished_at - (c.started_at || c.submitted_at))));
+      if (int(c.total_tokens) !== null) sub.append(el('span', null, fmtTokens(c.total_tokens) + ' tok'));
+      if (int(c.cost_micro_usd) !== null) sub.append(el('span', null, fmtMicro(c.cost_micro_usd)));
+      if (c.engine_mode === 'placeholder') sub.append(el('span', null, 'placeholder'));
+      b.append(top, sub);
+      b.addEventListener('click', () => this.app.go(l.filter, c.crew_id));
+      box.append(b);
+    }
+    const foot = this.$('list-foot');
+    foot.replaceChildren();
+    if (l.error) foot.append(el('div', 'box bad', l.error));
+    else if (l.loading && !l.crews.length) foot.textContent = 'Loading…';
+    else if (l.loaded && !l.crews.length) foot.textContent = l.filter === 'all' ? 'No crews yet. Start one from Swarm Command, or POST /api/v1/crews — every crew in your tenant is listed here.' : 'No crews match this filter.';
+    if (l.next) {
+      const more = el('button', 'btn', l.loading ? 'Loading…' : 'Load more');
+      more.type = 'button';
+      more.disabled = l.loading;
+      more.addEventListener('click', () => l.more());
+      foot.append(more);
+    }
+    nav.scrollTop = keep;
+  }
+  renderDetail() {
+    const box = this.$('detail');
+    const keep = box.scrollTop;
+    const oldFeed = box.querySelector('.feed');
+    const atEnd = !oldFeed || oldFeed.scrollTop + oldFeed.clientHeight >= oldFeed.scrollHeight - 4;
+    const feedKeep = oldFeed ? oldFeed.scrollTop : 0;
+    box.replaceChildren();
+    this.fillDetail(box);
+    box.scrollTop = keep;
+    const feed = box.querySelector('.feed');
+    if (feed) feed.scrollTop = atEnd ? feed.scrollHeight : feedKeep;
+  }
+  fillDetail(box) {
+    const d = this.app.detail;
+    if (this.noteFor !== (d ? d.id : '')) { this.note = ''; this.confirming = false; this.noteFor = d ? d.id : ''; }
+    if (!d) { box.append(el('div', 'empty', 'Choose a crew to see its plan, its progress and its results.')); return; }
+    if (d.error) { box.append(el('div', 'box bad', d.error)); return; }
+    if (!d.loaded) { box.append(el('div', 'muted', 'Loading…')); return; }
+    const s = d.summary();
+    const h = el('h1');
+    h.append(el('span', null, s.name || 'Crew ' + d.id.slice(0, 8)), pill(s.status));
+    box.append(h, el('div', 'id', d.id));
+
+    const actions = el('div', 'actions');
+    if (isActive(s.status) && this.app.mayCancel()) {
+      // Asked inline: the shell frames this page without `allow-modals`, so window.confirm
+      // would answer false without asking.
+      if (this.confirming && !d.cancelling) {
+        const yes = el('button', 'btn danger', 'Yes, cancel it');
+        yes.type = 'button';
+        yes.addEventListener('click', async () => {
+          this.confirming = false;
+          const r = await d.cancel();
+          if (this.app.detail === d) { this.note = r.message; this.renderDetail(); }
+        });
+        const no = el('button', 'btn', 'Keep it running');
+        no.type = 'button';
+        no.addEventListener('click', () => { this.confirming = false; this.renderDetail(); });
+        actions.append(el('span', 'muted', 'Cancel this crew? Tasks already running finish; no new task starts.'), yes, no);
+      } else {
+        const b = el('button', 'btn danger', d.cancelling ? 'Cancelling…' : 'Cancel crew');
+        b.type = 'button';
+        b.disabled = d.cancelling;
+        b.addEventListener('click', () => { this.confirming = true; this.renderDetail(); });
+        actions.append(b);
+      }
+    }
+    if (this.app.host.hasView('swarm')) {
+      const w = el('button', 'btn link', 'Watch in Swarm Command');
+      w.type = 'button';
+      w.title = 'Its agents and tasks on the command map';
+      w.addEventListener('click', () => this.app.host.navigate('swarm', 'crew=' + d.id));
+      actions.append(w);
+    }
+    if (actions.childElementCount) box.append(actions);
+    if (this.note) { box.append(el('div', 'box', this.note)); }
+
+    if (s.mode === 'placeholder') {
+      box.append(el('div', 'box warn', 'Placeholder run: this server has no LLM configured, so each task’s output is its own description, not real work.'));
+    }
+    if (s.error) box.append(el('div', 'box bad', s.error));
+
+    const facts = el('div', 'facts');
+    const fact = (k, v, title) => { const f = el('div', 'fact'); f.append(el('div', 'k', k), el('div', 'v', v)); if (title) f.title = title; facts.append(f); };
+    fact('Submitted', s.submitted !== null ? fmtAgo(s.submitted) : '—', s.submitted !== null ? new Date(s.submitted).toLocaleString() : '');
+    // A cancelled crew's finishing time is when the cancel landed; its running tasks went on.
+    if (s.took !== null) fact(s.status === 'cancelled' ? 'Cancelled after' : 'Took', fmtDuration(s.took));
+    else if (s.started !== null) fact('Running for', fmtDuration(Date.now() - s.started));
+    fact('Process', s.process ? s.process + (s.maxConcurrency ? ' · ' + s.maxConcurrency + ' at once' : '') : '—');
+    fact('Tasks', s.tasks ? s.done + ' / ' + s.tasks + ' done' + (s.failed ? ' · ' + s.failed + ' failed' : '') + (s.running ? ' · ' + s.running + ' running' : '') : '—');
+    fact('Tokens', s.tokens !== null ? fmtTokens(s.tokens) : 'not metered', 'what the engine metered for this crew’s tasks');
+    fact('Cost', s.cost !== null ? fmtMicro(s.cost) : 'not priced', 'only a priced call has a cost: an unpriced one is not $0');
+    box.append(facts);
+
+    box.append(el('h2', null, 'Tasks'));
+    if (d.planNote) box.append(el('div', 'muted', d.planNote));
+    if (d.tasks.length) {
+      const t = el('table', 'tasks');
+      const hr = el('tr');
+      for (const c of ['#', 'Task', 'Status', 'Used']) hr.append(el('th', null, c));
+      t.append(el('thead'));
+      t.firstChild.append(hr);
+      const body = el('tbody');
+      for (const task of d.tasks) {
+        const tr = el('tr');
+        tr.append(el('td', 'n', String(task.index + 1)));
+        const main = el('td');
+        main.append(el('div', 'ttl', task.title));
+        const meta = [];
+        if (task.deps.length) meta.push('after ' + task.deps.map((i) => '#' + (i + 1)).join(', '));
+        if (task.agent) meta.push('by ' + task.agent);
+        if (task.priority && task.priority !== 'normal') meta.push(task.priority + ' priority');
+        if (meta.length) main.append(el('div', 'muted', meta.join(' · ')));
+        if (task.error) main.append(el('div', 'err', task.error));
+        if (task.output) {
+          const det = el('details');
+          det.open = this.openOutputs.has(task.task_id);
+          det.addEventListener('toggle', () => { if (det.open) this.openOutputs.add(task.task_id); else this.openOutputs.delete(task.task_id); });
+          det.append(el('summary', null, 'Output · ' + task.output.length + ' characters'), el('pre', null, task.output));
+          main.append(det);
+        }
+        tr.append(main);
+        const st = el('td');
+        // A task still pending when the crew has ended never ran — say that, not \"pending\".
+        st.append(pill(task.status === 'pending' && !d.waiting() && !isActive(s.status) ? 'not run' : task.status));
+        tr.append(st);
+        const u = task.usage || {};
+        const used = [];
+        if (int(u.total_tokens) !== null) used.push(fmtTokens(u.total_tokens) + ' tok');
+        if (int(u.cost_micro_usd) !== null) used.push(fmtMicro(u.cost_micro_usd));
+        if (int(u.duration_ms) !== null) used.push(fmtDuration(u.duration_ms));
+        const ut = el('td', 'use', used.join(' · '));
+        if (typeof u.model === 'string') ut.title = u.model + (typeof u.provider === 'string' ? ' · ' + u.provider : '');
+        tr.append(ut);
+        body.append(tr);
+      }
+      t.append(body);
+      box.append(t);
+    }
+
+    box.append(el('h2', null, 'Progress'));
+    if (d.pollError) box.append(el('div', 'box warn', d.pollError));
+    if (!d.events.length) box.append(el('div', 'muted', d.waiting() ? 'Waiting for the first event…' : 'No progress is held for this crew.'));
+    else {
+      const feed = el('ul', 'feed');
+      for (const e of d.events) {
+        const li = el('li');
+        li.append(el('span', 't', '+' + fmtDuration(e.at)), el('span', null, e.text));
+        feed.append(li);
+      }
+      box.append(feed);
+    }
+    const gaps = [];
+    if (d.missed) gaps.push(d.missed + ' events had left the window before they were read');
+    if (d.lost) gaps.push(d.lost + ' events were dropped before agnostic collected them');
+    if (gaps.length) box.append(el('div', 'box warn', 'The progress has gaps: ' + gaps.join('; ') + '.'));
+  }
+}
+
+if (typeof document !== 'undefined' && document.getElementById('detail')) {
+  const app = new CrewsApp(new Host(), { isHidden: () => document.hidden });
+  window.crews = { app, view: new CrewsView(app) };
+}
+</script>
+</body>
+</html>
+";
+
+# --- src/webgui/plugins/library/index.html — 38876 bytes ---------------------
+var _AGNOSTIC_WEBGUI_ASSET_03 = "<!doctype html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\">
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+<meta name=\"referrer\" content=\"no-referrer\">
+<title>Library · agnostic</title>
+<style>
+:root {
+  --bg: #060a0f;
+  --panel: #0c131c;
+  --panel-2: #111b27;
+  --line: #1c2a38;
+  --line-2: #2a3d50;
+  --text: #d4e4f1;
+  --dim: #7d93a8;
+  --faint: #4b6075;
+  --accent: #39d0ff;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --err: #ef4444;
+  --mono: ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans); }
+body { display: flex; flex-direction: column; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.muted { color: var(--dim); }
+.btn { background: #0f1823; border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 11px; font: 600 12px var(--sans); }
+.btn:hover { border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: #0e3346; border-color: var(--accent); color: var(--accent); }
+.btn.danger { color: var(--err); border-color: rgba(239, 68, 68, .5); }
+
+.bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line-2); background: var(--panel-2); flex-wrap: wrap; }
+.chip { background: none; border: 1px solid var(--line-2); border-radius: 12px; padding: 2px 11px; color: var(--dim); font-weight: 600; font-size: 12px; }
+.chip:hover { color: var(--text); }
+.chip[aria-pressed=\"true\"] { color: var(--text); border-color: var(--accent); background: #0e3346; }
+.spacer { flex: 1; }
+
+.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 340px) 1fr; }
+.list { border-right: 1px solid var(--line-2); overflow: auto; }
+.detail { overflow: auto; padding: 18px 22px 48px; min-width: 0; }
+.row { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 9px 12px; }
+.row:hover { background: #0b141e; }
+.row[aria-current=\"true\"] { background: #0e2433; box-shadow: inset 3px 0 0 var(--accent); }
+.row .top { display: flex; gap: 8px; align-items: center; }
+.row .nm { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.foot { padding: 12px; color: var(--dim); font-size: 12px; }
+.pill { font: 600 10px var(--mono); letter-spacing: .06em; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line-2); color: var(--dim); text-transform: uppercase; white-space: nowrap; }
+
+h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+h2 { font-size: 12px; margin: 22px 0 8px; letter-spacing: .14em; color: var(--dim); text-transform: uppercase; }
+.lede { color: var(--dim); margin: 6px 0 0; max-width: 75ch; }
+.actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+.box { border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 11px; margin-top: 12px; color: var(--dim); }
+.box.ok { border-color: rgba(34, 197, 94, .5); color: var(--ok); }
+.box.bad { border-color: rgba(239, 68, 68, .5); color: var(--err); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+.card h3 { font-size: 14px; margin: 0; }
+.card .role { color: var(--accent); font-size: 12px; margin-top: 1px; }
+.card p { margin: 8px 0 0; }
+.card details { margin-top: 8px; }
+.card summary { color: var(--accent); cursor: pointer; font-size: 12px; }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; margin-top: 14px; }
+.kv dt { color: var(--dim); }
+.kv dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+.tag { font: 11px var(--mono); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 6px; color: var(--dim); }
+form.edit { display: grid; grid-template-columns: 170px 1fr; gap: 10px 14px; margin-top: 16px; max-width: 900px; align-items: start; }
+form.edit label { color: var(--dim); padding-top: 6px; }
+form.edit .hint { grid-column: 2; color: var(--faint); font-size: 11.5px; margin-top: -6px; }
+form.edit input[type=\"text\"], form.edit input[type=\"number\"], form.edit textarea, form.edit select { width: 100%; background: #0b131c; border: 1px solid var(--line-2); border-radius: 5px; padding: 6px 9px; }
+form.edit textarea { min-height: 76px; resize: vertical; }
+form.edit .checks { display: flex; gap: 18px; flex-wrap: wrap; padding-top: 6px; }
+form.edit .checks label { padding: 0; color: var(--text); }
+form.edit .row-actions { grid-column: 2; display: flex; gap: 8px; }
+.empty { color: var(--dim); padding: 48px 20px; text-align: center; max-width: 60ch; margin: 0 auto; }
+@media (max-width: 720px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: minmax(140px, 35%) 1fr; }
+  .list { border-right: 0; border-bottom: 1px solid var(--line-2); }
+  form.edit { grid-template-columns: 1fr; }
+  form.edit .hint, form.edit .row-actions { grid-column: 1; }
+  .kv { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header class=\"bar\">
+  <div id=\"tabs\" role=\"group\" aria-label=\"Show\"></div>
+  <span class=\"spacer\"></span>
+  <button class=\"btn primary\" id=\"new-def\" type=\"button\" hidden>New definition</button>
+</header>
+<div class=\"layout\" id=\"layout\">
+  <nav class=\"list\" aria-label=\"Items\"><div id=\"list\"></div><div class=\"foot\" id=\"list-foot\"></div></nav>
+  <main class=\"detail\" id=\"detail\"></main>
+</div>
+<script>
+'use strict';
+/* agnostic-kit:host begin — DO NOT EDIT A COPY: the canonical source is src/webgui/kit/host.js,
+ * and scripts/gen-webgui.sh refuses a plugin page whose copy differs (`--sync-kit` rewrites them).
+ *
+ *  Host — the plugin side of agnostic's host bridge (ADR 0005, 0007, 0010).
+ *
+ *  Framed by the agnostic shell, a plugin page runs in an opaque origin with connect-src 'none': it
+ *  cannot reach the API. It asks the shell by postMessage, and the shell answers only what this
+ *  plugin's manifest permits, with the signed-in user's own credential (which the page never sees)
+ *  — and the server checks the same permissions, and that user's role, again. Protocol 1:
+ *
+ *     page  → shell   {type:'agnostic:hello', protocol}
+ *     shell → page    {type:'agnostic:init', protocol, features[], plugin:{id,name,version},
+ *                      permissions[], user:{auth, signedIn, role}, params, views[{id,name}]}
+ *     page  → shell   {type:'agnostic:request', id, method, path, body?, ifMatch?, ifNoneMatch?,
+ *                      idempotencyKey?}
+ *     shell → page    {type:'agnostic:response', id, status, data, etag?}  status 0 = never reached it
+ *     page  → shell   {type:'agnostic:navigate', to, params?}             open another view (0.1.10)
+ *     shell → page    {type:'agnostic:params', params}                    this view's params changed
+ *
+ *  The shell re-sends init after a sign-in or sign-out. `params` is the part of the shell's URL after
+ *  `#plugin/<id>?` — a deep link into this view, e.g. `crew=<uuid>`. `views` lists the views switched
+ *  on, so a page offers a link only to one that will open. Opened on its own (a new tab) there is no
+ *  shell: `mode` is 'standalone', and the page must degrade.
+ */
+class Host {
+  constructor({ helloMs = 3000, timeoutMs = 30000 } = {}) {
+    this.mode = 'connecting';  // 'connecting' | 'connected' | 'standalone'
+    this.info = null;          // the latest agnostic:init
+    this.params = '';          // this view's params, from init or agnostic:params
+    this.pending = new Map();  // request id → {resolve, timer}
+    this.seq = 0;
+    this.timeoutMs = timeoutMs;
+    // A random prefix per page load: request ids restart with every load, and a reply the shell
+    // sends after a reload must never match a request of this page that happens to share a number.
+    this.prefix = 'q' + Host.token(6) + '-';
+    this.listeners = new Set();
+    this.paramListeners = new Set();
+    let framed = false;
+    try { framed = window.parent !== window; } catch (err) { framed = true; }
+    if (!framed) { this.mode = 'standalone'; return; }
+    window.addEventListener('message', (e) => this.onMessage(e));
+    try { window.parent.postMessage({ type: 'agnostic:hello', protocol: 1 }, '*'); } catch (err) { /* detached */ }
+    // A parent that never answers is not the agnostic shell (or is an older one): stand alone.
+    this.timer = setTimeout(() => { if (this.mode === 'connecting') this.setMode('standalone'); }, helloMs);
+  }
+  /** `n` random characters of [a-z0-9]. */
+  static token(n) {
+    const b = new Uint8Array(n);
+    try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
+    let s = '';
+    for (const x of b) s += (x % 36).toString(36);
+    return s;
+  }
+  onMessage(e) {
+    if (e.source !== window.parent) return;
+    const m = e.data;
+    if (!m || typeof m !== 'object' || typeof m.type !== 'string') return;
+    if (m.type === 'agnostic:init') {
+      const u = m.user && typeof m.user === 'object' ? m.user : {};
+      this.info = {
+        plugin: m.plugin && typeof m.plugin === 'object' ? m.plugin : {},
+        permissions: Array.isArray(m.permissions) ? m.permissions.filter((x) => typeof x === 'string') : [],
+        features: Array.isArray(m.features) ? m.features.filter((x) => typeof x === 'string') : [],
+        user: { auth: typeof u.auth === 'string' ? u.auth : 'unknown', signedIn: !!u.signedIn, role: typeof u.role === 'string' ? u.role : null },
+        views: Array.isArray(m.views) ? m.views.filter((v) => v && typeof v.id === 'string' && typeof v.name === 'string') : [],
+      };
+      clearTimeout(this.timer);
+      const params = typeof m.params === 'string' ? m.params : '';
+      const changed = params !== this.params;
+      this.params = params;
+      this.setMode('connected');
+      if (changed) this.emitParams();
+    } else if (m.type === 'agnostic:params') {
+      this.params = typeof m.params === 'string' ? m.params : '';
+      this.emitParams();
+    } else if (m.type === 'agnostic:response') {
+      const r = this.pending.get(m.id);
+      if (!r) return;
+      this.pending.delete(m.id);
+      clearTimeout(r.timer);
+      r.resolve({ status: Number.isInteger(m.status) ? m.status : 0, data: m.data === undefined ? null : m.data, etag: typeof m.etag === 'string' ? m.etag : null });
+    }
+  }
+  setMode(mode) { this.mode = mode; for (const fn of this.listeners) fn(this); }
+  /** Called on every init (and the fall back to standalone); returns an unsubscribe. */
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  /** Called when this view's params change — a deep link followed while it is open. */
+  onParams(fn) { this.paramListeners.add(fn); return () => this.paramListeners.delete(fn); }
+  emitParams() { for (const fn of this.paramListeners) fn(this.params); }
+  /** One param of this view: `param('crew')` for `crew=<uuid>`; '' when absent. */
+  param(name) {
+    for (const pair of this.params.split('&')) {
+      const i = pair.indexOf('=');
+      const k = i < 0 ? pair : pair.slice(0, i);
+      if (k === name) { try { return decodeURIComponent(i < 0 ? '' : pair.slice(i + 1)); } catch (err) { return ''; } }
+    }
+    return '';
+  }
+  can(permission) { return this.mode === 'connected' && this.info.permissions.includes(permission); }
+  /** Whether the shell's bridge carries `feature` ('query' | 'revisions' | 'idempotency' | 'navigate'). */
+  has(feature) { return this.mode === 'connected' && this.info.features.includes(feature); }
+  pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || ''; }
+  /** The user's role when the server enforces roles; null when auth is off or unknown. */
+  role() { return this.info && this.info.user.auth === 'required' ? this.info.user.role : null; }
+  /** Whether the user may write at all: any role but viewer. */
+  mayWrite() { return this.mode === 'connected' && this.role() !== 'viewer'; }
+  /** Whether view `id` is switched on — so a link to it will open. */
+  hasView(id) { return this.mode === 'connected' && this.info.views.some((v) => v.id === id); }
+  /** Open another view (or 'overview' / 'settings'), with params for it. Resolves false when it cannot. */
+  navigate(to, params) {
+    if (!this.has('navigate')) return false;
+    try { window.parent.postMessage({ type: 'agnostic:navigate', to: String(to), params: params ? String(params) : '' }, '*'); } catch (err) { return false; }
+    return true;
+  }
+  /** `opts`: {ifMatch, ifNoneMatch, idempotencyKey}, each sent only when the shell carries it. */
+  request(method, path, body, opts) {
+    if (this.mode !== 'connected') return Promise.resolve({ status: 0, data: { error: 'not connected to agnostic' }, etag: null });
+    const id = this.prefix + ++this.seq;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' }, etag: null }); }, this.timeoutMs);
+      this.pending.set(id, { resolve, timer });
+      const msg = { type: 'agnostic:request', id, method, path };
+      if (body !== undefined) msg.body = body;
+      const o = opts || {};
+      if (o.ifMatch && this.has('revisions')) msg.ifMatch = o.ifMatch;
+      if (o.ifNoneMatch && this.has('revisions')) msg.ifNoneMatch = o.ifNoneMatch;
+      if (o.idempotencyKey && this.has('idempotency')) msg.idempotencyKey = o.idempotencyKey;
+      try { window.parent.postMessage(msg, '*'); } catch (err) { this.pending.delete(id); clearTimeout(timer); resolve({ status: 0, data: { error: 'the shell is gone' }, etag: null }); }
+    });
+  }
+}
+/** The error text of a bridge response. */
+function errOf(r) {
+  if (r && r.data && typeof r.data.error === 'string') return r.data.error;
+  return r && r.status ? 'HTTP ' + r.status : 'the server is unreachable';
+}
+/* agnostic-kit:host end */
+
+/* =====================================================================================
+ *  LIBRARY — the preset crews built into this server, and its agent definitions (0.1.10)
+ *
+ *  Presets are compiled in and read-only (GET /api/v1/presets[/{name}]). Definitions are the
+ *  server's stored agents (/api/v1/agents/definitions[/{key}]): created with POST — a key that
+ *  exists is 409 — replaced with PUT, deleted with DELETE, each audited by the server. A preset's
+ *  agent can be saved as a definition. The tab and the item open are in the URL
+ *  (`#plugin/library?tab=definitions&item=<key>`).
+ *
+ *  Everything above the VIEW section is plain logic with no DOM — tests/webgui/library.test.mjs
+ *  runs it in Node against a fake agnostic.
+ * ===================================================================================== */
+const TABS = Object.freeze(['presets', 'definitions']);
+const RE_DEF_KEY = /^[a-z0-9][a-z0-9-]{0,99}$/;
+const RE_PRESET = /^[a-z0-9][a-z0-9-]{0,99}$/;
+const COMPLEXITY = Object.freeze(['', 'low', 'medium', 'high']);
+// The fields a definition carries, in the order the editor shows them (src/engine/agentdef.cyr).
+const DEF_STRINGS = Object.freeze(['name', 'role', 'goal', 'backstory', 'domain', 'complexity', 'llm_model', 'focus']);
+
+/** A list of tool names from text: commas or newlines, trimmed, without repeats. */
+function parseTools(text) {
+  const out = [];
+  for (const t of String(text || '').split(/[,\\n]/)) {
+    const v = t.trim();
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+/**
+ * A definition body from editor fields: required strings always, the rest only when given —
+ * an empty optional field is absent, never \"\". Returns {def} or {error}.
+ */
+function definitionFromFields(f) {
+  const key = String(f.key || '').trim();
+  if (!RE_DEF_KEY.test(key)) return { error: 'A key is 1–100 of a–z, 0–9 and -, starting with a letter or digit.' };
+  const role = String(f.role || '').trim(), goal = String(f.goal || '').trim();
+  if (!role) return { error: 'A definition needs a role.' };
+  if (!goal) return { error: 'A definition needs a goal.' };
+  const def = { key, role, goal };
+  for (const k of DEF_STRINGS) {
+    if (k === 'role' || k === 'goal') continue;
+    const v = String(f[k] === undefined || f[k] === null ? '' : f[k]).trim();
+    if (v) def[k] = v;
+  }
+  const tools = Array.isArray(f.tools) ? f.tools.filter((t) => typeof t === 'string' && t) : parseTools(f.tools);
+  if (tools.length) def.tools = tools;
+  if (f.gpu_required) def.gpu_required = true;
+  if (f.gpu_preferred) def.gpu_preferred = true;
+  if (f.gpu_memory_min_mb !== undefined && f.gpu_memory_min_mb !== null && String(f.gpu_memory_min_mb).trim() !== '') {
+    const mb = Number(f.gpu_memory_min_mb);
+    if (!Number.isInteger(mb) || mb < 0) return { error: 'GPU memory is a whole number of megabytes.' };
+    def.gpu_memory_min_mb = mb;
+  }
+  if (f.allow_delegation) def.allow_delegation = true;
+  return { def };
+}
+/** Editor fields from a stored definition. */
+function fieldsFromDefinition(d) {
+  const f = { key: d.key || '', tools: Array.isArray(d.tools) ? d.tools.join(', ') : '' };
+  for (const k of DEF_STRINGS) f[k] = typeof d[k] === 'string' ? d[k] : '';
+  f.gpu_required = d.gpu_required === true;
+  f.gpu_preferred = d.gpu_preferred === true;
+  f.gpu_memory_min_mb = Number.isInteger(d.gpu_memory_min_mb) ? String(d.gpu_memory_min_mb) : '';
+  f.allow_delegation = d.allow_delegation === true;
+  return f;
+}
+/**
+ * A preset's agent as a definition. The preset spells the key `agent_key` and carries fields a
+ * definition refuses (`celery_queue`, `redis_prefix` — the oracle's broker tier); those stay behind.
+ */
+function definitionFromPresetAgent(agent) {
+  return definitionFromFields({
+    key: agent.agent_key, name: agent.name, role: agent.role, goal: agent.goal, backstory: agent.backstory,
+    domain: agent.domain, complexity: agent.complexity, llm_model: agent.llm_model, focus: agent.focus,
+    tools: Array.isArray(agent.tools) ? agent.tools : [], allow_delegation: agent.allow_delegation === true,
+  });
+}
+/** `?tab=…&item=…`, leaving out the defaults. */
+function paramsFor(tab, item) {
+  const p = [];
+  if (tab && tab !== 'presets') p.push('tab=' + tab);
+  if (item) p.push('item=' + encodeURIComponent(item));
+  return p.join('&');
+}
+
+/** The presets, and the one open. Read-only. */
+class PresetShelf {
+  constructor(host) { this.host = host; this.items = []; this.loaded = false; this.error = ''; this.open = null; this.openError = ''; }
+  async load() {
+    const r = await this.host.request('GET', '/api/v1/presets');
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.presets)) { this.error = 'Could not list presets: ' + errOf(r); return false; }
+    this.items = r.data.presets.filter((p) => p && typeof p.name === 'string' && RE_PRESET.test(p.name));
+    this.error = '';
+    this.loaded = true;
+    return true;
+  }
+  async read(name) {
+    this.open = null;
+    this.openError = '';
+    if (!RE_PRESET.test(name)) { this.openError = 'There is no such preset.'; return null; }
+    const r = await this.host.request('GET', '/api/v1/presets/' + name);
+    if (r.status !== 200 || !r.data || typeof r.data !== 'object') { this.openError = r.status === 404 ? 'There is no such preset.' : 'Could not read it: ' + errOf(r); return null; }
+    this.open = r.data;
+    return r.data;
+  }
+}
+
+/** The stored definitions, the one open, and the writes. */
+class DefinitionShelf {
+  constructor(host) { this.host = host; this.items = []; this.loaded = false; this.error = ''; this.open = null; this.unforwarded = []; this.openError = ''; }
+  async load() {
+    const r = await this.host.request('GET', '/api/v1/agents/definitions');
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.definitions)) { this.error = r.status === 403 ? 'Your role cannot read definitions.' : 'Could not list definitions: ' + errOf(r); return false; }
+    this.items = r.data.definitions.filter((d) => d && typeof d.key === 'string').sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    this.error = '';
+    this.loaded = true;
+    return true;
+  }
+  async read(key) {
+    this.open = null;
+    this.unforwarded = [];
+    this.openError = '';
+    if (!RE_DEF_KEY.test(key)) { this.openError = 'There is no such definition.'; return null; }
+    const r = await this.host.request('GET', '/api/v1/agents/definitions/' + key);
+    if (r.status !== 200 || !r.data || !r.data.definition) { this.openError = r.status === 404 ? 'There is no such definition — it may have been deleted.' : 'Could not read it: ' + errOf(r); return null; }
+    this.open = r.data.definition;
+    this.unforwarded = Array.isArray(r.data.unforwarded) ? r.data.unforwarded.filter((x) => typeof x === 'string') : [];
+    return this.open;
+  }
+  /** Create (`isNew`) or replace a definition. Resolves {ok, message, definition?}. */
+  async save(def, isNew) {
+    const r = isNew
+      ? await this.host.request('POST', '/api/v1/agents/definitions', def)
+      : await this.host.request('PUT', '/api/v1/agents/definitions/' + def.key, def);
+    if ((r.status === 201 || r.status === 200) && r.data && r.data.definition) {
+      this.open = r.data.definition;
+      this.unforwarded = Array.isArray(r.data.unforwarded) ? r.data.unforwarded : [];
+      await this.load();
+      return { ok: true, message: isNew ? 'Created ' + def.key + '.' : 'Saved ' + def.key + '.', definition: r.data.definition };
+    }
+    if (r.status === 409) return { ok: false, message: 'A definition with the key ' + def.key + ' already exists.' };
+    if (r.status === 404) return { ok: false, message: def.key + ' no longer exists — someone deleted it.' };
+    if (r.status === 403) return { ok: false, message: 'Your role cannot change definitions.' };
+    if (r.status === 507) return { ok: false, message: 'The definition store is full: delete one first.' };
+    return { ok: false, message: errOf(r) };
+  }
+  async remove(key) {
+    const r = await this.host.request('DELETE', '/api/v1/agents/definitions/' + key);
+    if (r.status === 200 || r.status === 404) { this.open = null; await this.load(); return { ok: true, message: 'Deleted ' + key + '.' }; }
+    if (r.status === 403) return { ok: false, message: 'Your role cannot delete definitions.' };
+    return { ok: false, message: 'Could not delete: ' + errOf(r) };
+  }
+}
+
+/** The view's state — which tab, which item — kept in the URL through the shell. */
+class LibraryApp {
+  constructor(host) {
+    this.host = host;
+    this.presets = new PresetShelf(host);
+    this.defs = new DefinitionShelf(host);
+    this.tab = 'presets';
+    this.item = '';
+    this.editing = null;       // {isNew, fields} while the editor is open
+    this.message = null;       // {ok, text}, the last write's answer
+    this.gen = 0;
+    this.listeners = new Set();
+    host.onChange(() => this.onHost());
+    host.onParams(() => this.applyParams(false));
+  }
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit() { for (const fn of this.listeners) fn(this); }
+  state() {
+    if (this.host.mode !== 'connected') return this.host.mode;
+    return this.host.can('presets:read') || this.host.can('definitions:read') ? 'ready' : 'forbidden';
+  }
+  /** Whether this user may change definitions here: the permission, and a role that may write. */
+  mayWrite() { return this.host.can('definitions:write') && this.host.mayWrite(); }
+  onHost() { if (this.state() === 'ready') this.applyParams(true); else this.emit(); }
+  async applyParams(force) {
+    if (this.state() !== 'ready') return;
+    const t = this.host.param('tab');
+    const tab = TABS.includes(t) ? t : 'presets';
+    const item = this.host.param('item');
+    const gen = ++this.gen;
+    if (force || tab !== this.tab) { this.tab = tab; this.editing = null; }
+    if (force || item !== this.item) { this.item = item; this.editing = null; }
+    this.emit();
+    const shelf = this.tab === 'presets' ? this.presets : this.defs;
+    if (force || !shelf.loaded) await shelf.load();
+    if (gen !== this.gen) return;
+    if (this.item) await shelf.read(this.item);
+    else { shelf.open = null; shelf.openError = ''; }
+    if (gen !== this.gen) return;
+    this.emit();
+  }
+  go(tab, item) {
+    this.message = null;
+    const params = paramsFor(tab, item);
+    if (this.host.navigate(this.host.pluginId() || 'library', params)) return;
+    this.host.params = params;
+    this.applyParams(false);
+  }
+  edit(isNew) {
+    if (!this.mayWrite()) return;
+    this.message = null;
+    this.editing = { isNew, fields: isNew ? fieldsFromDefinition({}) : fieldsFromDefinition(this.defs.open || {}) };
+    this.emit();
+  }
+  cancelEdit() { this.editing = null; this.emit(); }
+  /** Save the editor's fields. Resolves {ok, message}. */
+  async saveEdit(fields) {
+    if (!this.editing) return { ok: false, message: 'Nothing is being edited.' };
+    const isNew = this.editing.isNew;
+    const built = definitionFromFields(isNew ? fields : Object.assign({}, fields, { key: this.defs.open ? this.defs.open.key : fields.key }));
+    if (built.error) { this.message = { ok: false, text: built.error }; this.emit(); return { ok: false, message: built.error }; }
+    const r = await this.defs.save(built.def, isNew);
+    this.message = { ok: r.ok, text: r.message };
+    if (r.ok) {
+      this.editing = null;
+      if (isNew) { this.go('definitions', built.def.key); this.message = { ok: true, text: r.message }; }
+    } else {
+      this.editing.fields = fields;
+    }
+    this.emit();
+    return r;
+  }
+  async remove(key) {
+    const r = await this.defs.remove(key);
+    this.message = { ok: r.ok, text: r.message };
+    if (r.ok) this.go('definitions', '');
+    this.emit();
+    return r;
+  }
+  /** Save a preset's agent as a definition. */
+  async adopt(agent) {
+    const built = definitionFromPresetAgent(agent);
+    if (built.error) { this.message = { ok: false, text: built.error }; this.emit(); return { ok: false, message: built.error }; }
+    const r = await this.defs.save(built.def, true);
+    this.message = { ok: r.ok, text: r.ok ? 'Saved ' + built.def.key + ' as a definition.' : r.message };
+    this.emit();
+    return r;
+  }
+}
+
+/* =====================================================================================
+ *  VIEW — the DOM. Every value from the server is written with textContent.
+ * ===================================================================================== */
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+
+class LibraryView {
+  constructor(app) {
+    this.app = app;
+    this.$ = (id) => document.getElementById(id);
+    this.confirmDelete = '';
+    const tabs = this.$('tabs');
+    for (const [id, label] of [['presets', 'Presets'], ['definitions', 'Agent definitions']]) {
+      const b = el('button', 'chip', label);
+      b.type = 'button';
+      b.dataset.tab = id;
+      b.addEventListener('click', () => this.app.go(id, ''));
+      tabs.append(b);
+    }
+    this.$('new-def').addEventListener('click', () => { this.app.edit(true); });
+    app.onChange(() => this.render());
+    this.render();
+  }
+  render() {
+    const a = this.app;
+    const st = a.state();
+    for (const b of this.$('tabs').children) b.setAttribute('aria-pressed', String(b.dataset.tab === a.tab));
+    this.$('layout').hidden = st !== 'ready';
+    this.$('tabs').hidden = st !== 'ready';
+    this.$('new-def').hidden = !(st === 'ready' && a.tab === 'definitions' && a.mayWrite());
+    let msg = this.$('message');
+    if (st !== 'ready') {
+      if (!msg) { msg = el('div', 'empty'); msg.id = 'message'; document.body.append(msg); }
+      msg.textContent = st === 'standalone' ? 'This view shows an agnostic server’s presets and agent definitions. Open it from agnostic’s WebGUI (/ui).'
+        : st === 'forbidden' ? 'This build of the Library view was granted neither presets:read nor definitions:read.' : 'Connecting to agnostic…';
+      return;
+    }
+    if (msg) msg.remove();
+    this.renderList();
+    this.renderDetail();
+  }
+  renderList() {
+    const a = this.app;
+    const shelf = a.tab === 'presets' ? a.presets : a.defs;
+    const box = this.$('list');
+    box.replaceChildren();
+    for (const it of shelf.items) {
+      const id = a.tab === 'presets' ? it.name : it.key;
+      const b = el('button', 'row');
+      b.type = 'button';
+      if (id === a.item) b.setAttribute('aria-current', 'true');
+      const top = el('div', 'top');
+      top.append(el('span', 'nm', a.tab === 'presets' ? it.name : (it.name || it.key)));
+      if (a.tab === 'presets' && it.size) top.append(el('span', 'pill', it.size));
+      b.append(top);
+      const sub = a.tab === 'presets'
+        ? [it.domain, Number.isInteger(it.agent_count) ? it.agent_count + ' agents' : '', it.workflow_mode].filter(Boolean).join(' · ')
+        : [it.key !== it.name ? it.key : '', it.role, it.domain].filter(Boolean).join(' · ');
+      b.append(el('div', 'sub', sub));
+      b.addEventListener('click', () => a.go(a.tab, id));
+      box.append(b);
+    }
+    const foot = this.$('list-foot');
+    foot.replaceChildren();
+    if (shelf.error) foot.append(el('div', 'box bad', shelf.error));
+    else if (!shelf.loaded) foot.textContent = 'Loading…';
+    else if (!shelf.items.length) foot.textContent = a.tab === 'presets' ? 'This build has no presets.' : 'No definitions yet.' + (a.mayWrite() ? ' Create one, or save a preset’s agent as one.' : '');
+  }
+  renderDetail() {
+    const a = this.app;
+    const box = this.$('detail');
+    const keep = box.scrollTop;
+    box.replaceChildren();
+    if (a.message) box.append(el('div', 'box ' + (a.message.ok ? 'ok' : 'bad'), a.message.text));
+    if (a.editing) this.fillEditor(box);
+    else if (a.tab === 'presets') this.fillPreset(box);
+    else this.fillDefinition(box);
+    box.scrollTop = keep;
+  }
+  fillPreset(box) {
+    const a = this.app;
+    const p = a.presets.open;
+    if (!a.item) { box.append(el('div', 'empty', 'Choose a preset to see its agents. Presets are built into this server; Swarm Command can run one as a crew.')); return; }
+    if (a.presets.openError) { box.append(el('div', 'box bad', a.presets.openError)); return; }
+    if (!p) { box.append(el('div', 'muted', 'Loading…')); return; }
+    const h = el('h1');
+    h.append(el('span', null, p.name));
+    if (p.size) h.append(el('span', 'pill', p.size));
+    if (p.version) h.append(el('span', 'pill', 'v' + p.version));
+    box.append(h);
+    if (p.description) box.append(el('p', 'lede', p.description));
+    const meta = [p.domain && 'domain ' + p.domain, p.workflow_mode && p.workflow_mode + ' workflow'].filter(Boolean).join(' · ');
+    if (meta) box.append(el('div', 'muted', meta));
+    box.append(el('h2', null, 'Agents'));
+    const cards = el('div', 'cards');
+    for (const ag of Array.isArray(p.agents) ? p.agents : []) {
+      if (!ag || typeof ag !== 'object') continue;
+      const c = el('div', 'card');
+      c.append(el('h3', null, ag.name || ag.agent_key || 'agent'), el('div', 'role', ag.role || ''));
+      if (ag.goal) c.append(el('p', null, ag.goal));
+      if (ag.focus) c.append(el('p', 'muted', 'Focus: ' + ag.focus));
+      const tags = el('div', 'tags');
+      for (const t of [ag.complexity && 'complexity ' + ag.complexity, ag.allow_delegation && 'delegates'].concat(Array.isArray(ag.tools) ? ag.tools : []).filter(Boolean)) tags.append(el('span', 'tag', t));
+      if (tags.childElementCount) c.append(tags);
+      if (ag.backstory) { const d = el('details'); d.append(el('summary', null, 'Backstory'), el('p', null, ag.backstory)); c.append(d); }
+      if (a.mayWrite() && a.host.can('definitions:read')) {
+        const act = el('div', 'actions');
+        const b = el('button', 'btn', 'Save as a definition');
+        b.type = 'button';
+        b.title = 'Store this agent as definition ' + (ag.agent_key || '');
+        b.addEventListener('click', async () => { b.disabled = true; await a.adopt(ag); });
+        act.append(b);
+        c.append(act);
+      }
+      cards.append(c);
+    }
+    box.append(cards);
+  }
+  fillDefinition(box) {
+    const a = this.app;
+    const d = a.defs.open;
+    if (!a.item) { box.append(el('div', 'empty', 'Choose a definition to see it' + (a.mayWrite() ? ', or create one.' : '.'))); return; }
+    if (a.defs.openError) { box.append(el('div', 'box bad', a.defs.openError)); return; }
+    if (!d) { box.append(el('div', 'muted', 'Loading…')); return; }
+    const h = el('h1');
+    h.append(el('span', null, d.name || d.key));
+    box.append(h, el('div', 'muted', d.key));
+    if (a.mayWrite()) {
+      const act = el('div', 'actions');
+      const edit = el('button', 'btn', 'Edit');
+      edit.type = 'button';
+      edit.addEventListener('click', () => a.edit(false));
+      act.append(edit);
+      if (this.confirmDelete === d.key) {
+        const yes = el('button', 'btn danger', 'Yes, delete it');
+        yes.type = 'button';
+        yes.addEventListener('click', () => { this.confirmDelete = ''; a.remove(d.key); });
+        const no = el('button', 'btn', 'Keep it');
+        no.type = 'button';
+        no.addEventListener('click', () => { this.confirmDelete = ''; this.renderDetail(); });
+        act.append(el('span', 'muted', 'Delete ' + d.key + '? Crews that name it by key will no longer find it.'), yes, no);
+      } else {
+        const del = el('button', 'btn danger', 'Delete');
+        del.type = 'button';
+        del.addEventListener('click', () => { this.confirmDelete = d.key; this.renderDetail(); });
+        act.append(del);
+      }
+      box.append(act);
+    }
+    const kv = el('dl', 'kv');
+    const row = (k, v) => { if (v === undefined || v === null || v === '') return; kv.append(el('dt', null, k), el('dd', null, v)); };
+    row('Role', d.role);
+    row('Goal', d.goal);
+    row('Backstory', d.backstory);
+    row('Domain', d.domain);
+    row('Tools', Array.isArray(d.tools) && d.tools.length ? d.tools.join(', ') : '');
+    row('Complexity', d.complexity);
+    row('LLM model', d.llm_model);
+    row('GPU', [d.gpu_required && 'required', d.gpu_preferred && 'preferred', Number.isInteger(d.gpu_memory_min_mb) && d.gpu_memory_min_mb + ' MB minimum'].filter(Boolean).join(' · '));
+    row('Focus', d.focus);
+    row('Delegation', d.allow_delegation === true ? 'allowed' : '');
+    box.append(kv);
+    if (a.defs.unforwarded.length) {
+      box.append(el('div', 'box', 'Kept but not used by the engine: ' + a.defs.unforwarded.join(', ') + '. They round-trip with the definition and shape nothing.'));
+    }
+  }
+  fillEditor(box) {
+    const a = this.app;
+    const ed = a.editing;
+    const f = ed.fields;
+    box.append(el('h1', null, ed.isNew ? 'New agent definition' : 'Edit ' + f.key));
+    const form = el('form', 'edit');
+    form.noValidate = true;
+    const input = (name, label, hint, opts = {}) => {
+      const id = 'f-' + name;
+      const l = el('label', null, label);
+      l.htmlFor = id;
+      let i;
+      if (opts.area) i = el('textarea');
+      else if (opts.select) { i = el('select'); for (const o of opts.select) { const op = el('option', null, o || '—'); op.value = o; i.append(op); } }
+      else { i = el('input'); i.type = opts.number ? 'number' : 'text'; }
+      i.id = id;
+      i.name = name;
+      i.value = f[name] === undefined || f[name] === null ? '' : String(f[name]);
+      if (opts.readOnly) i.readOnly = true;
+      i.spellcheck = false;
+      form.append(l, i);
+      if (hint) form.append(el('div', 'hint', hint));
+    };
+    input('key', 'Key', ed.isNew ? 'How crews name this agent: a–z, 0–9 and -. It cannot change once created.' : 'Fixed once created.', { readOnly: !ed.isNew });
+    input('name', 'Name');
+    input('role', 'Role *');
+    input('goal', 'Goal *', null, { area: true });
+    input('backstory', 'Backstory', null, { area: true });
+    input('domain', 'Domain');
+    input('tools', 'Tools', 'Tool names, separated by commas.');
+    input('complexity', 'Complexity', null, { select: COMPLEXITY.includes(f.complexity) ? COMPLEXITY : COMPLEXITY.concat([f.complexity]) });
+    input('llm_model', 'LLM model', 'Leave empty to use the server’s default.');
+    input('gpu_memory_min_mb', 'GPU memory (MB)', null, { number: true });
+    input('focus', 'Focus', 'Kept with the definition; the engine does not use it.');
+    const checks = el('div', 'checks');
+    for (const [name, label] of [['gpu_required', 'Needs a GPU'], ['gpu_preferred', 'Prefers a GPU'], ['allow_delegation', 'May delegate']]) {
+      const l = el('label');
+      const c = el('input');
+      c.type = 'checkbox';
+      c.name = name;
+      c.checked = !!f[name];
+      l.append(c, document.createTextNode(' ' + label));
+      checks.append(l);
+    }
+    form.append(el('label', null, 'Options'), checks);
+    const acts = el('div', 'row-actions');
+    // ⚠ Not a submit: the shell frames this page without `allow-forms`, and a sandboxed form
+    // never fires `submit` at all. Save on a click, and on Enter in a one-line field.
+    const save = el('button', 'btn primary', ed.isNew ? 'Create' : 'Save');
+    save.type = 'button';
+    const cancel = el('button', 'btn', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => a.cancelEdit());
+    acts.append(save, cancel);
+    form.append(acts);
+    const submit = async () => {
+      if (save.disabled) return;
+      const fields = {};
+      for (const n of form.elements) {
+        if (!n.name) continue;
+        fields[n.name] = n.type === 'checkbox' ? n.checked : n.value;
+      }
+      save.disabled = true;
+      await a.saveEdit(fields);
+      save.disabled = false;
+    };
+    save.addEventListener('click', submit);
+    form.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') { e.preventDefault(); submit(); }
+    });
+    box.append(form);
+  }
+}
+
+if (typeof document !== 'undefined' && document.getElementById('detail')) {
+  const app = new LibraryApp(new Host());
+  window.library = { app, view: new LibraryView(app) };
+}
+</script>
+</body>
+</html>
+";
+
+# --- src/webgui/plugins/audit/index.html — 26068 bytes -----------------------
+var _AGNOSTIC_WEBGUI_ASSET_04 = "<!doctype html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\">
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+<meta name=\"referrer\" content=\"no-referrer\">
+<title>Audit trail · agnostic</title>
+<style>
+:root {
+  --bg: #060a0f;
+  --panel: #0c131c;
+  --panel-2: #111b27;
+  --line: #1c2a38;
+  --line-2: #2a3d50;
+  --text: #d4e4f1;
+  --dim: #7d93a8;
+  --faint: #4b6075;
+  --accent: #39d0ff;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --err: #ef4444;
+  --mono: ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans); }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 18px 20px 48px; }
+.muted { color: var(--dim); }
+.btn { background: #0f1823; border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 11px; font: 600 12px var(--sans); }
+.btn:hover { border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: default; }
+.chip { background: none; border: 1px solid var(--line-2); border-radius: 12px; padding: 2px 11px; color: var(--dim); font-weight: 600; font-size: 12px; }
+.chip:hover { color: var(--text); }
+.chip[aria-pressed=\"true\"] { color: var(--text); border-color: var(--accent); background: #0e3346; }
+h1 { font-size: 18px; margin: 0 0 4px; }
+.lede { color: var(--dim); margin: 0 0 14px; max-width: 80ch; }
+.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.fact { background: var(--panel); border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 11px; }
+.fact .k { color: var(--dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; }
+.fact .v { font: 15px var(--mono); margin-top: 2px; }
+.fact.ok .v { color: var(--ok); }
+.fact.bad { border-color: rgba(239, 68, 68, .55); }
+.fact.bad .v { color: var(--err); }
+.box { border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 11px; margin-top: 12px; color: var(--dim); }
+.box.bad { border-color: rgba(239, 68, 68, .5); color: var(--err); }
+.box.warn { border-color: rgba(245, 158, 11, .5); color: var(--warn); }
+.tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 20px 0 8px; }
+.tools input { background: #0b131c; border: 1px solid var(--line-2); border-radius: 5px; padding: 4px 9px; min-width: 220px; }
+.spacer { flex: 1; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; color: var(--dim); font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; padding: 4px 8px; border-bottom: 1px solid var(--line-2); }
+td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.n, td.ts, td.h { font: 12px var(--mono); color: var(--dim); white-space: nowrap; }
+td.act { font: 12.5px var(--mono); white-space: nowrap; }
+td.det { overflow-wrap: anywhere; }
+td.h .bad { color: var(--err); }
+td.h .ok { color: var(--ok); }
+.sev { font: 600 10px var(--mono); letter-spacing: .06em; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line-2); text-transform: uppercase; color: var(--dim); }
+.sev.warning { color: var(--warn); border-color: rgba(245, 158, 11, .5); }
+.sev.error, .sev.critical, .sev.security { color: var(--err); border-color: rgba(239, 68, 68, .5); }
+.more { margin-top: 12px; display: flex; gap: 10px; align-items: center; }
+.empty { color: var(--dim); padding: 48px 20px; text-align: center; max-width: 60ch; margin: 0 auto; }
+@media (max-width: 720px) { td.ts, th.ts, td.h, th.h { display: none; } }
+</style>
+</head>
+<body>
+<div class=\"wrap\" id=\"main\">
+  <h1>Audit trail</h1>
+  <p class=\"lede\">Every change to this server is recorded in a hash-linked chain: each entry carries the hash of the
+    one before it, so altering, removing or reordering a stored entry breaks the chain where it happened. The server
+    verifies the whole chain when it starts.</p>
+  <div class=\"facts\" id=\"facts\"></div>
+  <div id=\"summary-note\"></div>
+  <div class=\"tools\">
+    <div id=\"sev\" role=\"group\" aria-label=\"Severity\"></div>
+    <span class=\"spacer\"></span>
+    <input id=\"q\" type=\"search\" placeholder=\"Filter by action or details\" aria-label=\"Filter entries\" spellcheck=\"false\">
+    <button class=\"btn\" id=\"refresh\" type=\"button\">Refresh</button>
+  </div>
+  <table>
+    <thead><tr><th>#</th><th class=\"ts\">When</th><th>Severity</th><th>Action</th><th>Details</th><th class=\"h\">Chain</th></tr></thead>
+    <tbody id=\"rows\"></tbody>
+  </table>
+  <div class=\"more\" id=\"more\"></div>
+</div>
+<script>
+'use strict';
+/* agnostic-kit:host begin — DO NOT EDIT A COPY: the canonical source is src/webgui/kit/host.js,
+ * and scripts/gen-webgui.sh refuses a plugin page whose copy differs (`--sync-kit` rewrites them).
+ *
+ *  Host — the plugin side of agnostic's host bridge (ADR 0005, 0007, 0010).
+ *
+ *  Framed by the agnostic shell, a plugin page runs in an opaque origin with connect-src 'none': it
+ *  cannot reach the API. It asks the shell by postMessage, and the shell answers only what this
+ *  plugin's manifest permits, with the signed-in user's own credential (which the page never sees)
+ *  — and the server checks the same permissions, and that user's role, again. Protocol 1:
+ *
+ *     page  → shell   {type:'agnostic:hello', protocol}
+ *     shell → page    {type:'agnostic:init', protocol, features[], plugin:{id,name,version},
+ *                      permissions[], user:{auth, signedIn, role}, params, views[{id,name}]}
+ *     page  → shell   {type:'agnostic:request', id, method, path, body?, ifMatch?, ifNoneMatch?,
+ *                      idempotencyKey?}
+ *     shell → page    {type:'agnostic:response', id, status, data, etag?}  status 0 = never reached it
+ *     page  → shell   {type:'agnostic:navigate', to, params?}             open another view (0.1.10)
+ *     shell → page    {type:'agnostic:params', params}                    this view's params changed
+ *
+ *  The shell re-sends init after a sign-in or sign-out. `params` is the part of the shell's URL after
+ *  `#plugin/<id>?` — a deep link into this view, e.g. `crew=<uuid>`. `views` lists the views switched
+ *  on, so a page offers a link only to one that will open. Opened on its own (a new tab) there is no
+ *  shell: `mode` is 'standalone', and the page must degrade.
+ */
+class Host {
+  constructor({ helloMs = 3000, timeoutMs = 30000 } = {}) {
+    this.mode = 'connecting';  // 'connecting' | 'connected' | 'standalone'
+    this.info = null;          // the latest agnostic:init
+    this.params = '';          // this view's params, from init or agnostic:params
+    this.pending = new Map();  // request id → {resolve, timer}
+    this.seq = 0;
+    this.timeoutMs = timeoutMs;
+    // A random prefix per page load: request ids restart with every load, and a reply the shell
+    // sends after a reload must never match a request of this page that happens to share a number.
+    this.prefix = 'q' + Host.token(6) + '-';
+    this.listeners = new Set();
+    this.paramListeners = new Set();
+    let framed = false;
+    try { framed = window.parent !== window; } catch (err) { framed = true; }
+    if (!framed) { this.mode = 'standalone'; return; }
+    window.addEventListener('message', (e) => this.onMessage(e));
+    try { window.parent.postMessage({ type: 'agnostic:hello', protocol: 1 }, '*'); } catch (err) { /* detached */ }
+    // A parent that never answers is not the agnostic shell (or is an older one): stand alone.
+    this.timer = setTimeout(() => { if (this.mode === 'connecting') this.setMode('standalone'); }, helloMs);
+  }
+  /** `n` random characters of [a-z0-9]. */
+  static token(n) {
+    const b = new Uint8Array(n);
+    try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
+    let s = '';
+    for (const x of b) s += (x % 36).toString(36);
+    return s;
+  }
+  onMessage(e) {
+    if (e.source !== window.parent) return;
+    const m = e.data;
+    if (!m || typeof m !== 'object' || typeof m.type !== 'string') return;
+    if (m.type === 'agnostic:init') {
+      const u = m.user && typeof m.user === 'object' ? m.user : {};
+      this.info = {
+        plugin: m.plugin && typeof m.plugin === 'object' ? m.plugin : {},
+        permissions: Array.isArray(m.permissions) ? m.permissions.filter((x) => typeof x === 'string') : [],
+        features: Array.isArray(m.features) ? m.features.filter((x) => typeof x === 'string') : [],
+        user: { auth: typeof u.auth === 'string' ? u.auth : 'unknown', signedIn: !!u.signedIn, role: typeof u.role === 'string' ? u.role : null },
+        views: Array.isArray(m.views) ? m.views.filter((v) => v && typeof v.id === 'string' && typeof v.name === 'string') : [],
+      };
+      clearTimeout(this.timer);
+      const params = typeof m.params === 'string' ? m.params : '';
+      const changed = params !== this.params;
+      this.params = params;
+      this.setMode('connected');
+      if (changed) this.emitParams();
+    } else if (m.type === 'agnostic:params') {
+      this.params = typeof m.params === 'string' ? m.params : '';
+      this.emitParams();
+    } else if (m.type === 'agnostic:response') {
+      const r = this.pending.get(m.id);
+      if (!r) return;
+      this.pending.delete(m.id);
+      clearTimeout(r.timer);
+      r.resolve({ status: Number.isInteger(m.status) ? m.status : 0, data: m.data === undefined ? null : m.data, etag: typeof m.etag === 'string' ? m.etag : null });
+    }
+  }
+  setMode(mode) { this.mode = mode; for (const fn of this.listeners) fn(this); }
+  /** Called on every init (and the fall back to standalone); returns an unsubscribe. */
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  /** Called when this view's params change — a deep link followed while it is open. */
+  onParams(fn) { this.paramListeners.add(fn); return () => this.paramListeners.delete(fn); }
+  emitParams() { for (const fn of this.paramListeners) fn(this.params); }
+  /** One param of this view: `param('crew')` for `crew=<uuid>`; '' when absent. */
+  param(name) {
+    for (const pair of this.params.split('&')) {
+      const i = pair.indexOf('=');
+      const k = i < 0 ? pair : pair.slice(0, i);
+      if (k === name) { try { return decodeURIComponent(i < 0 ? '' : pair.slice(i + 1)); } catch (err) { return ''; } }
+    }
+    return '';
+  }
+  can(permission) { return this.mode === 'connected' && this.info.permissions.includes(permission); }
+  /** Whether the shell's bridge carries `feature` ('query' | 'revisions' | 'idempotency' | 'navigate'). */
+  has(feature) { return this.mode === 'connected' && this.info.features.includes(feature); }
+  pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || ''; }
+  /** The user's role when the server enforces roles; null when auth is off or unknown. */
+  role() { return this.info && this.info.user.auth === 'required' ? this.info.user.role : null; }
+  /** Whether the user may write at all: any role but viewer. */
+  mayWrite() { return this.mode === 'connected' && this.role() !== 'viewer'; }
+  /** Whether view `id` is switched on — so a link to it will open. */
+  hasView(id) { return this.mode === 'connected' && this.info.views.some((v) => v.id === id); }
+  /** Open another view (or 'overview' / 'settings'), with params for it. Resolves false when it cannot. */
+  navigate(to, params) {
+    if (!this.has('navigate')) return false;
+    try { window.parent.postMessage({ type: 'agnostic:navigate', to: String(to), params: params ? String(params) : '' }, '*'); } catch (err) { return false; }
+    return true;
+  }
+  /** `opts`: {ifMatch, ifNoneMatch, idempotencyKey}, each sent only when the shell carries it. */
+  request(method, path, body, opts) {
+    if (this.mode !== 'connected') return Promise.resolve({ status: 0, data: { error: 'not connected to agnostic' }, etag: null });
+    const id = this.prefix + ++this.seq;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' }, etag: null }); }, this.timeoutMs);
+      this.pending.set(id, { resolve, timer });
+      const msg = { type: 'agnostic:request', id, method, path };
+      if (body !== undefined) msg.body = body;
+      const o = opts || {};
+      if (o.ifMatch && this.has('revisions')) msg.ifMatch = o.ifMatch;
+      if (o.ifNoneMatch && this.has('revisions')) msg.ifNoneMatch = o.ifNoneMatch;
+      if (o.idempotencyKey && this.has('idempotency')) msg.idempotencyKey = o.idempotencyKey;
+      try { window.parent.postMessage(msg, '*'); } catch (err) { this.pending.delete(id); clearTimeout(timer); resolve({ status: 0, data: { error: 'the shell is gone' }, etag: null }); }
+    });
+  }
+}
+/** The error text of a bridge response. */
+function errOf(r) {
+  if (r && r.data && typeof r.data.error === 'string') return r.data.error;
+  return r && r.status ? 'HTTP ' + r.status : 'the server is unreachable';
+}
+/* agnostic-kit:host end */
+
+/* =====================================================================================
+ *  AUDIT TRAIL — the chain's verdict and its newest entries (0.1.10)
+ *
+ *  GET /api/v1/audit is the summary: how many entries, whether the chain verified when the
+ *  server started (`verified: \"open\"` — not a moment ago), and how many appends were DROPPED,
+ *  which verification cannot see. GET /api/v1/audit/entries pages the newest entries by index
+ *  (`next` → `?before=`); the server keeps the newest 1024 for reading (`oldest_held`). Both are
+ *  ADMIN routes: the trail records every user's actions.
+ *
+ *  The \"Chain\" column checks, for the entries on screen, that each one's `prev_hash` is the
+ *  hash of the entry before it. That is a reading aid, not the verification — the server's
+ *  pass at start-up re-hashes every entry; this only compares the links it was sent.
+ *
+ *  Everything above the VIEW section is plain logic with no DOM — tests/webgui/audit.test.mjs
+ *  runs it in Node against a fake agnostic.
+ * ===================================================================================== */
+const SEVERITIES = Object.freeze(['all', 'warning', 'error']);
+const AT_LEAST = Object.freeze({ debug: 0, info: 1, warning: 2, error: 3, critical: 4, security: 5 });
+const PAGE = 100;
+const int = (v) => (Number.isInteger(v) ? v : null);
+
+/** An entry worth showing: an index and an action. */
+function validEntry(e) { return !!e && typeof e === 'object' && Number.isInteger(e.index) && e.index >= 0 && typeof e.action === 'string'; }
+/** Whether entry `e` passes the severity filter: 'all', or at least 'warning' / 'error'. */
+function passesSeverity(e, sev) {
+  if (sev === 'all') return true;
+  return (AT_LEAST[e.severity] ?? 5) >= (AT_LEAST[sev] ?? 0);
+}
+/** Whether entry `e` matches the text filter (case-insensitive, action or details). */
+function matchesText(e, q) {
+  const t = String(q || '').trim().toLowerCase();
+  if (!t) return true;
+  return String(e.action).toLowerCase().includes(t) || String(e.details || '').toLowerCase().includes(t);
+}
+/**
+ * For entries sorted newest first, each one's link to the entry below it: 'ok' when its
+ * `prev_hash` is the hash of index − 1 as sent, 'broken' when it is not, and '' when the entry
+ * below is not on screen (or this is the first entry of the chain).
+ */
+function linkStates(entries) {
+  const byIndex = new Map(entries.map((e) => [e.index, e]));
+  const out = new Map();
+  for (const e of entries) {
+    const below = byIndex.get(e.index - 1);
+    if (!below || typeof e.prev_hash !== 'string' || typeof below.hash !== 'string') { out.set(e.index, ''); continue; }
+    out.set(e.index, e.prev_hash === below.hash ? 'ok' : 'broken');
+  }
+  return out;
+}
+/** Merge a fresh first page into the entries held (newest first): new ones go on top. */
+function mergeNewest(held, fresh) {
+  const top = held.length ? held[0].index : -1;
+  const add = fresh.filter((e) => e.index > top);
+  return add.concat(held);
+}
+
+/** The trail: its summary and the entries read so far. */
+class AuditTrail {
+  constructor(host) {
+    this.host = host;
+    this.summary = null;
+    this.summaryError = '';
+    this.entries = [];          // newest first
+    this.next = null;           // the index to send as ?before=
+    this.oldestHeld = 0;
+    this.total = 0;
+    this.error = '';
+    this.loading = false;
+    this.listeners = new Set();
+  }
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit() { for (const fn of this.listeners) fn(this); }
+  errorText(r, what) {
+    if (r.status === 401) return 'Sign in as an administrator to read the audit trail.';
+    if (r.status === 403 && !(r.data && typeof r.data.code === 'string' && r.data.code.startsWith('plugin_'))) return 'The audit trail is for administrators: it records every user’s actions.';
+    return 'Could not read ' + what + ': ' + errOf(r);
+  }
+  page(r) {
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.entries)) return null;
+    return { entries: r.data.entries.filter(validEntry), next: int(r.data.next), oldest: int(r.data.oldest_held) ?? 0, total: int(r.data.total) ?? 0 };
+  }
+  async load() {
+    this.loading = true;
+    this.emit();
+    const [s, r] = await Promise.all([this.host.request('GET', '/api/v1/audit'), this.host.request('GET', '/api/v1/audit/entries?limit=' + PAGE)]);
+    this.loading = false;
+    if (s.status === 200 && s.data && typeof s.data === 'object') { this.summary = s.data; this.summaryError = ''; }
+    else { this.summary = null; this.summaryError = this.errorText(s, 'its summary'); }
+    const p = this.page(r);
+    if (!p) { this.error = this.errorText(r, 'its entries'); this.emit(); return false; }
+    this.error = '';
+    this.entries = p.entries;
+    this.next = p.next;
+    this.oldestHeld = p.oldest;
+    this.total = p.total;
+    this.emit();
+    return true;
+  }
+  /** The next older page. */
+  async more() {
+    if (this.next === null || this.loading) return false;
+    this.loading = true;
+    this.emit();
+    const r = await this.host.request('GET', '/api/v1/audit/entries?limit=' + PAGE + '&before=' + this.next);
+    this.loading = false;
+    const p = this.page(r);
+    if (!p) { this.error = this.errorText(r, 'its entries'); this.emit(); return false; }
+    const have = new Set(this.entries.map((e) => e.index));
+    for (const e of p.entries) if (!have.has(e.index)) this.entries.push(e);
+    this.next = p.next;
+    this.oldestHeld = p.oldest;
+    this.emit();
+    return true;
+  }
+  /** New entries since the last read go on top; the summary is read again. */
+  async refresh() {
+    if (this.loading) return false;
+    const [s, r] = await Promise.all([this.host.request('GET', '/api/v1/audit'), this.host.request('GET', '/api/v1/audit/entries?limit=' + PAGE)]);
+    if (s.status === 200 && s.data && typeof s.data === 'object') this.summary = s.data;
+    const p = this.page(r);
+    if (!p) { this.error = this.errorText(r, 'its entries'); this.emit(); return false; }
+    this.error = '';
+    const top = this.entries.length ? this.entries[0].index : -1;
+    const gap = p.entries.length && p.entries[p.entries.length - 1].index > top + 1 && top >= 0;
+    // More arrived than a page holds: start again from the newest rather than leave a hole.
+    if (gap) { this.entries = p.entries; this.next = p.next; }
+    else this.entries = mergeNewest(this.entries, p.entries);
+    if (!this.entries.length) this.next = p.next;
+    this.oldestHeld = p.oldest;
+    this.total = p.total;
+    this.emit();
+    return true;
+  }
+}
+
+/* =====================================================================================
+ *  VIEW — the DOM. Every value from the server is written with textContent.
+ * ===================================================================================== */
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+
+class AuditView {
+  constructor(host) {
+    this.host = host;
+    this.trail = new AuditTrail(host);
+    this.$ = (id) => document.getElementById(id);
+    this.sev = 'all';
+    const box = this.$('sev');
+    for (const s of SEVERITIES) {
+      const b = el('button', 'chip', s === 'all' ? 'All' : s === 'warning' ? 'Warnings and worse' : 'Errors and worse');
+      b.type = 'button';
+      b.dataset.sev = s;
+      b.addEventListener('click', () => { this.sev = s; this.render(); });
+      box.append(b);
+    }
+    this.$('q').addEventListener('input', () => this.renderRows());
+    this.$('refresh').addEventListener('click', () => this.trail.refresh());
+    this.trail.onChange(() => this.render());
+    host.onChange(() => { if (this.state() === 'ready') this.trail.load(); else this.render(); });
+    setInterval(() => { if (this.state() === 'ready' && !document.hidden && !this.trail.error) this.trail.refresh(); }, 15000);
+    this.render();
+  }
+  state() {
+    if (this.host.mode !== 'connected') return this.host.mode;
+    return this.host.can('audit:read') ? 'ready' : 'forbidden';
+  }
+  render() {
+    const st = this.state();
+    this.$('main').hidden = st !== 'ready';
+    let msg = this.$('message');
+    if (st !== 'ready') {
+      if (!msg) { msg = el('div', 'empty'); msg.id = 'message'; document.body.append(msg); }
+      msg.textContent = st === 'standalone' ? 'This view shows an agnostic server’s audit trail. Open it from agnostic’s WebGUI (/ui), as an administrator.'
+        : st === 'forbidden' ? 'This build of the Audit view was not granted audit:read.' : 'Connecting to agnostic…';
+      return;
+    }
+    if (msg) msg.remove();
+    for (const b of this.$('sev').children) b.setAttribute('aria-pressed', String(b.dataset.sev === this.sev));
+    this.renderSummary();
+    this.renderRows();
+  }
+  renderSummary() {
+    const t = this.trail, s = t.summary;
+    const facts = this.$('facts');
+    facts.replaceChildren();
+    const note = this.$('summary-note');
+    note.replaceChildren();
+    if (!s) { if (t.summaryError) note.append(el('div', 'box bad', t.summaryError)); return; }
+    const fact = (k, v, cls, title) => { const f = el('div', 'fact' + (cls ? ' ' + cls : '')); f.append(el('div', 'k', k), el('div', 'v', v)); if (title) f.title = title; facts.append(f); };
+    fact('Chain', s.intact === true ? 'verified' : 'BROKEN', s.intact === true ? 'ok' : 'bad', 'checked when the server started (' + String(s.verified || 'open') + ')');
+    fact('Entries', String(int(s.total) ?? '—'));
+    fact('At start-up', String(int(s.entries_at_open) ?? '—'), '', 'entries the store held when this server started');
+    fact('Since', String(int(s.appended) ?? '—'), '', 'entries this server has appended');
+    fact('Dropped', String(int(s.dropped) ?? '—'), int(s.dropped) > 0 ? 'bad' : '', 'appends that failed — gaps verification cannot see');
+    if (s.intact !== true) note.append(el('div', 'box bad', 'The chain failed verification when the server started' + (int(s.bad_index) !== null ? ', first at entry #' + s.bad_index : '') + ': the stored trail was altered while the server was not running. It keeps recording, so the tampering is bracketed.'));
+    if (int(s.dropped) > 0) note.append(el('div', 'box warn', s.dropped + ' audit records could not be written. The chain still verifies, because a record never written leaves no hole to find — this count is the only sign of them.'));
+  }
+  renderRows() {
+    const t = this.trail;
+    const body = this.$('rows');
+    body.replaceChildren();
+    const q = this.$('q').value;
+    const links = linkStates(t.entries);
+    let shown = 0;
+    for (const e of t.entries) {
+      if (!passesSeverity(e, this.sev) || !matchesText(e, q)) continue;
+      shown++;
+      const tr = el('tr');
+      tr.append(el('td', 'n', '#' + e.index), el('td', 'ts', String(e.timestamp || '').replace('T', ' ').replace('Z', ' UTC')));
+      const sv = el('td');
+      sv.append(el('span', 'sev ' + String(e.severity).replace(/[^a-z]/g, ''), e.severity));
+      tr.append(sv, el('td', 'act', e.action), el('td', 'det', (e.details || '') + (e.cut ? ' …' : '')));
+      const h = el('td', 'h');
+      const link = links.get(e.index);
+      h.append(el('span', null, String(e.hash || '').slice(0, 10)));
+      if (link) h.append(el('span', link === 'ok' ? 'ok' : 'bad', link === 'ok' ? ' ← ✓' : ' ← ✗'));
+      h.title = link === 'ok' ? 'links to #' + (e.index - 1) + ' as sent' : link === 'broken' ? 'does NOT link to #' + (e.index - 1) + ' as sent' : 'the entry before it is not on screen';
+      tr.append(h);
+      body.append(tr);
+    }
+    const more = this.$('more');
+    more.replaceChildren();
+    if (t.error) more.append(el('div', 'box bad', t.error));
+    else if (t.loading && !t.entries.length) more.append(el('span', 'muted', 'Loading…'));
+    else if (!t.entries.length) more.append(el('span', 'muted', 'The trail is empty.'));
+    else {
+      if (shown < t.entries.length) more.append(el('span', 'muted', shown + ' of ' + t.entries.length + ' loaded entries match.'));
+      if (t.next !== null) {
+        const b = el('button', 'btn', t.loading ? 'Loading…' : 'Older entries');
+        b.type = 'button';
+        b.disabled = t.loading;
+        b.addEventListener('click', () => t.more());
+        more.append(b);
+      } else if (t.oldestHeld > 0) {
+        more.append(el('span', 'muted', 'Entries before #' + t.oldestHeld + ' are in the store and were verified at start-up; this view shows the newest ' + (t.total - t.oldestHeld) + '.'));
+      }
+    }
+  }
+}
+
+if (typeof document !== 'undefined' && document.getElementById('rows')) {
+  window.audit = new AuditView(new Host());
+}
+</script>
+</body>
+</html>
+";
+
 # The `i`th page's bytes as a NUL-terminated C string, or 0 when `i` is out of range.
 #
 # A chain rather than a table because a `var` array of string literals has no
@@ -8192,20 +10491,29 @@ if (typeof document !== 'undefined' && document.getElementById('map')) {
 fn agnostic_webgui_asset_bytes(i): i64 {
     if (i == 0) { return _AGNOSTIC_WEBGUI_ASSET_00; }
     if (i == 1) { return _AGNOSTIC_WEBGUI_ASSET_01; }
+    if (i == 2) { return _AGNOSTIC_WEBGUI_ASSET_02; }
+    if (i == 3) { return _AGNOSTIC_WEBGUI_ASSET_03; }
+    if (i == 4) { return _AGNOSTIC_WEBGUI_ASSET_04; }
     return 0;
 }
 
 # The `i`th page's length in bytes, as the generator counted it, or 0.
 fn agnostic_webgui_asset_len(i): i64 {
-    if (i == 0) { return 36729; }
-    if (i == 1) { return 429829; }
+    if (i == 0) { return 39929; }
+    if (i == 1) { return 434017; }
+    if (i == 2) { return 48612; }
+    if (i == 3) { return 38876; }
+    if (i == 4) { return 26068; }
     return 0;
 }
 
 # The SHA-256 of the `i`th page's source file, lowercase hex, or 0.
 fn agnostic_webgui_asset_sha256(i): i64 {
-    if (i == 0) { return "beea3daa33223a43ae256c406c10a9795338867d188700fe5f0fbc102946d44a"; }
-    if (i == 1) { return "9c548705695a17699c31fba1e3cb6f41cfaf67f332ace713ee4ba870f09eb2ac"; }
+    if (i == 0) { return "648fe9a771661148353e0aa1dc0052a079de169dcd50e6379b16472f006795a4"; }
+    if (i == 1) { return "88956083859f0b53afd793e5f16a63800742fd81f163222bdb16eef253c0d1bc"; }
+    if (i == 2) { return "9c0d1db373df1cca6448dc9f5513addf0d2ecf5eefece406620fa7c7f7a2197e"; }
+    if (i == 3) { return "fdcdea3e97cfa7bc34fc240b489c8ef85bd105d36f3a7302b7fa774d1cd6d11c"; }
+    if (i == 4) { return "7414db44ebe8ce144a1125e404848cdc274406c6440e55384c20f55af83776fe"; }
     return 0;
 }
 
@@ -8213,13 +10521,19 @@ fn agnostic_webgui_asset_sha256(i): i64 {
 fn agnostic_webgui_asset_path(i): i64 {
     if (i == 0) { return "index.html"; }
     if (i == 1) { return "plugins/swarm/index.html"; }
+    if (i == 2) { return "plugins/crews/index.html"; }
+    if (i == 3) { return "plugins/library/index.html"; }
+    if (i == 4) { return "plugins/audit/index.html"; }
     return 0;
 }
 
 # The Content-Security-Policy the `i`th page is served with, or 0.
 fn agnostic_webgui_asset_csp(i): i64 {
-    if (i == 0) { return "default-src 'none'; script-src 'sha256-S1VrhLT2zvUHm4a9GnRHl9f5Aj52Gl6VWb4b16OBc/Q=' 'sha256-8iGTNXriYVDdoS1ptrHlMIzG3MozOu+U6J945PTq8Xw='; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"; }
-    if (i == 1) { return "default-src 'none'; script-src 'sha256-pJ22yUUt/Y6jv8NXIrVo8Hkq3Eldzglcd2FGOYwzT8Q='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 0) { return "default-src 'none'; script-src 'sha256-bYYKB5LjVZ9/bMt48VUA0ybhegZ34CAu8JB5qDsSeh0=' 'sha256-7aaIEcGQDDIHI9mAjtdfnZC3ZgV1rxmVx/xdAXvmUMA='; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"; }
+    if (i == 1) { return "default-src 'none'; script-src 'sha256-P8C/HOFBYDdvshDoKayzEgodo7guUWBxyJ/gx7KvUj8='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 2) { return "default-src 'none'; script-src 'sha256-kovlYA2j9WbfamSiCn/qcixGDGpoLyl9zL1EzC8Q8Fg='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 3) { return "default-src 'none'; script-src 'sha256-pKC6q/x2N0KntteEH7sEOIYmWkBr6Pb5U+70veBNd30='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 4) { return "default-src 'none'; script-src 'sha256-pN9GIg8MhioPnBnmoZg63PAPmynulcTsAKabcXWRjVE='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     return 0;
 }
 
@@ -8227,12 +10541,15 @@ fn agnostic_webgui_asset_csp(i): i64 {
 # `{name: {grants, routes[]}}`. Parsed once at mount (`src/webgui/plugins.cyr`), which
 # enforces it on every request a plugin makes (ADR 0007).
 fn agnostic_webgui_permissions_json(): i64 {
-    return "{\"storage\":{\"grants\":\"keep its own documents\",\"routes\":[\"GET /api/v1/plugins/:self/data\",\"GET /api/v1/plugins/:self/data/:key\",\"PUT /api/v1/plugins/:self/data/:key\",\"DELETE /api/v1/plugins/:self/data/:key\"]},\"presets:read\":{\"grants\":\"read the preset library\",\"routes\":[\"GET /api/v1/presets\",\"GET /api/v1/presets/:name\"]},\"definitions:read\":{\"grants\":\"read agent definitions\",\"routes\":[\"GET /api/v1/agents/definitions\",\"GET /api/v1/agents/definitions/:key\"]},\"crews:read\":{\"grants\":\"list crews and read their plans, progress and results\",\"routes\":[\"GET /api/v1/crews\",\"GET /api/v1/crews/:id\",\"GET /api/v1/crews/:id/events\",\"GET /api/v1/crews/:id/plan\"]},\"crews:write\":{\"grants\":\"start and cancel crews\",\"routes\":[\"POST /api/v1/crews\",\"POST /api/v1/crews/:id/cancel\"]}}";
+    return "{\"storage\":{\"grants\":\"keep its own documents\",\"routes\":[\"GET /api/v1/plugins/:self/data\",\"GET /api/v1/plugins/:self/data/:key\",\"PUT /api/v1/plugins/:self/data/:key\",\"DELETE /api/v1/plugins/:self/data/:key\"]},\"presets:read\":{\"grants\":\"read the preset library\",\"routes\":[\"GET /api/v1/presets\",\"GET /api/v1/presets/:name\"]},\"definitions:read\":{\"grants\":\"read agent definitions\",\"routes\":[\"GET /api/v1/agents/definitions\",\"GET /api/v1/agents/definitions/:key\"]},\"definitions:write\":{\"grants\":\"create, change and delete agent definitions\",\"routes\":[\"POST /api/v1/agents/definitions\",\"PUT /api/v1/agents/definitions/:key\",\"DELETE /api/v1/agents/definitions/:key\"]},\"crews:read\":{\"grants\":\"list crews and read their plans, progress and results\",\"routes\":[\"GET /api/v1/crews\",\"GET /api/v1/crews/:id\",\"GET /api/v1/crews/:id/events\",\"GET /api/v1/crews/:id/plan\"]},\"crews:write\":{\"grants\":\"start and cancel crews\",\"routes\":[\"POST /api/v1/crews\",\"POST /api/v1/crews/:id/cancel\"]},\"audit:read\":{\"grants\":\"read the audit trail, which records every user's actions\",\"routes\":[\"GET /api/v1/audit\",\"GET /api/v1/audit/entries\"]}}";
 }
 
 # The `i`th plugin's manifest as compact JSON, or 0. `asset` is the page the
 # generator resolved its `entry` to.
 fn agnostic_webgui_plugin_manifest(i): i64 {
-    if (i == 0) { return "{\"id\":\"swarm\",\"name\":\"Swarm Command\",\"description\":\"An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. Save swarms, simulate them or estimate their cost, run one as a live crew and see what it really cost, and watch any crew on this server. Each mission is labelled simulated or live.\",\"version\":\"0.3.0\",\"data\":\"mixed\",\"entry\":\"index.html\",\"permissions\":[\"storage\",\"presets:read\",\"crews:read\",\"crews:write\"],\"asset\":1}"; }
+    if (i == 0) { return "{\"id\":\"swarm\",\"name\":\"Swarm Command\",\"description\":\"An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. Save swarms, simulate them or estimate their cost, run one as a live crew and see what it really cost, and watch any crew on this server. Each mission is labelled simulated or live.\",\"version\":\"0.4.0\",\"data\":\"mixed\",\"entry\":\"index.html\",\"permissions\":[\"storage\",\"presets:read\",\"crews:read\",\"crews:write\"],\"asset\":1}"; }
+    if (i == 1) { return "{\"id\":\"crews\",\"name\":\"Crews\",\"description\":\"Every crew in your tenant, live: filter by status, open one to see its plan, its progress as it happens, each task's result and what it cost — and cancel one that is still running.\",\"version\":\"0.1.0\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"crews:read\",\"crews:write\"],\"asset\":2}"; }
+    if (i == 2) { return "{\"id\":\"library\",\"name\":\"Library\",\"description\":\"The preset crews built into this server and the agent definitions stored in it: browse both, save a preset's agent as a definition, and create, edit or delete definitions.\",\"version\":\"0.1.0\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"presets:read\",\"definitions:read\",\"definitions:write\"],\"asset\":3}"; }
+    if (i == 3) { return "{\"id\":\"audit\",\"name\":\"Audit trail\",\"description\":\"The tamper-evident audit trail: whether its chain verified, whether any record was dropped, and its newest entries — who did what, and when. Administrators only.\",\"version\":\"0.1.0\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"audit:read\"],\"asset\":4}"; }
     return 0;
 }

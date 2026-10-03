@@ -100,6 +100,39 @@ var _agnostic_audit_intact = 1;
 var _agnostic_audit_bad_index = 0 - 1;
 var _agnostic_audit_at_open = 0;
 
+# ## The newest entries, kept for reading (0.1.10)
+#
+# `GET /api/v1/audit/entries` shows the trail's newest entries — the Audit view. libro reads
+# only the WHOLE store (`patrastore_load_all`), into the global heap, which has no `free()`:
+# serving a page that way would leak the size of the trail on every request. So the newest
+# `AGNOSTIC_AUDIT_RING` entries are kept here, COPIED into fixed slots allocated once — seeded
+# at open from the same load that verifies the chain, and filled as each entry is persisted,
+# under the audit lock. Older entries stay in the store, and verification covers them; this
+# route does not serve them.
+#
+# A slot holds an entry's position in the chain (`index`, from 0), its severity, and its text
+# fields, each an 8-byte length and then at most its field's bytes. A field longer than its
+# slot is cut at a UTF-8 boundary and the slot says so (`CUT`) — the stored entry, which is
+# the evidence, is never touched.
+var AGNOSTIC_AUDIT_RING = 1024;
+
+enum AgnosticAuditSlotOff {
+    AGNOSTIC_AS_INDEX   = 0;
+    AGNOSTIC_AS_SEV     = 8;
+    AGNOSTIC_AS_CUT     = 16;
+    AGNOSTIC_AS_TS      = 24;    # 8 + 32
+    AGNOSTIC_AS_SRC     = 64;    # 8 + 64
+    AGNOSTIC_AS_ACTION  = 136;   # 8 + 64
+    AGNOSTIC_AS_DETAILS = 208;   # 8 + 320: a detail is at most AGNOSTIC_AUDIT_DETAIL_MAX
+    AGNOSTIC_AS_HASH    = 536;   # 8 + 64
+    AGNOSTIC_AS_PREV    = 608;   # 8 + 64
+    AGNOSTIC_AS_SIZE    = 680;
+}
+
+var _agnostic_audit_ring = 0;          # AGNOSTIC_AUDIT_RING slots, allocated once
+var _agnostic_audit_ring_next = 0;     # the index the next persisted entry gets
+var _agnostic_audit_ring_floor = 0;    # the lowest index ever put in the ring
+
 # ## ⛔ One append at a time — the chain and its handle share one lock
 #
 # An append is three steps: `chain_append` reads the head hash and links the new
@@ -160,6 +193,7 @@ fn _agnostic_audit_open_locked(path: Str): i64 {
     var entries = patrastore_load_all(s);
     var err = 0;
     if (entries != 0) { err = verify_chain(entries, 0); }
+    _agnostic_audit_ring_seed_locked(entries);
     if (err == 0) {
         _agnostic_audit_intact = 1;
         _agnostic_audit_bad_index = 0 - 1;
@@ -321,7 +355,10 @@ fn _agnostic_audit_record_locked(severity, source: Str, action: Str, det: Str): 
     }
 
     var rc = patrastore_append(_agnostic_audit_store, e);
-    if (rc == PATRA_OK) { _agnostic_audit_appended = _agnostic_audit_appended + 1; }
+    if (rc == PATRA_OK) {
+        _agnostic_audit_appended = _agnostic_audit_appended + 1;
+        _agnostic_audit_ring_put_locked(e);
+    }
     if (rc != PATRA_OK) {
         _agnostic_audit_dropped = _agnostic_audit_dropped + 1;
         agnostic_log_kv_str(SK_ERROR, "audit append failed; the trail has a gap", 40,
@@ -365,4 +402,170 @@ fn agnostic_audit_detail(key, value: Str): i64 {
     str_builder_add_cstr(sb, "=");
     if (value != 0) { str_builder_add(sb, value); }
     return str_builder_build(sb);
+}
+
+# --- the newest entries (0.1.10) -------------------------------------------
+
+# How many of `n` bytes at `d` fit in `cap` without splitting a UTF-8 sequence.
+fn _agnostic_audit_fit_utf8(d, n, cap): i64 {
+    if (n <= cap) { return n; }
+    var k = cap;
+    # Back off past continuation bytes (10xxxxxx) to the start of the cut character.
+    while (k > 0 && (load8(d + k) & 192) == 128) { k = k - 1; }
+    return k;
+}
+
+# Copy Str `v` into the slot field at `f` (an 8-byte length, then `cap` bytes). Returns 1
+# when it had to be cut.
+fn _agnostic_audit_slot_text(f, cap, v: Str): i64 {
+    if (v == 0) { store64(f, 0); return 0; }
+    var n = str_len(v);
+    var k = _agnostic_audit_fit_utf8(str_data(v), n, cap);
+    memcpy(f + 8, str_data(v), k);
+    store64(f, k);
+    if (k < n) { return 1; }
+    return 0;
+}
+
+# Put a persisted entry into the ring as the next index. The caller holds the audit lock.
+fn _agnostic_audit_ring_put_locked(e): i64 {
+    if (_agnostic_audit_ring == 0 || e == 0) { return 0; }
+    var idx = _agnostic_audit_ring_next;
+    var slot = _agnostic_audit_ring + (idx % AGNOSTIC_AUDIT_RING) * AGNOSTIC_AS_SIZE;
+    store64(slot + AGNOSTIC_AS_INDEX, idx);
+    store64(slot + AGNOSTIC_AS_SEV, entry_severity(e));
+    var cut = 0;
+    cut = cut | _agnostic_audit_slot_text(slot + AGNOSTIC_AS_TS, 32, entry_timestamp(e));
+    cut = cut | _agnostic_audit_slot_text(slot + AGNOSTIC_AS_SRC, 64, entry_source(e));
+    cut = cut | _agnostic_audit_slot_text(slot + AGNOSTIC_AS_ACTION, 64, entry_action(e));
+    cut = cut | _agnostic_audit_slot_text(slot + AGNOSTIC_AS_DETAILS, 320, entry_details(e));
+    cut = cut | _agnostic_audit_slot_text(slot + AGNOSTIC_AS_HASH, 64, entry_hash(e));
+    cut = cut | _agnostic_audit_slot_text(slot + AGNOSTIC_AS_PREV, 64, entry_prev_hash(e));
+    store64(slot + AGNOSTIC_AS_CUT, cut);
+    _agnostic_audit_ring_next = idx + 1;
+    return 1;
+}
+
+# Seed the ring at open with the newest entries of `entries` (the store, in chain order). The
+# caller holds the audit lock. The ring is allocated on the first open and reused after.
+fn _agnostic_audit_ring_seed_locked(entries): i64 {
+    if (_agnostic_audit_ring == 0) {
+        _agnostic_audit_ring = alloc(AGNOSTIC_AUDIT_RING * AGNOSTIC_AS_SIZE);
+        if (_agnostic_audit_ring == 0) { return 0; }
+    }
+    var n = 0;
+    if (entries != 0) { n = vec_len(entries); }
+    # A load that came back short of the count (a failed read reads as empty) holds
+    # nothing: the next index is still the store's count, so indexes stay positions.
+    if (n != _agnostic_audit_at_open) {
+        _agnostic_audit_ring_next = _agnostic_audit_at_open;
+        _agnostic_audit_ring_floor = _agnostic_audit_at_open;
+        return 0;
+    }
+    var start = 0;
+    if (n > AGNOSTIC_AUDIT_RING) { start = n - AGNOSTIC_AUDIT_RING; }
+    _agnostic_audit_ring_next = start;
+    _agnostic_audit_ring_floor = start;
+    var i = start;
+    while (i < n) {
+        _agnostic_audit_ring_put_locked(vec_get(entries, i));
+        i = i + 1;
+    }
+    return 1;
+}
+
+# The lowest index `agnostic_audit_entries_a` can answer: entries below it are in the store,
+# verified, and not kept for reading.
+fn agnostic_audit_oldest_held(): i64 {
+    agnostic_rlock_enter(_agnostic_audit_rl);
+    var lo = _agnostic_audit_ring_floor;
+    if (_agnostic_audit_ring_next - AGNOSTIC_AUDIT_RING > lo) { lo = _agnostic_audit_ring_next - AGNOSTIC_AUDIT_RING; }
+    _agnostic_audit_unlock();
+    return lo;
+}
+
+# How many entries the chain holds as this process has seen it: the next index.
+fn agnostic_audit_next_index(): i64 {
+    agnostic_rlock_enter(_agnostic_audit_rl);
+    var n = _agnostic_audit_ring_next;
+    _agnostic_audit_unlock();
+    return n;
+}
+
+# One entry read out of the ring, in an arena — 80 bytes.
+enum AgnosticAuditReadOff {
+    AGNOSTIC_AR_INDEX   = 0;
+    AGNOSTIC_AR_SEV     = 8;
+    AGNOSTIC_AR_CUT     = 16;
+    AGNOSTIC_AR_TS      = 24;
+    AGNOSTIC_AR_SRC     = 32;
+    AGNOSTIC_AR_ACTION  = 40;
+    AGNOSTIC_AR_DETAILS = 48;
+    AGNOSTIC_AR_HASH    = 56;
+    AGNOSTIC_AR_PREV    = 64;
+    AGNOSTIC_AR_SIZE    = 72;
+}
+
+# A read entry's field.
+fn agnostic_audit_read_get(r, off): i64 { return load64(r + off); }
+
+# A slot's text field at `f` as a Str in `a`, or 0 on exhaustion.
+fn _agnostic_audit_slot_str_a(a, f): i64 {
+    var n = load64(f);
+    var buf = alloc_via(a, n + 1);
+    if (buf == 0) { return 0; }
+    memcpy(buf, f + 8, n);
+    store8(buf + n, 0);
+    return str_new_a(a, buf, n);
+}
+
+# Up to `limit` entries with an index below `before` (any, when `before` is past the end),
+# newest first, as a vec of read entries copied into `a` — the slots may be overwritten as
+# soon as the lock is released, so nothing here points into them. 0 on exhaustion.
+fn agnostic_audit_entries_a(a, before, limit): i64 {
+    var out = vec_new_a(a);
+    if (out == 0) { return 0; }
+    agnostic_rlock_enter(_agnostic_audit_rl);
+    var r = _agnostic_audit_entries_locked_a(a, before, limit, out);
+    _agnostic_audit_unlock();
+    return r;
+}
+
+# `agnostic_audit_entries_a`'s body. The caller holds the audit lock.
+fn _agnostic_audit_entries_locked_a(a, before, limit, out): i64 {
+    if (_agnostic_audit_ring == 0) { return out; }
+    var hi = before;
+    if (hi > _agnostic_audit_ring_next) { hi = _agnostic_audit_ring_next; }
+    var lo = _agnostic_audit_ring_floor;
+    if (_agnostic_audit_ring_next - AGNOSTIC_AUDIT_RING > lo) { lo = _agnostic_audit_ring_next - AGNOSTIC_AUDIT_RING; }
+    var idx = hi - 1;
+    while (idx >= lo && vec_len(out) < limit) {
+        var slot = _agnostic_audit_ring + (idx % AGNOSTIC_AUDIT_RING) * AGNOSTIC_AS_SIZE;
+        var r = alloc_via(a, AGNOSTIC_AR_SIZE);
+        if (r == 0) { return 0; }
+        store64(r + AGNOSTIC_AR_INDEX, load64(slot + AGNOSTIC_AS_INDEX));
+        store64(r + AGNOSTIC_AR_SEV, load64(slot + AGNOSTIC_AS_SEV));
+        store64(r + AGNOSTIC_AR_CUT, load64(slot + AGNOSTIC_AS_CUT));
+        store64(r + AGNOSTIC_AR_TS, _agnostic_audit_slot_str_a(a, slot + AGNOSTIC_AS_TS));
+        store64(r + AGNOSTIC_AR_SRC, _agnostic_audit_slot_str_a(a, slot + AGNOSTIC_AS_SRC));
+        store64(r + AGNOSTIC_AR_ACTION, _agnostic_audit_slot_str_a(a, slot + AGNOSTIC_AS_ACTION));
+        store64(r + AGNOSTIC_AR_DETAILS, _agnostic_audit_slot_str_a(a, slot + AGNOSTIC_AS_DETAILS));
+        store64(r + AGNOSTIC_AR_HASH, _agnostic_audit_slot_str_a(a, slot + AGNOSTIC_AS_HASH));
+        store64(r + AGNOSTIC_AR_PREV, _agnostic_audit_slot_str_a(a, slot + AGNOSTIC_AS_PREV));
+        if (load64(r + AGNOSTIC_AR_PREV) == 0) { return 0; }
+        vec_push_a(a, out, r);
+        idx = idx - 1;
+    }
+    return out;
+}
+
+# A severity's wire name — libro's, lowercased.
+fn agnostic_audit_severity_wire(sev): i64 {
+    if (sev == SEV_DEBUG) { return "debug"; }
+    if (sev == SEV_INFO) { return "info"; }
+    if (sev == SEV_WARNING) { return "warning"; }
+    if (sev == SEV_ERROR) { return "error"; }
+    if (sev == SEV_CRITICAL) { return "critical"; }
+    if (sev == SEV_SECURITY) { return "security"; }
+    return "unknown";
 }

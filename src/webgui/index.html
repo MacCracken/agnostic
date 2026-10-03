@@ -187,6 +187,10 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     const RE_ID = /^[A-Za-z0-9._:-]{1,64}$/;
     const RE_ETAG = /^"[0-9a-f]{16}"$/;
     const RE_IDEM = /^[A-Za-z0-9._:-]{8,128}$/;
+    const RE_PLUGIN_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+    // A view's params — the part of `#plugin/<id>?<params>` after the `?` (0.1.10). Kept to
+    // characters that need no escaping in a URL fragment; a value is percent-encoded.
+    const RE_PARAMS = /^[A-Za-z0-9._~=&%:-]{0,256}$/;
     const reEscape = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     /** One catalogue route ("GET /api/v1/crews/:id") as a matcher for plugin `pluginId`. */
@@ -261,7 +265,39 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       }
       return { ok: true, method, path, body, headers };
     }
-    return Object.freeze({ METHODS, MAX_BODY, MAX_INFLIGHT, compileRoute, grantsFor, granted, check });
+    /**
+     * The shell's route from its URL hash: `#overview`, `#settings` or `#plugin/<id>[?<params>]`.
+     * Params outside RE_PARAMS are dropped, never passed on: a link is input like any other.
+     */
+    function parseRoute(hash) {
+      const h = String(hash || '').replace(/^#/, '');
+      if (h === 'settings') return { view: 'settings', id: '', params: '' };
+      if (h.startsWith('plugin/')) {
+        const rest = h.slice(7);
+        const q = rest.indexOf('?');
+        const params = q < 0 ? '' : rest.slice(q + 1);
+        return { view: 'plugin', id: q < 0 ? rest : rest.slice(0, q), params: RE_PARAMS.test(params) ? params : '' };
+      }
+      return { view: 'overview', id: '', params: '' };
+    }
+    /**
+     * Check one `agnostic:navigate` (0.1.10) against the plugins switched on. Returns
+     * `{ok: true, hash}` — where to go — or `{ok: false, error}`. `to` is 'overview', 'settings'
+     * or the id of a plugin in `enabledIds`; `params` go only to a plugin.
+     */
+    function checkNavigate(msg, enabledIds) {
+      const to = typeof msg.to === 'string' ? msg.to : '';
+      const params = msg.params === undefined || msg.params === null ? '' : msg.params;
+      if (typeof params !== 'string' || !RE_PARAMS.test(params)) {
+        return { ok: false, error: 'a view\u2019s params are up to 256 of [A-Za-z0-9._~=&%:-]' };
+      }
+      if (to === 'overview' || to === 'settings') return { ok: true, hash: to };
+      if (!RE_PLUGIN_ID.test(to) || !enabledIds.includes(to)) {
+        return { ok: false, error: 'that view is not switched on' };
+      }
+      return { ok: true, hash: 'plugin/' + to + (params ? '?' + params : '') };
+    }
+    return Object.freeze({ METHODS, MAX_BODY, MAX_INFLIGHT, compileRoute, grantsFor, granted, check, parseRoute, checkNavigate });
   })();
 </script>
 <script>
@@ -345,13 +381,8 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     const enabledPlugins = () => (state.plugins || []).filter((p) => p.enabled);
     const findPlugin = (id) => (state.plugins || []).find((p) => p.id === id) || null;
 
-    // --- routing: #overview, #settings, #plugin/<id> ---------------------------------
-    function parseRoute() {
-      const h = location.hash.replace(/^#/, '');
-      if (h === 'settings') return { view: 'settings' };
-      if (h.startsWith('plugin/')) return { view: 'plugin', id: h.slice(7) };
-      return { view: 'overview' };
-    }
+    // --- routing: #overview, #settings, #plugin/<id>[?<params>] ------------------------
+    const parseRoute = () => window.AgnosticBridge.parseRoute(location.hash);
     function go(hash) { if (location.hash !== '#' + hash) location.hash = hash; else render(); }
 
     // --- the plugin host bridge (0.1.8, ADR 0005; checked by the server since 0.1.9, ADR 0007)
@@ -367,7 +398,11 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     // object stays the same, so `e.source` cannot tell two pages apart. A reply is posted
     // only into the session that asked; anything answered after the page changed is
     // dropped, so a late answer can never resolve the next page's request of the same id.
-    const bridge = { plugin: null, grants: [], gen: 0, inflight: 0 };
+    //
+    // A plugin may also ask to open another view, with params for it (`agnostic:navigate`,
+    // 0.1.10) — only one that is switched on — and is told when its own params change
+    // (`agnostic:params`): the URL `#plugin/<id>?<params>` is a deep link into a view.
+    const bridge = { plugin: null, grants: [], gen: 0, inflight: 0, params: '' };
     const permissionWords = (name) => {
       const c = state.catalogue && state.catalogue[name];
       return c && typeof c.grants === 'string' ? c.grants : name;
@@ -385,7 +420,9 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
         // What this shell's bridge carries beyond protocol 1's first form (0.1.9): query
         // strings in a path, `ifMatch`/`ifNoneMatch` with an `etag` on the answer, and an
         // `idempotencyKey` on a POST. A plugin checks for a feature before relying on it.
-        features: ['query', 'revisions', 'idempotency'],
+        // 0.1.10 adds `navigate`: `agnostic:navigate`, `params` and `views` here, and
+        // `agnostic:params` when they change.
+        features: ['query', 'revisions', 'idempotency', 'navigate'],
         plugin: { id: bridge.plugin.id, name: bridge.plugin.name, version: bridge.plugin.version },
         permissions: (bridge.plugin.permissions || []).slice(),
         // `off`: every route is open (loopback). `required`: the server enforces roles,
@@ -394,6 +431,9 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
           auth: state.auth === 'off' ? 'off' : state.auth === 'unknown' ? 'unknown' : 'required',
           signedIn: !!store.get(TOKEN_KEY), role: store.get(ROLE_KEY) || null,
         },
+        params: bridge.params,
+        // The views switched on, so a page offers a link only to one that will open.
+        views: enabledPlugins().map((p) => ({ id: p.id, name: p.name })),
       }, '*');
     }
     window.addEventListener('message', async (e) => {
@@ -406,6 +446,12 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       const msg = e.data;
       if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
       if (msg.type === 'agnostic:hello') { newSession(); sendInit(); return; }
+      if (msg.type === 'agnostic:navigate') {
+        const n = window.AgnosticBridge.checkNavigate(msg, enabledPlugins().map((p) => p.id));
+        if (n.ok) go(n.hash);
+        else toast(bridge.plugin.name + ' tried to open a view: ' + n.error + '.', true);
+        return;
+      }
       if (msg.type !== 'agnostic:request') return;
       const p = bridge.plugin;
       const gen = bridge.gen;
@@ -629,7 +675,17 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       frame.title = p.name;
       bridge.plugin = p;
       bridge.grants = window.AgnosticBridge.grantsFor(p, state.catalogue);
-      if (frame.getAttribute('src') !== p.url) { newSession(); frame.setAttribute('src', p.url); }
+      const params = parseRoute().params;
+      if (frame.getAttribute('src') !== p.url) {
+        // A new page: its init carries the params.
+        bridge.params = params;
+        newSession();
+        frame.setAttribute('src', p.url);
+      } else if (params !== bridge.params) {
+        // The same page, followed by a deep link (or its own navigate): tell it, don't reload it.
+        bridge.params = params;
+        try { frame.contentWindow.postMessage({ type: 'agnostic:params', params }, '*'); } catch (err) { /* frame gone */ }
+      }
     }
 
     function render() {
@@ -638,7 +694,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       renderTabs(route);
       renderWho();
       for (const v of ['overview', 'settings', 'plugin']) $('view-' + v).hidden = v !== route.view;
-      if (route.view !== 'plugin') { $('plugin-frame').removeAttribute('src'); bridge.plugin = null; bridge.grants = []; newSession(); }
+      if (route.view !== 'plugin') { $('plugin-frame').removeAttribute('src'); bridge.plugin = null; bridge.grants = []; bridge.params = ''; newSession(); }
       if (route.view === 'overview') renderOverview();
       else if (route.view === 'settings') renderSettings();
       else renderPlugin(route.id);

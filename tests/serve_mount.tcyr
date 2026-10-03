@@ -10,9 +10,15 @@
 # request after the first hash, once 16 round-robin workers came back to it.
 #
 # This suite must be its own process, and must do no crypto before it mounts:
-# it asserts that sigil's init has NOT happened yet, and that mount is what does
-# it. Nothing else in mount hashes on a fresh store with auth off — which is the
+# it asserts that sigil's init has NOT happened yet, and that mount settles it.
+# Nothing else in mount hashes on a fresh store with auth off — which is the
 # exact configuration the crash was measured in.
+#
+# 0.1.10 (cyrius 6.6.14, sigil 3.13.6+): sigil now installs a block only on a
+# thread that has none, so `crypto_tls_main_init()` leaves a main thread alone
+# when the program already gave it one — as this suite's `main` does, like the
+# server's. "Settled" is therefore either state: sigil installed main's block
+# (state 2), or main's own block is there for it to read.
 include "src/app.cyr"
 
 var _T_MDB = "/tmp/agnostic-mount-suite.patra";
@@ -32,6 +38,14 @@ fn _t_mount_cfg() {
     return c;
 }
 
+# 1 when sigil will never install a block on this thread again: it installed
+# this one itself (state 2), or it can read the block the program installed.
+fn _t_crypto_settled(): i64 {
+    if (_crypto_tls_inited == 2) { return 1; }
+    if (_crypto_needs_block() == 0) { return 1; }
+    return 0;
+}
+
 fn test_mount_initialises_crypto_on_the_main_thread() {
     test_group("serve/mount-crypto-main-thread");
 
@@ -40,8 +54,9 @@ fn test_mount_initialises_crypto_on_the_main_thread() {
     sys_unlink(_T_MDB);
     sys_unlink(_T_MAUDIT);
     assert_neq(agnostic_serve_mount(_t_mount_cfg()), 0, "mount succeeds");
-    assert_eq(_crypto_tls_inited, 1,
-      "and it initialised sigil's crypto thread state HERE, on the main thread");
+    assert_eq(_t_crypto_settled(), 1,
+      "and sigil's crypto thread state is settled on the main thread");
+    assert_neq(_crypto_tls_inited, 1, "with no install left half-done");
 }
 
 # What a pool worker does: sandhi fills its arena slot when the worker starts,

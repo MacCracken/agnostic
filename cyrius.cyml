@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "agnostic — TODO"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.6.12"
+cyrius = "6.6.14"
 
 [build]
 entry = "src/main.cyr"
@@ -66,14 +66,16 @@ stdlib = [
 # changed: agnostic's own code uses no `Result`/`Option`/`Either` at all.
 # 2.0.8 pins kavach 3.12.5 + libro 2.10.x, which are migrated. Move both.
 #
-# ⚠ At 6.6.12 the folded copies WIN, not the chain's. 6.6.12 folds **sigil
-# 3.13.5** and **patra 1.15.1**. The chain declares sigil 3.13.5 (agnosai 2.1.2 —
-# the fold), 3.12.18 (kavach 3.13.1) and 3.13.4 (libro 2.10.5), and patra 1.15.1
-# (libro 2.10.5 — the first libro whose patra matches the fold). `cyrius deps`
-# refuses to overwrite a folded stdlib leaf with a dep's artifact ("refusing to
-# overwrite stdlib leaf"), so `lib/sigil.cyr` / `lib/patra.cyr` stay the 6.6.12
-# snapshot — byte-identical to `git show 6.6.12:lib/<mod>` — and `check-clean.sh`
-# stays green. The artifacts it skips are now the same bytes as the ones it keeps.
+# ⚠ The folded copies WIN, not the chain's. 6.6.14 folds **sigil 3.13.7** (6.6.12
+# folded 3.13.5) and **patra 1.15.1**. The chain declares sigil 3.13.5 (agnosai
+# 2.1.2), 3.12.18 (kavach 3.13.1) and 3.13.4 (libro 2.10.5), and patra 1.15.1
+# (libro 2.10.5). `cyrius deps` refuses to overwrite a folded stdlib leaf with a
+# dep's artifact ("refusing to overwrite stdlib leaf"), so `lib/sigil.cyr` /
+# `lib/patra.cyr` stay the 6.6.14 snapshot — byte-identical to the toolchain's own
+# `lib/` — and `check-clean.sh` stays green. The lock's sigil line still names the
+# 3.13.5 commit agnosai declares: it records what the chain asked for; its hash of
+# `lib/sigil.cyr` is of the bytes kept. An agnosai that declares 3.13.7 makes the
+# two agree (a recorded agnosai follow-up), not a pin here.
 #
 # ⛔ From 6.6.11 on, agnosai must be ≥ 2.1.1. 6.6.11 checks enum qualifiers, and
 # agnosai 2.1.0 still spells kavach's renamed enum `Backend.NOOP` / `.WASM` /
@@ -83,16 +85,18 @@ stdlib = [
 # ⚠ **agnosai's own deps are pinned by agnosai — this file carries no pins for them.**
 # Through 0.1.6 it declared bote, majra, ai-hwaccel and tyche here, believing a root
 # declaration without a `path` removed agnosai's `path = "../<sibling>"` overrides.
-# Those four blocks never did anything. `cyrius deps` clones a `[deps.X]` only when it
-# lists `modules` (`need_clone` in cyrius's cbt/deps.cyr), so a block with just `git`
-# and `tag` is never visited, and agnosai's own declaration resolved each one —
-# measured at 0.1.7, when moving their tags changed nothing in the lock. agnosai's
-# `path` lines were never live here either: a dep resolved from the cache reads its
-# `path` relative to the cache directory, where no sibling exists.
+# Those four blocks never did anything: before cyrius 6.6.13 `cyrius deps` cloned a
+# `[deps.X]` only when it listed `modules`, so a block with just `git` and `tag` was
+# never visited, and agnosai's own declaration resolved each one — measured at 0.1.7,
+# when moving their tags changed nothing in the lock. agnosai's `path` lines were
+# never live here either: a dep resolved from the cache reads its `path` relative to
+# the cache directory, where no sibling exists.
 #
-# So a newer bote, majra, kavach, ai-hwaccel or tyche arrives with an agnosai release
-# that pins it — 2.1.2 is exactly that, every one at its latest tag — and a block
-# added here to get ahead of agnosai must list `modules`, or it is decoration.
+# Since 6.6.13 (I10, filed by 0.1.7) a block with no `modules` means
+# `modules = ["dist/X.cyr"]` when the tag ships that file — and the ROOT's tag then
+# wins — or `cyrius deps` warns by name. So such a block is no longer decoration: it
+# is an override pin, which this repo does not carry. A newer bote, majra, kavach,
+# ai-hwaccel or tyche arrives with an agnosai release that pins it.
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
 tag = "2.1.2"
@@ -119,15 +123,11 @@ modules = ["dist/libro.cyr"]
 # release workflow cross-compiles. first-party-standards.md:956 makes both
 # x86_64-linux and aarch64-linux artifacts a release-checklist item.
 #
-# ⛔ **aarch64 is WITHHELD since 0.1.7, by decision (2026-10-01)** — a deliberate,
-# temporary exception to that checklist. The binary builds but dies with SIGBUS at
-# startup on real aarch64 hardware: cyrius does not re-align the global after a
-# typed array (`var a: u8[N]`), and the atomics on sigil's crypto init flags fault
-# (cyrius issue 2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus).
-# CI still cross-builds it as a compile gate. RESTORE `cross_bins` together with the
-# commented-out step and the two asset lines in `.github/workflows/release.yml` and
-# the upload line in `ci.yml`, once a cyrius release aligns globals and every suite
-# passes natively on the Pi.
+# aarch64 was withheld 0.1.7–0.1.9: the binary died with SIGBUS at startup on real
+# hardware, because cyrius did not re-align the global after a typed array and the
+# atomics on sigil's crypto init flags faulted. cyrius 6.6.13 aligns every global
+# (I9, filed by 0.1.7); restored at 0.1.10 once every suite and the server itself ran
+# natively on a Raspberry Pi 4 (`ssh pi`) at the 6.6.14 pin.
 [release]
 bins = ["agnostic"]
-# cross_bins = ["agnostic-aarch64"]
+cross_bins = ["agnostic-aarch64"]

@@ -5,9 +5,10 @@
 > Last refreshed: **2026-08-23**, after M5 and the M6 viability gate. The toolchain
 > and dependency facts in §2 and §6 were refreshed **2026-10-01**, at 0.1.7; §5
 > gained the store-lock rules at 0.1.4, the borrow/TLS rules at 0.1.5, the
-> dependency and embedding rules at 0.1.7, the transport and plugin rules at 0.1.8, and the
-> crew-surface and plugin-rung rules at 0.1.9. §1 notes the WebGUI (0.1.7), its plugin
-> platform (0.1.8), and the server-checked plugins and tenant-scoped crews of 0.1.9.
+> dependency and embedding rules at 0.1.7, the transport and plugin rules at 0.1.8, the
+> crew-surface and plugin-rung rules at 0.1.9, and the view, kit and toolchain rules at 0.1.10.
+> §1 notes the WebGUI (0.1.7), its plugin platform (0.1.8), the server-checked plugins and
+> tenant-scoped crews of 0.1.9, and the views of 0.1.10; §2 and §6 moved to cyrius 6.6.14 then.
 
 Read in this order:
 
@@ -18,7 +19,7 @@ Read in this order:
 | [`roadmap.md`](roadmap.md) | M0–M9 sequencing and per-milestone gates |
 | [`../../CYRIUS-PORT-BRIEF.md`](../../CYRIUS-PORT-BRIEF.md) | Research snapshot (2026-08-19): language notes, dep stack, **§7 decisions — binding** |
 | [`../../ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) | 86 verified defects in the Python oracle. §3 gated M2, §2.2 gated M3; **§3.15 is what M6's gate now measures** |
-| [`../adr/`](../adr/) | Nine ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server |
+| [`../adr/`](../adr/) | Twelve ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server, views that link through the shell with one bridge client, audit entries read from a bounded copy, a cancelled crew keeping its finished results |
 
 ---
 
@@ -65,18 +66,25 @@ server enforces:** every request a plugin makes is checked by the server against
 outcome durable without a poller (ADR 0009); results carry the tokens and cost the engine metered.
 Swarm Command 0.3.0 runs on all of it, and its JavaScript is tested under Node in CI.
 
-Version is **0.1.9** — see `CHANGELOG.md`. Per decision #4 the port's milestones
+**0.1.10 built the views M9 exists for**, as plugins beside Swarm Command: **Crews** (list by status,
+a crew's plan, live progress, results and cost, cancel), **Library** (presets, and agent definitions
+it can write) and **Audit trail** (the chain's verdict and its newest entries). Views link to each
+other through the shell — `#plugin/<id>?<params>` — and every plugin carries one bridge client,
+verified byte for byte by the generator (ADR 0010). A cancelled crew keeps its finished work
+(ADR 0012). The aarch64 artifact is released again.
+
+Version is **0.1.10** — see `CHANGELOG.md`. Per decision #4 the port's milestones
 ship together as **1.0.0** (§4).
 
 ## 2. ⚠ Build it correctly, or you will write a lock CI cannot reproduce
 
 This has bitten repeatedly and is the single most important operational fact here.
 
-**The pin is `6.6.12`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
+**The pin is `6.6.14`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
 under a toolchain other than the pin rewrites `lib/` and `cyrius.lock` with content
 CI — which installs the pin — cannot reproduce. CI has a fatal drift gate precisely
 for this. Read `cyrius --version` before provisioning: it must print
-`manifest-pin: 6.6.12` with **no** `drift` on the line.
+`manifest-pin: 6.6.14` with **no** `drift` on the line.
 
 ⚠ **Your editor may be building too.** The cyrius language server runs a build on save,
 and a build re-provisions `lib/` and rewrites the lock (below). During 0.1.7 it did so
@@ -212,6 +220,26 @@ then, against a real requirement. Out of scope for v1.0.
 
 ## 5. Cyrius footguns that have already cost time
 
+**Added at 0.1.10:**
+
+- **A plugin page never edits its own copy of the bridge client.** Edit `src/webgui/kit/host.js` and
+  run `./scripts/gen-webgui.sh --sync-kit`; the generator refuses a copy that differs by a byte, and a
+  page with `permissions` that carries none.
+- **A sandboxed plugin cannot `confirm()`** — the shell's iframe has no `allow-modals`, so it answers
+  false without asking. Ask inline (the Crews and Library views do). **Nor can it submit a form**: no
+  `allow-forms`, so the `submit` event never fires — not even for `requestSubmit()`. Save on a click.
+  Both pass every Node test; only a browser shows them.
+- **A view re-rendered on every poll loses its reader's place** unless it keeps it: save and restore
+  `scrollTop`, and remember which `<details>` were open (the Crews view keeps both).
+- **sigil 3.13.6+ installs a crypto block only on a thread that has none**, so a test may not assert
+  `_crypto_tls_inited == 1` after mount any more: `main` already gave the main thread a block, and
+  sigil leaves it (the flag stays 0); where it installs one, the flag is 2. Assert "settled" — see
+  `tests/serve_mount.tcyr`.
+- **An `scp` of 200 MB to the Pi can drop mid-file.** Use `rsync -z --partial` and compare
+  `sha256sum` on both ends before running anything; a truncated binary fails in confusing ways.
+- **`pkill -f <name>` over `ssh` matches the remote shell's own command line** and kills the session
+  (exit 255). Use `pgrep -a` to look, `timeout` to bound a server, and a distinct process name.
+
 **Added at 0.1.9:**
 
 - **A crew route must look its crew up IN SCOPE** — `agnostic_ledger_entry_in(key,
@@ -280,15 +308,13 @@ then, against a real requirement. Out of scope for v1.0.
   generator refuses such a page.
 - **`check-lib-symbols.py` must evaluate `#ifdef`.** It now does, per shipped target;
   before 0.1.7 it read both arms as live.
-- ⛔ **The aarch64 binary does not start, and the cause is known** (Pi 4, 0.1.7): a
-  typed-array global (`var a: u8[N]`) is not padded, so the globals after sankoch's
-  `u8[363]`/`u8[217]`/`u8[50]` are off by 6, and sigil's atomic init flags among them
-  SIGBUS. Filed upstream (`2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md`).
-  Re-check on the Pi after any cyrius bump: cross-build the suites, `scp`, run natively.
-  Never size a byte array in agnostic's own globals to a non-multiple of 8.
-  **The artifact is withheld meanwhile** (release, CI upload and `cross_bins`; CI still
-  compiles it). When the Pi run is clean, restore it — the steps are written beside the
-  commented-out lines in `cyrius.cyml` and `.github/workflows/release.yml`.
+- ✅ **The aarch64 binary starts again** (fixed upstream in cyrius 6.6.13, I9; verified at 0.1.10 on
+  the Pi: all 29 suites and the server, natively). It died with SIGBUS from 0.1.7 to 0.1.9: a
+  typed-array global (`var a: u8[N]`) was not padded, so the globals after sankoch's
+  `u8[363]`/`u8[217]`/`u8[50]` were off by 6 and sigil's atomic init flags among them faulted.
+  **Re-check on the Pi after every cyrius bump**: cross-build the server and each suite
+  (`cyrius build --aarch64`), copy them (`rsync -z --partial`, then compare checksums), run natively.
+  Still never size a byte array in agnostic's own globals to a non-multiple of 8.
 
 **Added during M5/M6 — each of these cost a wrong turn:**
 
@@ -408,8 +434,8 @@ already filed from this port.
 | `libro` | **2.10.5** | direct since 0.1.7 (`modules`, after agnosai) — the audit chain |
 | `bote` / `majra` | **3.3.15** / **2.9.2** | transitive via agnosai 2.1.2 |
 | `ai-hwaccel` / `tyche` / `kavach` | **2.4.0** / **1.1.0** / **3.13.1** | transitive via agnosai 2.1.2 |
-| `sigil` | **3.13.5** | folded into the 6.6.12 stdlib; agnosai declares the same version |
-| `patra` | **1.15.1** | folded into the 6.6.12 stdlib; libro declares the same version |
+| `sigil` | **3.13.7** | folded into the 6.6.14 stdlib; agnosai still declares 3.13.5 (the fold wins) |
+| `patra` | **1.15.1** | folded into the 6.6.14 stdlib; libro declares the same version |
 
 ✅ **All nine carry a commit pin in `cyrius.lock`**, and every tag was confirmed on
 the GitHub remote (API, not `gh`) before its pin moved. The agnosai 2.0.6 episode
@@ -430,10 +456,12 @@ Do not add it back.
 
 ### ✅ No `[deps.patra]` hold at this pin
 
-6.6.12 folds patra 1.15.1 (and sigil 3.13.5), and since 0.1.7 the chain declares the
-same versions — libro 2.10.5 patra 1.15.1, agnosai 2.1.2 sigil 3.13.5 — so the artifacts
-`cyrius deps` skips ("refusing to overwrite stdlib leaf") are the very bytes it keeps,
-and `lib/` matches the snapshot with **zero** files differing. The hold that agnosai 2.0.5 needed —
+6.6.14 folds patra 1.15.1 and sigil 3.13.7. libro 2.10.5 declares patra 1.15.1, the fold's own;
+agnosai 2.1.2 declares sigil 3.13.5, which 6.6.12 folded and 6.6.14 does not. `cyrius deps` refuses
+to overwrite a folded leaf ("refusing to overwrite stdlib leaf"), so `lib/sigil.cyr` is the 6.6.14
+fold's bytes either way and `lib/` matches the snapshot with **zero** files differing; only the
+lock's sigil line names agnosai's declared commit. An agnosai that declares 3.13.7 makes them agree —
+recorded as an agnosai follow-up, not a pin here. The hold that agnosai 2.0.5 needed —
 because no published Cyrius folded 1.13.10 at the time — is **not** reintroduced
 here and must not be. The general rule: taking a patra version through a transitive
 `[deps.patra]` obliges a Cyrius pin that folds the same version; the two are one

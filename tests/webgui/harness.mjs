@@ -47,5 +47,20 @@ export function loadPage(rel, { globals = {}, only = null } = {}) {
   return { ctx, get: (expr) => vm.runInContext(expr, ctx) };
 }
 
+/**
+ * Evaluate one plain script file (relative to the repo root) in a fresh context holding the
+ * given globals — the bridge client, `src/webgui/kit/host.js`, which pages carry verbatim.
+ * Returns `{ ctx, get(expr) }`, as `loadPage` does.
+ */
+export function loadScript(rel, { globals = {} } = {}) {
+  const ctx = vm.createContext({
+    console, setTimeout, clearTimeout, setInterval, clearInterval, queueMicrotask,
+    performance, TextEncoder, TextDecoder, URL, Blob, structuredClone, crypto: globalThis.crypto,
+    ...globals,
+  });
+  vm.runInContext(readFileSync(ROOT + rel, 'utf8'), ctx, { filename: rel });
+  return { ctx, get: (expr) => vm.runInContext(expr, ctx) };
+}
+
 /** A promise that settles after every pending microtask and timer callback queued so far. */
 export const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));

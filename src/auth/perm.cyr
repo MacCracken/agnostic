@@ -110,6 +110,7 @@ fn agnostic_perm_for_route(id): i64 {
     if (id == AGNOSTIC_ROUTE_DEF_DELETE) { return AGNOSTIC_PERM_WRITE; }
 
     if (id == AGNOSTIC_ROUTE_AUDIT) { return AGNOSTIC_PERM_ADMIN; }
+    if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) { return AGNOSTIC_PERM_ADMIN; }
 
     # ⚠ Switching a plugin is ADMIN, not WRITE. It is a setting of the DEPLOYMENT —
     # turning a view on adds its tab for every user, in every tenant — and an

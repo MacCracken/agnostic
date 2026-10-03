@@ -120,6 +120,7 @@ fn _agnostic_crews_exists_locked(crew_id: Str): i64 {
 # ⚠ A row is written **once**. A crew reaching a terminal state twice is not a
 # thing the latch permits, and re-writing would mean the second answer wins —
 # which is the ordering `ORACLE-AUDIT.md` §3.4 got wrong. An existing row stands.
+# (One exception, which changes no status: `agnostic_crews_resave_row`, 0.1.10.)
 fn agnostic_crews_save(crew_id: Str, name: Str, status, doc: Str): i64 {
     agnostic_store_lock();
     var r = _agnostic_crews_save_locked(crew_id, name, status, doc);
@@ -205,6 +206,48 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     # write's own result does not change the answer.
     patra_exec_prepared(db, st);
     patra_finalize(st);
+    return 1;
+}
+
+# Rewrite a CANCELLED crew's stored outcome and its index row's tokens and cost, once its
+# results have arrived (0.1.10) — the single exception to "a row is written once", and it
+# exists for the single exception the ledger's latch makes: a crew cancelled while tasks
+# ran is latched CANCELLED with no results, then takes the results of the tasks that
+# finished (`agnostic_ledger_latch`). Its status does not change, so neither does the
+# row's. A crew stored with no row yet (the first write failed) is written now instead.
+# Returns 1 when written; 0 when the status is not CANCELLED or a write failed.
+fn agnostic_crews_resave_row(row, doc: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_resave_row_locked(row, doc);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_resave_row`'s body. The caller holds the store lock.
+fn _agnostic_crews_resave_row_locked(row, doc: Str): i64 {
+    if (row == 0 || doc == 0) { return 0; }
+    if (agnostic_crew_row_get(row, AGNOSTIC_CR_STATUS) != AGNOSTIC_CREW_CANCELLED) { return 0; }
+    var crew_id = agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID);
+    if (crew_id == 0) { return 0; }
+    if (_agnostic_crews_exists_locked(crew_id) == 0) { return _agnostic_crews_save_row_locked(row, doc); }
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db, "UPDATE agnostic_crews SET doc = ? WHERE crew_id = ?");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(doc), str_len(doc));
+    patra_bind_text(st, 1, str_data(crew_id), str_len(crew_id));
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    if (rc != PATRA_OK) { return 0; }
+    # The listing's tokens and cost, as the outcome now has them. As in the first write,
+    # the index row's own result does not change the answer.
+    var si = patra_prepare(db, "UPDATE agnostic_crew_index SET tokens = ?, cost = ? WHERE crew_id = ?");
+    if (si == 0) { return 1; }
+    patra_bind_int(si, 0, agnostic_crew_row_get(row, AGNOSTIC_CR_TOKENS));
+    patra_bind_int(si, 1, agnostic_crew_row_get(row, AGNOSTIC_CR_COST));
+    patra_bind_text(si, 2, str_data(crew_id), str_len(crew_id));
+    patra_exec_prepared(db, si);
+    patra_finalize(si);
     return 1;
 }
 

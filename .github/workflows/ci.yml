@@ -136,12 +136,6 @@ jobs:
         # supports it". Skips rather than fails when the cross compiler is not
         # in the installed bundle, so the gate does not go red on a toolchain
         # that legitimately cannot produce it.
-        #
-        # ⛔ A COMPILE GATE ONLY since 0.1.7 — the binary is not uploaded and not
-        # released. It builds, but dies with SIGBUS at startup on real aarch64
-        # hardware (cyrius does not pad typed-array globals; see release.yml).
-        # Kept so aarch64 stays compiling and can come back by re-enabling the
-        # artifact, not by repairing a build that rotted while it was off.
         run: |
           if [ ! -x "$HOME/.cyrius/bin/cycc_aarch64" ] && [ ! -x "$HOME/.cyrius/bin/cycc-native-aarch64" ]; then
             echo "::notice::no aarch64 cross compiler in this bundle — skipping"
@@ -180,13 +174,12 @@ jobs:
           cyrius bench
 
       - name: Upload binaries
-        # x86_64 only: the aarch64 binary is withheld until cyrius aligns globals —
-        # see the "Build aarch64" note in release.yml. Restore its line here with it.
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agnostic-linux
           path: |
             build/agnostic
+            build/agnostic-aarch64
           if-no-files-found: error
 
   # ==========================================================================

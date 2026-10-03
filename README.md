@@ -12,11 +12,18 @@ cyrius test                              # run [build].test + tests/*.tcyr
 
 ## WebGUI
 
-`./build/agnostic` serves the WebGUI at `http://127.0.0.1:8000/ui`. Views such as Swarm Command are
-compiled-in plugins that an administrator switches on in its Settings tab — see
-[`docs/guides/webgui-plugins.md`](docs/guides/webgui-plugins.md). Swarm Command keeps swarms on the
-server, per tenant, prices them with headless simulations, runs them as live crews and reports what
-they really cost, and can watch any crew of your tenant.
+`./build/agnostic` serves the WebGUI at `http://127.0.0.1:8000/ui`. Its views are compiled-in plugins
+that an administrator switches on in its Settings tab — see
+[`docs/guides/webgui-plugins.md`](docs/guides/webgui-plugins.md):
+
+- **Crews** — every crew of your tenant by status; a crew's plan, live progress, results and real
+  cost; cancel one that is running.
+- **Library** — the preset crews built in, and the agent definitions stored here, which it can write.
+- **Audit trail** — whether the tamper-evident chain verified, and its newest entries (administrators).
+- **Swarm Command** — keeps swarms on the server, per tenant, prices them with headless simulations,
+  runs them as live crews and reports what they really cost, and watches any crew on its map.
+
+A view's state is in the URL (`/ui#plugin/crews?crew=<uuid>`), so a link to a crew can be shared.
 
 ## API
 

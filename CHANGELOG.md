@@ -4,6 +4,105 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.10] — 2026-10-02
+
+**Views over the real surface, and aarch64 is back** — Crews, Library and Audit trail as first-party
+plugins that link to each other and to Swarm Command, one bridge client every plugin carries, a
+cancelled crew that keeps its finished work, and Cyrius 6.6.14 with the aarch64 release artifact
+restored after every suite and the server ran natively on a Raspberry Pi 4.
+
+**29 suites, 1,885 assertions, 0 failed** — on x86_64 and natively on aarch64 — plus **61 JavaScript
+tests** under Node, and 41 checks in headless Chromium against a live server.
+
+### Added — three views over the real surface (M9)
+
+- **Crews** (`crews`, `data: live`): every crew in your tenant, newest first, a page at a time,
+  filtered **All · Active · Completed · Failed · Cancelled** by the server. A crew opened shows its
+  plan, its progress as it happens (by cursor, gaps said out loud), each task's result with the
+  tokens, cost and time it used, and the crew's totals — tokens only when metered, cost only when
+  priced, a placeholder run labelled as one. **Cancel**, for a role that may write; **Watch in Swarm
+  Command** for the same crew on the map.
+- **Library** (`library`, `data: live`): the preset crews built in (their agents, roles, goals,
+  tools, backstories) and the agent definitions stored here — create, edit, delete, or **save a
+  preset's agent as a definition**.
+- **Audit trail** (`audit`, `data: live`, ADMIN): whether the hash chain verified at start-up, how many
+  entries it holds and how many appends were dropped, and its newest entries — filterable by severity
+  and text, each with its hash and whether it names the entry before it.
+- Like every plugin they start **OFF** (ADR 0004); Settings switches them on.
+
+### Added — views link to each other through the shell (ADR 0010)
+
+- A view's state is in the shell's URL, **`#plugin/<id>?<params>`** — `/ui#plugin/crews?crew=<uuid>`
+  is a link to a crew. `init` carries the view's `params` and the `views` switched on; a plugin asks
+  the shell to open another view (or itself, with new params) with **`agnostic:navigate`**, and is
+  told when its own params change with **`agnostic:params`**, without a reload. Feature `navigate`.
+  The shell checks every navigate (`AgnosticBridge.checkNavigate`, tested under Node): only
+  `overview`, `settings` or a plugin that is switched on; params at most 256 of `[A-Za-z0-9._~=&%:-]`.
+- **Swarm Command 0.4.0** follows `#plugin/swarm?crew=<uuid>` — it watches that crew — and its Crews
+  list links each crew to the Crews view (**DETAILS**).
+
+### Added — one bridge client (ADR 0010)
+
+- **`src/webgui/kit/host.js`** is the plugin side of the bridge — `class Host` and `errOf` — and every
+  plugin page carries it verbatim between `agnostic-kit:host` markers. `scripts/gen-webgui.sh` refuses
+  a page whose copy differs by a byte, or that asks the server for anything without carrying it;
+  **`--sync-kit`** rewrites the copies. Swarm Command now carries it instead of its own.
+
+### Added — server
+
+- **`GET /api/v1/crews?status=`** — `pending`, `running`, `completed`, `failed`, `cancelled`,
+  `unknown`, or `active` (pending or running) — applied before the page is cut, so a filtered page is
+  full and its `next` continues the filter. Anything else is 422.
+- **`GET /api/v1/audit/entries?limit=&before=`** (ADMIN): the trail's newest entries, newest first —
+  `index` (position in the chain), `timestamp`, `severity`, `source`, `action`, `details`, `hash`,
+  `prev_hash` — with `total`, `oldest_held` and a `next` cursor. Read from the newest 1024 entries,
+  kept in fixed slots seeded at open and filled as each entry is persisted (ADR 0011): libro reads only
+  the whole store, into a heap with no `free()`.
+- **Two permissions** in `src/webgui/permissions.json`: `definitions:write` (create, replace, delete
+  definitions) and `audit:read` (`GET /api/v1/audit` and its entries). A permission is the plugin's
+  limit, never more than its user's role.
+
+### Fixed — cancelling a crew no longer loses its finished work (ADR 0012)
+
+- A crew cancelled while tasks ran was latched CANCELLED with no results, and the engine's later
+  report — the results of the tasks that finished, and what they cost — was refused by the terminal
+  latch. Now a stored CANCELLED with no results takes a terminal observation's results **once**
+  (status, reason and finishing time unchanged), and the stored outcome and its listing row are
+  rewritten once to carry them. The collector picks them up unwatched.
+
+### Changed — Cyrius 6.6.12 → **6.6.14**, and the aarch64 release artifact is restored
+
+- **aarch64 is released again.** Withheld since 0.1.7 because the binary died with SIGBUS at startup
+  (cyrius did not align the global after a typed array); 6.6.13 aligns every global (I9, filed by
+  0.1.7). Every suite (29, 1,885 assertions) and the DCE release binary itself — health, readiness,
+  a crew submitted, listed (filtered) and read, the audit entries, the WebGUI and its four plugin
+  pages — ran **natively on a Raspberry Pi 4**. `cross_bins`, the release step, the asset and
+  checksum lines, and CI's upload are back.
+- **Certified the CI way**: in a replica with no sibling checkouts and an **empty** dep cache,
+  `lib sync --full` + `deps` from an empty `lib/` reproduced `lib/` and `cyrius.lock` byte for byte,
+  and `check-symbols`, `check-clean` and both DCE builds passed. Every stdlib file is byte-identical to
+  `git show 6.6.14:lib/<mod>`; the nine commit pins did not move.
+- 6.6.14 folds **sigil 3.13.7** (6.6.12 folded 3.13.5); patra stays 1.15.1. `lib/` and the lock are
+  re-provisioned (112 snapshot files, 119 locked, 9 commit pins); `lib/math.cyr` no longer defines the
+  `f64_le` / `f64_ge` / `f64_trunc` builtins 6.6.13 reserved.
+- `bayan_json_v_obj_get` is deprecated in bayan 1.5.11: agnostic's four calls (`src/auth/jwt.cyr`)
+  and the suite's use `bayan_json_v_obj_get_by_cstr`.
+- **sigil 3.13.6+ installs a crypto block only on a thread that has none**, so mount's
+  `crypto_tls_main_init()` now leaves a main thread alone when `main` already gave it one — which
+  agnostic's does. `serve/mount-crypto-main-thread` asserts the new contract (settled: sigil installed
+  main's block, or can read the one main has) instead of the old flag value; the worker-keeps-its-TLS
+  regression it guards still passes. The call stays, for x86 kernels before 5.9, where the thread
+  pointer cannot be read.
+- `cyrius.cyml` notes: a `[deps.X]` without `modules` now means `dist/X.cyr` or warns (I10, filed by
+  0.1.7) — such a block is an override pin, which this repo does not carry.
+
+### Recorded — agnosai follow-ups (release agnosai, then re-pin)
+
+- agnosai 2.1.2's dist still calls the deprecated `bayan_json_v_obj_get` and passes `Str`s where 6.6.14
+  wants a `cstring` (`file_open(str_data(...))` at `lib/agnosai.cyr` 8017 / 30392): warnings in every
+  build here. And it declares sigil 3.13.5 where 6.6.14 folds 3.13.7 — harmless (the fold wins and
+  `lib/` is the fold's bytes), but the lock's sigil line names a commit that is not what `lib/` holds.
+
 ## [0.1.9] — 2026-10-02
 
 **The plugin platform is checked by the server, and Swarm Command runs on real numbers** — a crew's

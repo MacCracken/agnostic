@@ -276,7 +276,7 @@ canvas.timeline { width: 100%; height: 16px; display: block; border-radius: 3px;
 .lsec-title { display: flex; align-items: center; gap: 8px; }
 .lsec-title .spacer { flex: 1; }
 .crew-list { display: flex; flex-direction: column; gap: 4px; }
-.crew-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; gap: 10px; align-items: center; padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 6px; background: rgba(12,19,28,.85); font-size: 12px; }
+.crew-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto auto; gap: 10px; align-items: center; padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 6px; background: rgba(12,19,28,.85); font-size: 12px; }
 .crew-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crew-row .nm small { color: var(--dim); margin-left: 6px; font: 11px var(--mono); }
 .crew-row .st { font: 600 10.5px var(--mono); letter-spacing: .05em; }
@@ -629,14 +629,6 @@ function oneLine(s, n) {
 }
 const deepCopy = (x) => JSON.parse(JSON.stringify(x));
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
-/** `n` random characters of [a-z0-9] — request-id prefixes, idempotency keys. */
-function randomToken(n) {
-  const b = new Uint8Array(n);
-  try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
-  let s = '';
-  for (const x of b) s += (x % 36).toString(36);
-  return s;
-}
 /** Median / quantile of a numeric array (copied, not sorted in place). */
 function quantile(xs, q) {
   if (!xs.length) return 0;
@@ -785,43 +777,63 @@ function makeCommand(type, agentIds, target, payload) {
 }
 
 /* =====================================================================================
- *  SECTION 1b · HOST — the plugin side of agnostic's host bridge (ADR 0005)
+ *  SECTION 1b · HOST — the plugin side of agnostic's host bridge, carried verbatim from
+ *  src/webgui/kit/host.js: scripts/gen-webgui.sh refuses a copy that differs by a byte, and
+ *  `./scripts/gen-webgui.sh --sync-kit` rewrites it. Opened on its own (a new tab) there is no
+ *  shell: `mode` is 'standalone', and this page keeps its swarms in this browser instead.
+ * ===================================================================================== */
+/* agnostic-kit:host begin — DO NOT EDIT A COPY: the canonical source is src/webgui/kit/host.js,
+ * and scripts/gen-webgui.sh refuses a plugin page whose copy differs (`--sync-kit` rewrites them).
  *
- *  Framed by the agnostic shell, this page runs in an opaque origin with connect-src 'none': it
+ *  Host — the plugin side of agnostic's host bridge (ADR 0005, 0007, 0010).
+ *
+ *  Framed by the agnostic shell, a plugin page runs in an opaque origin with connect-src 'none': it
  *  cannot reach the API. It asks the shell by postMessage, and the shell answers only what this
- *  plugin's manifest permits, with the signed-in user's own credential (which the page never
- *  sees) — and the server still checks that user's role. Protocol 1:
+ *  plugin's manifest permits, with the signed-in user's own credential (which the page never sees)
+ *  — and the server checks the same permissions, and that user's role, again. Protocol 1:
  *
  *     page  → shell   {type:'agnostic:hello', protocol}
- *     shell → page    {type:'agnostic:init', protocol, plugin:{id,name,version}, permissions[], user:{auth, signedIn, role}}
- *     page  → shell   {type:'agnostic:request', id, method, path, body?}
- *     shell → page    {type:'agnostic:response', id, status, data}     status 0 = never reached the server
+ *     shell → page    {type:'agnostic:init', protocol, features[], plugin:{id,name,version},
+ *                      permissions[], user:{auth, signedIn, role}, params, views[{id,name}]}
+ *     page  → shell   {type:'agnostic:request', id, method, path, body?, ifMatch?, ifNoneMatch?,
+ *                      idempotencyKey?}
+ *     shell → page    {type:'agnostic:response', id, status, data, etag?}  status 0 = never reached it
+ *     page  → shell   {type:'agnostic:navigate', to, params?}             open another view (0.1.10)
+ *     shell → page    {type:'agnostic:params', params}                    this view's params changed
  *
- *  The shell re-sends init after a sign-in or sign-out. Opened on its own (a new tab) there is no
- *  shell: `mode` is 'standalone', and the page keeps its swarms in this browser instead.
- *
- *  Since agnostic 0.1.9 a request may carry `ifMatch` / `ifNoneMatch` (a document's revision, which
- *  comes back as `etag`) and `idempotencyKey` (a POST that is safe to retry), and its path may
- *  carry a query string — each when the shell lists the feature in `init.features`. The server
- *  checks every bridged request against this plugin's permissions too, not only the shell.
- * ===================================================================================== */
+ *  The shell re-sends init after a sign-in or sign-out. `params` is the part of the shell's URL after
+ *  `#plugin/<id>?` — a deep link into this view, e.g. `crew=<uuid>`. `views` lists the views switched
+ *  on, so a page offers a link only to one that will open. Opened on its own (a new tab) there is no
+ *  shell: `mode` is 'standalone', and the page must degrade.
+ */
 class Host {
-  constructor() {
+  constructor({ helloMs = 3000, timeoutMs = 30000 } = {}) {
     this.mode = 'connecting';  // 'connecting' | 'connected' | 'standalone'
     this.info = null;          // the latest agnostic:init
+    this.params = '';          // this view's params, from init or agnostic:params
     this.pending = new Map();  // request id → {resolve, timer}
     this.seq = 0;
+    this.timeoutMs = timeoutMs;
     // A random prefix per page load: request ids restart with every load, and a reply the shell
     // sends after a reload must never match a request of this page that happens to share a number.
-    this.prefix = 'q' + randomToken(6) + '-';
+    this.prefix = 'q' + Host.token(6) + '-';
     this.listeners = new Set();
+    this.paramListeners = new Set();
     let framed = false;
     try { framed = window.parent !== window; } catch (err) { framed = true; }
     if (!framed) { this.mode = 'standalone'; return; }
     window.addEventListener('message', (e) => this.onMessage(e));
     try { window.parent.postMessage({ type: 'agnostic:hello', protocol: 1 }, '*'); } catch (err) { /* detached */ }
     // A parent that never answers is not the agnostic shell (or is an older one): stand alone.
-    this.timer = setTimeout(() => { if (this.mode === 'connecting') this.setMode('standalone'); }, 3000);
+    this.timer = setTimeout(() => { if (this.mode === 'connecting') this.setMode('standalone'); }, helloMs);
+  }
+  /** `n` random characters of [a-z0-9]. */
+  static token(n) {
+    const b = new Uint8Array(n);
+    try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
+    let s = '';
+    for (const x of b) s += (x % 36).toString(36);
+    return s;
   }
   onMessage(e) {
     if (e.source !== window.parent) return;
@@ -834,9 +846,17 @@ class Host {
         permissions: Array.isArray(m.permissions) ? m.permissions.filter((x) => typeof x === 'string') : [],
         features: Array.isArray(m.features) ? m.features.filter((x) => typeof x === 'string') : [],
         user: { auth: typeof u.auth === 'string' ? u.auth : 'unknown', signedIn: !!u.signedIn, role: typeof u.role === 'string' ? u.role : null },
+        views: Array.isArray(m.views) ? m.views.filter((v) => v && typeof v.id === 'string' && typeof v.name === 'string') : [],
       };
       clearTimeout(this.timer);
+      const params = typeof m.params === 'string' ? m.params : '';
+      const changed = params !== this.params;
+      this.params = params;
       this.setMode('connected');
+      if (changed) this.emitParams();
+    } else if (m.type === 'agnostic:params') {
+      this.params = typeof m.params === 'string' ? m.params : '';
+      this.emitParams();
     } else if (m.type === 'agnostic:response') {
       const r = this.pending.get(m.id);
       if (!r) return;
@@ -846,21 +866,42 @@ class Host {
     }
   }
   setMode(mode) { this.mode = mode; for (const fn of this.listeners) fn(this); }
+  /** Called on every init (and the fall back to standalone); returns an unsubscribe. */
   onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  /** Called when this view's params change — a deep link followed while it is open. */
+  onParams(fn) { this.paramListeners.add(fn); return () => this.paramListeners.delete(fn); }
+  emitParams() { for (const fn of this.paramListeners) fn(this.params); }
+  /** One param of this view: `param('crew')` for `crew=<uuid>`; '' when absent. */
+  param(name) {
+    for (const pair of this.params.split('&')) {
+      const i = pair.indexOf('=');
+      const k = i < 0 ? pair : pair.slice(0, i);
+      if (k === name) { try { return decodeURIComponent(i < 0 ? '' : pair.slice(i + 1)); } catch (err) { return ''; } }
+    }
+    return '';
+  }
   can(permission) { return this.mode === 'connected' && this.info.permissions.includes(permission); }
-  /** Whether the shell's bridge carries `feature` ('query' | 'revisions' | 'idempotency'). */
+  /** Whether the shell's bridge carries `feature` ('query' | 'revisions' | 'idempotency' | 'navigate'). */
   has(feature) { return this.mode === 'connected' && this.info.features.includes(feature); }
-  pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || 'swarm'; }
+  pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || ''; }
   /** The user's role when the server enforces roles; null when auth is off or unknown. */
   role() { return this.info && this.info.user.auth === 'required' ? this.info.user.role : null; }
-  /** Whether the user may write at all (start crews, save swarms): any role but viewer. */
+  /** Whether the user may write at all: any role but viewer. */
   mayWrite() { return this.mode === 'connected' && this.role() !== 'viewer'; }
+  /** Whether view `id` is switched on — so a link to it will open. */
+  hasView(id) { return this.mode === 'connected' && this.info.views.some((v) => v.id === id); }
+  /** Open another view (or 'overview' / 'settings'), with params for it. Resolves false when it cannot. */
+  navigate(to, params) {
+    if (!this.has('navigate')) return false;
+    try { window.parent.postMessage({ type: 'agnostic:navigate', to: String(to), params: params ? String(params) : '' }, '*'); } catch (err) { return false; }
+    return true;
+  }
   /** `opts`: {ifMatch, ifNoneMatch, idempotencyKey}, each sent only when the shell carries it. */
   request(method, path, body, opts) {
     if (this.mode !== 'connected') return Promise.resolve({ status: 0, data: { error: 'not connected to agnostic' }, etag: null });
     const id = this.prefix + ++this.seq;
     return new Promise((resolve) => {
-      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' }, etag: null }); }, 30000);
+      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' }, etag: null }); }, this.timeoutMs);
       this.pending.set(id, { resolve, timer });
       const msg = { type: 'agnostic:request', id, method, path };
       if (body !== undefined) msg.body = body;
@@ -877,6 +918,7 @@ function errOf(r) {
   if (r && r.data && typeof r.data.error === 'string') return r.data.error;
   return r && r.status ? 'HTTP ' + r.status : 'the server is unreachable';
 }
+/* agnostic-kit:host end */
 
 /* =====================================================================================
  *  SECTION 2 · SIM — world, scenarios and the deterministic simulator
@@ -5714,7 +5756,7 @@ class SwarmLibrary {
   }
   get(id) { return this.specs.get(id) || null; }
   list() { return [...this.specs.values()].sort((a, b) => b.updated - a.updated); }
-  docPath(key) { return '/api/v1/plugins/' + this.host.pluginId() + '/data' + (key ? '/' + key : ''); }
+  docPath(key) { return '/api/v1/plugins/' + (this.host.pluginId() || 'swarm') + '/data' + (key ? '/' + key : ''); }
   async load() {
     const seq = ++this.seq, be = this.backend();
     this.error = '';
@@ -5912,6 +5954,8 @@ class Launcher {
     this.host.onChange(() => { this.lib.load(); this.render(); this.loadCrews(); });
     $('crews-refresh').addEventListener('click', () => this.loadCrews(true));
     $('crews-list').addEventListener('click', (e) => {
+      const v = e.target.closest('button[data-view-crew]');
+      if (v) { this.host.navigate('crews', 'crew=' + v.dataset.viewCrew); return; }
       const b = e.target.closest('button[data-crew]');
       const c = b && this.crews.find((x) => x.crew_id === b.dataset.crew);
       if (c) this.app.watchCrew(c);
@@ -5992,6 +6036,7 @@ class Launcher {
         + '<span class="st ' + cls + '">' + escapeHtml(st.toUpperCase()) + '</span>'
         + '<span class="mt">' + (Number.isInteger(c.tasks_submitted) ? c.tasks_submitted + ' tasks' : '') + (took ? ' · ' + took : '') + '</span>'
         + '<span class="mt" title="what agnostic metered">' + escapeHtml(meter || when) + '</span>'
+        + (this.host.hasView('crews') ? '<button class="lbtn" type="button" data-view-crew="' + escapeHtml(c.crew_id) + '" title="Its plan, progress and results, in the Crews view">DETAILS</button>' : '')
         + '<button class="lbtn" type="button" data-crew="' + escapeHtml(c.crew_id) + '" title="Watch it on the map">WATCH ▸</button></div>';
     }).join('');
   }
@@ -6870,6 +6915,10 @@ class App {
     this.attract = false;
     this.host = new Host();
     this.library = new SwarmLibrary(this.host);
+    // A deep link — `#plugin/swarm?crew=<uuid>`, from the Crews view — watches that crew (0.1.10).
+    this.linkedCrew = '';
+    this.host.onParams(() => this.openFromParams());
+    this.library.onChange(() => { if (this.library.state === 'ready' && this.linkedCrew) this.openFromParams(); });
     this.presetCache = new Map();
     this.store = new Store();
     this.layout = new Layout();
@@ -7030,6 +7079,22 @@ class App {
     // The swarm's current plan lends its titles and roles only if the crew's tasks are the same.
     this.startCrew(spec, specToCrewRequest(spec, preset), crewId.toLowerCase());
   }
+  /**
+   * Follow a deep link to a crew: watch it, as the Crews list's WATCH does. Waits for the
+   * library, so a crew one of these swarms started opens as that swarm's run; reads the crew's
+   * name first, so one it did not opens under its own name. Once per link.
+   */
+  async openFromParams() {
+    const id = this.host.param('crew').toLowerCase();
+    if (!RE_CREW_ID.test(id)) { this.linkedCrew = ''; return; }
+    this.linkedCrew = id;
+    if (this.library.state !== 'ready' || !this.host.can('crews:read')) return;
+    this.linkedCrew = '';
+    if (this.live && this.live.source && this.live.source.crewId === id) return;
+    const r = await this.host.request('GET', '/api/v1/crews/' + id);
+    if (r.status !== 200 || !r.data) { this.hud.toast('Could not open that crew: ' + errOf(r), 'bad'); return; }
+    this.watchCrew({ crew_id: id, name: typeof r.data.name === 'string' ? r.data.name : '' });
+  }
   /** Watch any crew of this tenant — from the Crews list — whether or not one of these swarms started it. */
   watchCrew(crew) {
     const id = String(crew && crew.crew_id || '').toLowerCase();
@@ -7053,7 +7118,7 @@ class App {
     this.recording = [];
     this.store.reset();
     this.resetUI();
-    const key = crewId ? null : 'sw-' + s.id + '-' + randomToken(12);
+    const key = crewId ? null : 'sw-' + s.id + '-' + Host.token(12);
     const at = Date.now();
     if (!crewId && saved) {
       this.library.patch(s.id, (x) => { x.runs.push({ kind: 'live', at, status: 'submitting', key, engine: '' }); }, { touch: false });

@@ -1,0 +1,9 @@
+{
+  "id": "audit",
+  "name": "Audit trail",
+  "description": "The tamper-evident audit trail: whether its chain verified, whether any record was dropped, and its newest entries — who did what, and when. Administrators only.",
+  "version": "0.1.0",
+  "data": "live",
+  "entry": "index.html",
+  "permissions": ["audit:read"]
+}
