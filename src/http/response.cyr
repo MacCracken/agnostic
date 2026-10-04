@@ -101,18 +101,123 @@ fn agnostic_response_error_a(a, status, message: Str): i64 {
     return agnostic_response_json_a(a, status, obj);
 }
 
-# An error response that also names a machine-readable `code` (a C string) — for refusals
-# a client acts on rather than shows, like the plugin rung's `plugin_off` (0.1.9).
-fn agnostic_response_error_code_a(a, status, code, message: Str): i64 {
+# ## The error codes are a closed set (0.1.13)
+#
+# A refusal a client ACTS on, rather than shows, also names a machine-readable `code`.
+# The codes are this enum and nothing else. `agnostic_response_error_code_a` takes a
+# member, not a string, so no handler can send a code the catalogue does not list, and
+# the API schema (H5) lists them from here. Until 0.1.13 each was a string literal at
+# its call site, with its status beside it.
+#
+# Appended, never renumbered: the codes run 1, 2, 3 … with no gap, so a caller listing
+# them stops at the first one `agnostic_error_code_name` answers 0 for. That is structural,
+# not a convention: code `ec` is row `ec - 1` of the table below, a row is written only as
+# the next one, and a lookup answers nothing below 1 or past the last row.
+enum AgnosticErrorCode {
+    AGNOSTIC_EC_PLUGIN_UNKNOWN   = 1;   # 403: no such plugin is built in (ADR 0007)
+    AGNOSTIC_EC_PLUGIN_OFF       = 2;   # 403: the plugin is switched off; the shell leaves it
+    AGNOSTIC_EC_PLUGIN_FORBIDDEN = 3;   # 403: the plugin is not granted this route
+    AGNOSTIC_EC_REVISION         = 4;   # 412: a plugin document changed since it was read
+}
+
+enum AgnosticErrorCodeRowOff {
+    AGNOSTIC_ECROW_NAME        = 0;     # NUL-terminated cstring, the wire code
+    AGNOSTIC_ECROW_STATUS      = 8;     # the HTTP status it is sent with
+    AGNOSTIC_ECROW_SIZE        = 16;
+    AGNOSTIC_ECROW_TABLE_BYTES = 128;   # the table's storage: 8 rows, 4 used
+}
+
+# The rows, AGNOSTIC_ECROW_SIZE bytes each: code `ec` is row `ec - 1`.
+var _agnostic_ec_rows: u8[AGNOSTIC_ECROW_TABLE_BYTES];
+
+# How many rows `_agnostic_ec_add` has refused: 0 after a correct build, which
+# `http/error-codes` pins. Declared before the build below, or its initialiser would run
+# after it and wipe the count.
+var _agnostic_ec_refused = 0;
+
+# Write code `ec` as row `n` and answer the next row's index. A code that is not the next
+# one (`ec != n + 1`: a gap, a repeat, a renumbering) or that would not fit is refused — `n`
+# comes back unchanged — so the table cannot hold a gap or a row past its storage. A
+# refused code is neither listed nor sent (it answers 500, below), so it cannot be sent
+# unlisted, and it is counted, so it cannot be refused silently either.
+fn _agnostic_ec_add(n, ec, name, status): i64 {
+    if ((ec != n + 1) || ((n + 1) * AGNOSTIC_ECROW_SIZE > AGNOSTIC_ECROW_TABLE_BYTES)) {
+        _agnostic_ec_refused = _agnostic_ec_refused + 1;
+        return n;
+    }
+    var r = &_agnostic_ec_rows + n * AGNOSTIC_ECROW_SIZE;
+    store64(r + AGNOSTIC_ECROW_NAME, name);
+    store64(r + AGNOSTIC_ECROW_STATUS, status);
+    return n + 1;
+}
+
+# The catalogue. Answers the row count.
+#
+# Each code's name and status are defined here and nowhere else, on one line, so the two
+# cannot drift apart.
+fn _agnostic_ec_table_build(): i64 {
+    var n = 0;
+    n = _agnostic_ec_add(n, AGNOSTIC_EC_PLUGIN_UNKNOWN, "plugin_unknown", HTTP_FORBIDDEN);
+    n = _agnostic_ec_add(n, AGNOSTIC_EC_PLUGIN_OFF, "plugin_off", HTTP_FORBIDDEN);
+    n = _agnostic_ec_add(n, AGNOSTIC_EC_PLUGIN_FORBIDDEN, "plugin_forbidden", HTTP_FORBIDDEN);
+    n = _agnostic_ec_add(n, AGNOSTIC_EC_REVISION, "revision", AGNOSTIC_HTTP_PRECONDITION_FAILED);
+    return n;
+}
+
+# How many codes the table holds. Built at load, after the statuses it stores —
+# `HTTP_FORBIDDEN` is sandhi's, prepended before `src/`, and `src/http/status.cyr` is
+# included first — and never written again, so workers read it without a lock.
+#
+# ⚠ **At load means in include order.** A `var` initialiser in a module that `src/app.cyr`
+# includes before this one would see an empty table and every code would answer 500. None
+# builds a coded refusal at load today; keep it that way.
+var _agnostic_ec_nrows = _agnostic_ec_table_build();
+
+# Code `ec`'s row, or 0 for a value the catalogue does not list.
+#
+# The one bounds check every reader goes through. It holds whether `<` compares signed or
+# unsigned: either way only 1 through the row count pass it.
+fn _agnostic_error_code_row(ec): i64 {
+    if (ec < 1 || ec > _agnostic_ec_nrows) { return 0; }
+    return &_agnostic_ec_rows + (ec - 1) * AGNOSTIC_ECROW_SIZE;
+}
+
+# The wire name of error code `ec` — "plugin_off" and so on, a C string — or 0 for a
+# value the catalogue does not list.
+fn agnostic_error_code_name(ec): i64 {
+    var r = _agnostic_error_code_row(ec);
+    if (r == 0) { return 0; }
+    return load64(r + AGNOSTIC_ECROW_NAME);
+}
+
+# The HTTP status error code `ec` is sent with, or 0 for a value the catalogue does not list.
+fn agnostic_error_code_status(ec): i64 {
+    var r = _agnostic_error_code_row(ec);
+    if (r == 0) { return 0; }
+    return load64(r + AGNOSTIC_ECROW_STATUS);
+}
+
+# An error response that also names a machine-readable `code` — for refusals a client acts
+# on rather than shows, like the plugin rung's `plugin_off` (0.1.9) — allocated in `a`.
+# `ec` is an `AgnosticErrorCode`; the status and the code both come from the catalogue.
+#
+# ⚠ **A value the catalogue does not list answers 500 "unknown error code", with no
+# `code`**, rather than a refusal with an empty or invented one. It fails closed: a client
+# switching on `code` never sees a value the catalogue does not list.
+fn agnostic_response_error_code_a(a, ec, message: Str): i64 {
+    var row = _agnostic_error_code_row(ec);
+    if (row == 0) {
+        return agnostic_response_error_a(a, HTTP_INTERNAL, str_from_a(a, "unknown error code"));
+    }
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }
     var msg = bayan_json_v_str_new_a(a, message);
     if (msg == 0) { return 0; }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ERROR, msg);
-    var cv = bayan_json_v_str_new_a(a, str_from_a(a, code));
+    var cv = bayan_json_v_str_new_a(a, str_from_a(a, load64(row + AGNOSTIC_ECROW_NAME)));
     if (cv == 0) { return 0; }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CODE, cv);
-    return agnostic_response_json_a(a, status, obj);
+    return agnostic_response_json_a(a, load64(row + AGNOSTIC_ECROW_STATUS), obj);
 }
 
 # An error response from the global allocator. Not for request paths.

@@ -2,7 +2,7 @@
   "id": "crews",
   "name": "Crews",
   "description": "Every crew in your tenant, live: filter by status, open one to see its plan, its progress as it happens, each task's result and what it cost — and cancel one that is still running.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "data": "live",
   "entry": "index.html",
   "permissions": ["crews:read", "crews:write"]

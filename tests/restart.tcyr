@@ -1,0 +1,121 @@
+# agnostic/server/serve — what the real mount does with the crews the last process left in
+# flight (0.1.13, ADR 0013).
+#
+# The other suites call `agnostic_crews_interrupt_inflight` themselves. This one pins that
+# MOUNT does it: a database is seeded the way a killed process leaves one, and the real
+# `agnostic_serve_mount` must turn the crew it never finished into `interrupted` — listed,
+# audited, and answered 200 — before it returns, which is before anything can listen.
+#
+# Its own process, like tests/serve_mount.tcyr: a mount happens once per process, and the
+# seed's `patra_init` installs a TLS block that serve_mount's crypto precondition must never
+# see, so the two cannot share one.
+include "src/app.cyr"
+
+var _T_RDB = "/tmp/agnostic-restart-suite.patra";
+var _T_RAUDIT = "/tmp/agnostic-restart-suite-audit.patra";
+
+# Crew A was accepted and never finished. Crew B finished and its outcome was written, but
+# the process died before its in-flight row was deleted.
+var _T_A = "c0ffee00-0000-4000-8000-00000000000a";
+var _T_B = "c0ffee00-0000-4000-8000-00000000000b";
+
+fn _t_mount_cfg() {
+    var c = agnostic_config_from_env();
+    store64(c + AGNOSTIC_CFG_ADDR, INADDR_LOOPBACK());
+    store64(c + AGNOSTIC_CFG_AUTH_MODE, AGNOSTIC_AUTH_OFF);
+    store64(c + AGNOSTIC_CFG_DB_PATH, str_from(_T_RDB));
+    store64(c + AGNOSTIC_CFG_AUDIT_PATH, str_from(_T_RAUDIT));
+    return c;
+}
+
+# The state a killed process leaves behind, written and closed as that process would.
+fn _t_seed() {
+    sys_unlink(_T_RDB);
+    sys_unlink(_T_RAUDIT);
+    patra_init();
+    agnostic_store_open(str_from(_T_RDB));
+    agnostic_crews_ensure();
+    agnostic_crews_mark_inflight(str_from(_T_A), str_from("_"), str_from("lost work"), 1759000000000, 2,
+      str_from("live"), str_from("dag"));
+    agnostic_crews_mark_inflight(str_from(_T_B), str_from("_"), str_from("finished work"), 1759000000001, 1,
+      str_from("live"), str_from("sequential"));
+    agnostic_crews_save(str_from(_T_B), str_from("finished work"), AGNOSTIC_CREW_COMPLETED,
+      str_from("{\"crew_id\":\"c0ffee00-0000-4000-8000-00000000000b\",\"status\":\"completed\",\"task_count\":1}"));
+    var n = agnostic_crews_inflight_count();
+    agnostic_store_close();
+    return n;
+}
+
+# The stored outcome for `id`, parsed in `a`, or 0.
+fn _t_doc(a, id) {
+    var d = agnostic_crews_doc_a(a, str_from(id));
+    if (d == 0) { return 0; }
+    return bayan_json_v_parse_buf_a(a, str_data(d), str_len(d));
+}
+
+fn test_mount_interrupts_what_the_last_process_left_in_flight() {
+    test_group("restart/mount");
+
+    assert_eq(_t_seed(), 2, "precondition: the dead process left two crews in flight");
+    assert_neq(agnostic_serve_mount(_t_mount_cfg()), 0, "mount succeeds");
+
+    var a = arena_allocator(1048576);
+    var da = _t_doc(a, _T_A);
+    assert_neq(da, 0, "⭐ the crew that never finished has an outcome once mount returns");
+    if (da == 0) { return 0; }   # the reads below need it; the failure is named above
+    assert_eq(str_eq_cstr(agnostic_req_str(da, AGNOSTIC_JK_STATUS), "interrupted"), 1, "⭐ interrupted");
+    assert_eq(str_eq_cstr(agnostic_req_str(da, AGNOSTIC_JK_PROCESS), "dag"), 1, "keeping what was known at submit");
+    var db = _t_doc(a, _T_B);
+    assert_neq(db, 0, "the crew that finished still has its outcome");
+    if (db == 0) { return 0; }
+    assert_eq(str_eq_cstr(agnostic_req_str(db, AGNOSTIC_JK_STATUS), "completed"), 1,
+      "⭐ the crew whose outcome was written is still completed");
+    assert_eq(agnostic_crews_inflight_count(), 0, "and nothing is in flight");
+
+    # Through the routes, as the first request after the listen would see it.
+    var g = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/crews/c0ffee00-0000-4000-8000-00000000000a"),
+      str_from(""), 1048576, 0);
+    assert_eq(agnostic_response_status(g), HTTP_OK, "GET answers 200, not 404");
+    var list = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+        str_from("/api/v1/crews?status=interrupted"), str_from(""), 1048576, 0));
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(list, AGNOSTIC_JK_CREWS)), 1,
+      "and the listing's interrupted filter holds it alone");
+
+    # ⭐ The audit trail names it — once, at WARNING — and says nothing about B.
+    var entries = agnostic_audit_entries_a(a, agnostic_audit_next_index(), 8);
+    var seen = 0;
+    var warned = 0;
+    var named = 0;
+    var about_b = 0;
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var e = vec_get(entries, i);
+        if (str_eq_cstr(agnostic_audit_read_get(e, AGNOSTIC_AR_ACTION), "crew.interrupted") == 1) {
+            seen = seen + 1;
+            if (agnostic_audit_read_get(e, AGNOSTIC_AR_SEV) == SEV_WARNING) { warned = warned + 1; }
+            var det = agnostic_audit_read_get(e, AGNOSTIC_AR_DETAILS);
+            if (str_eq_cstr(det, "crew_id=c0ffee00-0000-4000-8000-00000000000a") == 1) { named = named + 1; }
+            if (str_contains(det, str_from(_T_B)) == 1) { about_b = about_b + 1; }
+        }
+        i = i + 1;
+    }
+    assert_eq(seen, 1, "⭐ exactly one crew.interrupted entry");
+    assert_eq(warned, 1, "at warning");
+    assert_eq(named, 1, "naming the crew: crew_id=<A>");
+    assert_eq(about_b, 0, "and none for the crew that had finished");
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    test_mount_interrupts_what_the_last_process_left_in_flight();
+    agnostic_audit_close();
+    agnostic_store_close();
+    sys_unlink(_T_RDB);
+    sys_unlink(_T_RAUDIT);
+    return assert_summary();
+}
+
+var _agnostic_restart_test_exit = main();
+if (_agnostic_restart_test_exit > 0) { _agnostic_restart_test_exit = 1; }
+sys_exit_group(_agnostic_restart_test_exit);

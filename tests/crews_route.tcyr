@@ -473,6 +473,103 @@ fn test_events_cursor() {
       HTTP_OK, "another parameter beside it is fine");
 }
 
+# Publish `count` events of `type` for crew `id` on `bus`, numbering their data from `from`.
+# A copy of tests/ledger.tcyr's: each suite is its own compile unit.
+fn _t_send(bus, id, type, from, count): i64 {
+    var tx = agnosai_event_bus_sender(bus, id);
+    var i = 0;
+    while (i < count) {
+        var data = bayan_json_v_obj_new();
+        bayan_json_v_obj_set(data, str_from("n"), bayan_json_v_int_new(from + i));
+        agnosai_event_sender_send(tx, agnosai_crew_event_new(id, str_from(type), data));
+        i = i + 1;
+    }
+    return count;
+}
+
+# `GET .../events?{query}` for `id` in `a`, which is emptied first: the body, or 0 unless 200.
+fn _t_events_get(a, id, query): i64 {
+    reset_via(a);
+    var r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, _t_events_url(id, query),
+      str_from(""), 1048576, 0);
+    if (agnostic_response_status(r) != HTTP_OK) { return 0; }
+    return agnostic_response_body(r);
+}
+
+# The `seq` of event `i` in an events body, or -1.
+fn _t_seq_at(body, i): i64 {
+    var evs = bayan_json_v_obj_get_by_str(body, AGNOSTIC_JK_EVENTS);
+    if (i >= bayan_json_v_arr_len(evs)) { return 0 - 1; }
+    return agnostic_req_int(bayan_json_v_arr_get(evs, i), AGNOSTIC_JK_SEQ, 0 - 1);
+}
+
+# ⭐ H3, over HTTP: a reader whose cursor is older than the 256 events a crew holds is
+# TOLD (0.1.9). It gets every event still held, from the oldest, and `missed` counts
+# the numbers after its cursor that the ring had already overwritten. The oldest cursor
+# still answerable is `events[0].seq`, and `after=0` is everything held. Pinned here
+# beside tests/ledger.tcyr's ring tests, which the route only formats.
+#
+# No engine (reset, not initialised): the refresh only drains, so the crew stays
+# `pending` and the test owns every event. 300 are sent in two drained batches of 200
+# and 100 — one batch of 300 would overflow the bus's per-subscriber queue and come
+# out as `lost_events`, the other kind of gap, not as `missed`.
+fn test_events_gap() {
+    test_group("crews/events-gap");
+
+    agnostic_engine_reset();
+    var a = arena_allocator(1048576);
+    var id = str_from("0b1f6c3e-3f7a-4b8e-9d2c-5a6e7f8091a2");
+    var bus = agnosai_event_bus_new();
+    var e = agnostic_ledger_record(id, str_from("gap"), agnosai_event_bus_subscribe(bus, id));
+    _t_send(bus, id, "token", 1, 200);
+    agnostic_ledger_drain(e);
+    _t_send(bus, id, "token", 201, 100);
+    agnostic_ledger_drain(e);
+
+    var behind = _t_events_get(a, id, "after=10");
+    assert_neq(behind, 0, "a cursor older than the window is answered 200, not refused");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(behind, AGNOSTIC_JK_EVENTS)),
+      AGNOSTIC_LEDGER_MAX_EVENTS, "with every event still held");
+    assert_eq(_t_seq_at(behind, 0), 45, "from the oldest held, 45: the oldest cursor is events[0].seq");
+    assert_eq(_t_seq_at(behind, 255), 300, "to the newest, 300");
+    assert_eq(agnostic_req_int(behind, AGNOSTIC_JK_NEXT, 0 - 1), 300, "next is the newest");
+    assert_eq(agnostic_req_int(behind, AGNOSTIC_JK_MISSED, 0 - 1), 34,
+      "and missed says 11 through 44 are gone: the gap is not silent");
+    assert_eq(agnostic_req_int(behind, AGNOSTIC_JK_LOST, 0 - 1), 0, "none of it lost on the bus");
+    assert_eq(agnostic_req_int(behind, AGNOSTIC_JK_DROPPED, 0 - 1), 44,
+      "dropped_events counts the 44 the ring overwrote");
+    assert_eq(str_eq_cstr(agnostic_req_str(behind, AGNOSTIC_JK_STATUS), "pending"), 1,
+      "under the crew's status");
+
+    var zero = _t_events_get(a, id, "after=0");
+    assert_eq(agnostic_req_int(zero, AGNOSTIC_JK_MISSED, 0 - 1), 44, "after=0 missed all 44");
+    assert_eq(_t_seq_at(zero, 0), 45, "and is everything held, from 45");
+
+    var bare = _t_events_get(a, id, 0);
+    assert_eq(agnostic_req_int(bare, AGNOSTIC_JK_MISSED, 0 - 1), 44,
+      "without after, the whole window still says what it lacks");
+
+    var edge = _t_events_get(a, id, "after=43");
+    assert_eq(agnostic_req_int(edge, AGNOSTIC_JK_MISSED, 0 - 1), 1, "a cursor one short of the window missed 1");
+
+    var held = _t_events_get(a, id, "after=44");
+    assert_eq(agnostic_req_int(held, AGNOSTIC_JK_MISSED, 0 - 1), 0, "a cursor at the window's edge missed none");
+    assert_eq(_t_seq_at(held, 0), 45, "and reads on from 45");
+
+    var newest = _t_events_get(a, id, "after=300");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(newest, AGNOSTIC_JK_EVENTS)), 0,
+      "a cursor at the newest reads nothing");
+    assert_eq(agnostic_req_int(newest, AGNOSTIC_JK_NEXT, 0 - 1), 300, "and next stays 300");
+
+    # A cursor past the newest was never issued for this crew; it reads nothing and is
+    # handed back unchanged, as tests/ledger.tcyr pins at the ring.
+    var ahead = _t_events_get(a, id, "after=999");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(ahead, AGNOSTIC_JK_EVENTS)), 0,
+      "a cursor ahead of the crew reads nothing");
+    assert_eq(agnostic_req_int(ahead, AGNOSTIC_JK_MISSED, 0 - 1), 0, "misses nothing");
+    assert_eq(agnostic_req_int(ahead, AGNOSTIC_JK_NEXT, 0 - 1), 999, "and next is 999, unchanged");
+}
+
 var _T_CREWDB = "/tmp/agnostic-crews-route-collector.patra";
 
 # ⭐ The collector (0.1.9): with no client polling at all, a finished crew's outcome is
@@ -516,8 +613,116 @@ fn test_collector_without_a_poller() {
     assert_eq(agnostic_ledger_event_count(entry) > 2, 1, "with its events numbered");
     assert_eq(vec_len(agnostic_ledger_live_entries_a(sa)), 0, "and nothing left to sweep");
     assert_eq(agnostic_collector_sweep_a(sa), 0, "so a further sweep refreshes nothing");
+    # 0.1.13: the outcome the collector wrote discharged the crew's in-flight row with it.
+    assert_eq(agnostic_crews_inflight_count(), 0, "and the crew is no longer in flight");
     agnostic_store_close();
     sys_unlink(_T_CREWDB);
+}
+
+var _T_RESTARTDB = "/tmp/agnostic-crews-route-restart.patra";
+
+# A fresh store at `_T_RESTARTDB` and a fresh engine, as a mount leaves them.
+fn _t_fresh_store() {
+    agnostic_store_close();
+    sys_unlink(_T_RESTARTDB);
+    patra_init();
+    agnostic_store_open(str_from(_T_RESTARTDB));
+    agnostic_crews_ensure();
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+    return 0;
+}
+
+# ⭐ 0.1.13 (ADR 0013): an accepted crew is recorded as in flight at submit, and its outcome
+# — written when a poll latches it — clears the record.
+fn test_submit_marks_the_crew_in_flight() {
+    test_group("crews/inflight-mark");
+
+    _t_fresh_store();
+    var a = arena_allocator(262144);
+    var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"),
+      str_from(_T_BODY), 1048576, 0);
+    assert_eq(agnostic_response_status(resp), AGNOSTIC_HTTP_ACCEPTED, "a crew is accepted");
+    var id = agnostic_req_str(agnostic_response_body(resp), AGNOSTIC_JK_CREW_ID);
+    # No collector and no poll yet, so nothing has latched: the crew has no outcome.
+    assert_eq(agnostic_crews_inflight_count(), 1, "⭐ and recorded as in flight at submit");
+
+    var tries = 0;
+    var done = 0;
+    while (tries < 200 && done == 0) {
+        var b = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+            _t_crew_url(id, ""), str_from(""), 1048576, 0));
+        if (str_eq_cstr(agnostic_req_str(b, AGNOSTIC_JK_STATUS), "completed") == 1) { done = 1; }
+        else { sleep_ms(10); }
+        tries = tries + 1;
+    }
+    assert_eq(done, 1, "polled to its end");
+    assert_neq(agnostic_crews_doc_a(a, id), 0, "its outcome is stored");
+    assert_eq(agnostic_crews_inflight_count(), 0, "⭐ and that cleared the in-flight record");
+    agnostic_store_close();
+    sys_unlink(_T_RESTARTDB);
+}
+
+# ⭐ H4 (0.1.13, ADR 0013): a crew accepted before a restart that never finished answers 200
+# `interrupted` — before 0.1.13 its id, handed out in a 202, answered 404 like a typo.
+fn test_an_interrupted_crew_is_not_404() {
+    test_group("crews/interrupted-not-404");
+
+    _t_fresh_store();
+    var a = arena_allocator(262144);
+    var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"),
+      str_from(_T_BODY), 1048576, 0);
+    var id = agnostic_req_str(agnostic_response_body(resp), AGNOSTIC_JK_CREW_ID);
+    assert_neq(id, 0, "a crew is accepted and never polled");
+
+    # The process dies: the engine and the ledger are gone, the store is reopened, and the
+    # next mount builds a new engine and runs the start-up sweep.
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_store_close();
+    patra_init();
+    agnostic_store_open(str_from(_T_RESTARTDB));
+    agnostic_crews_ensure();
+    agnostic_engine_init(agnostic_config_from_env());
+    assert_eq(agnostic_crews_interrupt_inflight(), 1, "the start-up sweep interrupts it");
+
+    var g = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, ""), str_from(""), 1048576, 0);
+    assert_eq(agnostic_response_status(g), HTTP_OK, "⭐ GET answers 200 — it was 404 before 0.1.13");
+    if (agnostic_response_status(g) != HTTP_OK) {   # the reads below need the body; the failure is named above
+        agnostic_store_close();
+        sys_unlink(_T_RESTARTDB);
+        return 0;
+    }
+    var gb = agnostic_response_body(g);
+    assert_eq(str_eq_cstr(agnostic_req_str(gb, AGNOSTIC_JK_STATUS), "interrupted"), 1,
+      "⭐ with status interrupted — terminal, not a stale pending");
+    assert_eq(agnostic_req_int(gb, AGNOSTIC_JK_TASKS_SUB, 0 - 1), 1, "tasks_submitted 1, as accepted");
+    assert_eq(str_eq_cstr(agnostic_req_str(gb, AGNOSTIC_JK_CREW_SCOPE), "_"), 1, "in the scope it was submitted in");
+    assert_eq(str_eq_cstr(agnostic_req_str(gb, AGNOSTIC_JK_NAME), "sweep"), 1, "and its name");
+
+    # What only the ledger held does not survive: events, plan and cancel answer 404.
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/events")), HTTP_NOT_FOUND,
+      "its events are not held");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan")), HTTP_NOT_FOUND,
+      "nor its plan");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_POST, _t_crew_url(id, "/cancel")), HTTP_NOT_FOUND,
+      "and cancel answers 404, as for any crew from before a restart");
+
+    var list = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+        str_from("/api/v1/crews"), str_from(""), 1048576, 0));
+    var crews = bayan_json_v_obj_get_by_str(list, AGNOSTIC_JK_CREWS);
+    assert_eq(bayan_json_v_arr_len(crews), 1, "the listing holds it");
+    if (bayan_json_v_arr_len(crews) == 1) {
+        var item = bayan_json_v_arr_get(crews, 0);
+        assert_eq(str_eq(agnostic_req_str(item, AGNOSTIC_JK_CREW_ID), id), 1, "that crew");
+        assert_eq(str_eq_cstr(agnostic_req_str(item, AGNOSTIC_JK_STATUS), "interrupted"), 1, "listed as interrupted");
+    }
+
+    assert_eq(_t_status(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", _T_BODY), AGNOSTIC_HTTP_ACCEPTED,
+      "and the new process accepts crews as before");
+    agnostic_store_close();
+    sys_unlink(_T_RESTARTDB);
 }
 
 var _T_DAG = "{\"name\":\"plan\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"llm_model\":\"m1\"},{\"key\":\"a2\",\"role\":\"writer\",\"goal\":\"write it up\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\",\"priority\":\"high\"},{\"description\":\"three\",\"dependencies\":[0,1]}]}";
@@ -648,7 +853,10 @@ fn main() {
     test_events_route();
     test_events_route_status_is_current();
     test_events_cursor();
+    test_events_gap();
     test_collector_without_a_poller();
+    test_submit_marks_the_crew_in_flight();
+    test_an_interrupted_crew_is_not_404();
     test_task_ids_and_plan();
     test_readiness_registers_the_engine();
     return assert_summary();

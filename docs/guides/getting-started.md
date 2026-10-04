@@ -17,6 +17,19 @@ cyrius test                              # run [build].test + tests/*.tcyr
 Then open `http://127.0.0.1:8000/ui`. Plugins such as Swarm Command start switched off — turn one on
 in Settings; see [`webgui-plugins.md`](webgui-plugins.md).
 
+To let a coding agent drive the API, see [`skills/agnostic/SKILL.md`](../../skills/agnostic/SKILL.md)
+and the install note in the README's API section.
+
+## Ask the binary for its API
+
+```sh
+./build/agnostic api schema   # the HTTP API as JSON; needs no configuration and opens nothing
+./build/agnostic help         # the commands
+```
+
+The output is committed as [`../api/generated/schema.json`](../api/generated/schema.json); an API
+change regenerates it with `./scripts/gen-api-schema.sh` (see [`../api/README.md`](../api/README.md)).
+
 ## Layout
 
 - `src/main.cyr` — entry point. Top-level `var r = main(); sys_exit_group(r);`.

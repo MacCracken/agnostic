@@ -1,0 +1,130 @@
+# agnostic/cli — the binary's command line (0.1.13).
+#
+# Until 0.1.13 the binary read no arguments: it served, whatever it was given. It now has one
+# command besides serving, and refuses an argument it does not know rather than ignoring it:
+#
+#   agnostic                 serve, configured by AGNOSTIC_* — exactly as before
+#   agnostic api schema      print the HTTP API as JSON (`src/http/schema.cyr`), exit 0
+#   agnostic help            print usage, exit 0 (`--help` and `-h` too)
+#   anything else            usage on stderr, exit 2
+#
+# Exit codes: 0 ok, 1 failure, 2 usage error — herdr's convention (research note 2026-10-03).
+#
+# ⚠ **An invocation that passed arguments and relied on their being ignored now exits 2.** None
+# is documented: the README and the getting-started guide run the binary bare.
+#
+# ⚠ **Read before the environment, on purpose** (`src/main.cyr`). The schema must not depend on
+# `AGNOSTIC_*`, and an invalid `AGNOSTIC_PORT` must neither change it nor block it.
+#
+# No sakshi calls: this is the binary's own output, not a log line, and it is written before
+# logging is configured.
+
+enum AgnosticCliCmd {
+    AGNOSTIC_CLI_SERVE       = 0;
+    AGNOSTIC_CLI_API_SCHEMA  = 1;
+    AGNOSTIC_CLI_HELP        = 2;
+    AGNOSTIC_CLI_USAGE_ERROR = 3;
+}
+
+enum AgnosticCliExit {
+    AGNOSTIC_EXIT_OK      = 0;
+    AGNOSTIC_EXIT_FAILURE = 1;
+    AGNOSTIC_EXIT_USAGE   = 2;
+}
+
+# The command `n` arguments name — `n` counts the program name, as `argc()` does; `a1` and
+# `a2` are the first two after it, C strings or 0. Pure, so the suite tests it directly.
+#
+# `n` of 0 is serving too: `argc()` answers 0 when `/proc/self/cmdline` cannot be read, and a
+# binary that cannot read its arguments does what it did before it read any.
+fn agnostic_cli_command_of(n, a1, a2): i64 {
+    if (n <= 1) { return AGNOSTIC_CLI_SERVE; }
+    if (a1 == 0) { return AGNOSTIC_CLI_USAGE_ERROR; }
+    if (n == 2) {
+        if (streq(a1, "help") == 1) { return AGNOSTIC_CLI_HELP; }
+        if (streq(a1, "--help") == 1) { return AGNOSTIC_CLI_HELP; }
+        if (streq(a1, "-h") == 1) { return AGNOSTIC_CLI_HELP; }
+        return AGNOSTIC_CLI_USAGE_ERROR;
+    }
+    if (n == 3 && a2 != 0) {
+        if (streq(a1, "api") == 1 && streq(a2, "schema") == 1) { return AGNOSTIC_CLI_API_SCHEMA; }
+    }
+    return AGNOSTIC_CLI_USAGE_ERROR;
+}
+
+# The command this process was started with. `args_init()` must have run.
+#
+# ⚠ `argv(i)` is asked only for an `i` that exists: past the last argument it answers a pointer
+# just beyond `/proc/self/cmdline`'s bytes, not 0.
+fn agnostic_cli_command(): i64 {
+    var n = argc();
+    if (n <= 1) { return AGNOSTIC_CLI_SERVE; }
+    var a2 = 0;
+    if (n >= 3) { a2 = argv(2); }
+    return agnostic_cli_command_of(n, argv(1), a2);
+}
+
+# Write all `n` bytes at `data` to `fd`, retrying a short write and an interrupted one. 0 when
+# every byte was written, 1 otherwise — a closed pipe, a full disk.
+fn agnostic_cli_write_all(fd, data, n): i64 {
+    var off = 0;
+    while (off < n) {
+        var w = sys_write(fd, data + off, n - off);
+        if (w > 0) {
+            off = off + w;
+        } elif (w != 0 - EINTR) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+# Write the C string `s` to `fd`. 0, or 1 when it could not all be written.
+fn _agnostic_cli_put(fd, s): i64 {
+    return agnostic_cli_write_all(fd, s, strlen(s));
+}
+
+# Print the usage text to `fd`: the output for `help`, the complaints for a usage error. 0, or
+# 1 on a failed write.
+fn agnostic_cli_usage(fd): i64 {
+    var rc = _agnostic_cli_put(fd, "usage: agnostic               serve the HTTP API, configured by AGNOSTIC_*\n");
+    rc = rc | _agnostic_cli_put(fd, "       agnostic api schema    print the HTTP API as JSON\n");
+    rc = rc | _agnostic_cli_put(fd, "       agnostic help          print this\n");
+    return rc;
+}
+
+# `agnostic api schema`: print the schema to `out`, and on a failure say why on `err`. The exit
+# code: 0, or 1 when the document could not be built or written — and then nothing, or a
+# truncated document, is on `out`, so a caller must check the code rather than the output.
+fn agnostic_cli_api_schema(out, err): i64 {
+    var a = default_alloc();
+    var text = agnostic_api_schema_text_a(a);
+    if (text == 0) {
+        _agnostic_cli_put(err, "agnostic: could not build the API schema\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    if (agnostic_cli_write_all(out, str_data(text), str_len(text)) != 0) {
+        _agnostic_cli_put(err, "agnostic: could not write the API schema\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    return AGNOSTIC_EXIT_OK;
+}
+
+# Run command `cmd` — anything but AGNOSTIC_CLI_SERVE, which is `src/main.cyr`'s — with its
+# output on `out` and its complaints on `err`, and answer the process exit code. The process
+# passes 1 and 2 (`agnostic_cli_run`); `api/cli` passes files, so it can read what went where.
+fn agnostic_cli_run_on(cmd, out, err): i64 {
+    if (cmd == AGNOSTIC_CLI_API_SCHEMA) { return agnostic_cli_api_schema(out, err); }
+    if (cmd == AGNOSTIC_CLI_HELP) {
+        if (agnostic_cli_usage(out) != 0) { return AGNOSTIC_EXIT_FAILURE; }
+        return AGNOSTIC_EXIT_OK;
+    }
+    _agnostic_cli_put(err, "agnostic: unrecognised arguments\n");
+    agnostic_cli_usage(err);
+    return AGNOSTIC_EXIT_USAGE;
+}
+
+# Run command `cmd` on stdout and stderr, and answer the process exit code.
+fn agnostic_cli_run(cmd): i64 {
+    return agnostic_cli_run_on(cmd, 1, 2);
+}

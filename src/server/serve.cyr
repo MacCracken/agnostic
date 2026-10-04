@@ -498,6 +498,21 @@ fn agnostic_serve_mount(cfg): i64 {
     }
     agnostic_log_kv_str(SK_INFO, "audit chain open", 16, "path", 4, audit_path);
 
+    # --- crews the last process never finished (0.1.13, ADR 0013) -------------
+    #
+    # Every crew still recorded as in flight was accepted before this start and has no
+    # outcome: its thread died with that process. Each becomes a terminal
+    # `interrupted` outcome, listed and audited, so its id answers 200 rather than 404.
+    # After the audit chain opens, so each one is recorded; before `run_pooled`, so no
+    # request — `/ready` (ADR 0001) included — is answered until it is done, and no
+    # readiness check is needed. ⚠ Not fatal: a crew it cannot write keeps its row and
+    # is retried at the next start, and nothing else reads that row meanwhile.
+    var interrupted = agnostic_crews_interrupt_inflight();
+    if (interrupted > 0) {
+        agnostic_log_kv_int(SK_WARN, "crews in flight at the last stop are now interrupted", 52,
+          "crews", 5, interrupted);
+    }
+
     agnostic_ready_register(str_from("engine"), &agnostic_engine_is_ready);
 
     # ⚠ **The two size ceilings interact, and the interaction leaks.** A request

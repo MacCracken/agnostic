@@ -480,11 +480,11 @@ fn agnostic_plugin_gate_a(a, pid: Str, method, path: Str): i64 {
     var p = 0;
     if (agnostic_plugin_id_is_valid(pid) == 1) { p = agnostic_plugin_find(pid); }
     if (p == 0) {
-        return agnostic_response_error_code_a(a, HTTP_FORBIDDEN, "plugin_unknown",
+        return agnostic_response_error_code_a(a, AGNOSTIC_EC_PLUGIN_UNKNOWN,
           str_from_a(a, "no such plugin is built into this server"));
     }
     if (agnostic_plugin_enabled(p) == 0) {
-        return agnostic_response_error_code_a(a, HTTP_FORBIDDEN, "plugin_off",
+        return agnostic_response_error_code_a(a, AGNOSTIC_EC_PLUGIN_OFF,
           str_from_a(a, "this plugin is switched off; an administrator can turn it on in Settings"));
     }
     if (agnostic_plugin_granted_a(a, p, method, path) == 0) {
@@ -493,8 +493,7 @@ fn agnostic_plugin_gate_a(a, pid: Str, method, path: Str): i64 {
         var sb = str_builder_new_a(a);
         str_builder_add_a(a, sb, agnostic_plugin_name(p));
         str_builder_add_cstr_a(a, sb, " is not permitted to make this request");
-        return agnostic_response_error_code_a(a, HTTP_FORBIDDEN, "plugin_forbidden",
-          str_builder_build_a(a, sb));
+        return agnostic_response_error_code_a(a, AGNOSTIC_EC_PLUGIN_FORBIDDEN, str_builder_build_a(a, sb));
     }
     return 0;
 }

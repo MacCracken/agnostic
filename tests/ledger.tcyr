@@ -185,6 +185,8 @@ fn test_unknown_does_not_latch_permanently() {
     agnostic_ledger_latch(e, AGNOSTIC_CREW_UNKNOWN, str_from("cannot account for this crew"), 0);
     assert_eq(agnostic_ledger_status(e), AGNOSTIC_CREW_UNKNOWN, "unknown is recorded");
     assert_eq(agnostic_status_is_terminal(AGNOSTIC_CREW_UNKNOWN), 0, "and is not terminal");
+    # 0.1.13 (ADR 0013): INTERRUPTED is — a crew a restart interrupted will never run again.
+    assert_eq(agnostic_status_is_terminal(AGNOSTIC_CREW_INTERRUPTED), 1, "while interrupted is terminal");
     assert_eq(agnostic_ledger_latch(e, AGNOSTIC_CREW_COMPLETED, 0, 0), 1,
       "so a real outcome can still arrive");
     assert_eq(agnostic_ledger_status(e), AGNOSTIC_CREW_COMPLETED, "and wins");

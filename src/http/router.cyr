@@ -17,23 +17,31 @@
 # `sandhi_server_route_match` it is a rename rather than a rewrite — and carries
 # the parameter's name as documentation at the point of use.
 #
-# ## A flat table, deliberately
+# ## A flat table, deliberately — and, since 0.1.13, literally one
+#
+# The routes are DATA: rows of a pattern and the route id it resolves to for each
+# method, built once at load (`_agnostic_route_table_build`). The resolver walks the
+# rows in order, and anything that has to list the API reads the same rows through
+# `agnostic_route_row_pattern` / `agnostic_route_row_id`. Until 0.1.13 the resolver
+# was an if-chain of literal patterns that this header already called a table, and
+# nothing outside it could enumerate the routes.
 #
 # AgnosAI builds a two-level index (`_agnosai_path_prefix_end` / `_agnosai_seg_is`)
 # to amortise sixteen table attempts. A flat scan in table order is correct,
 # simpler, and faster at a small size.
 #
-# ⚠ **The table is 18 paths at 0.1.8 (19 patterns: `/ui` is tried with and without
+# ⚠ **The table is 20 paths at 0.1.13 (21 rows: `/ui` is listed with and without
 # its slash) — M1 had 2, M2 took it to 6, M3 to 11, the WebGUI to 16 (0.1.7, once
-# miscounted as 15), plugin documents to 18 — and the threshold at which the index
-# becomes worth copying was always "roughly a dozen".** It is still flat, on a
-# measurement rather than an estimate (`tests/agnostic.bcyr`, x86_64; re-measured at
-# 0.1.8): resolving the first entry costs ~0.12 µs, the last ~0.93 µs, a miss that
-# tries every pattern ~0.78 µs, and the one two-capture path ~2.1 µs — against
-# ~48 µs for the per-request user lookup alone (ADR 0003). The index earns its
-# complexity when that stops being true, or when the table stops fitting in a
-# reader's head. The next change that adds a route should re-run `cyrius bench`
-# rather than inherit this sentence.
+# miscounted as 15), plugin documents to 18, the crew plan to 19 (0.1.9), audit
+# entries to 20 (0.1.10) — and the threshold at which the index becomes worth
+# copying was always "roughly a dozen".** It is still flat, on a measurement rather
+# than an estimate (`tests/agnostic.bcyr`, x86_64; re-measured at 0.1.13, when the
+# if-chain became rows): resolving the first entry costs ~0.11 µs, the last
+# ~0.87 µs, a miss that tries every row ~0.72 µs, and the one two-capture path
+# ~2.2 µs — against ~48 µs for the per-request user lookup alone (ADR 0003). The
+# index earns its complexity when that stops being true, or when the table stops
+# fitting in a reader's head. The next change that adds a route should re-run
+# `cyrius bench` rather than inherit this sentence.
 
 enum AgnosticRouteId {
     AGNOSTIC_ROUTE_NONE         = 0;
@@ -79,14 +87,26 @@ enum AgnosticRouteMatchOff {
     AGNOSTIC_RM_SIZE            = 32;
 }
 
-# Map an HTTP method name to its constant. Unknown methods are NONE, which the
-# table can never match — so an exotic verb 404s rather than being treated as GET.
+# Map an HTTP method name to its constant. Unknown methods are NONE, which no row
+# of the table has an arm for — so an exotic verb is never treated as GET: on a known
+# path it answers 405, like any other method the path lacks, and on an unknown one 404.
 fn agnostic_method_from(name: Str): i64 {
     if (str_eq_cstr(name, "GET") == 1) { return AGNOSTIC_METHOD_GET; }
     if (str_eq_cstr(name, "POST") == 1) { return AGNOSTIC_METHOD_POST; }
     if (str_eq_cstr(name, "PUT") == 1) { return AGNOSTIC_METHOD_PUT; }
     if (str_eq_cstr(name, "DELETE") == 1) { return AGNOSTIC_METHOD_DELETE; }
     return AGNOSTIC_METHOD_NONE;
+}
+
+# The name of method constant `m` — "GET", "POST", "PUT" or "DELETE", a C string — or 0
+# for NONE and anything else. The inverse of `agnostic_method_from`, for whatever lists
+# the routes: the API schema (H5).
+fn agnostic_method_name(m): i64 {
+    if (m == AGNOSTIC_METHOD_GET) { return "GET"; }
+    if (m == AGNOSTIC_METHOD_POST) { return "POST"; }
+    if (m == AGNOSTIC_METHOD_PUT) { return "PUT"; }
+    if (m == AGNOSTIC_METHOD_DELETE) { return "DELETE"; }
+    return 0;
 }
 
 # Build a match record in `a`.
@@ -255,192 +275,166 @@ fn agnostic_path_only_a(a, path: Str): i64 {
     return path;
 }
 
+# --- the route table (0.1.13) ------------------------------------------------
+#
+# One row per pattern: the pattern, then the route id it resolves to for each
+# method — AGNOSTIC_ROUTE_NONE where the path has no arm for that method.
+enum AgnosticRouteRowOff {
+    AGNOSTIC_RR_PATTERN     = 0;    # NUL-terminated cstring, `:name` segments kept
+    AGNOSTIC_RR_GET         = 8;
+    AGNOSTIC_RR_POST        = 16;
+    AGNOSTIC_RR_PUT         = 24;
+    AGNOSTIC_RR_DELETE      = 32;
+    AGNOSTIC_RR_SIZE        = 40;
+    AGNOSTIC_RR_TABLE_BYTES = 1280; # the table's storage: 32 rows, 21 used
+}
+
+# The rows, AGNOSTIC_RR_SIZE bytes each, in resolution order.
+var _agnostic_route_rows: u8[AGNOSTIC_RR_TABLE_BYTES];
+
+# Write row `n` and answer the next row's index. A row that would not fit is refused
+# — `n` comes back unchanged — rather than written past the storage; the
+# `router/table` suite fails while the table is full, so a refused row cannot ship.
+fn _agnostic_route_add(n, pattern, get_id, post_id, put_id, delete_id): i64 {
+    if ((n + 1) * AGNOSTIC_RR_SIZE > AGNOSTIC_RR_TABLE_BYTES) { return n; }
+    var r = &_agnostic_route_rows + n * AGNOSTIC_RR_SIZE;
+    store64(r + AGNOSTIC_RR_PATTERN, pattern);
+    store64(r + AGNOSTIC_RR_GET, get_id);
+    store64(r + AGNOSTIC_RR_POST, post_id);
+    store64(r + AGNOSTIC_RR_PUT, put_id);
+    store64(r + AGNOSTIC_RR_DELETE, delete_id);
+    return n + 1;
+}
+
+# The table, in resolution order. Answers the row count.
+#
+# Order is readability, not precedence: `_agnostic_path_matches_at` requires an
+# exact segment count and every literal segment, so no two rows match one path and
+# `/api/v1/crews/:id` cannot swallow `/api/v1/crews/:id/cancel`. It is still kept
+# as it was, so the costs measured above stay comparable.
+fn _agnostic_route_table_build(): i64 {
+    var none = AGNOSTIC_ROUTE_NONE;
+    var n = 0;
+    # Each row: (n, pattern, GET, POST, PUT, DELETE).
+    n = _agnostic_route_add(n, "/health", AGNOSTIC_ROUTE_HEALTH, none, none, none);
+    n = _agnostic_route_add(n, "/ready", AGNOSTIC_ROUTE_READY, none, none, none);
+
+    # The crew surface (M2). `GET /api/v1/crews` answered 405 until 0.1.9: a listing
+    # needed pagination and a tenancy scope to be worth anything. It has both now — a
+    # cursor, and crews that belong to the tenant that submitted them.
+    n = _agnostic_route_add(n, "/api/v1/crews", AGNOSTIC_ROUTE_CREW_LIST, AGNOSTIC_ROUTE_CREW_SUBMIT, none, none);
+    n = _agnostic_route_add(n, "/api/v1/crews/:id", AGNOSTIC_ROUTE_CREW_GET, none, none, none);
+    n = _agnostic_route_add(n, "/api/v1/crews/:id/cancel", none, AGNOSTIC_ROUTE_CREW_CANCEL, none, none);
+    n = _agnostic_route_add(n, "/api/v1/crews/:id/events", AGNOSTIC_ROUTE_CREW_EVENTS, none, none, none);
+    # What a crew was asked to do (0.1.9): its agents and its tasks, with the engine's
+    # ids — what a watcher binds progress events to.
+    n = _agnostic_route_add(n, "/api/v1/crews/:id/plan", AGNOSTIC_ROUTE_CREW_PLAN, none, none, none);
+
+    # Identity (M5). POST only: a GET earns a 405 naming the mismatch rather than a
+    # 404, because the endpoint exists — it just is not readable.
+    n = _agnostic_route_add(n, "/api/v1/auth/login", none, AGNOSTIC_ROUTE_AUTH_LOGIN, none, none);
+
+    # The preset library (M3) — read-only. A POST to either path earns a 405 naming
+    # the mismatch rather than a 404: the collection exists, the write surface does
+    # not. Creating a preset is a durable object, which is M4's.
+    n = _agnostic_route_add(n, "/api/v1/presets", AGNOSTIC_ROUTE_PRESET_LIST, none, none, none);
+    n = _agnostic_route_add(n, "/api/v1/presets/:name", AGNOSTIC_ROUTE_PRESET_GET, none, none, none);
+
+    # Agent definitions (M3). Two paths, five methods — the first rows where one path
+    # carries more than one verb.
+    n = _agnostic_route_add(n, "/api/v1/agents/definitions",
+      AGNOSTIC_ROUTE_DEF_LIST, AGNOSTIC_ROUTE_DEF_CREATE, none, none);
+    n = _agnostic_route_add(n, "/api/v1/agents/definitions/:key",
+      AGNOSTIC_ROUTE_DEF_GET, none, AGNOSTIC_ROUTE_DEF_REPLACE, AGNOSTIC_ROUTE_DEF_DELETE);
+
+    # The audit trail (M4), read-only. Nothing writes it over HTTP — entries come
+    # from the operations they record, never from a client. Its newest entries
+    # (0.1.10), by cursor.
+    n = _agnostic_route_add(n, "/api/v1/audit", AGNOSTIC_ROUTE_AUDIT, none, none, none);
+    n = _agnostic_route_add(n, "/api/v1/audit/entries", AGNOSTIC_ROUTE_AUDIT_ENTRIES, none, none, none);
+
+    # WebGUI plugins (0.1.7). The collection is GET only — the set of plugins is fixed
+    # by the build, so there is nothing to POST — and one plugin is PUT only: its
+    # switch is the whole of its mutable state.
+    n = _agnostic_route_add(n, "/api/v1/plugins", AGNOSTIC_ROUTE_PLUGIN_LIST, none, none, none);
+    n = _agnostic_route_add(n, "/api/v1/plugins/:id", none, none, AGNOSTIC_ROUTE_PLUGIN_SET, none);
+
+    # A plugin's own documents (0.1.8) — the only row with two path parameters; the
+    # second is captured into the match record's `param2`.
+    n = _agnostic_route_add(n, "/api/v1/plugins/:id/data", AGNOSTIC_ROUTE_PDATA_LIST, none, none, none);
+    n = _agnostic_route_add(n, "/api/v1/plugins/:id/data/:key",
+      AGNOSTIC_ROUTE_PDATA_GET, none, AGNOSTIC_ROUTE_PDATA_PUT, AGNOSTIC_ROUTE_PDATA_DELETE);
+
+    # The WebGUI's pages (0.1.7). `/ui/` is a row beside `/ui` because the matcher
+    # reads a trailing `/` as one more, empty, segment — and a person types either.
+    n = _agnostic_route_add(n, "/ui", AGNOSTIC_ROUTE_UI_SHELL, none, none, none);
+    n = _agnostic_route_add(n, "/ui/", AGNOSTIC_ROUTE_UI_SHELL, none, none, none);
+    n = _agnostic_route_add(n, "/ui/plugins/:id", AGNOSTIC_ROUTE_UI_PLUGIN, none, none, none);
+    return n;
+}
+
+# How many rows the table holds. Built at load, like the store lock, so the table is
+# complete before any thread can read it; nothing writes it afterwards, so workers
+# read it without a lock.
+#
+# ⚠ **At load means in include order.** A `var` initialiser in a module that
+# `src/app.cyr` includes before this one runs while the table is still empty, and
+# would see every path 404. None resolves a route at load today; keep it that way.
+var _agnostic_route_nrows = _agnostic_route_table_build();
+
+# The id `row` resolves to for `method`, or AGNOSTIC_ROUTE_NONE.
+fn _agnostic_route_arm(row, method): i64 {
+    if (method == AGNOSTIC_METHOD_GET) { return load64(row + AGNOSTIC_RR_GET); }
+    if (method == AGNOSTIC_METHOD_POST) { return load64(row + AGNOSTIC_RR_POST); }
+    if (method == AGNOSTIC_METHOD_PUT) { return load64(row + AGNOSTIC_RR_PUT); }
+    if (method == AGNOSTIC_METHOD_DELETE) { return load64(row + AGNOSTIC_RR_DELETE); }
+    return AGNOSTIC_ROUTE_NONE;
+}
+
+# The pattern of row `i` — a cstring, `:name` segments kept — or 0 past the last
+# row, so a caller listing the routes needs no count of its own.
+fn agnostic_route_row_pattern(i): i64 {
+    if (i < 0 || i >= _agnostic_route_nrows) { return 0; }
+    return load64(&_agnostic_route_rows + i * AGNOSTIC_RR_SIZE + AGNOSTIC_RR_PATTERN);
+}
+
+# The route id row `i` resolves to for `method`: AGNOSTIC_ROUTE_NONE when the row
+# has no arm for that method, the method is unknown, or `i` is past the last row.
+fn agnostic_route_row_id(i, method): i64 {
+    if (i < 0 || i >= _agnostic_route_nrows) { return AGNOSTIC_ROUTE_NONE; }
+    return _agnostic_route_arm(&_agnostic_route_rows + i * AGNOSTIC_RR_SIZE, method);
+}
+
 # Resolve a method and path to a route.
 #
 # Returns a match record. When no route matches, the id is AGNOSTIC_ROUTE_NONE
-# and `method_mismatch` distinguishes 405 from 404.
+# and `method_mismatch` distinguishes 405 from 404: a row whose path matched but
+# which has no arm for the method marks the miss as a mismatch, and the scan goes
+# on — so a path is 405 only when no row answers its method.
+#
+# Every row goes through the two-capture matcher. It clears both out-params on
+# entry and fills the second only for a pattern with two `:name` segments, so a
+# one-parameter route's record carries `param2` = 0, exactly as before 0.1.13.
+# The loop calls `_agnostic_path_matches_at` itself rather than through the
+# `agnostic_path_matches2_a` wrapper: one call fewer per row is what keeps the
+# walk at or below the if-chain's cost (measured, see the header).
 fn agnostic_route_resolve_a(a, method, path: Str): i64 {
     var clean = agnostic_path_only_a(a, path);
     var param = 0;
-    var path_hit = 0;
-
-    if (agnostic_path_matches_a(a, clean, "/health", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_HEALTH, param, 0);
-        }
-    }
-    if (agnostic_path_matches_a(a, clean, "/ready", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_READY, param, 0);
-        }
-    }
-
-    # The crew surface (M2). Longest patterns are not required to come first —
-    # `_agnostic_path_matches_at` requires an exact segment count, so
-    # `/api/v1/crews/{id}` cannot swallow `/api/v1/crews/{id}/cancel`. Table order
-    # is readability only.
-    #
-    # `GET /api/v1/crews` answered 405 until 0.1.9: a listing needed pagination and a
-    # tenancy scope to be worth anything. It has both now — a cursor, and crews that
-    # belong to the tenant that submitted them.
-    if (agnostic_path_matches_a(a, clean, "/api/v1/crews", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_POST) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_CREW_SUBMIT, param, 0);
-        }
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_CREW_LIST, param, 0);
-        }
-    }
-    if (agnostic_path_matches_a(a, clean, "/api/v1/crews/:id", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_CREW_GET, param, 0);
-        }
-    }
-    if (agnostic_path_matches_a(a, clean, "/api/v1/crews/:id/cancel", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_POST) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_CREW_CANCEL, param, 0);
-        }
-    }
-    if (agnostic_path_matches_a(a, clean, "/api/v1/crews/:id/events", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_CREW_EVENTS, param, 0);
-        }
-    }
-    # What a crew was asked to do (0.1.9): its agents and its tasks, with the engine's
-    # ids — what a watcher binds progress events to.
-    if (agnostic_path_matches_a(a, clean, "/api/v1/crews/:id/plan", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_CREW_PLAN, param, 0);
-        }
-    }
-
-    # Identity (M5). POST only: a GET earns a 405 naming the mismatch rather
-    # than a 404, because the endpoint exists — it just is not readable.
-    if (agnostic_path_matches_a(a, clean, "/api/v1/auth/login", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_POST) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_AUTH_LOGIN, param, 0);
-        }
-    }
-
-    # The preset library (M3) — read-only. A POST to either path earns a 405
-    # naming the mismatch rather than a 404: the collection exists, the write
-    # surface does not. Creating a preset is a durable object, which is M4's.
-    if (agnostic_path_matches_a(a, clean, "/api/v1/presets", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_PRESET_LIST, param, 0);
-        }
-    }
-    if (agnostic_path_matches_a(a, clean, "/api/v1/presets/:name", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_PRESET_GET, param, 0);
-        }
-    }
-
-    # Agent definitions (M3). Two paths, five methods — the first entries in this
-    # table where one path carries more than one verb, which is why the method
-    # arms are nested rather than the pattern being repeated.
-    if (agnostic_path_matches_a(a, clean, "/api/v1/agents/definitions", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_DEF_LIST, param, 0);
-        }
-        if (method == AGNOSTIC_METHOD_POST) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_DEF_CREATE, param, 0);
-        }
-    }
-    if (agnostic_path_matches_a(a, clean, "/api/v1/agents/definitions/:key", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_DEF_GET, param, 0);
-        }
-        if (method == AGNOSTIC_METHOD_PUT) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_DEF_REPLACE, param, 0);
-        }
-        if (method == AGNOSTIC_METHOD_DELETE) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_DEF_DELETE, param, 0);
-        }
-    }
-
-    # The audit trail (M4), read-only. Nothing writes it over HTTP — entries
-    # come from the operations they record, never from a client.
-    if (agnostic_path_matches_a(a, clean, "/api/v1/audit", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_AUDIT, param, 0);
-        }
-    }
-    # Its newest entries (0.1.10), by cursor.
-    if (agnostic_path_matches_a(a, clean, "/api/v1/audit/entries", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_AUDIT_ENTRIES, param, 0);
-        }
-    }
-
-    # WebGUI plugins (0.1.7). The collection is GET only — the set of plugins is
-    # fixed by the build, so there is nothing to POST — and one plugin is PUT only:
-    # its switch is the whole of its mutable state.
-    if (agnostic_path_matches_a(a, clean, "/api/v1/plugins", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_PLUGIN_LIST, param, 0);
-        }
-    }
-    if (agnostic_path_matches_a(a, clean, "/api/v1/plugins/:id", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_PUT) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_PLUGIN_SET, param, 0);
-        }
-    }
-
-    # A plugin's own documents (0.1.8) — the first routes with two path parameters,
-    # so they go through the two-capture matcher.
-    if (agnostic_path_matches_a(a, clean, "/api/v1/plugins/:id/data", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_PDATA_LIST, param, 0);
-        }
-    }
     var param2 = 0;
-    if (agnostic_path_matches2_a(a, clean, "/api/v1/plugins/:id/data/:key", &param, &param2) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new2_a(a, AGNOSTIC_ROUTE_PDATA_GET, param, param2, 0);
+    var path_hit = 0;
+    var row = &_agnostic_route_rows;
+    var end = row + _agnostic_route_nrows * AGNOSTIC_RR_SIZE;
+    while (row < end) {
+        if (_agnostic_path_matches_at(a, clean, 0, load64(row + AGNOSTIC_RR_PATTERN), &param, &param2) == 1) {
+            path_hit = 1;
+            var id = _agnostic_route_arm(row, method);
+            if (id != AGNOSTIC_ROUTE_NONE) {
+                return _agnostic_rm_new2_a(a, id, param, param2, 0);
+            }
         }
-        if (method == AGNOSTIC_METHOD_PUT) {
-            return _agnostic_rm_new2_a(a, AGNOSTIC_ROUTE_PDATA_PUT, param, param2, 0);
-        }
-        if (method == AGNOSTIC_METHOD_DELETE) {
-            return _agnostic_rm_new2_a(a, AGNOSTIC_ROUTE_PDATA_DELETE, param, param2, 0);
-        }
+        row = row + AGNOSTIC_RR_SIZE;
     }
-
-    # The WebGUI's pages (0.1.7). `/ui/` is listed beside `/ui` because the matcher
-    # reads a trailing `/` as one more, empty, segment — and a person types either.
-    if (agnostic_path_matches_a(a, clean, "/ui", &param) == 1
-      || agnostic_path_matches_a(a, clean, "/ui/", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_UI_SHELL, param, 0);
-        }
-    }
-    if (agnostic_path_matches_a(a, clean, "/ui/plugins/:id", &param) == 1) {
-        path_hit = 1;
-        if (method == AGNOSTIC_METHOD_GET) {
-            return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_UI_PLUGIN, param, 0);
-        }
-    }
-
     return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_NONE, 0, path_hit);
 }
 

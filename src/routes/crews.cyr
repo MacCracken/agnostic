@@ -11,6 +11,7 @@
 # |---|---|
 # | `POST /api/v1/crews` | **202** accepted · 400 semantic · 422 shape · 503 engine down · 500 |
 # | `GET /api/v1/crews/{id}` | 200 · 404 never submitted · 422 malformed id |
+# |  | 200 `interrupted` for a crew a restart cut short (0.1.13, ADR 0013) |
 # | `POST /api/v1/crews/{id}/cancel` | 200 cancelled · 404 never submitted |
 # |  | 409 already terminal · 422 malformed id · 503 engine does not know it |
 # | `GET /api/v1/crews/{id}/events[?after=N]` | 200 · 404 · 422 (also a malformed `after`) |
@@ -19,6 +20,10 @@
 #
 # Every crew route answers 404 for a crew of ANOTHER tenant, exactly as for one never
 # submitted (0.1.9): a crew belongs to the scope it was submitted in.
+#
+# A crew accepted before the last restart that had no outcome when the process stopped
+# answers 200 with status `interrupted` (0.1.13, ADR 0013) — terminal, written at
+# start-up. Its events, plan and cancel still answer 404: they are held in memory only.
 #
 # **202, not 200 and not 201.** The crew has been accepted and is not finished,
 # which is exactly what 202 means. 201 would claim a resource is complete; 200 is
@@ -329,8 +334,10 @@ fn agnostic_route_crew_get_a(a, id: Str, ctx): i64 {
     elif (agnostic_ledger_entry(key) != 0) { return _agnostic_crew_not_found_a(a); }
     if (outcome == 0) {
         # ⚠ **Not in this process's ledger — but it may be on disk from a
-        # previous run.** Only terminal outcomes are ever persisted, so anything
-        # found here finished; there is no stale "running" to mistake for live
+        # previous run.** Only terminal outcomes are ever persisted: completed,
+        # failed, cancelled, or `interrupted`, written at start-up for a crew the
+        # last process accepted and never finished (0.1.13, ADR 0013). Never a
+        # non-terminal one, so there is no stale "running" to mistake for live
         # work. The stored bytes go out verbatim, which is the response the run
         # that produced them would have given.
         var stored = agnostic_crews_doc_a(a, key);
@@ -427,6 +434,15 @@ fn agnostic_route_crew_cancel_a(a, id: Str, ctx): i64 {
 # far, instead of matching overlapping windows to guess. `lost_events` is the other
 # kind of gap: events the bus dropped before agnostic collected them, which were never
 # numbered and so cannot be placed.
+#
+# A reader told `missed` > 0 has already been handed everything still held, oldest
+# first: `events[0].seq` is the oldest cursor this crew can still answer, and `after=0`
+# asks for all of it. It reads on from `next`. There is nothing to resync from mid-run —
+# the engine holds no task results until the crew ends, so `GET /crews/{id}` settles
+# the tasks once the crew is terminal, and a per-task snapshot is agnosai F3's to give.
+# That is why H3 (0.1.13) added no `events_lost` field: it would restate `missed` > 0.
+# An `after` past the newest number reads no events and gets `next` back unchanged;
+# this crew never issued such a cursor.
 fn agnostic_route_crew_events_a(a, id: Str, path: Str, ctx): i64 {
     var key = _agnostic_crew_key_a(a, id);
     if (key == 0) { return _agnostic_crew_bad_id_a(a); }
@@ -614,8 +630,9 @@ fn agnostic_route_crew_plan_a(a, id: Str, ctx): i64 {
 # 200, default 50.
 #
 # **`status` filters before the page is cut (0.1.10)** — one wire status (`pending`,
-# `running`, `completed`, `failed`, `cancelled`, `unknown`) or `active` (pending or
-# running) — so a filtered page is full, and its `next` continues the same filter.
+# `running`, `completed`, `failed`, `cancelled`, `interrupted` (0.1.13), `unknown`) or
+# `active` (pending or running) — so a filtered page is full, and its `next` continues
+# the same filter.
 fn agnostic_route_crews_list_a(a, path: Str, ctx): i64 {
     var scope = agnostic_reqctx_scope(ctx);
     var limit = agnostic_query_uint_a(a, path, "limit", 50);
@@ -628,8 +645,8 @@ fn agnostic_route_crews_list_a(a, path: Str, ctx): i64 {
     if (sq != 0) {
         want = agnostic_crews_status_mask(sq);
         if (want == 0) {
-            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
-              str_from_a(a, "'status' is pending, running, completed, failed, cancelled, unknown or active"));
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE, str_from_a(a,
+                "'status' is pending, running, completed, failed, cancelled, interrupted, unknown or active"));
         }
     }
     var cur_ms = 0 - 1;
@@ -709,8 +726,10 @@ fn agnostic_route_crews_list_a(a, path: Str, ctx): i64 {
     return agnostic_response_json_a(a, HTTP_OK, obj);
 }
 
-# Every status, as a listing filter (0.1.10): bit `1 << status` for each.
-var AGNOSTIC_CREWS_ANY = 63;
+# Every status, as a listing filter (0.1.10): bit `1 << status` for each, through the
+# highest. ⚠ Derived, not a literal: 63 stopped at UNKNOWN and silently hid every
+# INTERRUPTED crew (0.1.13) from the unfiltered listing.
+var AGNOSTIC_CREWS_ANY = (1 << (AGNOSTIC_CREW_INTERRUPTED + 1)) - 1;
 
 # The filter a `status` query value names — `1 << status` for one wire status, pending and
 # running together for `active` — or 0 when it names nothing.
@@ -721,14 +740,16 @@ fn agnostic_crews_status_mask(v: Str): i64 {
     if (str_eq_cstr(v, "failed") == 1)    { return 1 << AGNOSTIC_CREW_FAILED; }
     if (str_eq_cstr(v, "cancelled") == 1) { return 1 << AGNOSTIC_CREW_CANCELLED; }
     if (str_eq_cstr(v, "unknown") == 1)   { return 1 << AGNOSTIC_CREW_UNKNOWN; }
+    if (str_eq_cstr(v, "interrupted") == 1) { return 1 << AGNOSTIC_CREW_INTERRUPTED; }
     if (str_eq_cstr(v, "active") == 1)    { return (1 << AGNOSTIC_CREW_PENDING) | (1 << AGNOSTIC_CREW_RUNNING); }
     return 0;
 }
 
-# Whether crew row `r` passes the filter `want`. 1 or 0.
+# Whether crew row `r` passes the filter `want`. 1 or 0. A status past the highest this
+# build knows — a row written by a newer release — is never listed.
 fn _agnostic_crews_row_wanted(r, want): i64 {
     var st = agnostic_crew_row_get(r, AGNOSTIC_CR_STATUS);
-    if (st < 0 || st > AGNOSTIC_CREW_UNKNOWN) { return 0; }
+    if (st < 0 || st > AGNOSTIC_CREW_INTERRUPTED) { return 0; }
     if ((want & (1 << st)) != 0) { return 1; }
     return 0;
 }

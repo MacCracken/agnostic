@@ -34,6 +34,11 @@ fn test_status_wire() {
     assert_eq(str_eq_cstr(agnostic_crew_status_to_wire(AGNOSTIC_CREW_FAILED), "failed"), 1, "failed");
     assert_eq(str_eq_cstr(agnostic_crew_status_to_wire(AGNOSTIC_CREW_CANCELLED), "cancelled"), 1, "cancelled");
     assert_eq(str_eq_cstr(agnostic_crew_status_to_wire(AGNOSTIC_CREW_UNKNOWN), "unknown"), 1, "unknown");
+    # 0.1.13 (ADR 0013): a crew a restart interrupted. Without its arm it would read as
+    # `pending`, the fallback — the stale non-terminal answer the ADR removes.
+    assert_eq(str_eq_cstr(agnostic_crew_status_to_wire(AGNOSTIC_CREW_INTERRUPTED), "interrupted"), 1, "interrupted");
+    # ⚠ Stored on disk as `cstatus`, so it is the next number and never renumbered.
+    assert_eq(AGNOSTIC_CREW_INTERRUPTED, 6, "INTERRUPTED is 6: appended, never renumbered");
 }
 
 fn test_status_translation() {
@@ -154,6 +159,9 @@ fn test_terminal_predicate() {
         agnostic_outcome_new_a(a, 0, AGNOSTIC_CREW_FAILED, 0, 0)), 1, "failed is terminal");
     assert_eq(agnostic_outcome_is_terminal(
         agnostic_outcome_new_a(a, 0, AGNOSTIC_CREW_CANCELLED, 0, 0)), 1, "cancelled is terminal");
+    # 0.1.13: an interrupted crew will never run again, so it is as terminal as the rest.
+    assert_eq(agnostic_outcome_is_terminal(
+        agnostic_outcome_new_a(a, 0, AGNOSTIC_CREW_INTERRUPTED, 0, 0)), 1, "interrupted is terminal");
 
     assert_eq(agnostic_outcome_is_terminal(
         agnostic_outcome_new_a(a, 0, AGNOSTIC_CREW_PENDING, 0, 0)), 0, "pending is not terminal");

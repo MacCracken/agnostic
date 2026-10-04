@@ -255,8 +255,9 @@ fn agnostic_config_from_env(): i64 {
     # The LLM gateway is OPTIONAL. Unset means the engine takes its placeholder
     # path — crews orchestrate, tasks produce placeholder output — which is a
     # legitimate configuration for a deployment exercising orchestration alone.
-    # `/ready` reports which of the two this process is, so the distinction is
-    # visible rather than inferred from output that looks oddly synthetic.
+    # `engine_mode` on every crew response (not `/ready`) says which of the two this
+    # process is, so the distinction is visible rather than inferred from output
+    # that looks oddly synthetic.
     var url = 0;
     var raw_url = getenv("AGNOSTIC_LLM_URL");
     if (raw_url != 0) {

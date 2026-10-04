@@ -9,11 +9,18 @@
 # time and would start a server inside a suite.
 include "src/app.cyr"
 
-# Entry point. Initialises the allocator and returns the process exit code.
-# Entry point. Reads config, wires logging, and serves until a shutdown signal.
+# Entry point. Reads its arguments, then config, wires logging, and serves until a shutdown
+# signal — or runs the command the arguments name (`src/cli.cyr`). Returns the exit code.
 fn main() {
     alloc_init();
     thread_local_init();
+
+    # ⚠ **The command line BEFORE the environment** (0.1.13). `agnostic api schema` must not
+    # depend on `AGNOSTIC_*`: an invalid AGNOSTIC_PORT must neither change the schema nor stop
+    # it printing. No arguments serves, exactly as before.
+    args_init();
+    var cmd = agnostic_cli_command();
+    if (cmd != AGNOSTIC_CLI_SERVE) { return agnostic_cli_run(cmd); }
 
     var cfg = agnostic_config_from_env();
     if (cfg == 0) {

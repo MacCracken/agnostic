@@ -147,8 +147,60 @@ fn test_refusal_table() {
     assert_eq(_t_has(ak, "use 'key'"), 1, "and points at the field that works");
 
     assert_eq(agnostic_agent_def_refused_reason(str_from("key")), 0, "a real field is not refused");
+    assert_eq(agnostic_agent_def_refused_reason(str_from("role")), 0, "nor is role");
     assert_eq(agnostic_agent_def_refused_reason(str_from("focus")), 0, "nor a retained one");
     assert_eq(agnostic_agent_def_refused_reason(0), 0, "a null key is not refused");
+}
+
+# Whether refused field `i` is named `name`.
+fn _t_refused_is(i, name): i64 {
+    var got = agnostic_agent_def_refused_name(i);
+    if (got == 0) { return 0; }
+    return str_eq_cstr(str_from(got), name);
+}
+
+fn test_refusal_rows() {
+    test_group("agentdef/refuse-rows");
+
+    # ⭐ 0.1.13 (H5): the refused fields are one table of rows, which the decoder looks keys
+    # up in and the API schema lists. Pinned name by name and in order: a row added, dropped
+    # or renamed changes what a client is told, so it is an API change and fails here.
+    assert_eq(_t_refused_is(0, "gpu_strict"), 1, "row 0 is gpu_strict");
+    assert_eq(_t_refused_is(1, "llm_temperature"), 1, "row 1 is llm_temperature");
+    assert_eq(_t_refused_is(2, "verbose"), 1, "row 2 is verbose");
+    assert_eq(_t_refused_is(3, "metadata"), 1, "row 3 is metadata");
+    assert_eq(_t_refused_is(4, "celery_queue"), 1, "row 4 is celery_queue");
+    assert_eq(_t_refused_is(5, "redis_prefix"), 1, "row 5 is redis_prefix");
+    assert_eq(_t_refused_is(6, "celery_task"), 1, "row 6 is celery_task");
+    assert_eq(_t_refused_is(7, "tool_instances"), 1, "row 7 is tool_instances");
+    assert_eq(_t_refused_is(8, "personality"), 1, "row 8 is personality");
+    assert_eq(_t_refused_is(9, "hardware"), 1, "row 9 is hardware");
+    assert_eq(_t_refused_is(10, "agent_key"), 1, "row 10 is agent_key");
+    assert_eq(_t_refused_is(11, "workflow_mode"), 1, "row 11 is workflow_mode");
+    assert_eq(agnostic_agent_def_refused_name(12), 0, "and there are twelve: nothing past the last row");
+    assert_eq(agnostic_agent_def_refused_name(0 - 1), 0, "nor before the first");
+
+    # Every listed name is refused by the decoder's own lookup, with the message of its own
+    # row: each message quotes its key, so a row paired with a neighbour's message fails.
+    var a = arena_allocator(65536);
+    var n = 0;
+    var unpaired = 0;
+    while (agnostic_agent_def_refused_name(n) != 0) {
+        var name = agnostic_agent_def_refused_name(n);
+        var why = agnostic_agent_def_refused_reason(str_from(name));
+        var sb = str_builder_new_a(a);
+        str_builder_add_cstr_a(a, sb, "'");
+        str_builder_add_cstr_a(a, sb, name);
+        str_builder_add_cstr_a(a, sb, "'");
+        if (why == 0) {
+            unpaired = unpaired + 1;
+        } elif (str_contains(why, str_builder_build_a(a, sb)) != 1) {
+            unpaired = unpaired + 1;
+        }
+        n = n + 1;
+    }
+    assert_eq(n, 12, "listed from 0, the table holds twelve refused fields");
+    assert_eq(unpaired, 0, "⭐ each is refused, with the message that names it");
 }
 
 fn test_refusal_beats_unknown_field() {
@@ -428,6 +480,7 @@ fn main() {
     test_every_forwarded_field_arrives();
     test_retained_fields_round_trip();
     test_refusal_table();
+    test_refusal_rows();
     test_refusal_beats_unknown_field();
     test_required_and_key_syntax();
     test_wire_form_is_ours();

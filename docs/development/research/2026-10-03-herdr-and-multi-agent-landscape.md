@@ -81,6 +81,11 @@ agnostic's ledger keeps 256 events per crew and 1024 crews (`state.md`). herdr's
 - The client then re-reads `GET /crews/{id}`.
 - Today a gap like this would be silent.
 
+> **Correction (2026-10-03, at 0.1.13):** the gap is not silent, and the parameter is `after=`, not
+> `since=`. Since 0.1.9, a cursor older than the window gets every event still held, from the
+> oldest, plus `missed`, the count of events after it that the ring already overwrote (ADR 0009).
+> H3 was closed with no wire change; the roadmap's H3 entry gives the reasons.
+
 ### H4. Publish a survival table and stop returning 404 for interrupted crews → **agnostic**
 
 herdr documents exactly what survives a detach, a restart, or an update. agnostic persists terminal outcomes only, so a crew interrupted by a restart **returns 404** (`state.md`, `roadmap.md`).
@@ -107,6 +112,11 @@ herdr's `skills/herdr/SKILL.md` lets Claude Code or Codex act as a supervisor. I
 - A `skills/agnostic/SKILL.md` covering submitting a crew, polling with a cursor, cancelling, reading usage and cost, and the refusal semantics (422 per refused field, hierarchical refused).
 - SKILL.md is now a cross-vendor standard (Claude Code, Codex, Gemini CLI, Cursor, Goose; adoption counts **[secondary]**).
 - It is cheap and complements the M7 MCP work.
+
+> **Correction (2026-10-04, at 0.1.13):** `hierarchical` is refused with a 400, not a 422; a
+> refused or unknown field is the 422. The skill shipped as `skills/agnostic/SKILL.md`, checked
+> against the API schema by `scripts/check-skill.py`; the roadmap's H6 entry lists what else the
+> proposal had wrong.
 
 ### H7. An "explain" endpoint for engine decisions → **agnosai, then agnostic**
 

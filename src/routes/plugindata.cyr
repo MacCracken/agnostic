@@ -145,7 +145,7 @@ fn agnostic_route_plugindata_put_a(a, id: Str, key: Str, body: Str, ctx): i64 {
     var rc = agnostic_plugindata_put_if(a, scope, id, key, body, now,
       agnostic_reqctx_if_match(ctx), agnostic_reqctx_if_none_match(ctx));
     if (rc == AGNOSTIC_PDATA_PRECONDITION) {
-        return agnostic_response_error_code_a(a, AGNOSTIC_HTTP_PRECONDITION_FAILED, "revision",
+        return agnostic_response_error_code_a(a, AGNOSTIC_EC_REVISION,
           str_from_a(a, "the document is not the revision this write was made from; read it again"));
     }
     if (rc == AGNOSTIC_PDATA_FULL) {
@@ -184,7 +184,7 @@ fn agnostic_route_plugindata_delete_a(a, id: Str, key: Str, ctx): i64 {
     var scope = agnostic_plugindata_scope(agnostic_reqctx_principal(ctx));
     var dr = agnostic_plugindata_delete_if(a, scope, id, key, agnostic_reqctx_if_match(ctx));
     if (dr == AGNOSTIC_PDATA_PRECONDITION) {
-        return agnostic_response_error_code_a(a, AGNOSTIC_HTTP_PRECONDITION_FAILED, "revision",
+        return agnostic_response_error_code_a(a, AGNOSTIC_EC_REVISION,
           str_from_a(a, "the document is not the revision this delete was made from; read it again"));
     }
     if (dr == 0) {

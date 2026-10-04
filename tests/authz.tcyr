@@ -56,6 +56,21 @@ fn test_role_table() {
       "nor is a bit above the highest defined one");
 }
 
+fn test_perm_names() {
+    test_group("perm/names");
+
+    # 0.1.13 (H5): the words the API schema names a permission with. Pinned: a client reads
+    # them, so a rename is an API change.
+    assert_eq(str_eq_cstr(str_from(agnostic_perm_name(AGNOSTIC_PERM_READ)), "read"), 1, "READ is read");
+    assert_eq(str_eq_cstr(str_from(agnostic_perm_name(AGNOSTIC_PERM_WRITE)), "write"), 1, "WRITE is write");
+    assert_eq(str_eq_cstr(str_from(agnostic_perm_name(AGNOSTIC_PERM_ADMIN)), "admin"), 1, "ADMIN is admin");
+    assert_eq(str_eq_cstr(str_from(agnostic_perm_name(AGNOSTIC_PERM_SUPER)), "super"), 1, "SUPER is super");
+    assert_eq(agnostic_perm_name(0), 0, "0 is not a permission");
+    assert_eq(agnostic_perm_name(AGNOSTIC_PERM_READ | AGNOSTIC_PERM_WRITE), 0, "nor are two at once");
+    assert_eq(agnostic_perm_name(16), 0, "nor a bit above the highest");
+    assert_eq(agnostic_perm_name(0 - 1), 0, "nor a negative value");
+}
+
 fn test_route_permissions() {
     test_group("perm/routes");
 
@@ -218,6 +233,7 @@ fn main() {
     alloc_init();
     thread_local_init();
     test_role_table();
+    test_perm_names();
     test_route_permissions();
     test_tenant_keys();
     test_tenant_crud();

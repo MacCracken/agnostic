@@ -33,3 +33,6 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0010](0010-views-link-through-the-shell-and-share-one-bridge-client.md) | Views link to each other through the shell, and every plugin carries one bridge client |
 | [0011](0011-audit-entries-are-read-from-a-bounded-copy.md) | The audit trail's newest entries are read from a bounded copy, not the store |
 | [0012](0012-a-cancelled-crew-keeps-its-finished-results.md) | A cancelled crew keeps the results its finished tasks produced |
+| [0013](0013-a-crew-interrupted-by-a-restart-is-interrupted.md) | A crew a restart interrupted answers `interrupted`, not 404 |
+| [0014](0014-the-estimators-one-agent-baseline-is-its-own-model.md) | Swarm Command's estimator prices one agent at the swarm's own token spend, with its own model, not the Sim's |
+| [0015](0015-the-http-api-is-described-by-a-generated-schema.md) | The HTTP API is described by a schema generated from the server's own tables (`agnostic api schema`), and a committed snapshot freezes it |

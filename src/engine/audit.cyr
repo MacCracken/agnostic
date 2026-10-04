@@ -35,6 +35,10 @@
 # The trade libro names is real and accepted: on a streaming chain `chain_len` is
 # 0 and every in-memory query sees nothing. Reads go to the store.
 #
+# ⚠ A new streaming chain's head is empty, so the open seeds it from the last
+# stored entry (`_agnostic_audit_seed_head_locked`). Without that, each process's
+# first entry claimed to be the genesis and the next start reported tampering.
+#
 # ## ⚠ Gaps are invisible to verification, so they are counted instead
 #
 # Verification proves the entries that ARE there form an unbroken chain. It
@@ -42,6 +46,14 @@
 # find. So an append failure is logged at ERROR **and counted**, and the count is
 # part of what an operator reads. A chain that verifies clean with a non-zero
 # drop count has not told you everything.
+#
+# ⚠ **A write that fails is the exception (roadmap, "Found at 0.1.13").**
+# `chain_append` moves the head to the new entry before `patrastore_append` runs,
+# and a failed write does not move it back, so the next entry saved names a hash
+# the store never got and the next open reports the store altered. A record
+# refused before `chain_append` (a closed store) is a true, invisible gap. Older
+# than 0.1.13; the fix has to decide what a write that errors after its row
+# landed means.
 #
 # An audit failure does **not** fail the operation being audited. That is a
 # deliberate choice and the opposite one is defensible: it means an action can
@@ -194,12 +206,13 @@ fn _agnostic_audit_open_locked(path: Str): i64 {
     var err = 0;
     if (entries != 0) { err = verify_chain(entries, 0); }
     _agnostic_audit_ring_seed_locked(entries);
+    _agnostic_audit_seed_head_locked(entries);
     if (err == 0) {
         _agnostic_audit_intact = 1;
         _agnostic_audit_bad_index = 0 - 1;
     } else {
         _agnostic_audit_intact = 0;
-        _agnostic_audit_bad_index = load64(err + 24);
+        _agnostic_audit_bad_index = error_index(err);
         # ⚠ Loud, and deliberately not fatal. A broken chain means the file was
         # altered — refusing to start would hand an attacker a denial of service
         # by corrupting one byte, and would destroy the evidence's availability.
@@ -209,6 +222,30 @@ fn _agnostic_audit_open_locked(path: Str): i64 {
           "audit chain failed verification at open; the store was altered", 62,
           "entry", 5, _agnostic_audit_bad_index);
     }
+    return 1;
+}
+
+# Link the chain's head to the last entry of `entries` (the store, in chain order), so the
+# first entry this process appends names it as its predecessor. The caller holds the audit lock.
+#
+# ⚠ **Until 0.1.13 nothing did, and every restart broke the chain.** A streaming chain keeps
+# its head in libro's prev-hash carry slot, which `chain_new_streaming` leaves empty, so the
+# first append after an open linked to "" — the genesis link — and the NEXT open's
+# `verify_chain` failed there: `intact: false`, from a file nobody touched.
+#
+# The value is the loaded entry's own hash Str. `patrastore_load_all` copies every field out
+# of patra's result set into the global heap (`_ps_copy_cstr`), which never frees, so it
+# outlives the load; the first append replaces it with that entry's hash.
+#
+# Seeded on a broken chain too: new entries continue the file as it is, and the verdict
+# already names where it broke. A load that came back empty from a non-empty store (a failed
+# read reads as empty) leaves the head empty, and the next open will report the break at the
+# first entry this process wrote.
+fn _agnostic_audit_seed_head_locked(entries): i64 {
+    if (entries == 0) { return 0; }
+    var n = vec_len(entries);
+    if (n == 0) { return 0; }
+    chain_set_prev_hash(_agnostic_audit_chain, entry_hash(vec_get(entries, n - 1)));
     return 1;
 }
 
@@ -299,7 +336,7 @@ fn _agnostic_audit_reverify_locked(): i64 {
         return 1;
     }
     _agnostic_audit_intact = 0;
-    _agnostic_audit_bad_index = load64(err + 24);
+    _agnostic_audit_bad_index = error_index(err);
     agnostic_log_kv_int(SK_ERROR,
       "audit chain failed re-verification; the store was altered", 57,
       "entry", 5, _agnostic_audit_bad_index);
@@ -360,6 +397,7 @@ fn _agnostic_audit_record_locked(severity, source: Str, action: Str, det: Str): 
         _agnostic_audit_ring_put_locked(e);
     }
     if (rc != PATRA_OK) {
+        # ⚠ The head stays on `e`, which is not in the store; see the module header.
         _agnostic_audit_dropped = _agnostic_audit_dropped + 1;
         agnostic_log_kv_str(SK_ERROR, "audit append failed; the trail has a gap", 40,
           "action", 6, action);
@@ -386,7 +424,9 @@ fn agnostic_audit_is_intact(): i64 {
 
 # The index of the first bad entry, or -1 when the chain verified clean.
 #
-# libro's integrity error carries the index at offset 24 — see `error_integrity`.
+# Read with libro's `error_index` accessor, not an offset. ⚠ Until 0.1.13 this read offset 24,
+# which libro 2.8.11 made `field_name` when it put a magic word at offset 0 and moved the
+# index to 32 — so every broken chain was reported as broken at entry 0.
 fn agnostic_audit_bad_index(): i64 {
     return _agnostic_audit_bad_index;
 }

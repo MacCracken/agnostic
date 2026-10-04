@@ -9,11 +9,26 @@
 # a poller would wait on it forever, and the ledger's terminal latch could never
 # correct it because the wrong value would be latched first.
 #
-# Writing only COMPLETED / FAILED / CANCELLED removes the problem rather than
-# guarding it. There is no stale "running" to load because one is never written.
-# What that costs is honest and small: a crew interrupted mid-flight answers 404
-# after a restart, which is true — nothing ran it to completion and no outcome
-# exists.
+# So `agnostic_crews` and `agnostic_crew_index` hold only terminal outcomes —
+# COMPLETED / FAILED / CANCELLED, and INTERRUPTED (0.1.13). That removes the
+# problem rather than guarding it: there is no stale "running" to load because
+# one is never written.
+#
+# ## A crew in flight is an OBLIGATION, not a status (0.1.13, ADR 0013)
+#
+# Until 0.1.13 a crew interrupted mid-flight answered 404 after a restart — true,
+# but a client could not tell it from a typo. Now a third table records, for each
+# accepted crew, only that it has no outcome yet: `agnostic_crew_inflight`, written
+# at submit (`agnostic_crews_mark_inflight`) and deleted in the same critical
+# section that writes the crew's outcome (`_agnostic_crews_save_row_locked`). The
+# row has no status column, so nothing non-terminal is ever read back.
+#
+# At start-up, before the server listens, every row still there is a crew the last
+# process accepted and never finished: `agnostic_crews_interrupt_inflight` writes
+# each one a terminal INTERRUPTED outcome through the ordinary write-once path
+# (`agnostic_crews_interrupt_row`). The ledger is never seeded from disk, and only
+# that sweep reads the table. ⚠ It assumes one agnostic process per database file —
+# a second one would sweep the first one's live crews (ADR 0013).
 #
 # ## The stored document is the wire form, served verbatim
 #
@@ -28,10 +43,17 @@
 # Shares `src/engine/store.cyr`'s handle with the definition table. patra allows
 # 63 tables and exactly **one index each**, so `crew_id` gets it — the only
 # column anything looks up by.
+#
+# ⚠ `cname` is a patra STR, so it holds **at most 255 bytes** of the name, cut on a
+# character (0.1.13). Nothing reads it: the listing reads the index's `cname` and a
+# reader the document, and both keep the name whole.
 
 var AGNOSTIC_CREW_TABLE_SQL =
 "CREATE TABLE agnostic_crews (crew_id STR, cname STR, cstatus INT, doc TEXT)";
 var AGNOSTIC_CREW_INDEX_SQL = "CREATE INDEX ON agnostic_crews (crew_id)";
+
+# The most of a name `agnostic_crews.cname` takes: a patra STR is 255 bytes and a NUL.
+var AGNOSTIC_CREW_CNAME_MAX = 255;
 
 # ## The crew index — what the listing reads (0.1.9)
 #
@@ -51,6 +73,18 @@ var AGNOSTIC_CREW_IDX_TABLE_SQL =
 submitted INT, started INT, finished INT, ntasks INT, mode STR, tokens INT, cost INT)";
 var AGNOSTIC_CREW_IDX_INDEX_SQL = "CREATE INDEX ON agnostic_crew_index (scope)";
 
+# ## The in-flight table — what a restart turns into INTERRUPTED (0.1.13, ADR 0013)
+#
+# One row per accepted crew that has no stored outcome yet: what the crew was when it
+# was accepted, so an interrupted crew can still say what it was. ⚠ **No status
+# column** — that is what makes it safe to keep across a restart — and **deliberately
+# no index**: its live rows are only the crews in flight, so a delete scans a few
+# pages (patra frees emptied pages), where an index on `crew_id` would keep a
+# tombstone for every crew ever run until VACUUM.
+var AGNOSTIC_CREW_INFLIGHT_TABLE_SQL =
+"CREATE TABLE agnostic_crew_inflight (crew_id STR, scope STR, cname TEXT, submitted INT, \
+ntasks INT, mode STR, process STR)";
+
 # One crew as the listing shows it — a durable index row, or a ledger entry rendered the
 # same way. Built by `agnostic_crew_row_new_a`.
 enum AgnosticCrewRowOff {
@@ -65,7 +99,8 @@ enum AgnosticCrewRowOff {
     AGNOSTIC_CR_MODE      = 64;   # Str, or 0
     AGNOSTIC_CR_TOKENS    = 72;   # total tokens metered, or -1 when not known
     AGNOSTIC_CR_COST      = 80;   # micro-USD, or -1 when no task was priced
-    AGNOSTIC_CR_SIZE      = 88;
+    AGNOSTIC_CR_PROCESS   = 88;   # Str, or 0 — read from the in-flight table only (0.1.13)
+    AGNOSTIC_CR_SIZE      = 96;
 }
 
 # A crew row in `a`, every field empty: times 0, counts -1.
@@ -91,6 +126,7 @@ fn agnostic_crews_ensure(): i64 {
     if (agnostic_store_ensure(AGNOSTIC_CREW_INDEX_SQL) == 0) { return 0; }
     if (agnostic_store_ensure(AGNOSTIC_CREW_IDX_TABLE_SQL) == 0) { return 0; }
     if (agnostic_store_ensure(AGNOSTIC_CREW_IDX_INDEX_SQL) == 0) { return 0; }
+    if (agnostic_store_ensure(AGNOSTIC_CREW_INFLIGHT_TABLE_SQL) == 0) { return 0; }
     return 1;
 }
 
@@ -140,12 +176,17 @@ fn _agnostic_crews_save_locked(crew_id: Str, name: Str, status, doc: Str): i64 {
 
     var nm = name;
     if (nm == 0) { nm = str_from(""); }
+    # ⚠ patra REFUSES a STR over 255 bytes rather than cut it, and a request may name a
+    # crew in 10,000 characters. Until 0.1.13 such a crew's outcome was never stored, and
+    # its in-flight row was retried, with an ERROR, at every start. The column is never
+    # read, so it takes what fits, cut on a character.
+    var nlen = _agnostic_crews_fit_utf8(str_data(nm), str_len(nm), AGNOSTIC_CREW_CNAME_MAX);
 
     var st = patra_prepare(db,
       "INSERT INTO agnostic_crews (crew_id, cname, cstatus, doc) VALUES (?, ?, ?, ?)");
     if (st == 0) { return 0; }
     patra_bind_text(st, 0, str_data(crew_id), str_len(crew_id));
-    patra_bind_text(st, 1, str_data(nm), str_len(nm));
+    patra_bind_text(st, 1, str_data(nm), nlen);
     patra_bind_int(st, 2, status);
     patra_bind_text(st, 3, str_data(doc), str_len(doc));
     var rc = patra_exec_prepared(db, st);
@@ -153,9 +194,20 @@ fn _agnostic_crews_save_locked(crew_id: Str, name: Str, status, doc: Str): i64 {
 
     # ⚠ A failed write must not read as success — the same rule the definition
     # store follows. The caller counts the failure; the outcome is simply not
-    # durable, and a poll after a restart will 404 rather than lie.
+    # durable, and after a restart the crew answers `interrupted` from its
+    # in-flight row (0.1.13), or 404 when it has none, rather than lie.
     if (rc != PATRA_OK) { return 0; }
     return 1;
+}
+
+# How many of `n` bytes at `d` fit in `cap` without splitting a UTF-8 sequence — the rule
+# `_agnostic_audit_fit_utf8` applies to the trail's kept copies.
+fn _agnostic_crews_fit_utf8(d, n, cap): i64 {
+    if (n <= cap) { return n; }
+    var k = cap;
+    # Back off past continuation bytes (10xxxxxx) to the start of the cut character.
+    while (k > 0 && (load8(d + k) & 192) == 128) { k = k - 1; }
+    return k;
 }
 
 # Persist a terminal crew outcome AND its index row (0.1.9) — `row` carries the crew's
@@ -206,7 +258,27 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     # write's own result does not change the answer.
     patra_exec_prepared(db, st);
     patra_finalize(st);
+    # ⭐ The crew has its outcome, so it is no longer in flight (0.1.13, ADR 0013). Here,
+    # in the critical section that wrote the outcome, so the cancel latch, the collector
+    # and a poll all discharge it and no caller has to remember to. Its result is ignored
+    # like the index row's: a row left behind is swept at the next start, which finds
+    # this outcome and only deletes it.
+    _agnostic_crews_inflight_drop_locked(crew_id);
     return 1;
+}
+
+# Delete a crew's in-flight row, if it has one. The caller holds the store lock.
+# Returns patra's result; a crew with no row (one submitted before 0.1.13, or whose
+# mark failed) deletes nothing, which is not an error.
+fn _agnostic_crews_inflight_drop_locked(crew_id: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0 || crew_id == 0) { return 0 - 1; }
+    var st = patra_prepare(db, "DELETE FROM agnostic_crew_inflight WHERE crew_id = ?");
+    if (st == 0) { return 0 - 1; }
+    patra_bind_text(st, 0, str_data(crew_id), str_len(crew_id));
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    return rc;
 }
 
 # Rewrite a CANCELLED crew's stored outcome and its index row's tokens and cost, once its
@@ -249,6 +321,157 @@ fn _agnostic_crews_resave_row_locked(row, doc: Str): i64 {
     patra_exec_prepared(db, si);
     patra_finalize(si);
     return 1;
+}
+
+# --- crews in flight (0.1.13, ADR 0013) ---------------------------------------
+
+# Record that an accepted crew has no outcome yet: its id, scope, name, when it was
+# accepted (epoch ms), how many tasks (-1 when not known), the engine mode and the
+# process's wire spelling (each Str may be 0). Returns 1 when written; 2 when the crew
+# already has a stored outcome — it finished before this ran — and nothing was written;
+# 0 when there is no database or the write failed.
+#
+# ⚠ "Already stored?" and the insert are one step under the store lock, and the outcome
+# write deletes the row under the same lock, so a crew that finishes first leaves no row.
+fn agnostic_crews_mark_inflight(crew_id: Str, scope: Str, name: Str, submitted, ntasks, mode: Str, process: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_mark_inflight_locked(crew_id, scope, name, submitted, ntasks, mode, process);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_mark_inflight`'s body. The caller holds the store lock.
+fn _agnostic_crews_mark_inflight_locked(crew_id: Str, scope: Str, name: Str, sub, ntasks, mode: Str, proc: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0 || crew_id == 0) { return 0; }
+    if (_agnostic_crews_exists_locked(crew_id) == 1) { return 2; }
+    var sc = scope;
+    if (sc == 0) { sc = AGNOSTIC_SCOPE_DEFAULT; }
+    var nm = name;
+    if (nm == 0) { nm = str_from(""); }
+    var md = mode;
+    if (md == 0) { md = str_from(""); }
+    var pr = proc;
+    if (pr == 0) { pr = str_from(""); }
+    var st = patra_prepare(db, "INSERT INTO agnostic_crew_inflight \
+(crew_id, scope, cname, submitted, ntasks, mode, process) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(crew_id), str_len(crew_id));
+    patra_bind_text(st, 1, str_data(sc), str_len(sc));
+    patra_bind_text(st, 2, str_data(nm), str_len(nm));
+    patra_bind_int(st, 3, sub);
+    patra_bind_int(st, 4, ntasks);
+    patra_bind_text(st, 5, str_data(md), str_len(md));
+    patra_bind_text(st, 6, str_data(pr), str_len(pr));
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    if (rc != PATRA_OK) { return 0; }
+    return 1;
+}
+
+# Every crew still in flight, as a vec of crew rows in `a` — id, scope, name, submitted,
+# task count, mode and process; strings COPIED out of the result set, which is freed
+# before this returns. Read once, by the start-up sweep.
+fn agnostic_crews_inflight_a(a): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_inflight_locked_a(a);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_inflight_a`'s body. The caller holds the store lock.
+fn _agnostic_crews_inflight_locked_a(a): i64 {
+    var out = vec_new_a(a);
+    if (out == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return out; }
+    var rs = patra_query(db, "SELECT crew_id, scope, cname, submitted, ntasks, mode, process \
+FROM agnostic_crew_inflight");
+    if (rs == 0) { return out; }
+    var n = patra_result_count(rs);
+    var i = 0;
+    while (i < n) {
+        var row = agnostic_crew_row_new_a(a);
+        if (row == 0) { break; }
+        agnostic_crew_row_set(row, AGNOSTIC_CR_CREW_ID, _agnostic_crews_str_a(a, rs, i, 0));
+        agnostic_crew_row_set(row, AGNOSTIC_CR_SCOPE, _agnostic_crews_str_a(a, rs, i, 1));
+        var nl = patra_result_get_text_len(rs, i, 2);
+        if (nl > 0) {
+            var nb = alloc_via(a, nl);
+            if (nb != 0) {
+                if (patra_result_read_text(db, rs, i, 2, nb) == PATRA_OK) {
+                    agnostic_crew_row_set(row, AGNOSTIC_CR_NAME, str_new_a(a, nb, nl));
+                }
+            }
+        }
+        agnostic_crew_row_set(row, AGNOSTIC_CR_SUBMITTED, patra_result_get_int(rs, i, 3));
+        agnostic_crew_row_set(row, AGNOSTIC_CR_NTASKS, patra_result_get_int(rs, i, 4));
+        var mode = _agnostic_crews_str_a(a, rs, i, 5);
+        if (mode != 0) {
+            if (str_len(mode) > 0) { agnostic_crew_row_set(row, AGNOSTIC_CR_MODE, mode); }
+        }
+        var proc = _agnostic_crews_str_a(a, rs, i, 6);
+        if (proc != 0) {
+            if (str_len(proc) > 0) { agnostic_crew_row_set(row, AGNOSTIC_CR_PROCESS, proc); }
+        }
+        if (agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID) != 0) { vec_push_a(a, out, row); }
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return out;
+}
+
+# Turn one in-flight crew into its terminal INTERRUPTED outcome: `row` is the crew as
+# `agnostic_crews_inflight_a` read it, `doc` the document to store. One critical section:
+#
+#   * the crew already has an outcome — the process stopped between writing it and
+#     deleting this row — so the outcome stands, the row is deleted, and this returns 2;
+#   * otherwise the row is set INTERRUPTED (finished 0, tokens and cost not known) and
+#     written through the ordinary write-once path, which also deletes the in-flight
+#     row: 1;
+#   * a write failed: 0, and the in-flight row is KEPT, so the next start retries it.
+fn agnostic_crews_interrupt_row(row, doc: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_interrupt_row_locked(row, doc);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_interrupt_row`'s body. The caller holds the store lock.
+fn _agnostic_crews_interrupt_row_locked(row, doc: Str): i64 {
+    if (row == 0 || doc == 0) { return 0; }
+    var crew_id = agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID);
+    if (crew_id == 0) { return 0; }
+    if (agnostic_store_db() == 0) { return 0; }
+    if (_agnostic_crews_exists_locked(crew_id) == 1) {
+        _agnostic_crews_inflight_drop_locked(crew_id);
+        return 2;
+    }
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_INTERRUPTED);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STARTED, 0);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_FINISHED, 0);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_TOKENS, 0 - 1);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_COST, 0 - 1);
+    return _agnostic_crews_save_row_locked(row, doc);
+}
+
+# How many crews are in flight — accepted, with no stored outcome yet.
+fn agnostic_crews_inflight_count(): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_inflight_count_locked();
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_inflight_count`'s body. The caller holds the store lock.
+fn _agnostic_crews_inflight_count_locked(): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var rs = patra_query(db, "SELECT crew_id FROM agnostic_crew_inflight");
+    if (rs == 0) { return 0; }
+    var n = patra_result_count(rs);
+    patra_result_free(rs);
+    return n;
 }
 
 # Every durable crew row in `scope`, as a vec of crew rows in `a` — strings COPIED out of
@@ -381,6 +604,7 @@ fn agnostic_crews_reset(): i64 {
     if (db != 0) {
         patra_exec(db, "DELETE FROM agnostic_crews");
         patra_exec(db, "DELETE FROM agnostic_crew_index");
+        patra_exec(db, "DELETE FROM agnostic_crew_inflight");
     }
     agnostic_store_unlock();
     return 0;

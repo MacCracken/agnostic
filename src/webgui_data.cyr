@@ -796,7 +796,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
 </html>
 ";
 
-# --- src/webgui/plugins/swarm/index.html — 434017 bytes ----------------------
+# --- src/webgui/plugins/swarm/index.html — 451093 bytes ----------------------
 var _AGNOSTIC_WEBGUI_ASSET_01 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -1071,6 +1071,7 @@ canvas.timeline { width: 100%; height: 16px; display: block; border-radius: 3px;
 .sw-est .stale { color: #fbbf24; }
 .sw-est .bar { margin-top: 5px; height: 4px; }
 .sw-est .bar i { background: var(--accent); }
+.sw-est .sw-solo { margin-top: 3px; }
 .sw-runs { display: flex; flex-wrap: wrap; gap: 4px; min-height: 18px; }
 .lsec-title { display: flex; align-items: center; gap: 8px; }
 .lsec-title .spacer { flex: 1; }
@@ -1167,6 +1168,7 @@ table.etbl button.x:hover { color: #fca5a5; border-color: #7f1d1d; }
 .est-row { display: flex; justify-content: space-between; gap: 8px; font: 11px var(--mono); color: var(--dim); margin-top: 3px; }
 .est-row b { color: var(--text); font-weight: 600; }
 .est-stale { font: 10px var(--mono); color: #fbbf24; margin-top: 4px; }
+.est-note { font: 10.5px/1.5 var(--sans); color: var(--faint); margin: 6px 0 0; }
 pre.req { max-height: 260px; overflow: auto; background: #070c12; border: 1px solid var(--line); border-radius: 5px; padding: 8px; font: 10.5px/1.45 var(--mono); color: var(--dim); white-space: pre; user-select: text; -webkit-user-select: text; }
 .radio-row { display: flex; flex-direction: column; gap: 6px; }
 .radio-row label { display: flex; align-items: center; gap: 7px; color: var(--text); }
@@ -1346,9 +1348,10 @@ pre.req { max-height: 260px; overflow: auto; background: #070c12; border: 1px so
  *
  *  What runs is a saved swarm — a spec (2b): its tasks, roles, models, tools, regions, caps,
  *  budget and failure model. The simulator compiles it; the estimator runs it headless over
- *  several seeds to price it; a live run submits its tasks to agnostic as a crew. Specs are kept
- *  on the agnostic server, per tenant, through the shell's host bridge (1b): this page cannot
- *  reach the network itself.
+ *  several seeds to price it, and prices one agent at the swarm's token spend beside it, as a
+ *  baseline; a live run submits its tasks to agnostic as a crew. Specs are kept on the agnostic
+ *  server, per tenant, through the shell's host bridge (1b): this page cannot reach the network
+ *  itself.
  *
  *  Sections:  0 Utilities · 1 Event schema & interfaces · 1b Host bridge · 2 Sim (scenarios +
  *             simulator) · 2b Swarm specs & the estimator · 3 EventSource implementations ·
@@ -2830,8 +2833,9 @@ Object.assign(Sim.prototype, {
  *
  *  A spec is the one input to every run. The launcher keeps one per swarm (a plugin document in
  *  the user's tenant), the editor edits it, the simulator runs what compileSpec makes of it, the
- *  estimator runs that headless over several seeds to price it, and a live run submits its tasks
- *  to agnostic as a crew (specToCrewRequest).
+ *  estimator runs that headless over several seeds to price it — beside one agent at the swarm's
+ *  token spend, as a baseline (soloRun) — and a live run submits its tasks to agnostic as a crew
+ *  (specToCrewRequest).
  *
  *  Every field has a default, and every value read back is clamped (normalizeSpec): a stored
  *  document is untrusted input — an older version, a hand edit, an import, another tab's write.
@@ -3072,10 +3076,19 @@ function normalizeEstimate(e) {
   if (!runs) return null;
   const n = (v) => rdNum(v, 0, 1e12, 0);
   const g = (o, k) => n(o && typeof o === 'object' ? o[k] : 0);
+  // The one-agent baseline (0.5.0, ADR 0014). An estimate saved before it has none: null, and the
+  // views say to estimate again.
+  const so = e.solo && typeof e.solo === 'object' && !Array.isArray(e.solo) ? e.solo : null;
   return {
     sig: e.sig.slice(0, 16), at: n(e.at), runs, cost: { min: g(e.cost, 'min'), p50: g(e.cost, 'p50'), max: g(e.cost, 'max') },
     durationMs: { p50: g(e.durationMs, 'p50'), max: g(e.durationMs, 'max') }, tokens: { p50: g(e.tokens, 'p50') }, peak: { p50: g(e.peak, 'p50') },
     failed: n(e.failed), over: rdInt(e.over, 0, runs, 0), stalled: rdInt(e.stalled, 0, runs, 0),
+    solo: so && {
+      tokens: { p50: g(so.tokens, 'p50') }, cost: { min: g(so.cost, 'min'), p50: g(so.cost, 'p50'), max: g(so.cost, 'max') },
+      durationMs: { p50: g(so.durationMs, 'p50'), max: g(so.durationMs, 'max') },
+      ratio: { tokens: g(so.ratio, 'tokens'), cost: g(so.ratio, 'cost'), durationMs: g(so.ratio, 'durationMs') },
+      failed: n(so.failed), unreached: n(so.unreached), out: rdInt(so.out, 0, runs, 0), stalled: rdInt(so.stalled, 0, runs, 0),
+    },
   };
 }
 /**
@@ -3241,14 +3254,200 @@ function compileSpec(s) {
   return { sc, cfg };
 }
 
+/* ---- the estimator's baseline: one agent at the swarm's token spend (ADR 0014) ---- */
+/**
+ * Every number of a Sim agent that soloRun restates, each beside the Sim method it comes from.
+ * Restated, not shared (ADR 0014): a change to one of those numbers in the Sim must change it here.
+ * swarm.test.mjs reads each method's source and names the entry here whose number it no longer has.
+ */
+const SOLO = {
+  workMs: [1600, 4200],      // Sim.work: one work step
+  crashPerMs: 3000,          // Sim.work: a step's crash chance is policy.crash × difficulty × its ms / this
+  crashAt: [0.2, 0.9],       // Sim.work: where in the step a drawn crash lands
+  far: { ms: 1100, perLatency: 16, jitter: 300 }, // Sim.travelMs: to another region, + latency × perLatency
+  near: { ms: 650, jitter: 250 },                 // Sim.travelMs: to its parent, a sibling or a part
+  here: { ms: 1100, jitter: 700 },                // Sim.travelMs: anywhere else in the region
+  latencyMs: 150,            // Sim.latency: between two regions that set none
+  compute: { moving: 0.8, working: 1, tool: 1, other: 0.5 }, // Sim.tickAgent: the compute factor of each phase
+  localLlm: 1.6,             // Sim.callTool: how much longer an llm call takes in Local
+  slow: [3, 5],              // Sim.callTool: how many times longer a slow cloud call takes
+  toolGain: 0.8,             // Sim.toolReturn: the work a successful tool call is worth, × region speed
+  slowErr: 2,                // Sim.toolReturn: how much likelier a slow call is to fail
+  errorMs: [1100, 2200],     // Sim.hurt: the back-off after a tool error that did not kill
+  damage: [18, 34],          // Sim.hurt: the health a tool error costs
+  health: 100,               // Sim.spawnAgent: a new agent's health
+  spawnMs: 450,              // Sim.spawnAgent: spawning
+  retryMs: 900,              // Sim.scheduleRetry: a crashed task waits this long for its next agent
+  keep: { soft: 0.85, hard: 0.25, hardOver: 3 }, // Sim.scheduleRetry: the own work a crash keeps (hard: difficulty > hardOver)
+  leadShare: 0.5,            // Sim.workCap: the share of its work a fan-out lead does before its split
+  reworkFrom: 0.9,           // Sim.requestRework: where a review resumes after its fix
+  maxSteps: 200000,          // a guard, not the Sim's: past this many steps the run is cut off, the rest unreached
+};
+
+/**
+ * One agent, given the tokens the swarm spent: the estimator's baseline (roadmap B3, ADR 0014).
+ *
+ * It works the plan the Sim builds on `seed` — `sc.build` on the same RNG, so the same tasks and
+ * fan-out counts — one task at a time. Each task runs with its role's model, rate, tools and region,
+ * under the same failure model; there is no orchestrator, no coordinating lead, nothing in parallel.
+ * It stops when it has spent `budget` tokens, and what is left counts as unreached.
+ *
+ * It is NOT the Sim with one agent allowed (`maxActive = 1`): that is still a swarm — an orchestrator
+ * spending tokens for the whole run, leads coordinating, a fresh agent per sub-task — one worker at a
+ * time. And it does not touch the Sim, so every swarm estimate stays what it was.
+ *
+ * Small simplifications: a fan-out part runs in its parent's region (the Sim may spread parts to
+ * other clouds); a tool is its kind's in the task's region, else the nearest (no wandering); a crash
+ * drawn past the end of a work step is dropped; health resets per task — one context per task. Part
+ * sizes and rework are drawn again from this run's RNG, not taken from the swarm's run.
+ *
+ * → {tokens, cost, ms, done, failed, unreached, total, fixes, out, stalled}: `total` counts every
+ *   task and fan-out part of the plan plus the `fixes` review asked for, less the parts of a lead
+ *   that failed before its split (the Sim never makes those); done + failed + unreached === total,
+ *   and `tokens` never exceeds `budget`.
+ */
+function soloRun({ sc, cfg }, { seed, scale, budget }) {
+  const rng = new RNG((seed ^ hashStr(sc.key)) >>> 0);
+  const plan = sc.build(rng, scale); // first, as in Sim.start: the swarm's own plan on this seed
+  const P = sc.policy, mult = P.computeMult || 1;
+  const terr = new Map(cfg.world.territories.map((t) => [t.id, t]));
+  const lat = (a, b) => (a === b ? 0 : (terr.get(a).latencyMs[b] || SOLO.latencyMs));
+  const r = { tokens: 0, cost: 0, ms: 0, done: 0, failed: 0, unreached: 0, total: 0, fixes: 0, out: false, stalled: false };
+  let at = 'local', steps = 0;
+  // Time at a phase's compute factor (Sim.tickAgent), billed to the task's region `T`.
+  const pass = (ms, f, T) => { r.ms += ms; r.cost += (T.costPerSec * f * mult * ms) / 1000; };
+  // Travel (Sim.travelMs): `near` is a fan-out part, a fix or a lead going back to its own task.
+  const go = (T, to, near) => {
+    const F = SOLO.far, N = SOLO.near, H = SOLO.here;
+    pass(at !== to ? F.ms + lat(at, to) * F.perLatency + rng.range(0, F.jitter) : near ? N.ms + rng.range(0, N.jitter) : H.ms + rng.range(0, H.jitter), SOLO.compute.moving, T);
+    at = to;
+  };
+  const toolFor = (kind, home) => {
+    let best = null;
+    for (const t of cfg.world.tools) if (t.kind === kind && (!best || lat(home, t.territory) < lat(home, best.territory))) best = t;
+    return best;
+  };
+  const job = (role, territory, difficulty) => ({ role, territory, difficulty, own: 0, attempts: 0, health: SOLO.health,
+    model: (territory === 'local' && cfg.roleLocalModel[role]) || cfg.roleModel[role] });
+  const spent = () => (r.tokens >= budget ? (r.out = true) : false);
+  // Work `j` until its own work reaches `cap`: true when it does, false when the task fails, null
+  // when the run ends first — out of tokens, or cut off.
+  const run = (j, cap, near) => {
+    if (spent()) return null;
+    const T = terr.get(j.territory), m = cfg.models[j.model];
+    const tps = cfg.roleTps[j.role] * (m ? m.tps : 1), price = m ? m.price : 0;
+    const mix = cfg.roleTools[j.role];
+    let sinceTool = 1;
+    go(T, j.territory, near);
+    while (j.own < cap - 1e-6) {
+      if (++steps > SOLO.maxSteps) { r.stalled = true; return null; }
+      if (spent()) return null;
+      let crashed = false;
+      const tool = mix && sinceTool >= 1 && rng.chance(cfg.toolP[j.role] || 0) ? toolFor(rng.weighted(mix), j.territory) : null;
+      if (tool) {
+        // Sim.goUseTool → callTool → toolReturn, and back to the task.
+        sinceTool = 0;
+        go(T, tool.territory, false);
+        let ms = rng.range(cfg.toolMs[tool.kind][0], cfg.toolMs[tool.kind][1]) * (tool.territory === 'local' && tool.kind === 'llm' ? SOLO.localLlm : 1);
+        const slow = terr.get(tool.territory).kind === 'cloud' && rng.chance(P.slow);
+        if (slow) ms *= rng.range(SOLO.slow[0], SOLO.slow[1]);
+        pass(ms, SOLO.compute.tool, T);
+        if (rng.chance(P.toolErr * (slow ? SOLO.slowErr : 1))) {
+          j.health -= rng.int(SOLO.damage[0], SOLO.damage[1]);
+          if (j.health <= 0) crashed = true;
+          else pass(rng.range(SOLO.errorMs[0], SOLO.errorMs[1]), SOLO.compute.other, T);
+        } else {
+          // A result larger than what is left is read up to the budget, for its share of the work: the
+          // run stops where the tokens run out, as a work step does.
+          const drawn = rng.range(cfg.toolTokens[tool.kind][0], cfg.toolTokens[tool.kind][1]);
+          const cut = r.tokens + drawn > budget, tokens = cut ? budget - r.tokens : drawn;
+          r.cost += (tokens / 1000) * price;
+          r.tokens = cut ? budget : r.tokens + drawn;
+          j.own = Math.min(cap, j.own + SOLO.toolGain * T.speed * (cut ? tokens / drawn : 1));
+          if (cut) { r.out = true; return null; }
+        }
+        if (!crashed) go(T, j.territory, false);
+      } else {
+        // Sim.work: a step that ends when it is done, when the task is, or at a crash drawn for it.
+        const dur = rng.range(SOLO.workMs[0], SOLO.workMs[1]);
+        const crashAt = rng.chance(P.crash * j.difficulty * (dur / SOLO.crashPerMs)) ? rng.range(SOLO.crashAt[0], SOLO.crashAt[1]) * dur : Infinity;
+        const end = Math.min(dur, ((cap - j.own) / T.speed) * 1000);
+        crashed = crashAt < end;
+        let ms = crashed ? crashAt : end;
+        const cut = r.tokens + (tps * ms) / 1000 > budget;
+        if (cut) ms = ((budget - r.tokens) / tps) * 1000; // stops where the tokens run out
+        pass(ms, SOLO.compute.working, T);
+        r.cost += ((cut ? budget - r.tokens : (tps * ms) / 1000) / 1000) * price;
+        r.tokens = cut ? budget : r.tokens + (tps * ms) / 1000;
+        j.own = Math.min(cap, j.own + (ms / 1000) * T.speed);
+        if (cut) { r.out = true; return null; }
+        sinceTool++;
+      }
+      if (crashed) {
+        // Sim.crash → scheduleRetry: some context lost, a new agent from HQ after a wait.
+        if (++j.attempts > P.maxRetries) return false;
+        j.own *= j.difficulty > SOLO.keep.hardOver ? SOLO.keep.hard : SOLO.keep.soft;
+        j.health = SOLO.health;
+        r.ms += SOLO.retryMs;
+        at = 'local';
+        pass(SOLO.spawnMs, SOLO.compute.other, T);
+        go(T, j.territory, false);
+        sinceTool = 1;
+      }
+    }
+    return true;
+  };
+  const order = topoOrder(plan) || plan;
+  for (const t of order) r.total += 1 + (t.fanout ? t.fanout.titles.length : 0);
+  pass(SOLO.spawnMs, SOLO.compute.other, terr.get('local'));
+  // A failed task does not hold up those that depend on it (Sim.failTask → unlockDependents).
+  for (const t of order) {
+    const d = t.difficulty || 1, lead = job(t.role, t.territory, d);
+    const parts = t.fanout ? t.fanout.titles.length : 0;
+    let settled = 0;
+    // A fan-out lead does half its own work, its parts, then the rest (Sim.workCap, Sim.split).
+    let ok = run(lead, parts ? t.work * SOLO.leadShare : t.work, false);
+    for (let i = 0; ok && i < parts; i++) {
+      const p = run(job(t.fanout.role, t.territory, d), rng.range(t.fanout.work[0], t.fanout.work[1]), true);
+      if (p === null) { ok = null; break; }
+      if (p) r.done++; else r.failed++; // a failed part does not fail its lead
+      settled++;
+    }
+    if (ok && parts) ok = run(lead, t.work, true);
+    // Review may send work back (Sim.requestRework): a fix, then the rest of the review.
+    if (ok && t.rework && rng.chance(t.rework.chance)) {
+      r.total++;
+      r.fixes++;
+      const f = run(job(t.rework.role, t.territory, 1), rng.range(t.rework.work[0], t.rework.work[1]), true);
+      if (f === null) ok = null;
+      else {
+        if (f) r.done++; else r.failed++;
+        lead.own = t.work * SOLO.reworkFrom;
+        ok = run(lead, t.work, true);
+      }
+    }
+    if (ok === null) break;
+    if (ok) r.done++;
+    else {
+      // A lead that fails before its split never makes its parts: the Sim creates them at the split
+      // (Sim.reachedThreshold → Sim.split), and Sim.failTask fails only the parts that exist.
+      r.failed++;
+      r.total -= parts - settled;
+    }
+  }
+  r.unreached = r.total - r.done - r.failed;
+  return r;
+}
+
 /**
  * Price a spec: run it headless over `runs` seeds (seed, seed + 7919, …) and summarize each run's
  * final orchestrator summary. Yields to the page every few milliseconds, so the UI stays live;
- * resolves null when `signal.cancelled` turns true.
+ * resolves null when `signal.cancelled` turns true. Beside each run, soloRun prices one agent on
+ * the same seed at the tokens that run spent; the swarm's own figures are the Sim's, untouched.
  */
 async function estimateSpec(spec, { runs = 8, onProgress = null, signal = null } = {}) {
   const s = deepCopy(spec);
-  const rows = [];
+  const rows = [], solo = [];
   for (let i = 0; i < runs; i++) {
     const { sc, cfg } = compileSpec(s);
     const seed = ((s.seed - 1 + i * 7919) % 2147483647) + 1;
@@ -3271,9 +3470,15 @@ async function estimateSpec(spec, { runs = 8, onProgress = null, signal = null }
     }
     rows.push(sum ? { cost: sum.cost, ms: sum.durationMs, tokens: sum.tokens, peak: sum.peak, failed: sum.tasksFailed, stalled: sim.stalled }
       : { cost: sim.totals.cost, ms: sim.t, tokens: sim.totals.tokens, peak: sim.stats.peak, failed: sim.stats.tasksFailed, stalled: true });
+    // One agent on this seed, limited to the tokens this run spent — paired run by run, so a run
+    // that spent more gives the baseline more. A fresh compile: it shares nothing with the Sim.
+    const row = rows[rows.length - 1];
+    const so = soloRun(compileSpec(s), { seed, scale: s.scale, budget: row.tokens });
+    solo.push(Object.assign(so, { rTok: so.tokens / Math.max(1, row.tokens), rCost: row.cost > 0 ? so.cost / row.cost : 0, rTime: so.ms / Math.max(1, row.ms) }));
   }
   if (onProgress) onProgress(1);
   const col = (k) => rows.map((r) => r[k]);
+  const sol = (k) => solo.map((r) => r[k]);
   return {
     sig: specSig(s), at: Date.now(), runs,
     cost: { min: Math.min(...col('cost')), p50: quantile(col('cost'), 0.5), max: Math.max(...col('cost')) },
@@ -3281,6 +3486,15 @@ async function estimateSpec(spec, { runs = 8, onProgress = null, signal = null }
     tokens: { p50: quantile(col('tokens'), 0.5) }, peak: { p50: quantile(col('peak'), 0.5) },
     failed: col('failed').reduce((a, b) => a + b, 0) / runs,
     over: rows.filter((r) => r.cost > s.budget).length, stalled: rows.filter((r) => r.stalled).length,
+    // Each ratio is the p50 of the per-seed ratios, not a ratio of the two p50s.
+    solo: {
+      tokens: { p50: quantile(sol('tokens'), 0.5) },
+      cost: { min: Math.min(...sol('cost')), p50: quantile(sol('cost'), 0.5), max: Math.max(...sol('cost')) },
+      durationMs: { p50: quantile(sol('ms'), 0.5), max: Math.max(...sol('ms')) },
+      ratio: { tokens: quantile(sol('rTok'), 0.5), cost: quantile(sol('rCost'), 0.5), durationMs: quantile(sol('rTime'), 0.5) },
+      failed: sol('failed').reduce((a, b) => a + b, 0) / runs, unreached: sol('unreached').reduce((a, b) => a + b, 0) / runs,
+      out: solo.filter((r) => r.out).length, stalled: solo.filter((r) => r.stalled).length,
+    },
   };
 }
 
@@ -3479,7 +3693,9 @@ class ReadOnlySink extends CommandSink {
  * resumes when the shell answers again (a sign-in re-sends init) — rather than recording the crew
  * as lost. Only the server saying it holds no such crew ends it that way.
  */
-const CREW_TERMINAL = new Set(['completed', 'failed', 'cancelled', 'unknown']);
+// `interrupted` (agnostic 0.1.13, ADR 0013): a crew a server restart cut short. Terminal — without
+// it here, finalize() would follow its status forever as a crew still running.
+const CREW_TERMINAL = new Set(['completed', 'failed', 'cancelled', 'unknown', 'interrupted']);
 /** A task's title from a crew task description: the part after this plugin's \"Mission: …\\nTask: \" prefix. */
 function taskTitle(description, i) {
   const m = /^Mission:[^\\n]*\\n(?:Task: )?([\\s\\S]*)$/.exec(String(description || ''));
@@ -3850,7 +4066,7 @@ class LiveCrewSource extends EventSource {
     const who = t.unit ? t.unit.id : null;
     const took = t.startedAt ? (at != null ? at : this.ts()) - t.startedAt : 0;
     if (ok) this.emit('task.completed', who, t.id, { result: oneLine(t.output, 140) || 'completed', output: t.output, durationMs: took }, at);
-    else this.emit('task.failed', null, t.id, { reason: status === 'cancelled' ? 'Cancelled' : status === 'not run' ? 'Never ran' : 'The engine reported ' + status, output: t.output, attempts: 1 }, at);
+    else this.emit('task.failed', null, t.id, { reason: status === 'cancelled' ? 'Cancelled' : status === 'interrupted' ? 'Interrupted by a server restart' : status === 'not run' ? 'Never ran' : 'The engine reported ' + status, output: t.output, attempts: 1 }, at);
     const u = t.unit;
     t.unit = null;
     if (!u) return;
@@ -3917,7 +4133,8 @@ class LiveCrewSource extends EventSource {
         if (out && !t.output && (t.status === 'done' || t.status === 'failed')) t.output = out;
         this.resolve(t, typeof res.status === 'string' ? res.status : st === 'completed' ? 'completed' : 'failed', out);
       }
-      for (const t of this.tasks) if (t.status === 'pending' || t.status === 'active' || t.status === 'queued') this.resolve(t, st === 'cancelled' ? 'cancelled' : 'not run');
+      // A task left unsettled by a crew that was cancelled, or cut short by a restart, says so.
+      for (const t of this.tasks) if (t.status === 'pending' || t.status === 'active' || t.status === 'queued') this.resolve(t, st === 'cancelled' || st === 'interrupted' ? st : 'not run');
       // What the engine metered replaces the estimate — when it metered anything.
       if (d.usage && typeof d.usage === 'object') {
         this.usage = d.usage;
@@ -3931,7 +4148,7 @@ class LiveCrewSource extends EventSource {
       this.finish(st, typeof d.error === 'string' ? d.error : '');
       return;
     }
-    if (r.status === 404) { this.fail('agnostic holds no crew ' + this.crewId.slice(0, 8) + ' — it ran before agnostic kept outcomes, or belongs to another tenant', 'lost'); return; }
+    if (r.status === 404) { this.fail('agnostic holds no crew ' + this.crewId.slice(0, 8) + ' — it ran before agnostic kept outcomes, a restart cut it short before agnostic 0.1.13, or it belongs to another tenant', 'lost'); return; }
     if (r.status === 0 || r.status === 401 || r.status === 403) { this.pause(r, () => this.finalize()); return; }
     if (++this.misses >= 6) { this.pause({ status: 0 }, () => this.finalize()); return; }
     clearTimeout(this.timer);
@@ -6099,7 +6316,7 @@ class HUD {
     const status = String(ls.status || 'finished');
     const good = status === 'completed';
     const head = { completed: 'CREW <b>COMPLETED</b>', failed: 'CREW <b>FAILED</b>', cancelled: 'CREW <b>CANCELLED</b>', refused: 'CREW <b>REFUSED</b>', lost: 'CREW <b>LOST</b>',
-      unconfirmed: 'CREW <b>UNCONFIRMED</b>' }[status] || 'CREW <b>' + escapeHtml(status.toUpperCase()) + '</b>';
+      unconfirmed: 'CREW <b>UNCONFIRMED</b>', interrupted: 'CREW <b>INTERRUPTED</b>' }[status] || 'CREW <b>' + escapeHtml(status.toUpperCase()) + '</b>';
     const total = (ls.tasksDone || 0) + (ls.tasksFailed || 0);
     const tok = ls.tokensActual
       ? stat('TOKENS', fmtTokens(ls.tokens || 0), 'metered by agnostic for ' + (ls.meteredTasks || 0) + ' of ' + total + ' tasks')
@@ -6453,6 +6670,43 @@ Object.assign(HUD.prototype, {
  *  SECTION 6b · LAUNCHER, EDITOR & LIBRARY — the swarms you keep, and the page that edits them
  * ===================================================================================== */
 const ESTIMATE_RUNS = 8;
+/** What an estimate's one-agent baseline is, and is not (ADR 0014) — shown under it in the editor. */
+const SOLO_NOTE = 'One agent works the same tasks one at a time, limited on each seed to the tokens the swarm spent — the same models, tools and failure model, with no orchestrator, no coordination and nothing in parallel. The simulator models time, tokens and cost: not the quality of an answer, and not the context each new agent reads in, so a real swarm’s extra tokens are likely higher than shown. A run that runs out of tokens stops there: its time and cost cover only the work it did.';
+/** Why the baseline is there: the evidence, stated exactly. */
+const SOLO_WHY = 'With equal thinking-token budgets, one agent matches or beats a multi-agent system on multi-hop reasoning (Tran & Kiela, 2026); token spend explains about 80% of the variance in multi-agent results (Anthropic, 2025).';
+
+/**
+ * A card's line for an estimate's one-agent baseline; '' for an estimate without one. Running out of
+ * tokens is the baseline's own outcome, not a warning about the swarm, so it is not coloured as one;
+ * the tasks it left are said with it, since its time and cost cover only the work it did.
+ */
+function soloLine(e) {
+  const so = e && e.solo;
+  if (!so) return '';
+  return '<div class=\"sw-solo\" title=\"' + escapeHtml(SOLO_NOTE + ' ' + SOLO_WHY) + '\"><span class=\"src-tag sim\">SIM</span>1 agent, same tokens: ≈ ' + fmtCost(so.cost.p50)
+    + ' · ' + fmtTime(so.durationMs.p50) + ' (' + so.ratio.durationMs.toFixed(1) + '× the swarm’s time)'
+    + (so.out ? ' · out of tokens in ' + so.out + (so.unreached > 0 ? ' (' + so.unreached.toFixed(1) + ' tasks left / run)' : '') : '') + '</div>';
+}
+
+/** One row of an estimate box in the editor's side panel: a label and its figure. */
+function estRow(k, x) { return '<div class=\"est-row\"><span>' + k + '</span><b>' + x + '</b></div>'; }
+
+/**
+ * The editor's box for an estimate's one-agent baseline (ADR 0014): its figures against the swarm's,
+ * labelled SIM, with the note saying what it assumes. An estimate without one says how to get one;
+ * no estimate, no box.
+ */
+function soloBox(e) {
+  if (!e) return '';
+  const so = e.solo, of = (x) => ' · ' + fmtPct(x) + ' of swarm';
+  return '<div class=\"ed-box\"><div class=\"panel-title\" title=\"' + escapeHtml(SOLO_WHY) + '\">ONE AGENT, SAME TOKENS <span class=\"src-tag sim\">SIM</span></div>'
+    + (so ? estRow('cost (p50)', fmtCost(so.cost.p50) + (e.cost.p50 > 0 ? of(so.ratio.cost) : '')) + estRow('duration (p50)', fmtTime(so.durationMs.p50) + ' · ' + so.ratio.durationMs.toFixed(1) + '× swarm')
+      + estRow('tokens (p50)', fmtTokens(so.tokens.p50) + of(so.ratio.tokens)) + estRow('failed tasks', so.failed.toFixed(1) + ' / run') + estRow('out of tokens', so.out + ' of ' + e.runs)
+      + (so.unreached > 0 ? estRow('tasks left', so.unreached.toFixed(1) + ' / run') : '') + (so.stalled ? estRow('cut off', so.stalled + ' of ' + e.runs) : '')
+      + '<p class=\"est-note\">' + escapeHtml(SOLO_NOTE) + '</p>'
+      : '<p class=\"est-note\">No one-agent baseline in this estimate — Σ Estimate again.</p>')
+    + '</div>';
+}
 
 /** A confirm dialog. The iframe sandbox has no allow-modals, so window.confirm() is not available. */
 class Modal {
@@ -6827,7 +7081,7 @@ class Launcher {
     if (!this.crews.length) { list.innerHTML = '<div class=\"crew-empty\">No crews yet. Run a swarm live, or submit one to the API — every crew of yours shows up here.</div>'; return; }
     list.innerHTML = this.crews.map((c) => {
       const st = String(c.status || '?');
-      const cls = /failed|cancelled|unknown/.test(st) ? 'bad' : st === 'completed' ? 'ok' : 'run';
+      const cls = /failed|cancelled|interrupted|unknown/.test(st) ? 'bad' : st === 'completed' ? 'ok' : 'run';
       const when = Number.isFinite(c.submitted_at) ? fmtAgo(c.submitted_at) : '';
       const took = Number.isFinite(c.finished_at) && Number.isFinite(c.submitted_at) ? fmtTime(c.finished_at - (c.started_at || c.submitted_at)) : '';
       const meter = (Number.isInteger(c.total_tokens) ? fmtTokens(c.total_tokens) + ' tok' : '') + (Number.isInteger(c.cost_micro_usd) ? ' · ' + fmtMicro(c.cost_micro_usd) : '');
@@ -6926,13 +7180,13 @@ class Launcher {
     if (!e) return 'No cost estimate yet';
     return '<b>≈ ' + fmtCost(e.cost.p50) + '</b> p50 · ' + fmtCost(e.cost.min) + '–' + fmtCost(e.cost.max) + ' · ' + fmtTime(e.durationMs.p50) + ' · ' + e.runs + ' runs'
       + (e.over ? ' · <span style=\"color:#fca5a5\">over budget in ' + e.over + '</span>' : '') + (e.stalled ? ' · <span style=\"color:#fca5a5\">stalled in ' + e.stalled + '</span>' : '')
-      + (e.sig !== specSig(s) ? ' · <span class=\"stale\" title=\"Settings changed since this estimate\">stale</span>' : '');
+      + (e.sig !== specSig(s) ? ' · <span class=\"stale\" title=\"Settings changed since this estimate\">stale</span>' : '') + soloLine(e);
   }
   runChip(r) {
     if (r.kind === 'sim') {
       return '<span class=\"run-chip\" title=\"Simulated ' + escapeHtml(new Date(r.at).toLocaleString()) + (r.seed ? ' · seed ' + r.seed : '') + '\">SIM ' + fmtCost(r.cost || 0) + ' · ' + (r.done || 0) + '/' + (r.total || 0) + ' · ' + fmtAgo(r.at) + '</span>';
     }
-    const st = r.status || 'submitted', bad = /failed|cancelled|lost|refused|unknown|unconfirmed/.test(st);
+    const st = r.status || 'submitted', bad = /failed|cancelled|interrupted|lost|refused|unknown|unconfirmed/.test(st);
     const metered = (Number.isFinite(r.tokens) ? ' · ' + fmtTokens(r.tokens) + ' tokens' : '') + (Number.isFinite(r.costMicro) ? ' · ' + fmtMicro(r.costMicro) + ' (reported by agnostic)' : '');
     const tip = (r.crew ? 'Crew ' + r.crew : 'Submission ' + (r.key || '')) + ' · ' + st + (r.engine ? ' · ' + r.engine + ' engine' : '') + (r.total ? ' · ' + (r.done || 0) + '/' + r.total + ' tasks' : '')
       + (r.durationMs ? ' · ' + fmtTime(r.durationMs) : '') + metered
@@ -7334,7 +7588,7 @@ class Editor {
     if (!d) return;
     const v = (this.check = validateSpec(d));
     for (const b of $('ed-tabs').querySelectorAll('button')) b.querySelector('.n').textContent = v.tabs[b.dataset.tab] ? '●' : '';
-    const e = d.estimate, row = (k, x) => '<div class=\"est-row\"><span>' + k + '</span><b>' + x + '</b></div>';
+    const e = d.estimate, row = estRow;
     let html = '<div class=\"ed-box\"><div class=\"panel-title\">COST ESTIMATE</div>';
     if (this.estJob) {
       html += row('Simulating ' + ESTIMATE_RUNS + ' runs…', Math.round(this.estJob.progress * 100) + '%')
@@ -7350,7 +7604,10 @@ class Editor {
       html += '<p class=\"note\" style=\"margin-top:0\">Runs the swarm headless ' + ESTIMATE_RUNS + ' times, on different seeds, and reports the spread of cost and duration. Nothing runs for real.</p>'
         + '<div class=\"ed-actions\"><button class=\"lbtn sm primary\" type=\"button\" data-act=\"estimate\"' + (v.errors.length ? ' disabled' : '') + '>Σ Estimate cost</button></div>';
     }
-    html += '</div><div class=\"ed-box\"><div class=\"panel-title\">CHECKS</div><div class=\"chk-list\">'
+    html += '</div>';
+    // Beside the swarm's figures, one agent at the tokens it spent (ADR 0014): SIM, with what it assumes.
+    if (e && !this.estJob) html += soloBox(e);
+    html += '<div class=\"ed-box\"><div class=\"panel-title\">CHECKS</div><div class=\"chk-list\">'
       + v.errors.map((x) => '<div class=\"e\">✕ ' + escapeHtml(x) + '</div>').join('')
       + (v.tooBig ? '<div class=\"e\">✕ ' + fmtKB(v.bytes) + ' — the server keeps 32 KB per swarm, and ' + fmtKB(SPEC_RESERVE) + ' of that is kept for its run records.</div>' : '')
       + v.warnings.map((x) => '<div class=\"w\">⚠ ' + escapeHtml(x) + '</div>').join('')
@@ -8306,7 +8563,7 @@ if (typeof document !== 'undefined' && document.getElementById('map')) {
 </html>
 ";
 
-# --- src/webgui/plugins/crews/index.html — 48612 bytes -----------------------
+# --- src/webgui/plugins/crews/index.html — 49191 bytes -----------------------
 var _AGNOSTIC_WEBGUI_ASSET_02 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -8366,7 +8623,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .pill.running, .pill.pending { color: var(--accent); border-color: rgba(57, 208, 255, .45); }
 .pill.completed { color: var(--ok); border-color: rgba(34, 197, 94, .45); }
 .pill.failed, .pill.unknown { color: var(--err); border-color: rgba(239, 68, 68, .45); }
-.pill.cancelled, .pill.queued { color: var(--warn); border-color: rgba(245, 158, 11, .45); }
+.pill.cancelled, .pill.interrupted, .pill.queued { color: var(--warn); border-color: rgba(245, 158, 11, .45); }
 .pill.notrun { color: var(--faint); border-style: dashed; }
 
 h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -8570,6 +8827,8 @@ const FILTERS = Object.freeze([
   Object.freeze({ id: 'completed', label: 'Completed', status: 'completed' }),
   Object.freeze({ id: 'failed', label: 'Failed', status: 'failed' }),
   Object.freeze({ id: 'cancelled', label: 'Cancelled', status: 'cancelled' }),
+  // A crew a server restart cut short (agnostic 0.1.13, ADR 0013): terminal, its work lost.
+  Object.freeze({ id: 'interrupted', label: 'Interrupted', status: 'interrupted' }),
 ]);
 const ACTIVE = Object.freeze(['pending', 'running']);
 const PAGE_SIZE = 50;
@@ -8936,6 +9195,9 @@ class CrewDetail {
       name: typeof d.name === 'string' && d.name ? d.name : '',
       status: this.status || 'unknown',
       submitted, started, finished,
+      // When a restart declared it interrupted. It has no finished_at, so no `took`: the
+      // downtime is not run time.
+      interrupted: int(d.interrupted_at),
       took: finished !== null ? finished - (started ?? submitted ?? finished) : null,
       process: this.plan && typeof this.plan.process === 'string' ? this.plan.process : typeof d.process === 'string' ? d.process : '',
       maxConcurrency: this.plan ? int(this.plan.max_concurrency) : null,
@@ -9181,6 +9443,8 @@ class CrewsView {
     // A cancelled crew's finishing time is when the cancel landed; its running tasks went on.
     if (s.took !== null) fact(s.status === 'cancelled' ? 'Cancelled after' : 'Took', fmtDuration(s.took));
     else if (s.started !== null) fact('Running for', fmtDuration(Date.now() - s.started));
+    // A crew a restart cut short says when that was declared; its error box says what it means.
+    if (s.interrupted !== null) fact('Interrupted', fmtAgo(s.interrupted), new Date(s.interrupted).toLocaleString());
     fact('Process', s.process ? s.process + (s.maxConcurrency ? ' · ' + s.maxConcurrency + ' at once' : '') : '—');
     fact('Tasks', s.tasks ? s.done + ' / ' + s.tasks + ' done' + (s.failed ? ' · ' + s.failed + ' failed' : '') + (s.running ? ' · ' + s.running + ' running' : '') : '—');
     fact('Tokens', s.tokens !== null ? fmtTokens(s.tokens) : 'not metered', 'what the engine metered for this crew’s tasks');
@@ -10500,8 +10764,8 @@ fn agnostic_webgui_asset_bytes(i): i64 {
 # The `i`th page's length in bytes, as the generator counted it, or 0.
 fn agnostic_webgui_asset_len(i): i64 {
     if (i == 0) { return 39929; }
-    if (i == 1) { return 434017; }
-    if (i == 2) { return 48612; }
+    if (i == 1) { return 451093; }
+    if (i == 2) { return 49191; }
     if (i == 3) { return 38876; }
     if (i == 4) { return 26068; }
     return 0;
@@ -10510,8 +10774,8 @@ fn agnostic_webgui_asset_len(i): i64 {
 # The SHA-256 of the `i`th page's source file, lowercase hex, or 0.
 fn agnostic_webgui_asset_sha256(i): i64 {
     if (i == 0) { return "648fe9a771661148353e0aa1dc0052a079de169dcd50e6379b16472f006795a4"; }
-    if (i == 1) { return "88956083859f0b53afd793e5f16a63800742fd81f163222bdb16eef253c0d1bc"; }
-    if (i == 2) { return "9c0d1db373df1cca6448dc9f5513addf0d2ecf5eefece406620fa7c7f7a2197e"; }
+    if (i == 1) { return "bccb10e2da40ac6249bdf86f4296ef984f7e30fcd012dda82ae6dfb8f16ff4a6"; }
+    if (i == 2) { return "087a2560aa70056975b77ef0b593566709de00c0e7c0999042598b67208abd00"; }
     if (i == 3) { return "fdcdea3e97cfa7bc34fc240b489c8ef85bd105d36f3a7302b7fa774d1cd6d11c"; }
     if (i == 4) { return "7414db44ebe8ce144a1125e404848cdc274406c6440e55384c20f55af83776fe"; }
     return 0;
@@ -10530,8 +10794,8 @@ fn agnostic_webgui_asset_path(i): i64 {
 # The Content-Security-Policy the `i`th page is served with, or 0.
 fn agnostic_webgui_asset_csp(i): i64 {
     if (i == 0) { return "default-src 'none'; script-src 'sha256-bYYKB5LjVZ9/bMt48VUA0ybhegZ34CAu8JB5qDsSeh0=' 'sha256-7aaIEcGQDDIHI9mAjtdfnZC3ZgV1rxmVx/xdAXvmUMA='; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"; }
-    if (i == 1) { return "default-src 'none'; script-src 'sha256-P8C/HOFBYDdvshDoKayzEgodo7guUWBxyJ/gx7KvUj8='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
-    if (i == 2) { return "default-src 'none'; script-src 'sha256-kovlYA2j9WbfamSiCn/qcixGDGpoLyl9zL1EzC8Q8Fg='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 1) { return "default-src 'none'; script-src 'sha256-/QW2UOTetHrCZ06mP/CESxUKiCQxWkxo/IUoYIfL6Rk='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 2) { return "default-src 'none'; script-src 'sha256-Kco0lad01dc9cHA11GAv3UseDEy63mc46vnB8lN5UNw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 3) { return "default-src 'none'; script-src 'sha256-pKC6q/x2N0KntteEH7sEOIYmWkBr6Pb5U+70veBNd30='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 4) { return "default-src 'none'; script-src 'sha256-pN9GIg8MhioPnBnmoZg63PAPmynulcTsAKabcXWRjVE='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     return 0;
@@ -10547,8 +10811,8 @@ fn agnostic_webgui_permissions_json(): i64 {
 # The `i`th plugin's manifest as compact JSON, or 0. `asset` is the page the
 # generator resolved its `entry` to.
 fn agnostic_webgui_plugin_manifest(i): i64 {
-    if (i == 0) { return "{\"id\":\"swarm\",\"name\":\"Swarm Command\",\"description\":\"An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. Save swarms, simulate them or estimate their cost, run one as a live crew and see what it really cost, and watch any crew on this server. Each mission is labelled simulated or live.\",\"version\":\"0.4.0\",\"data\":\"mixed\",\"entry\":\"index.html\",\"permissions\":[\"storage\",\"presets:read\",\"crews:read\",\"crews:write\"],\"asset\":1}"; }
-    if (i == 1) { return "{\"id\":\"crews\",\"name\":\"Crews\",\"description\":\"Every crew in your tenant, live: filter by status, open one to see its plan, its progress as it happens, each task's result and what it cost — and cancel one that is still running.\",\"version\":\"0.1.0\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"crews:read\",\"crews:write\"],\"asset\":2}"; }
+    if (i == 0) { return "{\"id\":\"swarm\",\"name\":\"Swarm Command\",\"description\":\"An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. Save swarms, simulate them or estimate their cost beside what one agent would do with the same tokens, run one as a live crew and see what it really cost, and watch any crew on this server. Each mission is labelled simulated or live.\",\"version\":\"0.5.0\",\"data\":\"mixed\",\"entry\":\"index.html\",\"permissions\":[\"storage\",\"presets:read\",\"crews:read\",\"crews:write\"],\"asset\":1}"; }
+    if (i == 1) { return "{\"id\":\"crews\",\"name\":\"Crews\",\"description\":\"Every crew in your tenant, live: filter by status, open one to see its plan, its progress as it happens, each task's result and what it cost — and cancel one that is still running.\",\"version\":\"0.1.1\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"crews:read\",\"crews:write\"],\"asset\":2}"; }
     if (i == 2) { return "{\"id\":\"library\",\"name\":\"Library\",\"description\":\"The preset crews built into this server and the agent definitions stored in it: browse both, save a preset's agent as a definition, and create, edit or delete definitions.\",\"version\":\"0.1.0\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"presets:read\",\"definitions:read\",\"definitions:write\"],\"asset\":3}"; }
     if (i == 3) { return "{\"id\":\"audit\",\"name\":\"Audit trail\",\"description\":\"The tamper-evident audit trail: whether its chain verified, whether any record was dropped, and its newest entries — who did what, and when. Administrators only.\",\"version\":\"0.1.0\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"audit:read\"],\"asset\":4}"; }
     return 0;

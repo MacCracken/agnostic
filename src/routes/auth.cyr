@@ -30,8 +30,9 @@
 # already handled — and how long a stolen token is useful, which is not.
 var AGNOSTIC_TOKEN_TTL_SECS = 3600;
 
-# The permitted request fields. Anything else is a 422, not a silent discard.
-fn _agnostic_login_fields_a(a): i64 {
+# The permitted request fields. Anything else is a 422, not a silent discard. Public since
+# 0.1.13: the API schema lists the login body from this list (`src/http/schema.cyr`).
+fn agnostic_login_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
     agnostic_field_a(a, f, "email");
     agnostic_field_a(a, f, "password");
@@ -46,7 +47,7 @@ fn agnostic_route_login_a(a, body: Str, ctx): i64 {
           str_from_a(a, "malformed JSON body"));
     }
 
-    var allowed = _agnostic_login_fields_a(a);
+    var allowed = agnostic_login_fields_a(a);
     if (agnostic_no_unknown_fields(v, allowed) == 0) {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "unknown field in request body"));

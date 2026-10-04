@@ -131,6 +131,37 @@ jobs:
             || { echo "::error::output is not an ELF binary"; exit 1; }
           echo "ELF OK — $(stat -c%s build/agnostic) bytes"
 
+      - name: API schema matches the snapshot
+        # `agnostic api schema` on the shipped DCE binary — the real argument path — against
+        # docs/api/generated/schema.json (ADR 0015). `check-clean.sh` runs the same check, but
+        # it runs before the Build step above, when there is no binary to ask, so it skips
+        # there; this is where CI checks the binary. `tests/api_schema.tcyr` checks the source.
+        # The script stops a binary that serves instead of answering after 60s; the step's own
+        # limit is a backstop against GitHub's 360-minute default.
+        timeout-minutes: 5
+        run: ./scripts/gen-api-schema.sh --check --bin build/agnostic
+
+      - name: Command line exit codes
+        # `src/main.cyr`'s dispatch, which only the binary has: `help` exits 0 with usage on
+        # stdout, and an argument it does not know exits 2 with usage on stderr and nothing on
+        # stdout (ADR 0015). `tests/api_schema.tcyr` (`api/cli`) checks the commands themselves.
+        # `timeout`, because a binary that ignored its arguments would serve rather than exit.
+        timeout-minutes: 5
+        run: |
+          rc=0
+          timeout -k 5 60 ./build/agnostic help > "$RUNNER_TEMP/help.out" || rc=$?
+          [ "$rc" -eq 0 ] || { echo "::error::'agnostic help' exited $rc, not 0"; exit 1; }
+          grep -q '^usage: agnostic ' "$RUNNER_TEMP/help.out" \
+            || { echo "::error::'agnostic help' printed no usage on stdout"; exit 1; }
+          rc=0
+          timeout -k 5 60 ./build/agnostic no-such-command \
+            > "$RUNNER_TEMP/bad.out" 2> "$RUNNER_TEMP/bad.err" || rc=$?
+          [ "$rc" -eq 2 ] || { echo "::error::'agnostic no-such-command' exited $rc, not 2"; exit 1; }
+          [ ! -s "$RUNNER_TEMP/bad.out" ] || { echo "::error::a usage error wrote to stdout"; exit 1; }
+          grep -q '^usage: agnostic ' "$RUNNER_TEMP/bad.err" \
+            || { echo "::error::a usage error printed no usage on stderr"; exit 1; }
+          echo "exit codes OK — help 0, a usage error 2"
+
       - name: Cross-build aarch64
         # Conditional per first-party-standards.md:371 — "where the toolchain
         # supports it". Skips rather than fails when the cross compiler is not

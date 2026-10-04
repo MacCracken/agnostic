@@ -57,7 +57,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .pill.running, .pill.pending { color: var(--accent); border-color: rgba(57, 208, 255, .45); }
 .pill.completed { color: var(--ok); border-color: rgba(34, 197, 94, .45); }
 .pill.failed, .pill.unknown { color: var(--err); border-color: rgba(239, 68, 68, .45); }
-.pill.cancelled, .pill.queued { color: var(--warn); border-color: rgba(245, 158, 11, .45); }
+.pill.cancelled, .pill.interrupted, .pill.queued { color: var(--warn); border-color: rgba(245, 158, 11, .45); }
 .pill.notrun { color: var(--faint); border-style: dashed; }
 
 h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -261,6 +261,8 @@ const FILTERS = Object.freeze([
   Object.freeze({ id: 'completed', label: 'Completed', status: 'completed' }),
   Object.freeze({ id: 'failed', label: 'Failed', status: 'failed' }),
   Object.freeze({ id: 'cancelled', label: 'Cancelled', status: 'cancelled' }),
+  // A crew a server restart cut short (agnostic 0.1.13, ADR 0013): terminal, its work lost.
+  Object.freeze({ id: 'interrupted', label: 'Interrupted', status: 'interrupted' }),
 ]);
 const ACTIVE = Object.freeze(['pending', 'running']);
 const PAGE_SIZE = 50;
@@ -627,6 +629,9 @@ class CrewDetail {
       name: typeof d.name === 'string' && d.name ? d.name : '',
       status: this.status || 'unknown',
       submitted, started, finished,
+      // When a restart declared it interrupted. It has no finished_at, so no `took`: the
+      // downtime is not run time.
+      interrupted: int(d.interrupted_at),
       took: finished !== null ? finished - (started ?? submitted ?? finished) : null,
       process: this.plan && typeof this.plan.process === 'string' ? this.plan.process : typeof d.process === 'string' ? d.process : '',
       maxConcurrency: this.plan ? int(this.plan.max_concurrency) : null,
@@ -872,6 +877,8 @@ class CrewsView {
     // A cancelled crew's finishing time is when the cancel landed; its running tasks went on.
     if (s.took !== null) fact(s.status === 'cancelled' ? 'Cancelled after' : 'Took', fmtDuration(s.took));
     else if (s.started !== null) fact('Running for', fmtDuration(Date.now() - s.started));
+    // A crew a restart cut short says when that was declared; its error box says what it means.
+    if (s.interrupted !== null) fact('Interrupted', fmtAgo(s.interrupted), new Date(s.interrupted).toLocaleString());
     fact('Process', s.process ? s.process + (s.maxConcurrency ? ' · ' + s.maxConcurrency + ' at once' : '') : '—');
     fact('Tasks', s.tasks ? s.done + ' / ' + s.tasks + ' done' + (s.failed ? ' · ' + s.failed + ' failed' : '') + (s.running ? ' · ' + s.running + ' running' : '') : '—');
     fact('Tokens', s.tokens !== null ? fmtTokens(s.tokens) : 'not metered', 'what the engine metered for this crew’s tasks');

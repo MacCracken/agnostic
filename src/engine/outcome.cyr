@@ -57,15 +57,21 @@
 # silent misreport. The cost of the translation is one branch; the cost of the
 # coupling would be paid the day agnosai inserts a status.
 #
-# `UNKNOWN` is Agnostic's own and has no engine counterpart — see
-# `agnostic_ledger_poll` for the eviction case that produces it.
+# `UNKNOWN` and `INTERRUPTED` are Agnostic's own and have no engine counterpart.
+# UNKNOWN is the eviction case — see `agnostic_crew_refresh_a`. INTERRUPTED (0.1.13,
+# ADR 0013) is a crew accepted before a restart that had no stored outcome when the
+# process stopped; only the start-up sweep writes it (`agnostic_crews_interrupt_inflight`).
+#
+# ⚠ **These numbers are stored on disk** (`cstatus` in `agnostic_crews` and
+# `agnostic_crew_index`), so a status is only ever appended — never renumbered.
 enum AgnosticCrewStatus {
-    AGNOSTIC_CREW_PENDING   = 0;
-    AGNOSTIC_CREW_RUNNING   = 1;
-    AGNOSTIC_CREW_COMPLETED = 2;
-    AGNOSTIC_CREW_FAILED    = 3;
-    AGNOSTIC_CREW_CANCELLED = 4;
-    AGNOSTIC_CREW_UNKNOWN   = 5;
+    AGNOSTIC_CREW_PENDING     = 0;
+    AGNOSTIC_CREW_RUNNING     = 1;
+    AGNOSTIC_CREW_COMPLETED   = 2;
+    AGNOSTIC_CREW_FAILED      = 3;
+    AGNOSTIC_CREW_CANCELLED   = 4;
+    AGNOSTIC_CREW_UNKNOWN     = 5;
+    AGNOSTIC_CREW_INTERRUPTED = 6;   # stored in `cstatus`: never renumber
 }
 
 # The outcome record — 32 bytes.
@@ -125,6 +131,7 @@ var AGNOSTIC_JV_COMPLETED = str_from("completed");
 var AGNOSTIC_JV_FAILED    = str_from("failed");
 var AGNOSTIC_JV_CANCELLED = str_from("cancelled");
 var AGNOSTIC_JV_UNKNOWN   = str_from("unknown");
+var AGNOSTIC_JV_INTERRUPTED = str_from("interrupted");
 
 # The message a demoted vacuous success carries. Interned so the demotion path
 # allocates nothing — it runs when the engine is already misbehaving, which is
@@ -148,6 +155,11 @@ var AGNOSTIC_OC_PARTIAL_MSG = str_from("engine reported completion with a task t
 # nothing and has no term to search the operator's logs for.
 var AGNOSTIC_OC_OPAQUE_MSG = str_from("engine reported failure without a reason: a task failed or the crew timed out");
 
+# The reason an interrupted crew carries (0.1.13, ADR 0013). It says what a client needs
+# to act on: the work did not happen, so submit it again.
+var AGNOSTIC_OC_INTERRUPTED_MSG =
+str_from("the server restarted before this crew's outcome was recorded; its work was lost");
+
 # The snake_case wire spelling of a status. Never allocates.
 fn agnostic_crew_status_to_wire(status): i64 {
     if (status == AGNOSTIC_CREW_RUNNING)   { return AGNOSTIC_JV_RUNNING; }
@@ -155,6 +167,9 @@ fn agnostic_crew_status_to_wire(status): i64 {
     if (status == AGNOSTIC_CREW_FAILED)    { return AGNOSTIC_JV_FAILED; }
     if (status == AGNOSTIC_CREW_CANCELLED) { return AGNOSTIC_JV_CANCELLED; }
     if (status == AGNOSTIC_CREW_UNKNOWN)   { return AGNOSTIC_JV_UNKNOWN; }
+    # ⚠ Without this arm an interrupted crew would read as `pending` — the stale
+    # non-terminal answer ADR 0013 exists to remove.
+    if (status == AGNOSTIC_CREW_INTERRUPTED) { return AGNOSTIC_JV_INTERRUPTED; }
     return AGNOSTIC_JV_PENDING;
 }
 
@@ -245,6 +260,7 @@ fn agnostic_outcome_is_terminal(o): i64 {
     if (s == AGNOSTIC_CREW_COMPLETED) { return 1; }
     if (s == AGNOSTIC_CREW_FAILED)    { return 1; }
     if (s == AGNOSTIC_CREW_CANCELLED) { return 1; }
+    if (s == AGNOSTIC_CREW_INTERRUPTED) { return 1; }
     return 0;
 }
 

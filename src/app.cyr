@@ -110,4 +110,9 @@ include "src/routes/plugins.cyr"
 include "src/routes/plugindata.cyr"
 include "src/routes/webgui.cyr"
 include "src/http/router.cyr"
+# The API schema (0.1.13): a document built from the router's rows and the tables above it,
+# so it follows them all. Pure — it opens nothing (ADR 0015).
+include "src/http/schema.cyr"
+# The command line (0.1.13): `agnostic api schema` prints the schema, so it follows it.
+include "src/cli.cyr"
 include "src/server/serve.cyr"

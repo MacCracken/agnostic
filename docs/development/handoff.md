@@ -11,6 +11,9 @@
 > 0.1.12, for agnosai 2.1.4 (kavach 3.13.2, ai-hwaccel 2.4.1).
 > §1 notes the WebGUI (0.1.7), its plugin platform (0.1.8), the server-checked plugins and
 > tenant-scoped crews of 0.1.9, and the views of 0.1.10; §2 and §6 moved to cyrius 6.6.14 then.
+> At 0.1.13 the ADR list gained 0013–0015, §5's patra `COL_STR` rule was corrected, and §1's
+> version line and M5 figures were made to point at `VERSION` and `state.md`; the rest of §1
+> still stops at 0.1.10 (roadmap, "Found at 0.1.13").
 
 Read in this order:
 
@@ -21,7 +24,7 @@ Read in this order:
 | [`roadmap.md`](roadmap.md) | M0–M9 sequencing and per-milestone gates |
 | [`../../CYRIUS-PORT-BRIEF.md`](../../CYRIUS-PORT-BRIEF.md) | Research snapshot (2026-08-19): language notes, dep stack, **§7 decisions — binding** |
 | [`../../ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) | 86 verified defects in the Python oracle. §3 gated M2, §2.2 gated M3; **§3.15 is what M6's gate now measures** |
-| [`../adr/`](../adr/) | Twelve ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server, views that link through the shell with one bridge client, audit entries read from a bounded copy, a cancelled crew keeping its finished results |
+| [`../adr/`](../adr/) | Fifteen ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server, views that link through the shell with one bridge client, audit entries read from a bounded copy, a cancelled crew keeping its finished results, a crew a restart interrupted answering `interrupted`, the estimator's one-agent baseline as its own model, the HTTP API described by a generated schema |
 
 ---
 
@@ -31,9 +34,9 @@ Read in this order:
 blocked on one decision that has been deliberately deferred (§8).**
 
 Agnostic runs crews, serves its own catalogue, persists definitions and outcomes
-behind a tamper-evident audit chain, and **authenticates**. 37 source files,
-~10.2k lines, 631 top-level definitions.
-**24 test suites, 1,175 assertions, 0 failed.**
+behind a tamper-evident audit chain, and **authenticates**. At M5 that was 37 source
+files, ~10.2k lines and 631 top-level definitions, with 24 test suites and 1,175
+assertions; [`state.md`](state.md) has today's figures.
 
 M5 landed identity end to end: users and API keys on patra, HS256 tokens, a
 static role→permission table, tenancy with key-prefixing, the dispatch ladder's
@@ -75,8 +78,8 @@ other through the shell — `#plugin/<id>?<params>` — and every plugin carries
 verified byte for byte by the generator (ADR 0010). A cancelled crew keeps its finished work
 (ADR 0012). The aarch64 artifact is released again.
 
-Version is **0.1.10** — see `CHANGELOG.md`. Per decision #4 the port's milestones
-ship together as **1.0.0** (§4).
+The version is the one in `VERSION` — see `CHANGELOG.md`. Per decision #4 the port's
+milestones ship together as **1.0.0** (§4).
 
 ## 2. ⚠ Build it correctly, or you will write a lock CI cannot reproduce
 
@@ -343,9 +346,12 @@ then, against a real requirement. Out of scope for v1.0.
   `_agnostic_serve_send` serialises it; handing it a `Str` double-encodes the
   response into a JSON string. A test that reads the body directly rather than
   through the send path will not notice.
-- **`patra`'s `COL_STR` is a fixed 256-byte slot that truncates silently.** For an
-  identifier that is a collision primitive, not a storage wart — `src/auth/store.cyr`
-  refuses over-long emails at the door for exactly this reason.
+- **`patra`'s `COL_STR` is a fixed 256-byte slot: 255 bytes and a NUL.** patra **refuses** a
+  longer value (`PATRA_ERR_ROWSZ`) and writes nothing; it truncated silently until its own audit
+  (2026-08-18 S2-8). So bound every `STR` you bind: refuse it at the door (`src/auth/store.cyr`
+  does for emails), or cut it on a character when the column is never read. An unbounded one
+  loses the whole row: until 0.1.13 a crew named over 255 bytes never stored its outcome
+  (`_agnostic_crews_save_locked`).
 - **Worker threads spawned via `lib/thread.cyr` inherit their TLS block through
   `CLONE_SETTLS` and must NOT call `patra_init` / `thread_local_init`.** That is
   what lets a sandhi pool worker touch a patra store at all.

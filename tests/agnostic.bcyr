@@ -187,6 +187,39 @@ fn _agnostic_bench_audit_entries(): i64 {
     return n;
 }
 
+# 0.1.13 — what ADR 0013 adds to every crew: the in-flight row written at submit (an indexed
+# "already stored?" read, then an INSERT) and deleted with the outcome (a scan of the few live
+# rows, then the DELETE). Two fdatasyncs, both under the store lock. ⚠ /tmp is tmpfs here, so
+# the fsync half is under-reported: on a real disk it dominates.
+fn _agnostic_bench_inflight(): i64 {
+    var path = "/tmp/agnostic-bench-inflight.patra";
+    sys_unlink(path);
+    patra_init();
+    if (agnostic_store_open(str_from(path)) == 0) { return 0; }
+    agnostic_crews_ensure();
+    var id = str_from("6ba7b810-9dad-41d1-80b4-00c04fd430c8");
+    var scope = str_from("_");
+    var name = str_from("bench");
+    var mode = str_from("live");
+    var proc = str_from("sequential");
+    var n = 0;
+    var bi = bench_new("crew_inflight_mark_clear");
+    bench_batch_start(bi);
+    var i = 0;
+    while (i < 1000) {
+        n = n + agnostic_crews_mark_inflight(id, scope, name, 1000 + i, 3, mode, proc);
+        agnostic_store_lock();
+        _agnostic_crews_inflight_drop_locked(id);
+        agnostic_store_unlock();
+        i = i + 1;
+    }
+    bench_batch_stop(bi, 1000);
+    bench_report(bi);
+    agnostic_store_close();
+    sys_unlink(path);
+    return n;
+}
+
 fn main(): i64 {
     alloc_init();
     var b = bench_new("noop");
@@ -247,6 +280,7 @@ fn main(): i64 {
     _agnostic_bench_plugin_gate();
     _agnostic_bench_ledger_snapshot();
     _agnostic_bench_audit_entries();
+    _agnostic_bench_inflight();
     return 0;
 }
 

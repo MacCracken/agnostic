@@ -6,4 +6,8 @@ Not decisions (those live in [`../adr/`](../adr/)) and not guides (those live in
 
 ## Items
 
-_Empty. Add a numbered entry (`001-kebab-case-title.md`) the first time the code has a non-obvious invariant a reader can't derive. Do not write entries for decisions — those are ADRs._
+| # | Item |
+|---|---|
+| [001](001-what-survives-a-restart.md) | What survives a restart — every kind of state, where it lives, and what the next start does with it; one agnostic process per database file |
+
+Add the next as `002-kebab-case-title.md`. Do not write entries for decisions — those are ADRs.

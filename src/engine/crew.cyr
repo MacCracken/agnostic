@@ -17,8 +17,8 @@
 #
 # ## ⚠ The submit ordering is load-bearing in two places
 #
-# `agnostic_crew_submit` does: **build spec → subscribe → submit → record.**
-# Neither of the first two may move:
+# `agnostic_crew_submit` does: **build spec → subscribe → submit → record → mark
+# in flight.** None of the middle three may move:
 #
 #   * **Subscribe before submit.** `agnosai_event_bus_subscribe` creates the
 #     channel if it is absent, and `_agnosai_orch_register` — inside submit —
@@ -32,6 +32,11 @@
 #     ledger entry first would open a window where a poll finds our entry and no
 #     engine state, and reports `unknown` for a crew that is about to run
 #     perfectly well.
+#   * **Mark in flight last (0.1.13, ADR 0013).** The durable row that a restart
+#     turns into `interrupted` is written from the ledger entry, so it comes after
+#     the record. A crew fast enough to finish first has already stored its outcome
+#     by then, and `agnostic_crews_mark_inflight` sees that under the store lock and
+#     writes nothing — so no finished crew is ever left marked in flight.
 #
 # ## ⚠ Agnostic mints no crew id — `ORACLE-AUDIT.md` §3.2
 #
@@ -120,7 +125,8 @@ fn agnostic_engine_init(cfg): i64 {
     # Without a gateway the engine takes its placeholder path — crews run, tasks
     # produce placeholder output. That is a legitimate configuration for a
     # deployment that only exercises orchestration, so it is not a startup
-    # failure; `/ready` reports which of the two this process is.
+    # failure. `engine_mode` on every crew response says which of the two this
+    # process is; `/ready` does not.
     var url = agnostic_config_llm_url(cfg);
     if (url != 0) {
         agnosai_orchestrator_with_llm_url(o, url, agnostic_config_llm_api_key(cfg));
@@ -250,10 +256,80 @@ fn agnostic_crew_submit_owned(r, out_entry, scope: Str, idem: Str, fprint: Str):
         return AGNOSTIC_SUBMIT_START_FAILED;
     }
 
+    # Durable from here on: a restart before its outcome is written answers
+    # `interrupted`, not 404 (0.1.13, ADR 0013). A write that fails is logged, not
+    # raised — the rule `_agnostic_ledger_persist` follows: the crew runs, and only a
+    # restart before it ends loses it, as every crew was lost before 0.1.13.
+    if (agnostic_ledger_mark_inflight(entry) == 0) {
+        if (agnostic_store_is_open() == 1) {
+            agnostic_log_kv_str(SK_ERROR,
+              "crew accepted but not recorded as in flight; a restart before it ends loses it", 78,
+              "crew_id", 7, crew_id);
+        }
+    }
+
     agnostic_log_kv_str(SK_INFO, "crew submitted", 14, "crew_id", 7, crew_id);
     agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("crew.submit"),
       agnostic_audit_detail("crew_id", crew_id));
     return AGNOSTIC_SUBMIT_OK;
+}
+
+# The room the start-up sweep reads the in-flight rows into, and renders each crew's
+# document in. SPILL beyond either, like the collector's arena.
+var AGNOSTIC_INFLIGHT_ROWS_BYTES = 262144;
+var AGNOSTIC_INFLIGHT_DOC_BYTES  = 65536;
+
+# Turn every crew the last process accepted and never finished into a terminal
+# `interrupted` outcome (0.1.13, ADR 0013). Returns how many it wrote.
+#
+# **Mount time only, on the main thread, before the server listens** — so no request,
+# `/ready` included, is answered before it is done, and nothing races it. It never
+# touches the ledger or the engine: what it reads is the in-flight table, and what it
+# writes goes through the ordinary write-once path (`agnostic_crews_interrupt_row`).
+#
+# Each crew it writes is recorded in the audit trail as `crew.interrupted` (WARNING,
+# `crew_id=…`) — outside the store lock, as every append is. A crew whose outcome is
+# already stored (the process stopped between the two writes) keeps it, and its row is
+# only deleted. A write that fails is logged and its row kept, so the next start
+# retries it; nothing else reads the row meanwhile.
+#
+# ⚠ It assumes one agnostic process per database file: a second process on the same
+# file would sweep the first one's live crews (ADR 0013, docs/architecture/001).
+fn agnostic_crews_interrupt_inflight(): i64 {
+    if (agnostic_store_is_open() == 0) { return 0; }
+    var ra = arena_allocator(AGNOSTIC_INFLIGHT_ROWS_BYTES);
+    if (ra == 0) { return 0; }
+    arena_allocator_set_on_full(ra, ARENA_FULL_SPILL);
+    var da = arena_allocator(AGNOSTIC_INFLIGHT_DOC_BYTES);
+    if (da == 0) { return 0; }
+    arena_allocator_set_on_full(da, ARENA_FULL_SPILL);
+
+    var rows = agnostic_crews_inflight_a(ra);
+    if (rows == 0) { return 0; }
+    var now = agnostic_epoch_ms();
+    var written = 0;
+    var n = vec_len(rows);
+    var i = 0;
+    while (i < n) {
+        var row = vec_get(rows, i);
+        var id = agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID);
+        reset_via(da);
+        var rc = 0;
+        var doc = agnostic_crew_interrupted_doc_a(da, row, now);
+        if (doc != 0) { rc = agnostic_crews_interrupt_row(row, doc); }
+        if (rc == 1) {
+            agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from("crew.interrupted"),
+              agnostic_audit_detail("crew_id", id));
+            written = written + 1;
+        }
+        if (rc == 0) {
+            agnostic_log_kv_str(SK_ERROR,
+              "could not record an interrupted crew; it is retried at the next start", 69,
+              "crew_id", 7, id);
+        }
+        i = i + 1;
+    }
+    return written;
 }
 
 # The current outcome of a submitted crew, in `a`.

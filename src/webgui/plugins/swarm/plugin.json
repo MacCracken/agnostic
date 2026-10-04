@@ -1,8 +1,8 @@
 {
   "id": "swarm",
   "name": "Swarm Command",
-  "description": "An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. Save swarms, simulate them or estimate their cost, run one as a live crew and see what it really cost, and watch any crew on this server. Each mission is labelled simulated or live.",
-  "version": "0.4.0",
+  "description": "An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. Save swarms, simulate them or estimate their cost beside what one agent would do with the same tokens, run one as a live crew and see what it really cost, and watch any crew on this server. Each mission is labelled simulated or live.",
+  "version": "0.5.0",
   "data": "mixed",
   "entry": "index.html",
   "permissions": ["storage", "presets:read", "crews:read", "crews:write"]

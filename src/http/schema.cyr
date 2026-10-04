@@ -1,0 +1,705 @@
+# agnostic/http/schema — the HTTP API, described by the tables the server runs on (0.1.13).
+#
+# `agnostic api schema` prints this module's document; `docs/api/generated/schema.json` is that
+# output, committed, and `tests/api_schema.tcyr` fails when the two differ. ADR 0015.
+#
+# ## Generated from the server's own tables, so it cannot drift
+#
+# Everything a table holds is READ from that table — the one the server dispatches, authorises
+# or decodes with, not a copy of it:
+#
+#   * the routes: the router's rows (`agnostic_route_row_pattern` / `agnostic_route_row_id`), in
+#     resolution order, one entry per method a row answers;
+#   * auth and permission: `agnostic_route_needs_auth`, `agnostic_perm_for_route`, and the first
+#     role `agnostic_role_can` grants that permission to;
+#   * which plugin permissions grant a route, and which of its parameters a grant pins to the
+#     plugin's own id (`:self`): the embedded `permissions.json`, parsed here;
+#   * the request fields: the decoders' own allow-list functions, and the refused agent fields;
+#   * the error codes: the catalogue in `src/http/response.cyr`;
+#   * the vocabularies: each `*_to_wire`, walked until it repeats (`_agnostic_sch_vocab_a`).
+#
+# ## Declared here, by route id, and checked by probes
+#
+# Some things live in handler code rather than in a table: which body a route takes, its query
+# parameters, its route-specific request headers, the dispatch ladder's rungs, and what a
+# route answers — its success statuses, and its body's kind and top-level keys. They are
+# declared below, and `tests/api_schema.tcyr` drives the handlers to check each declaration.
+# Response keys are checked both ways (`api/responses`); the request side one way only — a
+# parameter or header a handler reads but this file omits is not caught (`docs/api/README.md`,
+# "Known gaps").
+#
+# ## Left out on purpose
+#
+# The version (it would change the snapshot every release), anything read from `AGNOSTIC_*`,
+# the permissions' `grants` wording, plugin manifests, per-handler 4xx statuses and messages,
+# field types and required-ness, and nested response shapes.
+#
+# ## Pure
+#
+# It reads no environment and no configuration, opens no store, starts no engine, and does not
+# call `agnostic_webgui_init` (which needs the settings store). So `agnostic api schema` runs
+# before the environment is read, and an invalid `AGNOSTIC_PORT` can neither change it nor
+# block it. It declares no top-level `var`: keys are built per call on this one-shot path, so
+# nothing here can collide with the `AGNOSTIC_JK_*` vocabulary.
+#
+# ## The document is whole, or it is 0
+#
+# Every builder answers its container, or 0 once anything inside it could not be built, and a
+# 0 container makes every later step answer 0 too. bayan prints a 0 value as `null`, so without
+# this an allocation failure — or a name a lookup did not have — would print as a plausible
+# `null` instead of failing the command.
+
+enum AgnosticSchConst {
+    AGNOSTIC_SCH_FORMAT    = 1;    # the document's own format; bumped only when its SHAPE changes
+    AGNOSTIC_SCH_INDENT    = 2;    # spaces per level in the printed document
+    AGNOSTIC_SCH_VOCAB_MAX = 64;   # a vocabulary walk that has not repeated by here has failed
+}
+
+# The vocabularies `_agnostic_sch_vocab_a` walks.
+enum AgnosticSchVocab {
+    AGNOSTIC_SCHV_PROCESS     = 1;
+    AGNOSTIC_SCHV_PRIORITY    = 2;
+    AGNOSTIC_SCHV_RISK        = 3;
+    AGNOSTIC_SCHV_CREW_STATUS = 4;
+}
+
+# --- building blocks ----------------------------------------------------------
+
+# `obj` with `key` (a C string) set to `val`, or 0 when `obj` or `val` is 0 or the set fails.
+fn _agnostic_sch_put_a(a, obj, key, val): i64 {
+    if (obj == 0 || val == 0) { return 0; }
+    var k = str_from_a(a, key);
+    if (k == 0) { return 0; }
+    if (bayan_json_v_obj_set_a(a, obj, k, val) != 0) { return 0; }
+    return obj;
+}
+
+# `arr` with `val` appended, or 0 when `arr` or `val` is 0 or the push fails.
+fn _agnostic_sch_add_a(a, arr, val): i64 {
+    if (arr == 0 || val == 0) { return 0; }
+    if (bayan_json_v_arr_push_a(a, arr, val) != 0) { return 0; }
+    return arr;
+}
+
+# A string value from a C string, or 0 when there is none — never a `null`.
+fn _agnostic_sch_cstr_a(a, s): i64 {
+    if (s == 0) { return 0; }
+    var str = str_from_a(a, s);
+    if (str == 0) { return 0; }
+    return bayan_json_v_str_new_a(a, str);
+}
+
+# A string value from a C string, or `null` when `s` is 0 — for a field that may be absent.
+fn _agnostic_sch_opt_a(a, s): i64 {
+    if (s == 0) { return bayan_json_v_null_a(a); }
+    return _agnostic_sch_cstr_a(a, s);
+}
+
+# `arr` with the C string `s` appended.
+fn _agnostic_sch_name_a(a, arr, s): i64 {
+    return _agnostic_sch_add_a(a, arr, _agnostic_sch_cstr_a(a, s));
+}
+
+# An array of the `Str`s in vec `v` — an allow-list, in its own order. 0 for a 0 vec.
+fn _agnostic_sch_strs_a(a, v): i64 {
+    if (v == 0) { return 0; }
+    var arr = bayan_json_v_arr_new_a(a);
+    var i = 0;
+    while (i < vec_len(v)) {
+        arr = _agnostic_sch_add_a(a, arr, bayan_json_v_str_new_a(a, vec_get(v, i)));
+        i = i + 1;
+    }
+    return arr;
+}
+
+# `{"fields": [...]}` for allow-list vec `v`.
+fn _agnostic_sch_fields_body_a(a, v): i64 {
+    return _agnostic_sch_put_a(a, bayan_json_v_obj_new_a(a), "fields", _agnostic_sch_strs_a(a, v));
+}
+
+# 1 when array `arr` holds a string equal to `s`.
+fn _agnostic_sch_arr_has(arr, s: Str): i64 {
+    var n = bayan_json_v_arr_len(arr);
+    var i = 0;
+    while (i < n) {
+        if (str_eq(bayan_json_v_str(bayan_json_v_arr_get(arr, i)), s) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# --- routes -------------------------------------------------------------------
+
+# Whether two route paths name the same route: the same segments, where a `:name` segment equals
+# any other `:name` segment — `permissions.json` writes `:self` where the router writes `:id`.
+# That `:self` is NARROWER than the `:id` it matches: the gate puts the requesting plugin's own
+# id there (`src/webgui/plugins.cyr`). A grant's `self` says so (`_agnostic_sch_self_a`).
+fn _agnostic_sch_same_path(x: Str, y: Str): i64 {
+    var xd = str_data(x);
+    var xn = str_len(x);
+    var yd = str_data(y);
+    var yn = str_len(y);
+    var i = 0;
+    var j = 0;
+    while (i < xn && j < yn) {
+        # One segment each, from its leading `/` up to the next one.
+        var ie = i + 1;
+        while (ie < xn) {
+            if ((load8(xd + ie) & 255) == 47) { break; }
+            ie = ie + 1;
+        }
+        var je = j + 1;
+        while (je < yn) {
+            if ((load8(yd + je) & 255) == 47) { break; }
+            je = je + 1;
+        }
+        var xp = 0;
+        if (ie - i > 1) { if ((load8(xd + i + 1) & 255) == 58) { xp = 1; } }
+        var yp = 0;
+        if (je - j > 1) { if ((load8(yd + j + 1) & 255) == 58) { yp = 1; } }
+        if (xp == 0 || yp == 0) {
+            if (ie - i != je - j) { return 0; }
+            if (memeq(xd + i, yd + j, ie - i) == 0) { return 0; }
+        }
+        i = ie;
+        j = je;
+    }
+    if (i == xn && j == yn) { return 1; }
+    return 0;
+}
+
+# The path of vocabulary route `r` — `"METHOD /path"` — when its method is `method`; 0 when it
+# is another method or not that shape.
+fn _agnostic_sch_route_path_a(a, r: Str, method): i64 {
+    var d = str_data(r);
+    var n = str_len(r);
+    var sp = 0;
+    while (sp < n) {
+        if ((load8(d + sp) & 255) == 32) { break; }
+        sp = sp + 1;
+    }
+    if (sp == 0 || sp >= n - 1) { return 0; }
+    if (agnostic_method_from(str_sub_a(a, r, 0, sp)) != method) { return 0; }
+    return str_sub_a(a, r, sp + 1, n - sp - 1);
+}
+
+# The names of route `pat`'s path parameters that grant path `g` writes as `:self` — the ones the
+# gate pins to the requesting plugin's own id — in path order; `[]` when there are none. `g`
+# and `pat` are the same route (`_agnostic_sch_same_path`), so their segments line up, and a
+# `:self` there always faces a `:name`.
+fn _agnostic_sch_self_a(a, g: Str, pat: Str): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    var gd = str_data(g);
+    var gn = str_len(g);
+    var pd = str_data(pat);
+    var pn = str_len(pat);
+    var i = 0;
+    var j = 0;
+    while (i < gn && j < pn) {
+        var ie = i + 1;
+        while (ie < gn) {
+            if ((load8(gd + ie) & 255) == 47) { break; }
+            ie = ie + 1;
+        }
+        var je = j + 1;
+        while (je < pn) {
+            if ((load8(pd + je) & 255) == 47) { break; }
+            je = je + 1;
+        }
+        if (ie - i == 6) {
+            if (memeq(gd + i + 1, ":self", 5) == 1) {
+                # The route's `/:name` segment, without its `/:`.
+                if (je - j < 3) { return 0; }
+                if ((load8(pd + j + 1) & 255) != 58) { return 0; }
+                var name = str_sub_a(a, pat, j + 2, je - j - 2);
+                if (name == 0) { return 0; }
+                arr = _agnostic_sch_add_a(a, arr, bayan_json_v_str_new_a(a, name));
+            }
+        }
+        i = ie;
+        j = je;
+    }
+    return arr;
+}
+
+# One grant: `{"name": ..., "self": [...]}` — plugin permission `name` (a Str) grants the route
+# through grant path `g`, and `self` lists the parameters it pins to the plugin's own id.
+fn _agnostic_sch_grant_a(a, name: Str, g: Str, pat: Str): i64 {
+    var o = bayan_json_v_obj_new_a(a);
+    o = _agnostic_sch_put_a(a, o, "name", bayan_json_v_str_new_a(a, name));
+    o = _agnostic_sch_put_a(a, o, "self", _agnostic_sch_self_a(a, g, pat));
+    return o;
+}
+
+# The plugin permissions in catalogue `cat` that grant `method` on row pattern `pattern`, in the
+# catalogue's order — what a plugin must hold to make the request (ADR 0007), each with the path
+# parameters it pins to the plugin's own id.
+fn _agnostic_sch_grants_a(a, cat, method, pattern): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    var routes_key = str_from_a(a, "routes");
+    var pat = str_from_a(a, pattern);
+    if (routes_key == 0 || pat == 0) { return 0; }
+    var n = bayan_json_v_obj_len(cat);
+    var i = 0;
+    while (i < n) {
+        var routes = bayan_json_v_obj_get_by_str(bayan_json_v_obj_val(cat, i), routes_key);
+        var rn = bayan_json_v_arr_len(routes);
+        var j = 0;
+        while (j < rn) {
+            var rv = bayan_json_v_arr_get(routes, j);
+            if (bayan_json_v_is_str(rv) == 1) {
+                var g = _agnostic_sch_route_path_a(a, bayan_json_v_str(rv), method);
+                if (g != 0) {
+                    if (_agnostic_sch_same_path(g, pat) == 1) {
+                        var name = bayan_json_v_obj_key(cat, i);
+                        arr = _agnostic_sch_add_a(a, arr, _agnostic_sch_grant_a(a, name, g, pat));
+                        break;
+                    }
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return arr;
+}
+
+# The permission's name, or `null` for a route that needs none.
+fn _agnostic_sch_perm_a(a, perm): i64 {
+    if (perm == 0) { return bayan_json_v_null_a(a); }
+    return _agnostic_sch_cstr_a(a, agnostic_perm_name(perm));
+}
+
+# The first role, in the role vocabulary's order, that holds `perm` — or `null` when the route
+# needs no permission or no role holds it.
+fn _agnostic_sch_min_role_a(a, perm): i64 {
+    if (perm == 0) { return bayan_json_v_null_a(a); }
+    var r = AGNOSTIC_ROLE_VIEWER;
+    while (agnostic_role_is_valid(r) == 1) {
+        if (agnostic_role_can(r, perm) == 1) { return _agnostic_sch_cstr_a(a, agnostic_role_name(r)); }
+        r = r + 1;
+    }
+    return bayan_json_v_null_a(a);
+}
+
+# ⚠ **Declared: the body route `id` takes**, a key of the document's `bodies`, or 0 for none.
+# `api/probes` sends each one's fields to its route and checks none is refused as unknown.
+fn _agnostic_sch_body_of(id): i64 {
+    if (id == AGNOSTIC_ROUTE_CREW_SUBMIT) { return "crew"; }
+    if (id == AGNOSTIC_ROUTE_DEF_CREATE) { return "agent_definition"; }
+    if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { return "agent_definition"; }
+    if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return "login"; }
+    if (id == AGNOSTIC_ROUTE_PLUGIN_SET) { return "plugin_switch"; }
+    if (id == AGNOSTIC_ROUTE_PDATA_PUT) { return "plugin_document"; }
+    return 0;
+}
+
+# ⚠ **Declared: the query parameters route `id` reads**, in the order its handler reads them
+# (`src/routes/crews.cyr`, `src/routes/definitions.cyr`). Any other parameter is ignored.
+# `api/probes` sends each one an invalid value and expects the handler's 422.
+fn _agnostic_sch_query_a(a, id): i64 {
+    var q = bayan_json_v_arr_new_a(a);
+    if (id == AGNOSTIC_ROUTE_CREW_LIST) {
+        q = _agnostic_sch_name_a(a, q, "limit");
+        q = _agnostic_sch_name_a(a, q, "status");
+        q = _agnostic_sch_name_a(a, q, "before");
+    }
+    if (id == AGNOSTIC_ROUTE_CREW_EVENTS) { q = _agnostic_sch_name_a(a, q, "after"); }
+    if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) {
+        q = _agnostic_sch_name_a(a, q, "limit");
+        q = _agnostic_sch_name_a(a, q, "before");
+    }
+    return q;
+}
+
+# ⚠ **Declared: the request headers route `id`'s handler reads**, beyond the ones every request
+# may carry (`_agnostic_sch_headers_a`). Lowercase, as `agnostic_serve_handler` looks them up.
+fn _agnostic_sch_route_headers_a(a, id): i64 {
+    var h = bayan_json_v_arr_new_a(a);
+    if (id == AGNOSTIC_ROUTE_CREW_SUBMIT) { h = _agnostic_sch_name_a(a, h, "idempotency-key"); }
+    if (id == AGNOSTIC_ROUTE_PDATA_PUT) {
+        h = _agnostic_sch_name_a(a, h, "if-match");
+        h = _agnostic_sch_name_a(a, h, "if-none-match");
+    }
+    if (id == AGNOSTIC_ROUTE_PDATA_DELETE) { h = _agnostic_sch_name_a(a, h, "if-match"); }
+    return h;
+}
+
+# `arr` with each space-separated word of C string `s` appended as a string, in order — so a
+# declared list is written the way it reads.
+fn _agnostic_sch_words_a(a, arr, s): i64 {
+    var n = strlen(s);
+    var i = 0;
+    while (i < n) {
+        var e = i;
+        while (e < n) {
+            if ((load8(s + e) & 255) == 32) { break; }
+            e = e + 1;
+        }
+        if (e > i) {
+            var w = str_new_a(a, s + i, e - i);
+            if (w == 0) { return 0; }
+            arr = _agnostic_sch_add_a(a, arr, bayan_json_v_str_new_a(a, w));
+        }
+        i = e + 1;
+    }
+    return arr;
+}
+
+# `arr` with status `s` appended.
+fn _agnostic_sch_status_a(a, arr, s): i64 {
+    return _agnostic_sch_add_a(a, arr, bayan_json_v_int_new_a(a, s));
+}
+
+# ⚠ **Declared: the statuses route `id` answers with its own body** (`response`), in the
+# order its handler reaches them. They are its successes — and for `/ready` also 503: "not
+# ready" is that route's answer, in the same body, not a refused request (ADR 0001). Any
+# other status is a refusal (`errors`). `api/responses` fails on a status not listed here,
+# and on one listed that the sweep never sees.
+fn _agnostic_sch_ok_a(a, id): i64 {
+    var ok = bayan_json_v_arr_new_a(a);
+    if (id == AGNOSTIC_ROUTE_CREW_SUBMIT) { return _agnostic_sch_status_a(a, ok, AGNOSTIC_HTTP_ACCEPTED); }
+    if (id == AGNOSTIC_ROUTE_DEF_CREATE) { return _agnostic_sch_status_a(a, ok, AGNOSTIC_HTTP_CREATED); }
+    # A plugin's PUT is an upsert, and says which happened (`src/routes/plugindata.cyr`).
+    if (id == AGNOSTIC_ROUTE_PDATA_PUT) { ok = _agnostic_sch_status_a(a, ok, AGNOSTIC_HTTP_CREATED); }
+    ok = _agnostic_sch_status_a(a, ok, HTTP_OK);
+    if (id == AGNOSTIC_ROUTE_READY) { ok = _agnostic_sch_status_a(a, ok, HTTP_SERVICE_UNAVAILABLE); }
+    return ok;
+}
+
+# What kind of body route `id` answers with: `json`, an object; `html`, a WebGUI page; or
+# `document`, a plugin's stored JSON document sent back verbatim with its revision as `ETag`.
+fn _agnostic_sch_kind_of(id): i64 {
+    if (id == AGNOSTIC_ROUTE_PDATA_GET) { return "document"; }
+    if (id == AGNOSTIC_ROUTE_UI_SHELL) { return "html"; }
+    if (id == AGNOSTIC_ROUTE_UI_PLUGIN) { return "html"; }
+    return "json";
+}
+
+# ⚠ **Declared: the top-level keys of the object route `id` answers with**, in the order its
+# handler writes them; `[]` for an `html` or `document` body, and 0 — failing the document —
+# for a route with no declaration, rather than claiming it answers an empty object.
+#
+# `key?` marks a key a success can leave out: a crew that has not started has no `started_at`. A
+# key left out only when the request could not be served at all — an exhausted arena, a
+# server that never mounted — is not marked. Nested shapes are not described. `api/responses`
+# drives every route's success path, and fails when a key not marked is missing, when the
+# handler writes a key not listed, or when a listed key is never written.
+fn _agnostic_sch_keys_a(a, id): i64 {
+    var k = bayan_json_v_arr_new_a(a);
+    if (id == AGNOSTIC_ROUTE_HEALTH) { return _agnostic_sch_words_a(a, k, "status"); }
+    if (id == AGNOSTIC_ROUTE_READY) { return _agnostic_sch_words_a(a, k, "status version checks"); }
+    if (id == AGNOSTIC_ROUTE_CREW_LIST) { return _agnostic_sch_words_a(a, k, "crews scope next?"); }
+    if (id == AGNOSTIC_ROUTE_CREW_SUBMIT) {
+        k = _agnostic_sch_words_a(a, k, "crew_id status name engine_mode unforwarded task_ids submitted_at");
+        return _agnostic_sch_words_a(a, k, "scope replayed?");
+    }
+    if (id == AGNOSTIC_ROUTE_CREW_GET) {
+        # An outcome, plus what was known about the crew where it was known: the ledger for
+        # a crew this process holds or stored (`agnostic_ledger_describe_a`), the in-flight
+        # row for one a restart interrupted (`agnostic_crew_interrupted_doc_a`).
+        k = _agnostic_sch_words_a(a, k, "crew_id status task_count results usage error? engine_mode?");
+        k = _agnostic_sch_words_a(a, k, "name? scope? process? tasks_submitted? submitted_at?");
+        return _agnostic_sch_words_a(a, k, "started_at? finished_at? interrupted_at?");
+    }
+    if (id == AGNOSTIC_ROUTE_CREW_CANCEL) { return _agnostic_sch_words_a(a, k, "crew_id status"); }
+    if (id == AGNOSTIC_ROUTE_CREW_EVENTS) {
+        return _agnostic_sch_words_a(a, k, "crew_id status events next missed lost_events dropped_events");
+    }
+    if (id == AGNOSTIC_ROUTE_CREW_PLAN) {
+        return _agnostic_sch_words_a(a, k, "crew_id name? process max_concurrency? agents tasks");
+    }
+    if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return _agnostic_sch_words_a(a, k, "token token_type expires_in role"); }
+    if (id == AGNOSTIC_ROUTE_PRESET_LIST) { return _agnostic_sch_words_a(a, k, "presets total"); }
+    if (id == AGNOSTIC_ROUTE_PRESET_GET) {
+        # The compiled-in document itself (`src/presets/*.json`), not a wrapper.
+        return _agnostic_sch_words_a(a, k, "name description domain size version workflow_mode? agents");
+    }
+    if (id == AGNOSTIC_ROUTE_DEF_LIST) { return _agnostic_sch_words_a(a, k, "definitions total storage"); }
+    if (id == AGNOSTIC_ROUTE_DEF_CREATE) { return _agnostic_sch_words_a(a, k, "definition unforwarded storage"); }
+    if (id == AGNOSTIC_ROUTE_DEF_GET) { return _agnostic_sch_words_a(a, k, "definition unforwarded storage"); }
+    if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { return _agnostic_sch_words_a(a, k, "definition unforwarded storage"); }
+    if (id == AGNOSTIC_ROUTE_DEF_DELETE) { return _agnostic_sch_words_a(a, k, "key status storage"); }
+    if (id == AGNOSTIC_ROUTE_AUDIT) {
+        return _agnostic_sch_words_a(a, k, "total entries_at_open appended dropped verified intact bad_index? storage");
+    }
+    if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) { return _agnostic_sch_words_a(a, k, "entries total oldest_held next?"); }
+    if (id == AGNOSTIC_ROUTE_PLUGIN_LIST) { return _agnostic_sch_words_a(a, k, "plugins total catalogue"); }
+    if (id == AGNOSTIC_ROUTE_PLUGIN_SET) { return _agnostic_sch_words_a(a, k, "plugin changed"); }
+    if (id == AGNOSTIC_ROUTE_PDATA_LIST) { return _agnostic_sch_words_a(a, k, "documents total scope"); }
+    if (id == AGNOSTIC_ROUTE_PDATA_PUT) { return _agnostic_sch_words_a(a, k, "key updated bytes etag created"); }
+    if (id == AGNOSTIC_ROUTE_PDATA_DELETE) { return _agnostic_sch_words_a(a, k, "key status"); }
+    if (streq(_agnostic_sch_kind_of(id), "json") == 0) { return k; }
+    return 0;
+}
+
+# `{"kind": ..., "keys": [...]}` — what route `id` answers with.
+fn _agnostic_sch_response_a(a, id): i64 {
+    var o = bayan_json_v_obj_new_a(a);
+    o = _agnostic_sch_put_a(a, o, "kind", _agnostic_sch_cstr_a(a, _agnostic_sch_kind_of(id)));
+    o = _agnostic_sch_put_a(a, o, "keys", _agnostic_sch_keys_a(a, id));
+    return o;
+}
+
+# One route: row `row`'s arm for `method`.
+fn _agnostic_sch_route_a(a, cat, row, method): i64 {
+    var id = agnostic_route_row_id(row, method);
+    var pattern = agnostic_route_row_pattern(row);
+    var perm = agnostic_perm_for_route(id);
+    var o = bayan_json_v_obj_new_a(a);
+    o = _agnostic_sch_put_a(a, o, "method", _agnostic_sch_cstr_a(a, agnostic_method_name(method)));
+    o = _agnostic_sch_put_a(a, o, "path", _agnostic_sch_cstr_a(a, pattern));
+    o = _agnostic_sch_put_a(a, o, "auth", bayan_json_v_bool_new_a(a, agnostic_route_needs_auth(id)));
+    o = _agnostic_sch_put_a(a, o, "permission", _agnostic_sch_perm_a(a, perm));
+    o = _agnostic_sch_put_a(a, o, "min_role", _agnostic_sch_min_role_a(a, perm));
+    o = _agnostic_sch_put_a(a, o, "plugin_permissions", _agnostic_sch_grants_a(a, cat, method, pattern));
+    o = _agnostic_sch_put_a(a, o, "body", _agnostic_sch_opt_a(a, _agnostic_sch_body_of(id)));
+    o = _agnostic_sch_put_a(a, o, "query", _agnostic_sch_query_a(a, id));
+    o = _agnostic_sch_put_a(a, o, "headers", _agnostic_sch_route_headers_a(a, id));
+    o = _agnostic_sch_put_a(a, o, "ok", _agnostic_sch_ok_a(a, id));
+    o = _agnostic_sch_put_a(a, o, "response", _agnostic_sch_response_a(a, id));
+    return o;
+}
+
+# Every route: each row of the router's table in resolution order, and within a row each
+# method it answers, GET, POST, PUT, DELETE.
+fn _agnostic_sch_routes_a(a, cat): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    var row = 0;
+    while (agnostic_route_row_pattern(row) != 0) {
+        var m = AGNOSTIC_METHOD_GET;
+        while (agnostic_method_name(m) != 0) {
+            if (agnostic_route_row_id(row, m) != AGNOSTIC_ROUTE_NONE) {
+                arr = _agnostic_sch_add_a(a, arr, _agnostic_sch_route_a(a, cat, row, m));
+            }
+            m = m + 1;
+        }
+        row = row + 1;
+    }
+    return arr;
+}
+
+# --- bodies, headers, errors --------------------------------------------------
+
+# The refused agent-definition fields, from the decoder's own table.
+fn _agnostic_sch_refused_a(a): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    var i = 0;
+    while (agnostic_agent_def_refused_name(i) != 0) {
+        arr = _agnostic_sch_name_a(a, arr, agnostic_agent_def_refused_name(i));
+        i = i + 1;
+    }
+    return arr;
+}
+
+# Every request body: its permitted fields, read from the allow-list its decoder uses. A key
+# outside a list is a 422 naming it. A plugin document is any JSON object up to a size.
+fn _agnostic_sch_bodies_a(a): i64 {
+    var crew = _agnostic_sch_fields_body_a(a, agnostic_crew_req_fields_a(a));
+    # What each element of the crew's two arrays is decoded as.
+    var items = bayan_json_v_obj_new_a(a);
+    items = _agnostic_sch_put_a(a, items, "agents", _agnostic_sch_cstr_a(a, "agent_definition"));
+    items = _agnostic_sch_put_a(a, items, "tasks", _agnostic_sch_cstr_a(a, "task"));
+    crew = _agnostic_sch_put_a(a, crew, "items", items);
+
+    var def = _agnostic_sch_fields_body_a(a, agnostic_agent_def_fields_a(a));
+    def = _agnostic_sch_put_a(a, def, "refused", _agnostic_sch_refused_a(a));
+
+    var doc = bayan_json_v_obj_new_a(a);
+    doc = _agnostic_sch_put_a(a, doc, "kind", _agnostic_sch_cstr_a(a, "object"));
+    doc = _agnostic_sch_put_a(a, doc, "max_bytes", bayan_json_v_int_new_a(a, AGNOSTIC_PLUGINDATA_DOC_MAX));
+
+    var b = bayan_json_v_obj_new_a(a);
+    b = _agnostic_sch_put_a(a, b, "crew", crew);
+    b = _agnostic_sch_put_a(a, b, "task", _agnostic_sch_fields_body_a(a, agnostic_task_req_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "agent_definition", def);
+    b = _agnostic_sch_put_a(a, b, "login", _agnostic_sch_fields_body_a(a, agnostic_login_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "plugin_switch", _agnostic_sch_fields_body_a(a, agnostic_plugin_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "plugin_document", doc);
+    return b;
+}
+
+# ⚠ **Declared: the request headers any request may carry** (`agnostic_serve_handler`, and
+# `traceparent` through `src/trace.cyr`). Route-specific ones are on each route.
+fn _agnostic_sch_headers_a(a): i64 {
+    var h = bayan_json_v_arr_new_a(a);
+    h = _agnostic_sch_name_a(a, h, "authorization");
+    h = _agnostic_sch_name_a(a, h, "content-type");
+    h = _agnostic_sch_name_a(a, h, "host");
+    h = _agnostic_sch_name_a(a, h, "traceparent");
+    h = _agnostic_sch_name_a(a, h, "x-agnostic-plugin");
+    return h;
+}
+
+# `arr` with `{"<k1>": <cstring v1>, "status": <status>}` appended.
+fn _agnostic_sch_status_row_a(a, arr, k1, v1, status): i64 {
+    var o = bayan_json_v_obj_new_a(a);
+    o = _agnostic_sch_put_a(a, o, k1, _agnostic_sch_cstr_a(a, v1));
+    o = _agnostic_sch_put_a(a, o, "status", bayan_json_v_int_new_a(a, status));
+    return _agnostic_sch_add_a(a, arr, o);
+}
+
+# How a refusal is shaped, every code the catalogue holds, and the dispatch ladder.
+fn _agnostic_sch_errors_a(a): i64 {
+    # Every error is `{"error": "<message>"}`; a refusal a client acts on adds `code`.
+    # A trailing `?` marks a key that is not always there.
+    var keys = bayan_json_v_arr_new_a(a);
+    keys = _agnostic_sch_name_a(a, keys, "error");
+    keys = _agnostic_sch_name_a(a, keys, "code?");
+    var body = bayan_json_v_obj_new_a(a);
+    body = _agnostic_sch_put_a(a, body, "kind", _agnostic_sch_cstr_a(a, "json"));
+    body = _agnostic_sch_put_a(a, body, "keys", keys);
+
+    # The catalogue runs 1, 2, 3 … with no gap (`src/http/response.cyr`).
+    var codes = bayan_json_v_arr_new_a(a);
+    var ec = 1;
+    while (agnostic_error_code_name(ec) != 0) {
+        codes = _agnostic_sch_status_row_a(a, codes, "code", agnostic_error_code_name(ec),
+          agnostic_error_code_status(ec));
+        ec = ec + 1;
+    }
+
+    # ⚠ **Declared: the refusals `agnostic_route_dispatch_a` makes before a handler runs, in
+    # its order** — the first that applies answers. Keep this in step with the ladder comment
+    # there; `api/errors` drives each rung it can reach without an identity store.
+    var ladder = bayan_json_v_arr_new_a(a);
+    ladder = _agnostic_sch_status_row_a(a, ladder, "rung", "body_size", HTTP_PAYLOAD_TOO_LARGE);
+    ladder = _agnostic_sch_status_row_a(a, ladder, "rung", "host", HTTP_FORBIDDEN);
+    ladder = _agnostic_sch_status_row_a(a, ladder, "rung", "route", HTTP_NOT_FOUND);
+    ladder = _agnostic_sch_status_row_a(a, ladder, "rung", "method", HTTP_METHOD_NOT_ALLOWED);
+    ladder = _agnostic_sch_status_row_a(a, ladder, "rung", "plugin", HTTP_FORBIDDEN);
+    ladder = _agnostic_sch_status_row_a(a, ladder, "rung", "authn", HTTP_UNAUTHORIZED);
+    ladder = _agnostic_sch_status_row_a(a, ladder, "rung", "authz", HTTP_FORBIDDEN);
+    ladder = _agnostic_sch_status_row_a(a, ladder, "rung", "media_type", AGNOSTIC_HTTP_UNSUPPORTED_MEDIA);
+
+    var e = bayan_json_v_obj_new_a(a);
+    e = _agnostic_sch_put_a(a, e, "body", body);
+    e = _agnostic_sch_put_a(a, e, "codes", codes);
+    e = _agnostic_sch_put_a(a, e, "ladder", ladder);
+    return e;
+}
+
+# --- vocabularies -------------------------------------------------------------
+
+# The wire spelling of value `v` in vocabulary `kind`, a `Str`, or 0 for an unknown `kind`.
+fn _agnostic_sch_wire_a(a, kind, v): i64 {
+    if (kind == AGNOSTIC_SCHV_PROCESS) { return agnostic_process_to_wire(v); }
+    if (kind == AGNOSTIC_SCHV_PRIORITY) { return agnosai_task_priority_to_wire_a(a, v); }
+    if (kind == AGNOSTIC_SCHV_RISK) { return agnosai_task_risk_to_wire_a(a, v); }
+    if (kind == AGNOSTIC_SCHV_CREW_STATUS) { return agnostic_crew_status_to_wire(v); }
+    return 0;
+}
+
+# Every spelling in vocabulary `kind`, in value order from 0.
+#
+# **Walked, not bounded.** Each `*_to_wire` answers a spelling it already has for a value it
+# does not know — process `sequential`, priority `normal`, risk `low`, crew status `pending` —
+# so the walk stops at the first spelling it has already listed, and a value appended with its
+# own arm (crew status `interrupted`, 0.1.13) is listed without touching this file.
+#
+# ⚠ A `*_to_wire` that answered a NEW spelling for unknown values would never repeat. The walk
+# gives up at AGNOSTIC_SCH_VOCAB_MAX and the document fails, rather than listing garbage.
+fn _agnostic_sch_vocab_a(a, kind): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    var v = 0;
+    while (v < AGNOSTIC_SCH_VOCAB_MAX) {
+        if (arr == 0) { return 0; }
+        var w = _agnostic_sch_wire_a(a, kind, v);
+        if (w == 0) { return 0; }
+        if (_agnostic_sch_arr_has(arr, w) == 1) { return arr; }
+        arr = _agnostic_sch_add_a(a, arr, bayan_json_v_str_new_a(a, w));
+        v = v + 1;
+    }
+    return 0;
+}
+
+# Every role, in the vocabulary's order.
+fn _agnostic_sch_roles_a(a): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    var r = AGNOSTIC_ROLE_VIEWER;
+    while (agnostic_role_is_valid(r) == 1) {
+        arr = _agnostic_sch_name_a(a, arr, agnostic_role_name(r));
+        r = r + 1;
+    }
+    return arr;
+}
+
+# Every permission, lowest bit first.
+fn _agnostic_sch_perms_a(a): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    var p = AGNOSTIC_PERM_READ;
+    while (agnostic_perm_name(p) != 0) {
+        arr = _agnostic_sch_name_a(a, arr, agnostic_perm_name(p));
+        p = p << 1;
+    }
+    return arr;
+}
+
+# The plugin permission names, in the catalogue's order.
+fn _agnostic_sch_catalogue_names_a(a, cat): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    var i = 0;
+    while (i < bayan_json_v_obj_len(cat)) {
+        arr = _agnostic_sch_add_a(a, arr, bayan_json_v_str_new_a(a, bayan_json_v_obj_key(cat, i)));
+        i = i + 1;
+    }
+    return arr;
+}
+
+# Every closed set of words the API reads or writes.
+fn _agnostic_sch_vocabularies_a(a, cat): i64 {
+    # `?status=` takes every crew status, and `active` for pending or running together
+    # (`agnostic_crews_status_mask`).
+    var filter = _agnostic_sch_vocab_a(a, AGNOSTIC_SCHV_CREW_STATUS);
+    filter = _agnostic_sch_name_a(a, filter, "active");
+
+    var v = bayan_json_v_obj_new_a(a);
+    v = _agnostic_sch_put_a(a, v, "roles", _agnostic_sch_roles_a(a));
+    v = _agnostic_sch_put_a(a, v, "permissions", _agnostic_sch_perms_a(a));
+    v = _agnostic_sch_put_a(a, v, "process", _agnostic_sch_vocab_a(a, AGNOSTIC_SCHV_PROCESS));
+    v = _agnostic_sch_put_a(a, v, "priority", _agnostic_sch_vocab_a(a, AGNOSTIC_SCHV_PRIORITY));
+    v = _agnostic_sch_put_a(a, v, "risk", _agnostic_sch_vocab_a(a, AGNOSTIC_SCHV_RISK));
+    v = _agnostic_sch_put_a(a, v, "crew_status", _agnostic_sch_vocab_a(a, AGNOSTIC_SCHV_CREW_STATUS));
+    v = _agnostic_sch_put_a(a, v, "crew_status_filter", filter);
+    v = _agnostic_sch_put_a(a, v, "plugin_permissions", _agnostic_sch_catalogue_names_a(a, cat));
+    return v;
+}
+
+# --- the document -------------------------------------------------------------
+
+# The API schema as a bayan object in `a`, or 0 when any part of it could not be built.
+#
+# Keys in this order: `schema` (the document's format, AGNOSTIC_SCH_FORMAT — not the binary's
+# version), `routes`, `bodies`, `headers`, `errors`, `vocabularies`. `docs/api/README.md`
+# describes each.
+fn agnostic_api_schema_a(a): i64 {
+    # The plugin permission vocabulary, parsed here rather than read from the registry:
+    # `agnostic_webgui_init` needs the settings store, and this module opens nothing.
+    var raw = agnostic_webgui_permissions_json();
+    var cat = bayan_json_v_parse_buf_a(a, raw, strlen(raw));
+    if (bayan_json_v_is_obj(cat) != 1) { return 0; }
+
+    var d = bayan_json_v_obj_new_a(a);
+    d = _agnostic_sch_put_a(a, d, "schema", bayan_json_v_int_new_a(a, AGNOSTIC_SCH_FORMAT));
+    d = _agnostic_sch_put_a(a, d, "routes", _agnostic_sch_routes_a(a, cat));
+    d = _agnostic_sch_put_a(a, d, "bodies", _agnostic_sch_bodies_a(a));
+    d = _agnostic_sch_put_a(a, d, "headers", _agnostic_sch_headers_a(a));
+    d = _agnostic_sch_put_a(a, d, "errors", _agnostic_sch_errors_a(a));
+    d = _agnostic_sch_put_a(a, d, "vocabularies", _agnostic_sch_vocabularies_a(a, cat));
+    return d;
+}
+
+# The API schema as the text `agnostic api schema` prints — indented two spaces, keys in
+# insertion order, ending in a newline — as a `Str` in `a`, or 0 on failure. Deterministic:
+# the same build prints the same bytes.
+fn agnostic_api_schema_text_a(a): i64 {
+    var v = agnostic_api_schema_a(a);
+    if (v == 0) { return 0; }
+    var s = bayan_json_v_build_pretty_a(a, v, AGNOSTIC_SCH_INDENT);
+    if (s == 0) { return 0; }
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    if (str_builder_add_a(a, sb, s) != 0) { return 0; }
+    if (str_builder_add_cstr_a(a, sb, "\n") != 0) { return 0; }
+    return str_builder_build_a(a, sb);
+}

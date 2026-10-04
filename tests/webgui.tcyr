@@ -171,8 +171,8 @@ fn test_settings() {
     assert_eq(agnostic_settings_count(), 1, "⭐ replacing does not add a row");
     assert_eq(agnostic_settings_put(str_from("k.two"), _T_EMPTY), 1, "an empty value is a value");
     assert_eq(str_len(agnostic_settings_get_a(a, str_from("k.two"))), 0, "and reads back empty");
-    # ⭐ COL_STR truncates silently at 256 bytes, so an over-long value is refused at
-    # the door rather than stored cut.
+    # ⭐ COL_STR holds 255 bytes and patra refuses more, so an over-long value is refused
+    # at the door rather than left to fail in the store.
     var big = alloc(300);
     memset(big, 120, 300);
     assert_eq(agnostic_settings_put(str_from("k.big"), str_new(big, 256)), 0, "256 bytes is refused");
@@ -416,6 +416,17 @@ fn _t_code(r) {
     return bayan_json_v_str(c);
 }
 
+# Whether `r`'s body is, byte for byte, the coded refusal `{"error":"<message>","code":"<code>"}`.
+fn _t_refusal_is(a, r, message, code) {
+    var sb = str_builder_new_a(a);
+    str_builder_add_cstr_a(a, sb, "{\"error\":\"");
+    str_builder_add_cstr_a(a, sb, message);
+    str_builder_add_cstr_a(a, sb, "\",\"code\":\"");
+    str_builder_add_cstr_a(a, sb, code);
+    str_builder_add_cstr_a(a, sb, "\"}");
+    return str_eq(agnostic_encode_a(a, agnostic_response_body(r)), str_builder_build_a(a, sb));
+}
+
 # ⭐ 0.1.9, ADR 0007: the server checks every request the bridge makes for a plugin against
 # that plugin's permissions — from ONE vocabulary, served to the shell as `catalogue`.
 fn test_plugin_rung() {
@@ -441,6 +452,10 @@ fn test_plugin_rung() {
     var off = _t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/presets", "");
     assert_eq(agnostic_response_status(off), HTTP_FORBIDDEN, "⭐ a switched-off plugin is refused");
     assert_eq(str_eq_cstr(_t_code(off), "plugin_off"), 1, "with code plugin_off, which the shell acts on");
+    # Each refusal's whole body, byte for byte: the bytes 0.1.9 sent, pinned when 0.1.13 (H5)
+    # moved `code` into a closed catalogue.
+    assert_eq(_t_refusal_is(a, off, "this plugin is switched off; an administrator can turn it on in Settings",
+        "plugin_off"), 1, "the plugin_off body is unchanged");
 
     _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":true}");
     assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/presets", "")), HTTP_OK,
@@ -455,6 +470,8 @@ fn test_plugin_rung() {
     var other = _t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/plugins/someone-else/data", "");
     assert_eq(agnostic_response_status(other), HTTP_FORBIDDEN, "⭐ but not ANOTHER plugin's documents");
     assert_eq(str_eq_cstr(_t_code(other), "plugin_forbidden"), 1, "plugin_forbidden");
+    assert_eq(_t_refusal_is(a, other, "Swarm Command is not permitted to make this request", "plugin_forbidden"), 1,
+      "the plugin_forbidden body is unchanged");
     assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":false}")),
       HTTP_FORBIDDEN, "⭐ nor its own switch");
     assert_eq(agnostic_plugin_enabled(agnostic_plugin_find(str_from("swarm"))), 1, "which stays on");
@@ -470,6 +487,8 @@ fn test_plugin_rung() {
     var nobody = _t_req_for(a, "no-such-plugin", AGNOSTIC_METHOD_GET, "/api/v1/presets", "");
     assert_eq(agnostic_response_status(nobody), HTTP_FORBIDDEN, "an unknown plugin is refused");
     assert_eq(str_eq_cstr(_t_code(nobody), "plugin_unknown"), 1, "plugin_unknown");
+    assert_eq(_t_refusal_is(a, nobody, "no such plugin is built into this server", "plugin_unknown"), 1,
+      "the plugin_unknown body is unchanged");
     assert_eq(str_eq_cstr(_t_code(_t_req_for(a, "Not An Id", AGNOSTIC_METHOD_GET, "/api/v1/presets", "")), "plugin_unknown"), 1,
       "and so is a malformed id");
 

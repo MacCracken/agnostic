@@ -30,7 +30,7 @@
 # A document is at most `AGNOSTIC_PLUGINDATA_DOC_MAX` bytes — small enough that a GET
 # is served from the 64 KiB request arena without spilling to the global allocator —
 # and a plugin keeps at most `AGNOSTIC_PLUGINDATA_MAX_DOCS` documents per scope. The
-# keys are refused at the door when too long, because `COL_STR` truncates silently.
+# keys are refused at the door when too long, because patra refuses a `COL_STR` over 255 bytes.
 #
 # ## Revisions: a document's ETag, and conditional writes (0.1.9)
 #

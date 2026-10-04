@@ -89,6 +89,55 @@ fn test_survives_a_reopen() {
     assert_eq(agnostic_audit_bad_index(), 0 - 1, "with no bad entry to name");
 }
 
+# Reopen the trail as the next process would: a new patra handle, nothing in memory.
+fn _t_reopen() {
+    agnostic_audit_close();
+    patra_init();
+    return agnostic_audit_open(str_from(_T_AUDIT));
+}
+
+fn test_appends_link_across_a_reopen() {
+    test_group("audit/durable-append");
+
+    # ⭐ `audit/durable` reopens and verifies, but never APPENDS after the reopen, which is
+    # where the chain broke until 0.1.13: the open started an empty head, so the first entry
+    # a process wrote linked to "" and the NEXT open reported the store altered.
+    assert_eq(_t_fresh(), 1, "fresh store");
+    assert_eq(agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("first"),
+        str_from("d=1")), 1, "the first process records an entry");
+
+    assert_eq(_t_reopen(), 1, "a second process opens the trail");
+    assert_eq(agnostic_audit_is_intact(), 1, "one entry verifies");
+    assert_eq(agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("second"),
+        str_from("d=2")), 1, "and records an entry");
+    assert_eq(agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("third"),
+        str_from("d=3")), 1, "and another");
+
+    assert_eq(_t_reopen(), 1, "a third process opens the trail");
+    assert_eq(agnostic_audit_at_open(), 3, "all three entries came off disk");
+    assert_eq(agnostic_audit_is_intact(), 1, "and the chain verifies across the restart");
+    assert_eq(agnostic_audit_bad_index(), 0 - 1, "with no bad entry to name");
+    assert_eq(agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("fourth"),
+        str_from("d=4")), 1, "and it records too");
+
+    # The links themselves, read from the file through libro with no copy of ours between.
+    agnostic_audit_close();
+    patra_init();
+    var s = patrastore_open(str_from(_T_AUDIT));
+    assert_eq(s != 0, 1, "the file opens through libro");
+    var rows = patrastore_load_all(s);
+    assert_eq(vec_len(rows), 4, "four entries, from three processes");
+    assert_eq(str_len(entry_prev_hash(vec_get(rows, 0))), 0, "the first is the genesis");
+    assert_eq(str_eq(entry_prev_hash(vec_get(rows, 1)), entry_hash(vec_get(rows, 0))), 1,
+      "the second process's first entry names the first process's last");
+    assert_eq(str_eq(entry_prev_hash(vec_get(rows, 2)), entry_hash(vec_get(rows, 1))), 1,
+      "and the chain carries on inside that process");
+    assert_eq(str_eq(entry_prev_hash(vec_get(rows, 3)), entry_hash(vec_get(rows, 2))), 1,
+      "and across the second restart");
+    assert_eq(verify_chain(rows, 0), 0, "libro's own pass finds it intact");
+    patrastore_close(s);
+}
+
 fn test_tampering_is_detected() {
     test_group("audit/tamper");
 
@@ -136,8 +185,29 @@ fn test_tampering_is_detected() {
     # failure. Refusing to start would let an attacker deny service by
     # corrupting one byte, and would take the evidence offline with it.
     assert_eq(agnostic_audit_is_intact(), 0, "the alteration is DETECTED");
-    assert_eq(agnostic_audit_bad_index() >= 0, 1, "and the failing entry is named");
+    # Entry 1 holds "key=bravo". Until 0.1.13 this read the wrong field of libro's error and
+    # named entry 0 for every break, which `>= 0` let through.
+    assert_eq(agnostic_audit_bad_index(), 1, "and the failing entry is named");
     assert_eq(agnostic_audit_at_open(), 3, "with the entries still readable");
+
+    # A re-verify reaches the same verdict through its own read of the error.
+    assert_eq(agnostic_audit_reverify(), 0, "a re-verify finds it too");
+    assert_eq(agnostic_audit_bad_index(), 1, "at the same entry");
+
+    # ⚠ The head is seeded on a broken chain too. Seeding only an intact one would link this
+    # process's first entry to "" and add a fresh break at every restart of an altered trail,
+    # which is every trail written before 0.1.13 that recorded after a restart.
+    assert_eq(agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("after"),
+        str_from("key=delta")), 1, "the altered trail keeps recording");
+    agnostic_audit_close();
+    patra_init();
+    var s = patrastore_open(str_from(_T_AUDIT));
+    assert_eq(s != 0, 1, "the file opens through libro");
+    var rows = patrastore_load_all(s);
+    assert_eq(vec_len(rows), 4, "four entries");
+    assert_eq(str_eq(entry_prev_hash(vec_get(rows, 3)), entry_hash(vec_get(rows, 2))), 1,
+      "the new entry names the last stored one, not the genesis");
+    patrastore_close(s);
 }
 
 fn test_gaps_are_counted_because_verification_cannot_see_them() {
@@ -343,6 +413,7 @@ fn main() {
     test_opens_and_records();
     test_details_are_cut_visibly_not_silently();
     test_survives_a_reopen();
+    test_appends_link_across_a_reopen();
     test_tampering_is_detected();
     test_gaps_are_counted_because_verification_cannot_see_them();
     test_the_newest_entries_are_kept_for_reading();

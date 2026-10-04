@@ -1,0 +1,934 @@
+{
+  "schema": 1,
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "auth": false,
+      "permission": null,
+      "min_role": null,
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "status"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/ready",
+      "auth": false,
+      "permission": null,
+      "min_role": null,
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200,
+        503
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "status",
+          "version",
+          "checks"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/crews",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "crews:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [
+        "limit",
+        "status",
+        "before"
+      ],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "crews",
+          "scope",
+          "next?"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/crews",
+      "auth": true,
+      "permission": "write",
+      "min_role": "operator",
+      "plugin_permissions": [
+        {
+          "name": "crews:write",
+          "self": []
+        }
+      ],
+      "body": "crew",
+      "query": [],
+      "headers": [
+        "idempotency-key"
+      ],
+      "ok": [
+        202
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "crew_id",
+          "status",
+          "name",
+          "engine_mode",
+          "unforwarded",
+          "task_ids",
+          "submitted_at",
+          "scope",
+          "replayed?"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/crews/:id",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "crews:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "crew_id",
+          "status",
+          "task_count",
+          "results",
+          "usage",
+          "error?",
+          "engine_mode?",
+          "name?",
+          "scope?",
+          "process?",
+          "tasks_submitted?",
+          "submitted_at?",
+          "started_at?",
+          "finished_at?",
+          "interrupted_at?"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/crews/:id/cancel",
+      "auth": true,
+      "permission": "write",
+      "min_role": "operator",
+      "plugin_permissions": [
+        {
+          "name": "crews:write",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "crew_id",
+          "status"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/crews/:id/events",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "crews:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [
+        "after"
+      ],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "crew_id",
+          "status",
+          "events",
+          "next",
+          "missed",
+          "lost_events",
+          "dropped_events"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/crews/:id/plan",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "crews:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "crew_id",
+          "name?",
+          "process",
+          "max_concurrency?",
+          "agents",
+          "tasks"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "auth": false,
+      "permission": null,
+      "min_role": null,
+      "plugin_permissions": [],
+      "body": "login",
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "token",
+          "token_type",
+          "expires_in",
+          "role"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/presets",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "presets:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "presets",
+          "total"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/presets/:name",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "presets:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "name",
+          "description",
+          "domain",
+          "size",
+          "version",
+          "workflow_mode?",
+          "agents"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agents/definitions",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "definitions:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "definitions",
+          "total",
+          "storage"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agents/definitions",
+      "auth": true,
+      "permission": "write",
+      "min_role": "operator",
+      "plugin_permissions": [
+        {
+          "name": "definitions:write",
+          "self": []
+        }
+      ],
+      "body": "agent_definition",
+      "query": [],
+      "headers": [],
+      "ok": [
+        201
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "definition",
+          "unforwarded",
+          "storage"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agents/definitions/:key",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "definitions:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "definition",
+          "unforwarded",
+          "storage"
+        ]
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/agents/definitions/:key",
+      "auth": true,
+      "permission": "write",
+      "min_role": "operator",
+      "plugin_permissions": [
+        {
+          "name": "definitions:write",
+          "self": []
+        }
+      ],
+      "body": "agent_definition",
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "definition",
+          "unforwarded",
+          "storage"
+        ]
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/agents/definitions/:key",
+      "auth": true,
+      "permission": "write",
+      "min_role": "operator",
+      "plugin_permissions": [
+        {
+          "name": "definitions:write",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "key",
+          "status",
+          "storage"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audit",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [
+        {
+          "name": "audit:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "total",
+          "entries_at_open",
+          "appended",
+          "dropped",
+          "verified",
+          "intact",
+          "bad_index?",
+          "storage"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audit/entries",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [
+        {
+          "name": "audit:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [
+        "limit",
+        "before"
+      ],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "entries",
+          "total",
+          "oldest_held",
+          "next?"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/plugins",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "plugins",
+          "total",
+          "catalogue"
+        ]
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/plugins/:id",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [],
+      "body": "plugin_switch",
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "plugin",
+          "changed"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/plugins/:id/data",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "storage",
+          "self": [
+            "id"
+          ]
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "documents",
+          "total",
+          "scope"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/plugins/:id/data/:key",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "storage",
+          "self": [
+            "id"
+          ]
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "document",
+        "keys": []
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/plugins/:id/data/:key",
+      "auth": true,
+      "permission": "write",
+      "min_role": "operator",
+      "plugin_permissions": [
+        {
+          "name": "storage",
+          "self": [
+            "id"
+          ]
+        }
+      ],
+      "body": "plugin_document",
+      "query": [],
+      "headers": [
+        "if-match",
+        "if-none-match"
+      ],
+      "ok": [
+        201,
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "key",
+          "updated",
+          "bytes",
+          "etag",
+          "created"
+        ]
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/plugins/:id/data/:key",
+      "auth": true,
+      "permission": "write",
+      "min_role": "operator",
+      "plugin_permissions": [
+        {
+          "name": "storage",
+          "self": [
+            "id"
+          ]
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [
+        "if-match"
+      ],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "key",
+          "status"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/ui",
+      "auth": false,
+      "permission": null,
+      "min_role": null,
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "html",
+        "keys": []
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/ui/",
+      "auth": false,
+      "permission": null,
+      "min_role": null,
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "html",
+        "keys": []
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/ui/plugins/:id",
+      "auth": false,
+      "permission": null,
+      "min_role": null,
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "html",
+        "keys": []
+      }
+    }
+  ],
+  "bodies": {
+    "crew": {
+      "fields": [
+        "name",
+        "process",
+        "max_concurrency",
+        "agents",
+        "tasks"
+      ],
+      "items": {
+        "agents": "agent_definition",
+        "tasks": "task"
+      }
+    },
+    "task": {
+      "fields": [
+        "description",
+        "expected_output",
+        "priority",
+        "risk",
+        "dependencies"
+      ]
+    },
+    "agent_definition": {
+      "fields": [
+        "key",
+        "name",
+        "role",
+        "goal",
+        "backstory",
+        "domain",
+        "tools",
+        "complexity",
+        "llm_model",
+        "gpu_required",
+        "gpu_preferred",
+        "gpu_memory_min_mb",
+        "focus",
+        "allow_delegation"
+      ],
+      "refused": [
+        "gpu_strict",
+        "llm_temperature",
+        "verbose",
+        "metadata",
+        "celery_queue",
+        "redis_prefix",
+        "celery_task",
+        "tool_instances",
+        "personality",
+        "hardware",
+        "agent_key",
+        "workflow_mode"
+      ]
+    },
+    "login": {
+      "fields": [
+        "email",
+        "password"
+      ]
+    },
+    "plugin_switch": {
+      "fields": [
+        "enabled"
+      ]
+    },
+    "plugin_document": {
+      "kind": "object",
+      "max_bytes": 32768
+    }
+  },
+  "headers": [
+    "authorization",
+    "content-type",
+    "host",
+    "traceparent",
+    "x-agnostic-plugin"
+  ],
+  "errors": {
+    "body": {
+      "kind": "json",
+      "keys": [
+        "error",
+        "code?"
+      ]
+    },
+    "codes": [
+      {
+        "code": "plugin_unknown",
+        "status": 403
+      },
+      {
+        "code": "plugin_off",
+        "status": 403
+      },
+      {
+        "code": "plugin_forbidden",
+        "status": 403
+      },
+      {
+        "code": "revision",
+        "status": 412
+      }
+    ],
+    "ladder": [
+      {
+        "rung": "body_size",
+        "status": 413
+      },
+      {
+        "rung": "host",
+        "status": 403
+      },
+      {
+        "rung": "route",
+        "status": 404
+      },
+      {
+        "rung": "method",
+        "status": 405
+      },
+      {
+        "rung": "plugin",
+        "status": 403
+      },
+      {
+        "rung": "authn",
+        "status": 401
+      },
+      {
+        "rung": "authz",
+        "status": 403
+      },
+      {
+        "rung": "media_type",
+        "status": 415
+      }
+    ]
+  },
+  "vocabularies": {
+    "roles": [
+      "viewer",
+      "operator",
+      "admin",
+      "super_admin"
+    ],
+    "permissions": [
+      "read",
+      "write",
+      "admin",
+      "super"
+    ],
+    "process": [
+      "sequential",
+      "parallel",
+      "dag"
+    ],
+    "priority": [
+      "background",
+      "low",
+      "normal",
+      "high",
+      "critical"
+    ],
+    "risk": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "crew_status": [
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "cancelled",
+      "unknown",
+      "interrupted"
+    ],
+    "crew_status_filter": [
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "cancelled",
+      "unknown",
+      "interrupted",
+      "active"
+    ],
+    "plugin_permissions": [
+      "storage",
+      "presets:read",
+      "definitions:read",
+      "definitions:write",
+      "crews:read",
+      "crews:write",
+      "audit:read"
+    ]
+  }
+}

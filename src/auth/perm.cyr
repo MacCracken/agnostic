@@ -43,6 +43,17 @@ enum AgnosticPerm {
     AGNOSTIC_PERM_SUPER = 8;
 }
 
+# The name of permission `p` — "read", "write", "admin" or "super", a C string — or 0
+# for anything that is not exactly one defined bit. The vocabulary the API schema (H5)
+# emits, as `agnostic_role_name` is for roles; nothing authorises by name.
+fn agnostic_perm_name(p): i64 {
+    if (p == AGNOSTIC_PERM_READ) { return "read"; }
+    if (p == AGNOSTIC_PERM_WRITE) { return "write"; }
+    if (p == AGNOSTIC_PERM_ADMIN) { return "admin"; }
+    if (p == AGNOSTIC_PERM_SUPER) { return "super"; }
+    return 0;
+}
+
 # The mask for a role, or 0 for anything unrecognised.
 #
 # ⚠ The masks are written out in full rather than accumulated (`VIEWER | WRITE`)
@@ -82,7 +93,7 @@ fn agnostic_role_can(role, perm): i64 {
 # The permission a route id requires, or 0 when the route needs no auth.
 #
 # ⚠ **Anything unclassified falls through to ADMIN**, mirroring
-# `agnostic_route_needs_auth`'s reasoning at `src/http/router.cyr:323`: the
+# `agnostic_route_needs_auth`'s reasoning (`src/http/router.cyr`): the
 # default is what protects a route someone forgets to classify. A new route
 # nobody listed here is refused to everyone below an admin rather than served
 # on a READ check.

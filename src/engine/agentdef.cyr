@@ -140,24 +140,79 @@ fn agnostic_key_is_valid(key: Str): i64 {
     return 1;
 }
 
+# --- the refused fields (0.1.13) ---------------------------------------------
+#
+# One row per refused key: its name and its message. The decoder looks a key up in these
+# rows, and anything that has to list the refused fields — the API schema (H5) — reads
+# the same rows through `agnostic_agent_def_refused_name`. Until 0.1.13 this was an
+# if-chain of twelve names that nothing could enumerate.
+enum AgnosticRefusedRowOff {
+    AGNOSTIC_RFROW_NAME        = 0;     # NUL-terminated cstring, the wire key
+    AGNOSTIC_RFROW_MSG         = 8;     # its interned `AGNOSTIC_RF_*` message, a Str
+    AGNOSTIC_RFROW_SIZE        = 16;
+    AGNOSTIC_RFROW_TABLE_BYTES = 256;   # the table's storage: 16 rows, 12 used
+}
+
+# The rows, AGNOSTIC_RFROW_SIZE bytes each, in the order the schema lists them.
+var _agnostic_rf_rows: u8[AGNOSTIC_RFROW_TABLE_BYTES];
+
+# Write row `n` and answer the next row's index. A row that would not fit is refused —
+# `n` comes back unchanged — rather than written past the storage; `agentdef/refuse-rows`
+# counts the rows, so a refused row cannot ship.
+fn _agnostic_rf_add(n, name, msg): i64 {
+    if ((n + 1) * AGNOSTIC_RFROW_SIZE > AGNOSTIC_RFROW_TABLE_BYTES) { return n; }
+    var r = &_agnostic_rf_rows + n * AGNOSTIC_RFROW_SIZE;
+    store64(r + AGNOSTIC_RFROW_NAME, name);
+    store64(r + AGNOSTIC_RFROW_MSG, msg);
+    return n + 1;
+}
+
+# The table. Answers the row count.
+fn _agnostic_rf_table_build(): i64 {
+    var n = 0;
+    n = _agnostic_rf_add(n, "gpu_strict", AGNOSTIC_RF_GPU_STRICT);
+    n = _agnostic_rf_add(n, "llm_temperature", AGNOSTIC_RF_LLM_TEMP);
+    n = _agnostic_rf_add(n, "verbose", AGNOSTIC_RF_VERBOSE);
+    n = _agnostic_rf_add(n, "metadata", AGNOSTIC_RF_METADATA);
+    n = _agnostic_rf_add(n, "celery_queue", AGNOSTIC_RF_CELERY_QUEUE);
+    n = _agnostic_rf_add(n, "redis_prefix", AGNOSTIC_RF_REDIS_PREFIX);
+    n = _agnostic_rf_add(n, "celery_task", AGNOSTIC_RF_CELERY_TASK);
+    n = _agnostic_rf_add(n, "tool_instances", AGNOSTIC_RF_TOOL_INSTANCES);
+    n = _agnostic_rf_add(n, "personality", AGNOSTIC_RF_PERSONALITY);
+    n = _agnostic_rf_add(n, "hardware", AGNOSTIC_RF_HARDWARE);
+    n = _agnostic_rf_add(n, "agent_key", AGNOSTIC_RF_AGENT_KEY);
+    n = _agnostic_rf_add(n, "workflow_mode", AGNOSTIC_RF_WORKFLOW);
+    return n;
+}
+
+# How many rows the table holds. Built at load, after the messages it points at — a
+# `var` initialiser reading a global declared later reads 0 — and never written again,
+# so workers read it without a lock.
+#
+# ⚠ **At load means in include order.** A `var` initialiser in a module that
+# `src/app.cyr` includes before this one would see an empty table and refuse nothing.
+# None decodes an agent at load today; keep it that way.
+var _agnostic_rf_nrows = _agnostic_rf_table_build();
+
+# The wire key of refused field `i` — "gpu_strict" and so on, a C string — or 0 past the
+# last row, so a caller listing the refused fields needs no count of its own.
+fn agnostic_agent_def_refused_name(i): i64 {
+    if (i < 0 || i >= _agnostic_rf_nrows) { return 0; }
+    return load64(&_agnostic_rf_rows + i * AGNOSTIC_RFROW_SIZE + AGNOSTIC_RFROW_NAME);
+}
+
 # The refusal reason for `key`, or 0 when it is not a refused name.
 #
 # Public so `tests/agentdef.tcyr` can assert the table directly rather than
 # through twelve decode round-trips.
 fn agnostic_agent_def_refused_reason(key: Str): i64 {
     if (key == 0) { return 0; }
-    if (str_eq_cstr(key, "gpu_strict") == 1)     { return AGNOSTIC_RF_GPU_STRICT; }
-    if (str_eq_cstr(key, "llm_temperature") == 1) { return AGNOSTIC_RF_LLM_TEMP; }
-    if (str_eq_cstr(key, "verbose") == 1)        { return AGNOSTIC_RF_VERBOSE; }
-    if (str_eq_cstr(key, "metadata") == 1)       { return AGNOSTIC_RF_METADATA; }
-    if (str_eq_cstr(key, "celery_queue") == 1)   { return AGNOSTIC_RF_CELERY_QUEUE; }
-    if (str_eq_cstr(key, "redis_prefix") == 1)   { return AGNOSTIC_RF_REDIS_PREFIX; }
-    if (str_eq_cstr(key, "celery_task") == 1)    { return AGNOSTIC_RF_CELERY_TASK; }
-    if (str_eq_cstr(key, "tool_instances") == 1) { return AGNOSTIC_RF_TOOL_INSTANCES; }
-    if (str_eq_cstr(key, "personality") == 1)    { return AGNOSTIC_RF_PERSONALITY; }
-    if (str_eq_cstr(key, "hardware") == 1)       { return AGNOSTIC_RF_HARDWARE; }
-    if (str_eq_cstr(key, "agent_key") == 1)      { return AGNOSTIC_RF_AGENT_KEY; }
-    if (str_eq_cstr(key, "workflow_mode") == 1)  { return AGNOSTIC_RF_WORKFLOW; }
+    var row = &_agnostic_rf_rows;
+    var end = row + _agnostic_rf_nrows * AGNOSTIC_RFROW_SIZE;
+    while (row < end) {
+        if (str_eq_cstr(key, load64(row + AGNOSTIC_RFROW_NAME)) == 1) { return load64(row + AGNOSTIC_RFROW_MSG); }
+        row = row + AGNOSTIC_RFROW_SIZE;
+    }
     return 0;
 }
 

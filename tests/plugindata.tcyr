@@ -386,6 +386,17 @@ fn _t_etag(r) {
     return bayan_json_v_str(bayan_json_v_obj_get_by_str(agnostic_response_body(r), str_from("etag")));
 }
 
+# Whether `r`'s body is, byte for byte, the coded refusal `{"error":"<message>","code":"<code>"}`.
+fn _t_refusal_is(a, r, message, code) {
+    var sb = str_builder_new_a(a);
+    str_builder_add_cstr_a(a, sb, "{\"error\":\"");
+    str_builder_add_cstr_a(a, sb, message);
+    str_builder_add_cstr_a(a, sb, "\",\"code\":\"");
+    str_builder_add_cstr_a(a, sb, code);
+    str_builder_add_cstr_a(a, sb, "\"}");
+    return str_eq(agnostic_encode_a(a, agnostic_response_body(r)), str_builder_build_a(a, sb));
+}
+
 # ⭐ 0.1.9: a document has a revision, and a write made from a stale one is refused —
 # that is what stops a second tab's save silently undoing the first's.
 fn test_revisions() {
@@ -412,6 +423,10 @@ fn test_revisions() {
 
     var stale = _t_req(a, AGNOSTIC_METHOD_PUT, path, "{\"v\":99}", _t_ctx_if(a, e1, 0));
     assert_eq(_t_status(stale), AGNOSTIC_HTTP_PRECONDITION_FAILED, "⭐ If-Match a STALE revision: 412");
+    # The whole body, byte for byte: the bytes 0.1.9 sent, pinned when 0.1.13 (H5) moved
+    # `code` into a closed catalogue.
+    assert_eq(_t_refusal_is(a, stale, "the document is not the revision this write was made from; read it again",
+        "revision"), 1, "with code revision, the refusal a client acts on");
     assert_eq(str_eq_cstr(agnostic_response_body(_t_req(a, AGNOSTIC_METHOD_GET, path, "", 0)), "{\"v\":2}"), 1,
       "and the stored document is untouched");
 
@@ -428,8 +443,10 @@ fn test_revisions() {
       AGNOSTIC_HTTP_PRECONDITION_FAILED, "an If-None-Match other than * cannot be met");
 
     var cur = _t_etag(_t_req(a, AGNOSTIC_METHOD_PUT, path, "{\"v\":4}", 0));
-    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_DELETE, path, "", _t_ctx_if(a, e2, 0))),
-      AGNOSTIC_HTTP_PRECONDITION_FAILED, "a DELETE from a stale revision is 412");
+    var sdel = _t_req(a, AGNOSTIC_METHOD_DELETE, path, "", _t_ctx_if(a, e2, 0));
+    assert_eq(_t_status(sdel), AGNOSTIC_HTTP_PRECONDITION_FAILED, "a DELETE from a stale revision is 412");
+    assert_eq(_t_refusal_is(a, sdel, "the document is not the revision this delete was made from; read it again",
+        "revision"), 1, "with code revision too");
     assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_GET, path, "", 0)), HTTP_OK, "and deletes nothing");
     assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_DELETE, path, "", _t_ctx_if(a, cur, 0))), HTTP_OK,
       "from the current one it deletes");

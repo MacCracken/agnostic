@@ -19,8 +19,9 @@
 # switch already in the asked-for position, and only a real change is recorded in the
 # audit trail, so the trail reads as the history of the switch rather than of clicks.
 
-# The fields a switch request may carry.
-fn _agnostic_plugin_fields_a(a): i64 {
+# The fields a switch request may carry. Public since 0.1.13: the API schema lists the switch
+# body from this list (`src/http/schema.cyr`).
+fn agnostic_plugin_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
     agnostic_field_a(a, f, "enabled");
     return f;
@@ -69,7 +70,7 @@ fn agnostic_route_plugin_set_a(a, id: Str, body: Str): i64 {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "the body must be a JSON object: {\"enabled\": true|false}"));
     }
-    var unknown = agnostic_unknown_field(v, _agnostic_plugin_fields_a(a));
+    var unknown = agnostic_unknown_field(v, agnostic_plugin_fields_a(a));
     if (unknown != 0) {
         var sb = str_builder_new_a(a);
         str_builder_add_cstr_a(a, sb, "unknown field in request body: ");

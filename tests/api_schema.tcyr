@@ -1,0 +1,1732 @@
+# agnostic/http/schema + cli — `agnostic api schema`, its committed snapshot, and every part of
+# the document checked against the server it describes (0.1.13, ADR 0015).
+#
+# What this suite holds:
+#
+#   1. The generator prints exactly `docs/api/generated/schema.json` (`api/snapshot`). The
+#      snapshot is read relative to the working directory: `cyrius test` and CI run at the
+#      repository root. After a deliberate API change, regenerate it:
+#        cyrius build src/main.cyr build/agnostic && ./scripts/gen-api-schema.sh
+#   2. Each route is what the router, the auth rung and the permission table say (`api/routes`).
+#   3. Every route `src/webgui/permissions.json` grants is a real route that lists the grant
+#      (`api/plugin-vocabulary`). A route renamed in the router but not there used to stop
+#      being granted silently (ADR 0007); it fails here now.
+#   4. The bodies are the decoders' allow-lists (`api/bodies`), the vocabularies round-trip
+#      through the real parsers (`api/vocabularies`), the codes are the catalogue and the
+#      ladder is the dispatcher's order (`api/errors`), and the command line parses (`api/cli`).
+#   5. What the schema DECLARES rather than reads — the body a route takes, its query
+#      parameters, its headers — is driven against the handlers (`api/probes`).
+#   6. What each route answers — its success statuses, its body's kind and top-level keys — is
+#      checked both ways against the real mount, auth on (`api/responses`): every route's success
+#      path is driven, each answer must match its declaration, and each status and key declared
+#      must be seen at least once. That group's ERROR lines (an altered trail) are expected.
+include "src/app.cyr"
+
+var _T_SNAPSHOT = "docs/api/generated/schema.json";
+var _T_MAXB = 1048576;
+var _T_UUID = "00000000-0000-4000-8000-000000000000";
+
+# The stores `api/probes` opens: under $TMPDIR, named for this process, removed at the end.
+var _t_db = 0;
+var _t_audit = 0;
+
+# --- reading the document ------------------------------------------------------
+
+fn _t_get(o, key) { return bayan_json_v_obj_get_by_cstr(o, key); }
+
+# `o[key]` as a Str, or 0 when it is absent or not a string.
+fn _t_s(o, key) { return bayan_json_v_str(_t_get(o, key)); }
+
+# `o[key]` as a Str — an EMPTY one when it is absent or not a string. Every helper and parser
+# below refuses an empty string, so a damaged document fails an assertion rather than
+# crashing the suite on a null before it reaches a verdict.
+fn _t_sz(o, key) {
+    var s = _t_s(o, key);
+    if (s == 0) { return str_from(""); }
+    return s;
+}
+
+# The `i`th element of array `arr` as a Str, empty when it is absent or not a string.
+fn _t_at(arr, i) {
+    var s = bayan_json_v_str(bayan_json_v_arr_get(arr, i));
+    if (s == 0) { return str_from(""); }
+    return s;
+}
+
+# The method constant route entry `r` names; NONE when it names none.
+fn _t_method_of(r) { return agnostic_method_from(_t_sz(r, "method")); }
+
+# 1 when `o[key]` is the string `want` (a C string).
+fn _t_is(o, key, want) {
+    var s = _t_s(o, key);
+    if (s == 0) { return 0; }
+    return str_eq_cstr(s, want);
+}
+
+# 1 when array `arr` holds the string `s` (a Str).
+fn _t_arr_has(arr, s) {
+    var i = 0;
+    while (i < bayan_json_v_arr_len(arr)) {
+        var v = bayan_json_v_str(bayan_json_v_arr_get(arr, i));
+        if (v != 0) { if (str_eq(v, s) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 when array `arr` is exactly the Strs of vec `v`, in order.
+fn _t_same_list(arr, v) {
+    if (bayan_json_v_is_arr(arr) != 1) { return 0; }
+    if (bayan_json_v_arr_len(arr) != vec_len(v)) { return 0; }
+    var i = 0;
+    while (i < vec_len(v)) {
+        var s = bayan_json_v_str(bayan_json_v_arr_get(arr, i));
+        if (s == 0) { return 0; }
+        if (str_eq(s, vec_get(v, i)) != 1) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# The route with this method and path (C strings), or 0.
+fn _t_route(routes, method, path) {
+    var i = 0;
+    while (i < bayan_json_v_arr_len(routes)) {
+        var r = bayan_json_v_arr_get(routes, i);
+        if (_t_is(r, "method", method) == 1 && _t_is(r, "path", path) == 1) { return r; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 when `s` contains the C string `needle`.
+fn _t_has(s, needle) {
+    if (s == 0) { return 0; }
+    var n = str_len(s);
+    var d = str_data(s);
+    var m = strlen(needle);
+    if (m > n) { return 0; }
+    var i = 0;
+    while (i <= n - m) {
+        if (memeq(d + i, needle, m) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Print one diagnostic line, built from up to three C strings.
+#
+# ⚠ `str_println`, not `println(str_data(...))`: `str_data` is declared `: i64`, so `println`
+# dispatches it to `println_int` and prints the pointer (lib/string.cyr, the v5.10.5 overload).
+fn _t_say(x, y, z) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "    ");
+    str_builder_add_cstr(sb, x);
+    if (y != 0) { str_builder_add_cstr(sb, y); }
+    if (z != 0) { str_builder_add_cstr(sb, z); }
+    str_println(str_builder_build(sb));
+    return 0;
+}
+
+# A Str's bytes as a fresh C string.
+fn _t_cstr(s) {
+    var n = str_len(s);
+    var c = alloc(n + 1);
+    memcpy(c, str_data(s), n);
+    store8(c + n, 0);
+    return c;
+}
+
+# --- paths -----------------------------------------------------------------------
+
+# Route path `p` (a Str) made concrete: `:self` and a plugin's `:id` become the built-in plugin
+# `swarm`, a crew's `:id` a well-formed uuid, `:key` `probe-1`, and any other `:name` `probe`.
+fn _t_concrete(p) { return _t_concrete_for(p, "swarm"); }
+
+# `_t_concrete`, with `:self` and a plugin's `:id` naming plugin `plugin` (a C string) instead.
+fn _t_concrete_for(p, plugin) {
+    var d = str_data(p);
+    var n = str_len(p);
+    var sb = str_builder_new();
+    var i = 0;
+    var prev = 0;   # the previous segment, a Str
+    while (i < n) {
+        # `d[i]` is a '/'; the segment runs to the next one.
+        var e = i + 1;
+        while (e < n) {
+            if ((load8(d + e) & 255) == 47) { break; }
+            e = e + 1;
+        }
+        var seg = str_sub(p, i + 1, e - i - 1);
+        str_builder_putc(sb, 47);
+        if (str_len(seg) > 0 && (load8(d + i + 1) & 255) == 58) {
+            var rep = "probe";
+            if (str_eq_cstr(seg, ":self") == 1) { rep = plugin; }
+            if (str_eq_cstr(seg, ":key") == 1) { rep = "probe-1"; }
+            if (str_eq_cstr(seg, ":id") == 1 && prev != 0) {
+                if (str_eq_cstr(prev, "plugins") == 1) { rep = plugin; }
+                if (str_eq_cstr(prev, "crews") == 1) { rep = _T_UUID; }
+            }
+            str_builder_add_cstr(sb, rep);
+        } else {
+            str_builder_add(sb, seg);
+        }
+        prev = seg;
+        i = e;
+    }
+    return str_builder_build(sb);
+}
+
+# Route path `p` (a Str) with every `:name` segment written `:` — so `:self` and `:id` compare
+# equal, and nothing else does. The suite's own spelling, not the generator's.
+fn _t_canon(p) {
+    var d = str_data(p);
+    var n = str_len(p);
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        if (c == 58) {
+            str_builder_putc(sb, 58);
+            while (i < n && (load8(d + i) & 255) != 47) { i = i + 1; }
+        } else {
+            str_builder_putc(sb, c);
+            i = i + 1;
+        }
+    }
+    return str_builder_build(sb);
+}
+
+# --- requests --------------------------------------------------------------------
+
+fn _t_req(a, method, path, body, ctx) {
+    return agnostic_route_dispatch_a(a, method, path, str_from(body), _T_MAXB, ctx);
+}
+
+# The error message of response `r`, a Str, or 0 when it has none.
+fn _t_msg(r) { return _t_s(agnostic_response_body(r), "error"); }
+
+# 1 when response `r` carries the code `want` (a C string).
+fn _t_code_is(r, want) { return _t_is(agnostic_response_body(r), "code", want); }
+
+# A context for a socket request carrying these Content-Type and Host values (C strings or 0).
+fn _t_ctx_wire(a, ctype, host) {
+    var c = agnostic_reqctx_new_a(a, 0, 0);
+    var ct = 0;
+    if (ctype != 0) { ct = str_from(ctype); }
+    var h = 0;
+    if (host != 0) { h = str_from(host); }
+    agnostic_reqctx_set_transport(c, ct, h);
+    return c;
+}
+
+# A context carrying the four handler-read headers (C strings or 0).
+fn _t_ctx_hdr(a, idem, plugin, if_match, if_none) {
+    var c = agnostic_reqctx_new_a(a, 0, 0);
+    var v1 = 0;
+    if (idem != 0) { v1 = str_from(idem); }
+    var v2 = 0;
+    if (plugin != 0) { v2 = str_from(plugin); }
+    var v3 = 0;
+    if (if_match != 0) { v3 = str_from(if_match); }
+    var v4 = 0;
+    if (if_none != 0) { v4 = str_from(if_none); }
+    agnostic_reqctx_set_headers(c, v1, v2, v3, v4);
+    return c;
+}
+
+# `pre` + `field` + `post`, as a C string — a request body with one field named.
+fn _t_body(pre, field, post) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, pre);
+    str_builder_add(sb, field);
+    str_builder_add_cstr(sb, post);
+    return str_data(str_builder_build(sb));
+}
+
+# A file path under $TMPDIR (else /tmp) that only this process uses, ending in `ext`.
+fn _t_tmp_file(tag, ext) {
+    var dir = getenv("TMPDIR");
+    if (dir == 0) { dir = "/tmp"; }
+    if (strlen(dir) == 0) { dir = "/tmp"; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, dir);
+    str_builder_add_cstr(sb, "/agnostic-api-schema-");
+    str_builder_add_cstr(sb, tag);
+    str_builder_putc(sb, 46);
+    str_builder_add_int(sb, getpid());
+    str_builder_add_cstr(sb, ext);
+    return str_data(str_builder_build(sb));
+}
+
+# A store path under $TMPDIR (else /tmp) that only this process uses.
+fn _t_tmp_path(tag) { return _t_tmp_file(tag, ".patra"); }
+
+# --- api/snapshot ----------------------------------------------------------------
+
+# The 1-based number of the first line where `x` and `y` differ, or 0 when they are equal.
+fn _t_first_diff_line(x, y) {
+    var xn = str_len(x);
+    var yn = str_len(y);
+    var xd = str_data(x);
+    var yd = str_data(y);
+    var line = 1;
+    var i = 0;
+    while (i < xn && i < yn) {
+        var c = load8(xd + i) & 255;
+        if (c != (load8(yd + i) & 255)) { return line; }
+        if (c == 10) { line = line + 1; }
+        i = i + 1;
+    }
+    if (xn == yn) { return 0; }
+    return line;
+}
+
+# Line `k` (1-based) of `s` as a C string, "" past the end.
+fn _t_line(s, k) {
+    var d = str_data(s);
+    var n = str_len(s);
+    var line = 1;
+    var i = 0;
+    while (i < n && line < k) {
+        if ((load8(d + i) & 255) == 10) { line = line + 1; }
+        i = i + 1;
+    }
+    var e = i;
+    while (e < n) {
+        if ((load8(d + e) & 255) == 10) { break; }
+        e = e + 1;
+    }
+    return _t_cstr(str_sub(s, i, e - i));
+}
+
+fn test_snapshot() {
+    test_group("api/snapshot");
+    var a = default_alloc();
+
+    var text = agnostic_api_schema_text_a(a);
+    assert_neq(text, 0, "the generator builds the whole document");
+    if (text == 0) { return 0; }
+    assert_eq(str_eq(text, agnostic_api_schema_text_a(a)), 1, "and the same bytes every time");
+    var tn = str_len(text);
+    assert_eq(load8(str_data(text) + tn - 1) & 255, 10, "the text ends in a newline");
+
+    var n = 0;
+    var raw = file_read_whole(_T_SNAPSHOT, &n);
+    if (raw == 0) {
+        _t_say("cannot read ", _T_SNAPSHOT, " from the working directory: run at the repository root,");
+        _t_say("or regenerate it: cyrius build src/main.cyr build/agnostic && ./scripts/gen-api-schema.sh", 0, 0);
+    }
+    assert_neq(raw, 0, "the snapshot docs/api/generated/schema.json is readable (cwd = the repo root)");
+    if (raw == 0) { return 0; }
+    var parsed = bayan_json_v_parse_buf_a(a, raw, n);
+    assert_neq(parsed, 0, "the snapshot is one JSON document");
+    if (parsed == 0) { return 0; }
+
+    # Both sides through the same printer, so only content differs — not a bayan formatting
+    # change that arrived with a toolchain bump.
+    var want = bayan_json_v_build_pretty_a(a, parsed, AGNOSTIC_SCH_INDENT);
+    var got = str_sub_a(a, text, 0, tn - 1);
+    var line = _t_first_diff_line(want, got);
+    if (line != 0) {
+        _t_say("the API differs from docs/api/generated/schema.json; first differing line follows.", 0, 0);
+        _t_say("snapshot:  ", _t_line(want, line), 0);
+        _t_say("generator: ", _t_line(got, line), 0);
+        _t_say("a deliberate change regenerates it: cyrius build src/main.cyr build/agnostic", 0, 0);
+        _t_say("  && ./scripts/gen-api-schema.sh, with a CHANGELOG line", 0, 0);
+    }
+    assert_eq(line, 0, "the generator prints exactly the snapshot (got = the first line that differs)");
+    return 0;
+}
+
+# --- api/routes --------------------------------------------------------------------
+
+# 1 when route entry `r` has exactly the route keys, in the document's order.
+fn _t_route_shape(r) {
+    if (bayan_json_v_obj_len(r) != 11) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 0), "method") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 1), "path") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 2), "auth") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 3), "permission") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 4), "min_role") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 5), "plugin_permissions") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 6), "body") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 7), "query") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 8), "headers") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 9), "ok") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(r, 10), "response") != 1) { return 0; }
+    return 1;
+}
+
+# The lowest role that holds permission `perm` (a C string name), by the permission table's
+# design — written out here, not computed, so the generator's walk is checked against it.
+fn _t_expected_role(perm) {
+    if (streq(perm, "read") == 1) { return "viewer"; }
+    if (streq(perm, "write") == 1) { return "operator"; }
+    if (streq(perm, "admin") == 1) { return "admin"; }
+    if (streq(perm, "super") == 1) { return "super_admin"; }
+    return "?";
+}
+
+fn test_routes() {
+    test_group("api/routes");
+    var a = default_alloc();
+    var doc = agnostic_api_schema_a(a);
+    assert_neq(doc, 0, "the document builds");
+    if (doc == 0) { return 0; }
+    assert_eq(bayan_json_v_int(_t_get(doc, "schema")), 1, "it is format 1");
+    var routes = _t_get(doc, "routes");
+    var n = bayan_json_v_arr_len(routes);
+    assert_eq(n, 27, "27 routes: one per method each of the router's 21 rows answers");
+
+    var shape = 0;
+    var unresolved = 0;
+    var auth = 0;
+    var perm = 0;
+    var role = 0;
+    var dup = 0;
+    var open = 0;
+    var i = 0;
+    while (i < n) {
+        var r = bayan_json_v_arr_get(routes, i);
+        if (_t_route_shape(r) == 0) { shape = shape + 1; }
+        # The route, made concrete, resolves — and the router, auth rung and permission
+        # table agree with what the entry says about it.
+        var m = agnostic_route_resolve_a(a, _t_method_of(r), _t_concrete(_t_sz(r, "path")));
+        var id = agnostic_route_match_id(m);
+        if (id == AGNOSTIC_ROUTE_NONE) {
+            unresolved = unresolved + 1;
+            _t_say("does not resolve: ", _t_cstr(_t_sz(r, "path")), 0);
+        }
+        if (bayan_json_v_bool(_t_get(r, "auth")) != agnostic_route_needs_auth(id)) { auth = auth + 1; }
+        var p = agnostic_perm_for_route(id);
+        if (p == 0) {
+            if (bayan_json_v_is_null(_t_get(r, "permission")) != 1) { perm = perm + 1; }
+            if (bayan_json_v_is_null(_t_get(r, "min_role")) != 1) { role = role + 1; }
+        } else {
+            if (_t_is(r, "permission", agnostic_perm_name(p)) != 1) { perm = perm + 1; }
+            if (_t_is(r, "min_role", _t_expected_role(agnostic_perm_name(p))) != 1) { role = role + 1; }
+        }
+        if (bayan_json_v_bool(_t_get(r, "auth")) == 0) {
+            open = open + 1;
+        } elif (bayan_json_v_is_null(_t_get(r, "permission")) == 1) {
+            perm = perm + 1;
+        }
+        var j = 0;
+        while (j < i) {
+            var o = bayan_json_v_arr_get(routes, j);
+            if (str_eq(_t_sz(o, "method"), _t_sz(r, "method")) == 1) {
+                if (str_eq(_t_sz(o, "path"), _t_sz(r, "path")) == 1) { dup = dup + 1; }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(shape, 0, "every route has the eleven keys, in order");
+    assert_eq(unresolved, 0, "every route resolves through the router");
+    assert_eq(auth, 0, "every route's auth is agnostic_route_needs_auth's");
+    assert_eq(perm, 0, "every route's permission is the table's: null exactly when it needs no auth");
+    assert_eq(role, 0, "min_role: viewer for read, operator for write, admin for admin, null for none");
+    assert_eq(dup, 0, "no method and path is listed twice");
+    assert_eq(open, 6, "six public routes: /health, /ready, login, /ui, /ui/, /ui/plugins/:id");
+
+    var named = 0;
+    if (_t_route(routes, "GET", "/health") != 0) { named = named + 1; }
+    if (_t_route(routes, "GET", "/ready") != 0) { named = named + 1; }
+    if (_t_route(routes, "POST", "/api/v1/auth/login") != 0) { named = named + 1; }
+    if (_t_route(routes, "GET", "/ui") != 0) { named = named + 1; }
+    if (_t_route(routes, "GET", "/ui/") != 0) { named = named + 1; }
+    if (_t_route(routes, "GET", "/ui/plugins/:id") != 0) { named = named + 1; }
+    assert_eq(named, 6, "and they are those six");
+    assert_eq(bayan_json_v_bool(_t_get(_t_route(routes, "POST", "/api/v1/auth/login"), "auth")), 0,
+      "login is public: it is how a caller obtains a credential");
+    assert_eq(_t_is(_t_route(routes, "GET", "/api/v1/audit"), "min_role", "admin"), 1,
+      "the audit trail is admin: it records every user's actions");
+    assert_eq(_t_is(_t_route(routes, "PUT", "/api/v1/plugins/:id"), "min_role", "admin"), 1,
+      "switching a plugin is admin: it changes every user's view");
+    assert_eq(_t_is(_t_route(routes, "POST", "/api/v1/crews"), "min_role", "operator"), 1,
+      "submitting a crew is operator");
+    assert_eq(_t_is(_t_route(routes, "GET", "/api/v1/crews"), "min_role", "viewer"), 1,
+      "listing crews is viewer");
+    return 0;
+}
+
+# --- api/plugin-vocabulary ---------------------------------------------------------
+
+# The grant named `name` (a Str) in a route's `plugin_permissions`, or 0 when none is.
+fn _t_grant(gs, name) {
+    var i = 0;
+    while (i < bayan_json_v_arr_len(gs)) {
+        var g = bayan_json_v_arr_get(gs, i);
+        if (str_eq(_t_sz(g, "name"), name) == 1) { return g; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 when grant `g` has exactly the grant keys, in the document's order.
+fn _t_grant_shape(g) {
+    if (bayan_json_v_obj_len(g) != 2) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(g, 0), "name") != 1) { return 0; }
+    if (str_eq_cstr(bayan_json_v_obj_key(g, 1), "self") != 1) { return 0; }
+    return 1;
+}
+
+# The parameters of route path `route` that grant path `grant` writes as `:self`, in path order,
+# as a vec of Strs without their `:` — worked out here from the two paths, which have the same
+# segments, rather than by the generator's code.
+fn _t_self_names(grant, route) {
+    var v = vec_new();
+    var gs = str_split(grant, 47);
+    var rs = str_split(route, 47);
+    var i = 0;
+    while (i < vec_len(gs) && i < vec_len(rs)) {
+        if (str_eq_cstr(vec_get(gs, i), ":self") == 1) {
+            var seg = vec_get(rs, i);
+            vec_push(v, str_sub(seg, 1, str_len(seg) - 1));
+        }
+        i = i + 1;
+    }
+    return v;
+}
+
+fn test_plugin_vocabulary() {
+    test_group("api/plugin-vocabulary");
+    var a = default_alloc();
+    var doc = agnostic_api_schema_a(a);
+    var routes = _t_get(doc, "routes");
+    var raw = agnostic_webgui_permissions_json();
+    var cat = bayan_json_v_parse_buf(raw, strlen(raw));
+    assert_eq(bayan_json_v_is_obj(cat), 1, "the embedded permission vocabulary parses");
+
+    var pairs = 0;
+    var unmatched = 0;
+    var unlisted = 0;
+    var unselfed = 0;
+    var unrouted = 0;
+    var k = 0;
+    while (k < bayan_json_v_obj_len(cat)) {
+        var name = bayan_json_v_obj_key(cat, k);
+        var rs = _t_get(bayan_json_v_obj_val(cat, k), "routes");
+        var j = 0;
+        while (j < bayan_json_v_arr_len(rs)) {
+            var s = _t_at(rs, j);
+            pairs = pairs + 1;
+            var sp = 0;
+            while (sp < str_len(s)) {
+                if ((load8(str_data(s) + sp) & 255) == 32) { break; }
+                sp = sp + 1;
+            }
+            var method = str_sub(s, 0, sp);
+            var path = str_sub(s, sp + 1, str_len(s) - sp - 1);
+            # The schema routes with this method and path, `:self` matching any `:name`.
+            var hits = 0;
+            var hit = 0;
+            var i = 0;
+            while (i < bayan_json_v_arr_len(routes)) {
+                var r = bayan_json_v_arr_get(routes, i);
+                if (str_eq(_t_sz(r, "method"), method) == 1) {
+                    if (str_eq(_t_canon(_t_sz(r, "path")), _t_canon(path)) == 1) {
+                        hits = hits + 1;
+                        hit = r;
+                    }
+                }
+                i = i + 1;
+            }
+            if (hits != 1) {
+                unmatched = unmatched + 1;
+                _t_say("permissions.json names no single route: ", _t_cstr(s), 0);
+            } else {
+                var g = _t_grant(_t_get(hit, "plugin_permissions"), name);
+                if (g == 0) {
+                    unlisted = unlisted + 1;
+                    _t_say("the route does not list the permission granting it: ", _t_cstr(s), 0);
+                } elif (_t_same_list(_t_get(g, "self"), _t_self_names(path, _t_sz(hit, "path"))) != 1) {
+                    unselfed = unselfed + 1;
+                    _t_say("the grant's self is not the parameters its :self pins: ", _t_cstr(s), 0);
+                }
+            }
+            # Independently of the schema: the router resolves it.
+            var m = agnostic_route_resolve_a(a, agnostic_method_from(method), _t_concrete(path));
+            if (agnostic_route_match_id(m) == AGNOSTIC_ROUTE_NONE) {
+                unrouted = unrouted + 1;
+                _t_say("the router does not resolve: ", _t_cstr(s), 0);
+            }
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    assert_gt(pairs, 0, "the vocabulary grants routes");
+    assert_eq(unmatched, 0, "every route permissions.json grants names exactly one schema route");
+    assert_eq(unlisted, 0, "and that route lists the permission that grants it");
+    assert_eq(unselfed, 0, "with `self` the route's parameters the grant writes as :self");
+    assert_eq(unrouted, 0, "and the router resolves it, made concrete");
+
+    # The other way: no route lists a grant the vocabulary does not hold.
+    var listed = 0;
+    var shaped = 1;
+    var selfed = 0;
+    var i2 = 0;
+    while (i2 < bayan_json_v_arr_len(routes)) {
+        var gs = _t_get(bayan_json_v_arr_get(routes, i2), "plugin_permissions");
+        listed = listed + bayan_json_v_arr_len(gs);
+        var g2 = 0;
+        while (g2 < bayan_json_v_arr_len(gs)) {
+            var gv = bayan_json_v_arr_get(gs, g2);
+            if (_t_grant_shape(gv) != 1) { shaped = 0; }
+            if (bayan_json_v_arr_len(_t_get(gv, "self")) > 0) { selfed = selfed + 1; }
+            g2 = g2 + 1;
+        }
+        i2 = i2 + 1;
+    }
+    assert_eq(listed, pairs, "the routes list exactly the grants the vocabulary holds");
+    assert_eq(shaped, 1, "each grant is {name, self}, in that order");
+    assert_eq(selfed, 4, "four grants pin a parameter to the plugin: storage, on the four data routes");
+
+    var names = _t_get(_t_get(doc, "vocabularies"), "plugin_permissions");
+    var order = 1;
+    if (bayan_json_v_arr_len(names) != bayan_json_v_obj_len(cat)) { order = 0; }
+    var q = 0;
+    while (q < bayan_json_v_arr_len(names)) {
+        if (str_eq(_t_at(names, q), bayan_json_v_obj_key(cat, q)) != 1) { order = 0; }
+        q = q + 1;
+    }
+    assert_eq(order, 1, "vocabularies.plugin_permissions is the vocabulary's names, in its order");
+    return 0;
+}
+
+# --- api/bodies ------------------------------------------------------------------------
+
+fn test_bodies() {
+    test_group("api/bodies");
+    var a = default_alloc();
+    var doc = agnostic_api_schema_a(a);
+    var b = _t_get(doc, "bodies");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "crew"), "fields"), agnostic_crew_req_fields_a(a)), 1,
+      "crew: the crew decoder's allow-list, in order");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "task"), "fields"), agnostic_task_req_fields_a(a)), 1,
+      "task: the task decoder's");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "agent_definition"), "fields"), agnostic_agent_def_fields_a(a)), 1,
+      "agent_definition: the definition decoder's");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "login"), "fields"), agnostic_login_fields_a(a)), 1,
+      "login: the login route's");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "plugin_switch"), "fields"), agnostic_plugin_fields_a(a)), 1,
+      "plugin_switch: the switch route's");
+
+    var refused = _t_get(_t_get(b, "agent_definition"), "refused");
+    assert_eq(bayan_json_v_arr_len(refused), 12, "twelve refused agent fields");
+    var rbad = 0;
+    var i = 0;
+    while (i < bayan_json_v_arr_len(refused)) {
+        var s = _t_at(refused, i);
+        var row = agnostic_agent_def_refused_name(i);
+        if (row == 0) {
+            rbad = rbad + 1;
+        } elif (str_eq_cstr(s, row) != 1) {
+            rbad = rbad + 1;
+        }
+        if (agnostic_agent_def_refused_reason(s) == 0) { rbad = rbad + 1; }
+        i = i + 1;
+    }
+    assert_eq(rbad, 0, "each is the decoder's table row, in order, and the decoder refuses it");
+
+    var doc_b = _t_get(b, "plugin_document");
+    assert_eq(_t_is(doc_b, "kind", "object"), 1, "a plugin document is any JSON object");
+    assert_eq(bayan_json_v_int(_t_get(doc_b, "max_bytes")), AGNOSTIC_PLUGINDATA_DOC_MAX,
+      "of at most AGNOSTIC_PLUGINDATA_DOC_MAX bytes");
+
+    var items = _t_get(_t_get(b, "crew"), "items");
+    assert_eq(_t_is(items, "agents", "agent_definition"), 1, "a crew's agents are agent definitions");
+    assert_eq(_t_is(items, "tasks", "task"), 1, "and its tasks are tasks");
+
+    # Every body named is a body listed, and every body listed is taken somewhere.
+    var routes = _t_get(doc, "routes");
+    var dangling = 0;
+    var used = vec_new();
+    vec_push(used, str_from("agent_definition"));
+    vec_push(used, str_from("task"));
+    var r = 0;
+    while (r < bayan_json_v_arr_len(routes)) {
+        var name = _t_s(bayan_json_v_arr_get(routes, r), "body");
+        if (name != 0) {
+            if (bayan_json_v_obj_get_by_str(b, name) == 0) { dangling = dangling + 1; }
+            vec_push(used, name);
+        }
+        r = r + 1;
+    }
+    assert_eq(dangling, 0, "every route's body is a key of bodies");
+    var unused = 0;
+    var k = 0;
+    while (k < bayan_json_v_obj_len(b)) {
+        var key = bayan_json_v_obj_key(b, k);
+        var found = 0;
+        var u = 0;
+        while (u < vec_len(used)) {
+            if (str_eq(vec_get(used, u), key) == 1) { found = 1; }
+            u = u + 1;
+        }
+        if (found == 0) { unused = unused + 1; }
+        k = k + 1;
+    }
+    assert_eq(unused, 0, "and every body is taken by a route or a crew's items");
+    return 0;
+}
+
+# --- api/vocabularies -----------------------------------------------------------------
+
+fn test_vocabularies() {
+    test_group("api/vocabularies");
+    var a = default_alloc();
+    var v = _t_get(agnostic_api_schema_a(a), "vocabularies");
+
+    var roles = _t_get(v, "roles");
+    assert_eq(bayan_json_v_arr_len(roles), 4, "four roles");
+    var bad = 0;
+    var i = 0;
+    while (i < bayan_json_v_arr_len(roles)) {
+        if (agnostic_role_parse(_t_at(roles, i)) != i) { bad = bad + 1; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "each role name parses back to its role");
+    assert_eq(agnostic_role_parse(str_from("nope")), 0 - 1, "and the role parser refuses another");
+
+    var perms = _t_get(v, "permissions");
+    assert_eq(bayan_json_v_arr_len(perms), 4, "four permissions");
+    bad = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(perms)) {
+        var pn = agnostic_perm_name(1 << i);
+        if (pn == 0) { bad = bad + 1; }
+        if (pn != 0) {
+            if (str_eq_cstr(_t_at(perms, i), pn) != 1) { bad = bad + 1; }
+        }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "permission i is bit 1 << i's name");
+
+    var proc = _t_get(v, "process");
+    assert_eq(bayan_json_v_arr_len(proc), 3, "three process modes");
+    bad = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(proc)) {
+        if (agnostic_process_from_wire(_t_at(proc, i)) != i) { bad = bad + 1; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "each process mode parses back to its value");
+    assert_eq(agnostic_process_from_wire(str_from("hierarchical")), 0 - 1,
+      "and the parser refuses one the engine does not implement");
+
+    var pri = _t_get(v, "priority");
+    assert_eq(bayan_json_v_arr_len(pri), 5, "five priorities");
+    bad = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(pri)) {
+        if (agnostic_priority_from_wire(_t_at(pri, i)) != i) { bad = bad + 1; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "each priority parses back to its value");
+    assert_eq(agnostic_priority_from_wire(str_from("nope")), 0 - 1, "and the parser refuses another");
+
+    var risk = _t_get(v, "risk");
+    assert_eq(bayan_json_v_arr_len(risk), 3, "three risk levels");
+    bad = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(risk)) {
+        if (agnostic_risk_from_wire(_t_at(risk, i)) != i) { bad = bad + 1; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "each risk level parses back to its value");
+    assert_eq(agnostic_risk_from_wire(str_from("nope")), 0 - 1, "and the parser refuses another");
+
+    var st = _t_get(v, "crew_status");
+    assert_eq(bayan_json_v_arr_len(st), AGNOSTIC_CREW_INTERRUPTED + 1,
+      "seven crew statuses, pending (0) to interrupted (6)");
+    bad = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(st)) {
+        if (agnostic_crews_status_mask(_t_at(st, i)) != (1 << i)) { bad = bad + 1; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "each filters the listing to exactly its own status");
+    assert_eq(str_eq_cstr(_t_at(st, AGNOSTIC_CREW_INTERRUPTED), "interrupted"), 1,
+      "status 6 is interrupted (ADR 0013)");
+    assert_eq(agnostic_crews_status_mask(str_from("nope")), 0, "and the filter refuses another");
+
+    var f = _t_get(v, "crew_status_filter");
+    assert_eq(bayan_json_v_arr_len(f), bayan_json_v_arr_len(st) + 1, "the filter takes every status and one more");
+    bad = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(st)) {
+        if (str_eq(_t_at(f, i), _t_at(st, i)) != 1) { bad = bad + 1; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "the statuses first, in order");
+    var last = _t_at(f, bayan_json_v_arr_len(st));
+    assert_eq(str_eq_cstr(last, "active"), 1, "then active");
+    assert_eq(agnostic_crews_status_mask(last), (1 << AGNOSTIC_CREW_PENDING) | (1 << AGNOSTIC_CREW_RUNNING),
+      "which is pending and running together");
+    return 0;
+}
+
+# --- api/errors ------------------------------------------------------------------------
+
+# The status the ladder lists for rung `name`, or 0.
+fn _t_rung(ladder, name) {
+    var i = 0;
+    while (i < bayan_json_v_arr_len(ladder)) {
+        var r = bayan_json_v_arr_get(ladder, i);
+        if (_t_is(r, "rung", name) == 1) { return bayan_json_v_int(_t_get(r, "status")); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn test_errors() {
+    test_group("api/errors");
+    var a = default_alloc();
+    var e = _t_get(agnostic_api_schema_a(a), "errors");
+
+    var keys = _t_get(_t_get(e, "body"), "keys");
+    assert_eq(bayan_json_v_arr_len(keys), 2, "an error body has two keys");
+    assert_eq(str_eq_cstr(_t_at(keys, 0), "error"), 1, "error, always");
+    assert_eq(str_eq_cstr(_t_at(keys, 1), "code?"), 1, "and code, sometimes");
+
+    var codes = _t_get(e, "codes");
+    var nc = 0;
+    while (agnostic_error_code_name(nc + 1) != 0) { nc = nc + 1; }
+    assert_eq(bayan_json_v_arr_len(codes), nc, "every code the catalogue holds");
+    assert_eq(nc, 4, "four of them");
+    var bad = 0;
+    var i = 0;
+    while (i < bayan_json_v_arr_len(codes)) {
+        var c = bayan_json_v_arr_get(codes, i);
+        if (_t_is(c, "code", agnostic_error_code_name(i + 1)) != 1) { bad = bad + 1; }
+        if (bayan_json_v_int(_t_get(c, "status")) != agnostic_error_code_status(i + 1)) { bad = bad + 1; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "each with its catalogue name and status, in catalogue order");
+
+    var ladder = _t_get(e, "ladder");
+    assert_eq(bayan_json_v_arr_len(ladder), 8, "eight rungs");
+    var r0 = bayan_json_v_arr_get(ladder, 0);
+    var r7 = bayan_json_v_arr_get(ladder, 7);
+    assert_eq(_t_is(r0, "rung", "body_size"), 1, "body size first");
+    assert_eq(_t_is(r7, "rung", "media_type"), 1, "the media type last");
+    var order = 1;
+    if (_t_is(bayan_json_v_arr_get(ladder, 1), "rung", "host") != 1) { order = 0; }
+    if (_t_is(bayan_json_v_arr_get(ladder, 2), "rung", "route") != 1) { order = 0; }
+    if (_t_is(bayan_json_v_arr_get(ladder, 3), "rung", "method") != 1) { order = 0; }
+    if (_t_is(bayan_json_v_arr_get(ladder, 4), "rung", "plugin") != 1) { order = 0; }
+    if (_t_is(bayan_json_v_arr_get(ladder, 5), "rung", "authn") != 1) { order = 0; }
+    if (_t_is(bayan_json_v_arr_get(ladder, 6), "rung", "authz") != 1) { order = 0; }
+    assert_eq(order, 1, "then host, route, method, plugin, authn, authz");
+
+    # ⭐ Each rung the ladder declares, driven through the dispatcher — its status, and its
+    # place: each pair below is a request two rungs would refuse, answered by the earlier one.
+    # `authz` needs a stored identity and is driven by `tests/authz.tcyr`.
+    var big = str_from("12345");
+    var r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from("/health"), big, 4, 0);
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "body_size"), "body_size: a body over the limit");
+    r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from("/nope"), big, 4, 0);
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "body_size"), "before route: to a path that does not exist");
+
+    r = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/nope"), "", _t_ctx_wire(a, "application/json", "evil.example"));
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "host"),
+      "host: auth off, a non-loopback Host, before route");
+
+    r = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/nope"), "", 0);
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "route"), "route: a path that does not exist");
+    r = _t_req(a, AGNOSTIC_METHOD_DELETE, str_from("/health"), "", 0);
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "method"), "method: a path that lacks the method");
+
+    var pctx = _t_ctx_hdr(a, 0, "no-such-plugin", 0, 0);
+    r = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/nope"), "", pctx);
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "route"), "route before plugin");
+    r = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/presets"), "", pctx);
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "plugin"), "plugin: a request made for an unknown plugin");
+    assert_eq(_t_code_is(r, "plugin_unknown"), 1, "with a code from the catalogue");
+
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    r = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/presets"), "", pctx);
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "plugin"), "plugin before authn");
+    assert_eq(_t_code_is(r, "plugin_unknown"), 1, "the plugin refusal, not the 401");
+    r = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/presets"), "", 0);
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "authn"), "authn: auth on, no credential");
+    r = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), "{}", _t_ctx_wire(a, "text/plain", "localhost"));
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "authn"), "authn before media_type");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+
+    r = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), "{}", _t_ctx_wire(a, "text/plain", "localhost"));
+    assert_eq(agnostic_response_status(r), _t_rung(ladder, "media_type"), "media_type: a socket POST that is not JSON");
+    return 0;
+}
+
+# --- api/cli ---------------------------------------------------------------------------
+
+# `path`, emptied and open for writing — or a negative errno.
+fn _t_open_out(path) {
+    return sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 384);   # 0600
+}
+
+# File `path`'s contents as a Str; 0 when it cannot be read, so an unreadable capture is not
+# taken for an empty one.
+fn _t_slurp(path) {
+    var n = 0;
+    var raw = file_read_whole(path, &n);
+    if (raw == 0) { return 0; }
+    return str_new(raw, n);
+}
+
+# 1 when file `path` can be read and is empty.
+fn _t_file_empty(path) {
+    var s = _t_slurp(path);
+    if (s == 0) { return 0; }
+    if (str_len(s) != 0) { return 0; }
+    return 1;
+}
+
+# 1 when file `path` can be read and holds exactly the bytes of Str `want`.
+fn _t_file_is(path, want) {
+    var s = _t_slurp(path);
+    if (s == 0 || want == 0) { return 0; }
+    return str_eq(s, want);
+}
+
+fn test_cli() {
+    test_group("api/cli");
+    assert_eq(agnostic_cli_command_of(1, 0, 0), AGNOSTIC_CLI_SERVE, "no arguments serves, as before");
+    assert_eq(agnostic_cli_command_of(0, 0, 0), AGNOSTIC_CLI_SERVE,
+      "and so does an unreadable command line (argc() is 0)");
+    assert_eq(agnostic_cli_command_of(3, "api", "schema"), AGNOSTIC_CLI_API_SCHEMA, "api schema");
+    assert_eq(agnostic_cli_command_of(2, "api", 0), AGNOSTIC_CLI_USAGE_ERROR, "api alone is a usage error");
+    assert_eq(agnostic_cli_command_of(3, "api", "schemas"), AGNOSTIC_CLI_USAGE_ERROR, "so is a misspelling");
+    assert_eq(agnostic_cli_command_of(4, "api", "schema"), AGNOSTIC_CLI_USAGE_ERROR, "and an extra argument");
+    assert_eq(agnostic_cli_command_of(2, "help", 0), AGNOSTIC_CLI_HELP, "help");
+    assert_eq(agnostic_cli_command_of(2, "--help", 0), AGNOSTIC_CLI_HELP, "--help");
+    assert_eq(agnostic_cli_command_of(2, "-h", 0), AGNOSTIC_CLI_HELP, "-h");
+    assert_eq(agnostic_cli_command_of(2, "serve", 0), AGNOSTIC_CLI_USAGE_ERROR,
+      "an argument the binary used to ignore is now refused");
+    assert_eq(agnostic_cli_command_of(2, 0, 0), AGNOSTIC_CLI_USAGE_ERROR, "a missing argument is refused, not read");
+
+    # What each command exits with, and what it writes where: 0 ok, 1 failure, 2 usage error.
+    # `agnostic_cli_run_on` is `agnostic_cli_run` with the streams passed in, so its output
+    # lands in two files here rather than in the suite's log. `src/main.cyr`'s dispatch to it
+    # is checked on the binary by CI ("Command line exit codes").
+    var a = default_alloc();
+    var out_path = _t_tmp_file("cli-out", ".txt");
+    var err_path = _t_tmp_file("cli-err", ".txt");
+
+    var out = _t_open_out(out_path);
+    var err = _t_open_out(err_path);
+    var opened = 0;
+    if (out >= 0) { if (err >= 0) { opened = 1; } }
+    assert_eq(opened, 1, "the capture files open");
+    assert_eq(agnostic_cli_run_on(AGNOSTIC_CLI_USAGE_ERROR, out, err), AGNOSTIC_EXIT_USAGE,
+      "a usage error exits 2");
+    sys_close(out);
+    sys_close(err);
+    assert_eq(_t_file_empty(out_path), 1, "and writes nothing to the output");
+    assert_eq(_t_has(_t_slurp(err_path), "usage: agnostic "), 1, "but usage to the complaints");
+
+    out = _t_open_out(out_path);
+    err = _t_open_out(err_path);
+    assert_eq(agnostic_cli_run_on(AGNOSTIC_CLI_HELP, out, err), AGNOSTIC_EXIT_OK, "help exits 0");
+    sys_close(out);
+    sys_close(err);
+    assert_eq(_t_has(_t_slurp(out_path), "usage: agnostic "), 1, "with usage on the output");
+    assert_eq(_t_file_empty(err_path), 1, "and no complaint");
+
+    out = _t_open_out(out_path);
+    err = _t_open_out(err_path);
+    assert_eq(agnostic_cli_run_on(AGNOSTIC_CLI_API_SCHEMA, out, err), AGNOSTIC_EXIT_OK, "api schema exits 0");
+    sys_close(out);
+    sys_close(err);
+    assert_eq(_t_file_is(out_path, agnostic_api_schema_text_a(a)), 1,
+      "with the whole document on the output, byte for byte");
+    assert_eq(_t_file_empty(err_path), 1, "and no complaint");
+
+    # A stream that cannot be written — EBADF here; a closed pipe or a full disk in life.
+    err = _t_open_out(err_path);
+    assert_eq(agnostic_cli_run_on(AGNOSTIC_CLI_API_SCHEMA, 0 - 1, err), AGNOSTIC_EXIT_FAILURE,
+      "api schema that cannot write its output exits 1");
+    sys_close(err);
+    assert_eq(_t_has(_t_slurp(err_path), "could not write the API schema"), 1, "and says so");
+    assert_eq(agnostic_cli_run_on(AGNOSTIC_CLI_HELP, 0 - 1, 0 - 1), AGNOSTIC_EXIT_FAILURE,
+      "so does help");
+
+    sys_unlink(out_path);
+    sys_unlink(err_path);
+    return 0;
+}
+
+# --- api/probes ------------------------------------------------------------------------
+
+fn _t_open() {
+    _t_db = _t_tmp_path("db");
+    _t_audit = _t_tmp_path("audit");
+    agnostic_webgui_reset();
+    agnostic_store_close();
+    sys_unlink(_t_db);
+    sys_unlink(_t_audit);
+    patra_init();
+    agnostic_store_open(str_from(_t_db));
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_settings_ensure();
+    agnostic_plugindata_ensure();
+    agnostic_audit_open(str_from(_t_audit));
+    return agnostic_webgui_init();
+}
+
+fn _t_close() {
+    agnostic_audit_close();
+    agnostic_store_close();
+    agnostic_webgui_reset();
+    sys_unlink(_t_db);
+    sys_unlink(_t_audit);
+    return 0;
+}
+
+# An invalid value for query parameter `name`, or 0 when the suite knows none.
+fn _t_bad_query(name) {
+    if (str_eq_cstr(name, "limit") == 1) { return "0"; }
+    if (str_eq_cstr(name, "before") == 1) { return "x"; }
+    if (str_eq_cstr(name, "status") == 1) { return "nope"; }
+    if (str_eq_cstr(name, "after") == 1) { return "-1"; }
+    return 0;
+}
+
+# 1 when response `r` is a 422 refusing an unknown field.
+fn _t_unknown_refused(r) {
+    if (agnostic_response_status(r) != AGNOSTIC_HTTP_UNPROCESSABLE) { return 0; }
+    return _t_has(_t_msg(r), "unknown field");
+}
+
+fn test_probes() {
+    test_group("api/probes");
+    assert_gt(_t_open(), 0, "the WebGUI loads on a fresh store, so plugin routes have a plugin to name");
+    var a = default_alloc();
+    var doc = agnostic_api_schema_a(a);
+    var routes = _t_get(doc, "routes");
+    var bodies = _t_get(doc, "bodies");
+
+    # ⭐ The body each route declares: an unknown key is refused as one, and each of the
+    # declared body's own fields is NOT — so a route declared with the wrong body fails here.
+    var takers = 0;
+    var probe_bad = 0;
+    var field_bad = 0;
+    var i = 0;
+    while (i < bayan_json_v_arr_len(routes)) {
+        var rt = bayan_json_v_arr_get(routes, i);
+        var bname = _t_s(rt, "body");
+        var fields = 0;
+        if (bname != 0) { fields = _t_get(bayan_json_v_obj_get_by_str(bodies, bname), "fields"); }
+        if (fields != 0) {
+            takers = takers + 1;
+            var method = _t_method_of(rt);
+            var path = _t_concrete(_t_sz(rt, "path"));
+            if (_t_unknown_refused(_t_req(a, method, path, "{\"__probe__\":1}", 0)) != 1) {
+                probe_bad = probe_bad + 1;
+                _t_say("an unknown key is not refused as one: ", _t_cstr(path), 0);
+            }
+            var f = 0;
+            while (f < bayan_json_v_arr_len(fields)) {
+                var fname = _t_at(fields, f);
+                var r = _t_req(a, method, path, _t_body("{\"", fname, "\":null}"), 0);
+                if (_t_has(_t_msg(r), "unknown field") == 1) {
+                    field_bad = field_bad + 1;
+                    _t_say("a declared field is unknown to ", _t_cstr(path), _t_body(": ", fname, ""));
+                }
+                f = f + 1;
+            }
+        }
+        i = i + 1;
+    }
+    assert_eq(takers, 5, "five routes take an allow-listed body");
+    assert_eq(probe_bad, 0, "each refuses an unknown key as unknown (422)");
+    assert_eq(field_bad, 0, "and accepts every field its declared body lists as known");
+
+    # A crew's items: each element is decoded as the body `items` names.
+    var crews = str_from("/api/v1/crews");
+    var agent_ok = "{\"key\":\"probe-1\",\"role\":\"r\",\"goal\":\"g\"}";
+    var r1 = _t_req(a, AGNOSTIC_METHOD_POST, crews,
+      "{\"name\":\"p\",\"agents\":[{\"__probe__\":1}],\"tasks\":[{}]}", 0);
+    assert_eq(_t_unknown_refused(r1), 1, "an unknown key in agents[0] is refused as one");
+    var tpre = _t_body("{\"name\":\"p\",\"agents\":[", str_from(agent_ok), "],\"tasks\":[{\"");
+    var r2 = _t_req(a, AGNOSTIC_METHOD_POST, crews, _t_body(tpre, str_from("__probe__"), "\":1}]}"), 0);
+    assert_eq(_t_unknown_refused(r2), 1, "and in tasks[0], past a well-formed agent");
+    var item_bad = 0;
+    var adef = _t_get(_t_get(bodies, "agent_definition"), "fields");
+    var k = 0;
+    while (k < bayan_json_v_arr_len(adef)) {
+        var an = _t_at(adef, k);
+        var ra = _t_req(a, AGNOSTIC_METHOD_POST, crews,
+          _t_body("{\"name\":\"p\",\"agents\":[{\"", an, "\":null}],\"tasks\":[{}]}"), 0);
+        if (_t_has(_t_msg(ra), "unknown field") == 1) { item_bad = item_bad + 1; }
+        k = k + 1;
+    }
+    var tdef = _t_get(_t_get(bodies, "task"), "fields");
+    k = 0;
+    while (k < bayan_json_v_arr_len(tdef)) {
+        var tn = _t_at(tdef, k);
+        var rtk = _t_req(a, AGNOSTIC_METHOD_POST, crews, _t_body(tpre, tn, "\":null}]}"), 0);
+        if (_t_has(_t_msg(rtk), "unknown field") == 1) { item_bad = item_bad + 1; }
+        k = k + 1;
+    }
+    assert_eq(item_bad, 0, "every agent_definition field is known in agents[0], every task field in tasks[0]");
+
+    # A plugin document: any JSON object, up to max_bytes.
+    var max = bayan_json_v_int(_t_get(_t_get(bodies, "plugin_document"), "max_bytes"));
+    var dpath = str_from("/api/v1/plugins/swarm/data/probe-1");
+    var arr = _t_req(a, AGNOSTIC_METHOD_PUT, dpath, "[1]", 0);
+    assert_eq(agnostic_response_status(arr), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "a plugin document that is not an object is 422");
+    var fill = alloc(max + 2);
+    memcpy(fill, "{\"p\":\"", 6);
+    var z = 6;
+    while (z < max - 2) {
+        store8(fill + z, 120);
+        z = z + 1;
+    }
+    memcpy(fill + max - 2, "\"}", 2);
+    store8(fill + max, 0);
+    var at_max = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_PUT, dpath, str_new(fill, max), _T_MAXB, 0);
+    assert_eq(agnostic_response_status(at_max), AGNOSTIC_HTTP_CREATED, "one of exactly max_bytes is stored");
+    memcpy(fill + max - 2, "x\"}", 3);
+    var over = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_PUT, dpath, str_new(fill, max + 1), _T_MAXB, 0);
+    assert_eq(agnostic_response_status(over), HTTP_PAYLOAD_TOO_LARGE, "and one byte more is 413");
+
+    # ⭐ The query parameters each route declares: an invalid value is the handler's 422.
+    var queried = 0;
+    var unknown_q = 0;
+    var query_bad = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(routes)) {
+        var rq = bayan_json_v_arr_get(routes, i);
+        var qs = _t_get(rq, "query");
+        var j = 0;
+        while (j < bayan_json_v_arr_len(qs)) {
+            var qn = _t_at(qs, j);
+            var badv = _t_bad_query(qn);
+            if (badv == 0) {
+                unknown_q = unknown_q + 1;
+                _t_say("the suite has no invalid value for query parameter ", _t_cstr(qn), 0);
+            } else {
+                queried = queried + 1;
+                var qpre = _t_body("", _t_concrete(_t_sz(rq, "path")), "?");
+                var qp = _t_body(qpre, qn, _t_body("=", str_from(badv), ""));
+                var rr = _t_req(a, _t_method_of(rq), str_from(qp), "", 0);
+                if (agnostic_response_status(rr) != AGNOSTIC_HTTP_UNPROCESSABLE) {
+                    query_bad = query_bad + 1;
+                    _t_say("not read: ", qp, 0);
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(unknown_q, 0, "the suite knows an invalid value for every declared query parameter");
+    assert_eq(queried, 6, "six declared: limit, status, before on crews; after on events; limit, before on audit");
+    assert_eq(query_bad, 0, "and each is read: an invalid value is a 422");
+
+    # And the other way, for the names above: a GET route ignores each one it does not declare.
+    # This half of the check knows only these four names; a handler that starts reading a NEW
+    # parameter without declaring it is not caught (`docs/api/README.md`, "Known gaps").
+    var ignored_bad = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(routes)) {
+        var rg = bayan_json_v_arr_get(routes, i);
+        if (_t_is(rg, "method", "GET") == 1) {
+            var gp = _t_concrete(_t_sz(rg, "path"));
+            var plain = agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, gp, "", 0));
+            var qsb = str_builder_new();
+            str_builder_add(qsb, gp);
+            str_builder_add_cstr(qsb, "?x=1");
+            var gq = _t_get(rg, "query");
+            if (_t_arr_has(gq, str_from("limit")) == 0) { str_builder_add_cstr(qsb, "&limit=0"); }
+            if (_t_arr_has(gq, str_from("status")) == 0) { str_builder_add_cstr(qsb, "&status=nope"); }
+            if (_t_arr_has(gq, str_from("before")) == 0) { str_builder_add_cstr(qsb, "&before=x"); }
+            if (_t_arr_has(gq, str_from("after")) == 0) { str_builder_add_cstr(qsb, "&after=-1"); }
+            var qpath = str_builder_build(qsb);
+            var with_q = agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, qpath, "", 0));
+            if (plain != with_q) {
+                ignored_bad = ignored_bad + 1;
+                _t_say("reads a query parameter it does not declare: ", str_data(qpath), 0);
+            }
+        }
+        i = i + 1;
+    }
+    assert_eq(ignored_bad, 0, "every GET route answers the same with each known parameter it does not declare set");
+
+    # ⭐ The headers each route declares: an invalid value is the handler's refusal. The
+    # document `probe-1` exists (stored above), so both preconditions are decidable.
+    var headed = 0;
+    var header_bad = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(routes)) {
+        var rh = bayan_json_v_arr_get(routes, i);
+        var hs = _t_get(rh, "headers");
+        var hm = _t_method_of(rh);
+        var hp = _t_concrete(_t_sz(rh, "path"));
+        var j2 = 0;
+        while (j2 < bayan_json_v_arr_len(hs)) {
+            var hn = _t_at(hs, j2);
+            var ctx = 0;
+            var want = 0;
+            var code = 0;
+            if (str_eq_cstr(hn, "idempotency-key") == 1) {
+                ctx = _t_ctx_hdr(a, "!", 0, 0, 0);
+                want = AGNOSTIC_HTTP_UNPROCESSABLE;
+            }
+            if (str_eq_cstr(hn, "if-match") == 1) {
+                ctx = _t_ctx_hdr(a, 0, 0, "\"stale\"", 0);
+                want = AGNOSTIC_HTTP_PRECONDITION_FAILED;
+                code = "revision";
+            }
+            if (str_eq_cstr(hn, "if-none-match") == 1) {
+                ctx = _t_ctx_hdr(a, 0, 0, 0, "*");
+                want = AGNOSTIC_HTTP_PRECONDITION_FAILED;
+                code = "revision";
+            }
+            if (ctx == 0) {
+                header_bad = header_bad + 1;
+                _t_say("the suite has no invalid value for header ", _t_cstr(hn), 0);
+            } else {
+                headed = headed + 1;
+                var rh2 = _t_req(a, hm, hp, "{}", ctx);
+                var ok = 1;
+                if (agnostic_response_status(rh2) != want) { ok = 0; }
+                if (code != 0) { if (_t_code_is(rh2, code) != 1) { ok = 0; } }
+                if (ok == 0) {
+                    header_bad = header_bad + 1;
+                    _t_say("not read: ", _t_cstr(hn), _t_body(" on ", hp, ""));
+                }
+            }
+            j2 = j2 + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(headed, 4,
+      "four declared: idempotency-key on submit; if-match, if-none-match on put; if-match on delete");
+    assert_eq(header_bad, 0, "and each is read: an invalid value is refused, a precondition with code revision");
+
+    # ⭐ A grant's `self`, against the plugin gate: a plugin holding the grant may name itself in
+    # the parameters `self` lists, and is refused `plugin_forbidden` for naming another plugin.
+    # The built-in `swarm` holds `storage`, the one grant with a `self` today; `crews` is the
+    # other plugin. A schema that dropped `self` would say `swarm` may read `crews`'s documents.
+    var pinned = 0;
+    var pin_unknown = 0;
+    var pin_bad = 0;
+    var as_swarm = _t_ctx_hdr(a, 0, "swarm", 0, 0);
+    # A plugin starts switched off; the gate refuses an off one before it reads the grants.
+    assert_neq(agnostic_plugin_set_enabled(agnostic_plugin_find(str_from("swarm")), 1), AGNOSTIC_PLUGIN_SET_FAILED,
+      "swarm switches on");
+    i = 0;
+    while (i < bayan_json_v_arr_len(routes)) {
+        var rp = bayan_json_v_arr_get(routes, i);
+        var gs = _t_get(rp, "plugin_permissions");
+        var k = 0;
+        while (k < bayan_json_v_arr_len(gs)) {
+            var g = bayan_json_v_arr_get(gs, k);
+            if (bayan_json_v_arr_len(_t_get(g, "self")) > 0) {
+                if (_t_is(g, "name", "storage") != 1) {
+                    pin_unknown = pin_unknown + 1;
+                    _t_say("the suite knows no plugin holding ", _t_cstr(_t_sz(g, "name")), 0);
+                } else {
+                    pinned = pinned + 1;
+                    var pm = _t_method_of(rp);
+                    var pbody = "";
+                    if (pm == AGNOSTIC_METHOD_PUT) { pbody = "{}"; }
+                    var own = _t_concrete_for(_t_sz(rp, "path"), "swarm");
+                    var ro = _t_req(a, pm, own, pbody, as_swarm);
+                    if (agnostic_response_status(ro) == HTTP_FORBIDDEN) {
+                        pin_bad = pin_bad + 1;
+                        _t_say("refused its own id: ", _t_cstr(own), 0);
+                    }
+                    var other = _t_concrete_for(_t_sz(rp, "path"), "crews");
+                    if (_t_code_is(_t_req(a, pm, other, pbody, as_swarm), "plugin_forbidden") != 1) {
+                        pin_bad = pin_bad + 1;
+                        _t_say("not refused another plugin's id: ", _t_cstr(other), 0);
+                    }
+                }
+            }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(pin_unknown, 0, "the suite knows a plugin holding every grant that pins a parameter");
+    assert_eq(pinned, 4, "storage pins :id on the four plugin-data routes");
+    assert_eq(pin_bad, 0, "and the gate agrees: its own id passes, another plugin's is plugin_forbidden");
+
+    _t_close();
+    return 0;
+}
+
+# --- api/responses ---------------------------------------------------------------------
+
+var _T_BOOT_EMAIL = "schema-sweep@agnostic.test";
+var _T_BOOT_PW = "the sweep's bootstrap password";
+var _T_CREW = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"},{\"description\":\"read the result\"}]}";
+var _T_CREW_PAR = "{\"name\":\"fan out\",\"process\":\"parallel\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\"}]}";
+var _T_DEF = "{\"key\":\"schema-sweep\",\"role\":\"reviewer\",\"goal\":\"read the diff\"}";
+var _T_LOGIN = "{\"email\":\"schema-sweep@agnostic.test\",\"password\":\"the sweep's bootstrap password\"}";
+
+# A crew the last process accepted and never finished, seeded before mount so mount's start-up
+# sweep interrupts it (ADR 0013) — the one source of a crew's `interrupted_at`.
+var _T_LOST = "c0ffee00-0000-4000-8000-0000000000a5";
+
+# What the sweep has seen, by the route's index in the document's `routes`: a vec of the keys
+# its JSON bodies held, and a vec of the statuses it answered with its own body.
+var _t_routes = 0;
+var _t_seen_keys = 0;
+var _t_seen_status = 0;
+var _t_broke = 0;   # responses that did not match their route's declaration
+
+# A readiness check that always fails, registered last, for `/ready`'s 503.
+fn _t_never_ready() { return 0; }
+
+# 1 when vec `v` holds a Str equal to `s`.
+fn _t_vec_has_str(v, s) {
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (str_eq(vec_get(v, i), s) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 when vec `v` holds the integer `n`.
+fn _t_vec_has_int(v, n) {
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (vec_get(v, i) == n) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 when declared key `d` (a Str) is marked optional: it ends in `?`.
+fn _t_key_optional(d) {
+    var n = str_len(d);
+    if (n == 0) { return 0; }
+    if ((load8(str_data(d) + n - 1) & 255) == 63) { return 1; }
+    return 0;
+}
+
+# The key declared key `d` names — `d` without its `?`.
+fn _t_key_name(d) {
+    if (_t_key_optional(d) == 1) { return str_sub(d, 0, str_len(d) - 1); }
+    return d;
+}
+
+# 1 when declared list `keys` names key `k` (a Str), marked optional or not.
+fn _t_declares(keys, k) {
+    var i = 0;
+    while (i < bayan_json_v_arr_len(keys)) {
+        if (str_eq(_t_key_name(_t_at(keys, i)), k) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Count one broken declaration, saying which: `pattern` and what is wrong with it.
+fn _t_broken(pattern, what, detail) {
+    _t_broke = _t_broke + 1;
+    _t_say(pattern, what, detail);
+    return 0;
+}
+
+# Response `r`'s status as a C string, for a diagnostic.
+fn _t_status_text(r) {
+    var sb = str_builder_new();
+    str_builder_add_int(sb, agnostic_response_status(r));
+    var m = _t_msg(r);
+    if (m != 0) {
+        str_builder_add_cstr(sb, " ");
+        str_builder_add(sb, m);
+    }
+    return str_data(str_builder_build(sb));
+}
+
+# A JSON body against route entry `rt`'s keys: each key it holds is declared, and each key
+# declared and not marked optional is there. Records the keys it held under `idx`.
+fn _t_check_json(idx, rt, pattern, r) {
+    var body = agnostic_response_body(r);
+    if (agnostic_response_is_text(r) != 0) { return _t_broken(pattern, " is not a JSON object", 0); }
+    if (bayan_json_v_is_obj(body) != 1) { return _t_broken(pattern, " is not a JSON object", 0); }
+    var keys = _t_get(_t_get(rt, "response"), "keys");
+    var seen = vec_get(_t_seen_keys, idx);
+    var j = 0;
+    while (j < bayan_json_v_obj_len(body)) {
+        var k = bayan_json_v_obj_key(body, j);
+        if (_t_declares(keys, k) == 0) { _t_broken(pattern, " wrote a key it does not declare: ", _t_cstr(k)); }
+        if (_t_vec_has_str(seen, k) == 0) { vec_push(seen, k); }
+        j = j + 1;
+    }
+    j = 0;
+    while (j < bayan_json_v_arr_len(keys)) {
+        var d = _t_at(keys, j);
+        if (_t_key_optional(d) == 0) {
+            if (bayan_json_v_obj_get_by_str(body, d) == 0) {
+                _t_broken(pattern, " left out a key it declares: ", _t_cstr(d));
+            }
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+# Response `r` to `method` on route `pattern` (the path as the schema writes it, a C string),
+# against that route's declaration: its status is one `ok` lists, and its body is the kind
+# `response` names — for `json`, with the keys it declares. Records what it answered, prints
+# and counts every mismatch. Answers `r`.
+fn _t_answered(method, pattern, r) {
+    var idx = 0 - 1;
+    var i = 0;
+    while (i < bayan_json_v_arr_len(_t_routes)) {
+        var e = bayan_json_v_arr_get(_t_routes, i);
+        if (_t_method_of(e) == method && _t_is(e, "path", pattern) == 1) { idx = i; }
+        i = i + 1;
+    }
+    if (idx < 0) {
+        _t_broken(pattern, " is not a route the schema lists", 0);
+        return r;
+    }
+    var rt = bayan_json_v_arr_get(_t_routes, idx);
+    var st = agnostic_response_status(r);
+    var ok = _t_get(rt, "ok");
+    var listed = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(ok)) {
+        if (bayan_json_v_int(bayan_json_v_arr_get(ok, i)) == st) { listed = 1; }
+        i = i + 1;
+    }
+    if (listed == 0) {
+        _t_broken(pattern, " answered a status its ok does not list: ", _t_status_text(r));
+        return r;
+    }
+    var sv = vec_get(_t_seen_status, idx);
+    if (_t_vec_has_int(sv, st) == 0) { vec_push(sv, st); }
+
+    var kind = _t_sz(_t_get(rt, "response"), "kind");
+    var ctype = agnostic_response_ctype(r);
+    if (str_eq_cstr(kind, "json") == 1) {
+        _t_check_json(idx, rt, pattern, r);
+    } elif (str_eq_cstr(kind, "html") == 1) {
+        if (agnostic_response_is_text(r) != 1 || ctype == 0) {
+            _t_broken(pattern, " is not an html page", 0);
+        } elif (streq(ctype, AGNOSTIC_WEBGUI_HTML) != 1) {
+            _t_broken(pattern, " is not an html page: ", ctype);
+        }
+    } elif (str_eq_cstr(kind, "document") == 1) {
+        var hs = agnostic_response_headers(r);
+        if (agnostic_response_is_text(r) != 1 || ctype == 0) {
+            _t_broken(pattern, " is not a stored document", 0);
+        } elif (streq(ctype, "application/json") != 1) {
+            _t_broken(pattern, " is not a stored JSON document: ", ctype);
+        } elif (hs == 0) {
+            _t_broken(pattern, " sends no ETag", 0);
+        } elif (_t_has(str_from(hs), "ETag: ") != 1) {
+            _t_broken(pattern, " sends no ETag", 0);
+        }
+    } else {
+        _t_broken(pattern, " declares a kind the suite does not know: ", _t_cstr(kind));
+    }
+    return r;
+}
+
+# A context carrying `Bearer <token>`, and an Idempotency-Key and If-Match (C strings or 0).
+fn _t_ctx_as(a, token, idem, if_match) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Bearer ");
+    str_builder_add(sb, token);
+    var c = agnostic_reqctx_new_a(a, str_builder_build(sb), 0);
+    var v1 = 0;
+    if (idem != 0) { v1 = str_from(idem); }
+    var v3 = 0;
+    if (if_match != 0) { v3 = str_from(if_match); }
+    agnostic_reqctx_set_headers(c, v1, 0, v3, 0);
+    return c;
+}
+
+# Dispatch `method` on `path` (a Str) with `body` (a C string) as `ctx`, and check the answer
+# against route `pattern`'s declaration.
+fn _t_go_s(a, method, pattern, path, body, ctx) {
+    return _t_answered(method, pattern, agnostic_route_dispatch_a(a, method, path, str_from(body), _T_MAXB, ctx));
+}
+
+# `_t_go_s` for a path given as a C string.
+fn _t_go(a, method, pattern, path, body, ctx) { return _t_go_s(a, method, pattern, str_from(path), body, ctx); }
+
+# 1 when wire status `st` (a Str) is one a crew ends in.
+fn _t_terminal(st) {
+    if (str_eq_cstr(st, "completed") == 1) { return 1; }
+    if (str_eq_cstr(st, "failed") == 1) { return 1; }
+    if (str_eq_cstr(st, "cancelled") == 1) { return 1; }
+    if (str_eq_cstr(st, "interrupted") == 1) { return 1; }
+    return 0;
+}
+
+# `/api/v1/crews/<id><tail>`, as a Str.
+fn _t_crew_url(id, tail) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/crews/");
+    str_builder_add(sb, id);
+    str_builder_add_cstr(sb, tail);
+    return str_builder_build(sb);
+}
+
+# The crew id a submit answered, or an empty Str.
+fn _t_crew_id(r) { return _t_sz(agnostic_response_body(r), "crew_id"); }
+
+# Poll crew `id` as `ctx` until it is terminal; 1 when it got there. Each poll is a GET the
+# sweep checks.
+fn _t_settle(a, id, ctx) {
+    var tries = 0;
+    while (tries < 300) {
+        var r = _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id", _t_crew_url(id, ""), "", ctx);
+        var st = _t_s(agnostic_response_body(r), "status");
+        if (st != 0) { if (_t_terminal(st) == 1) { return 1; } }
+        sleep_ms(10);
+        tries = tries + 1;
+    }
+    return 0;
+}
+
+# The state a process killed with crew `_T_LOST` in flight leaves behind, in database `db`.
+fn _t_seed_lost(db) {
+    patra_init();
+    agnostic_store_open(str_from(db));
+    agnostic_crews_ensure();
+    var n = agnostic_crews_mark_inflight(str_from(_T_LOST), AGNOSTIC_SCOPE_DEFAULT, str_from("lost work"),
+      1759000000000, 1, str_from("placeholder"), str_from("sequential"));
+    agnostic_store_close();
+    return n;
+}
+
+fn _t_resp_cfg(db, audit) {
+    var c = agnostic_config_from_env();
+    store64(c + AGNOSTIC_CFG_ADDR, INADDR_LOOPBACK());
+    store64(c + AGNOSTIC_CFG_AUTH_MODE, AGNOSTIC_AUTH_REQUIRED);
+    store64(c + AGNOSTIC_CFG_DB_PATH, str_from(db));
+    store64(c + AGNOSTIC_CFG_AUDIT_PATH, str_from(audit));
+    store64(c + AGNOSTIC_CFG_BOOT_EMAIL, str_from(_T_BOOT_EMAIL));
+    store64(c + AGNOSTIC_CFG_BOOT_PW, str_from(_T_BOOT_PW));
+    store64(c + AGNOSTIC_CFG_LLM_URL, 0);   # the placeholder engine, whatever the environment says
+    return c;
+}
+
+# Change one byte of the first recorded `needle` (a C string) in the audit store at `path`,
+# as the trail's own tamper test does — 1 when it found one to change.
+fn _t_tamper(path, needle) {
+    var fd = sys_open(path, O_RDWR, 0);
+    if (fd < 0) { return 0; }
+    var size = xlseek(fd, 0, 2);
+    var buf = alloc(size + 1);
+    xlseek(fd, 0, 0);
+    sys_read(fd, buf, size);
+    var m = strlen(needle);
+    var at = 0 - 1;
+    var i = 0;
+    while (i + m <= size) {
+        if (memeq(buf + i, needle, m) == 1) { at = i; break; }
+        i = i + 1;
+    }
+    if (at >= 0) {
+        xlseek(fd, at + m - 1, 0);
+        var x[1];
+        store8(&x, 88);   # 'X'
+        sys_write(fd, &x, 1);
+    }
+    sys_close(fd);
+    if (at < 0) { return 0; }
+    return 1;
+}
+
+fn test_responses() {
+    test_group("api/responses");
+    var a = default_alloc();
+    var doc = agnostic_api_schema_a(a);
+    _t_routes = _t_get(doc, "routes");
+    var nr = bayan_json_v_arr_len(_t_routes);
+    _t_seen_keys = vec_new();
+    _t_seen_status = vec_new();
+    var i = 0;
+    while (i < nr) {
+        vec_push(_t_seen_keys, vec_new());
+        vec_push(_t_seen_status, vec_new());
+        i = i + 1;
+    }
+
+    # The real mount, as `agnostic` runs it with AGNOSTIC_AUTH=required: a fresh database
+    # holding one crew the "last process" left in flight, and a bootstrap administrator.
+    var db = _t_tmp_path("resp-db");
+    var audit = _t_tmp_path("resp-audit");
+    sys_unlink(db);
+    sys_unlink(audit);
+    assert_eq(_t_seed_lost(db), 1, "a dead process's crew is in flight");
+    assert_neq(agnostic_serve_mount(_t_resp_cfg(db, audit)), 0, "mount succeeds, auth required");
+
+    # ⭐ Every route's success path, in the schema's order, each answer checked as it comes.
+    _t_go(a, AGNOSTIC_METHOD_GET, "/health", "/health", "", 0);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/ready", "/ready", "", 0);
+
+    var login = _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/auth/login", "/api/v1/auth/login", _T_LOGIN,
+      agnostic_reqctx_new_a(a, 0, 1));
+    var token = _t_s(agnostic_response_body(login), "token");
+    assert_neq(token, 0, "the bootstrap administrator logs in");
+    if (token == 0) { return 0; }
+    var cx = _t_ctx_as(a, token, 0, 0);
+
+    # A crew, submitted twice under one Idempotency-Key: the second is the replay.
+    var sub = _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", "/api/v1/crews", _T_CREW,
+      _t_ctx_as(a, token, "schema-sweep-key", 0));
+    var cid = _t_crew_id(sub);
+    var rep = _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", "/api/v1/crews", _T_CREW,
+      _t_ctx_as(a, token, "schema-sweep-key", 0));
+    assert_eq(bayan_json_v_bool(_t_get(agnostic_response_body(rep), "replayed")), 1,
+      "the same Idempotency-Key replays the crew");
+    var par = _t_crew_id(_t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", "/api/v1/crews", _T_CREW_PAR, cx));
+
+    _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id", _t_crew_url(cid, ""), "", cx);
+    _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id/events", _t_crew_url(cid, "/events"), "", cx);
+    _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id/plan", _t_crew_url(cid, "/plan"), "", cx);
+    _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id/plan", _t_crew_url(par, "/plan"), "", cx);
+    assert_eq(_t_settle(a, cid, cx), 1, "the crew finishes");
+    assert_eq(_t_settle(a, par, cx), 1, "and so does the parallel one");
+    _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id/events", _t_crew_url(cid, "/events?after=1"), "", cx);
+    _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id", _t_crew_url(str_from(_T_LOST), ""), "", cx);
+
+    # Cancel races the placeholder engine, which can finish first (409, a refusal): a crew is
+    # submitted and cancelled at once until one answers 200.
+    var cancelled = 0;
+    var tries = 0;
+    while (cancelled == 0 && tries < 64) {
+        var k = _t_crew_id(_t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", "/api/v1/crews", _T_CREW, cx));
+        var rc = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, _t_crew_url(k, "/cancel"), str_from(""),
+          _T_MAXB, cx);
+        if (agnostic_response_status(rc) != AGNOSTIC_HTTP_CONFLICT) {
+            _t_answered(AGNOSTIC_METHOD_POST, "/api/v1/crews/:id/cancel", rc);
+            cancelled = 1;
+            _t_settle(a, k, cx);
+        }
+        tries = tries + 1;
+    }
+    assert_eq(cancelled, 1, "a live crew is cancelled within 64 tries");
+
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/crews", "/api/v1/crews", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/crews", "/api/v1/crews?limit=1", "", cx);
+
+    var presets = _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/presets", "/api/v1/presets", "", cx);
+    var plist = _t_get(agnostic_response_body(presets), "presets");
+    assert_eq(bayan_json_v_arr_len(plist), AGNOSTIC_PRESET_JSON_COUNT, "every preset is listed");
+    i = 0;
+    while (i < bayan_json_v_arr_len(plist)) {
+        var pname = _t_sz(bayan_json_v_arr_get(plist, i), "name");
+        _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/presets/:name", _t_body("/api/v1/presets/", pname, ""), "", cx);
+        i = i + 1;
+    }
+
+    var dpath = "/api/v1/agents/definitions/schema-sweep";
+    _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", "/api/v1/agents/definitions", _T_DEF, cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions", "/api/v1/agents/definitions", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/:key", dpath, "", cx);
+    _t_go(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/:key", dpath, _T_DEF, cx);
+    _t_go(a, AGNOSTIC_METHOD_DELETE, "/api/v1/agents/definitions/:key", dpath, "", cx);
+
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit", "/api/v1/audit", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "/api/v1/audit/entries", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "/api/v1/audit/entries?limit=1", "", cx);
+
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins", "/api/v1/plugins", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/:id", "/api/v1/plugins/swarm", "{\"enabled\":true}", cx);
+
+    var ddoc = "/api/v1/plugins/swarm/data/schema-sweep";
+    _t_go(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/:id/data/:key", ddoc, "{\"n\":1}", cx);
+    _t_go(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/:id/data/:key", ddoc, "{\"n\":2}", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/:id/data", "/api/v1/plugins/swarm/data", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/plugins/:id/data/:key", ddoc, "", cx);
+    _t_go(a, AGNOSTIC_METHOD_DELETE, "/api/v1/plugins/:id/data/:key", ddoc, "", cx);
+
+    _t_go(a, AGNOSTIC_METHOD_GET, "/ui", "/ui", "", 0);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/ui/", "/ui/", "", 0);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/ui/plugins/:id", "/ui/plugins/swarm", "", 0);
+
+    # The answers only an altered trail and a failing dependency give: the trail is reopened
+    # after one byte of the definition's entry is changed on disk, and a check that always
+    # fails is registered.
+    agnostic_audit_close();
+    assert_eq(_t_tamper(audit, "key=schema-sweep"), 1, "one byte of the trail is altered on disk");
+    assert_eq(agnostic_audit_open(str_from(audit)), 1, "and the trail reopens");
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit", "/api/v1/audit", "", cx);
+    agnostic_ready_register(str_from("never"), &_t_never_ready);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/ready", "/ready", "", 0);
+
+    assert_eq(_t_broke, 0, "⭐ every answer is a status its route's ok lists, of its kind, with its declared keys");
+
+    # ⭐ And the other way: every route was driven, answered each status `ok` lists, and wrote
+    # each key it declares — so a declaration nothing produces fails too.
+    var undriven = 0;
+    var unanswered = 0;
+    var unwritten = 0;
+    i = 0;
+    while (i < nr) {
+        var rt = bayan_json_v_arr_get(_t_routes, i);
+        var path = _t_cstr(_t_sz(rt, "path"));
+        var sv = vec_get(_t_seen_status, i);
+        if (vec_len(sv) == 0) {
+            undriven = undriven + 1;
+            _t_say("the sweep never drove ", _t_cstr(_t_sz(rt, "method")), _t_body(" ", str_from(path), ""));
+        }
+        var ok = _t_get(rt, "ok");
+        var j = 0;
+        while (j < bayan_json_v_arr_len(ok)) {
+            if (_t_vec_has_int(sv, bayan_json_v_int(bayan_json_v_arr_get(ok, j))) == 0) {
+                unanswered = unanswered + 1;
+                _t_say(path, " never answered a status its ok lists", 0);
+            }
+            j = j + 1;
+        }
+        var keys = _t_get(_t_get(rt, "response"), "keys");
+        j = 0;
+        while (j < bayan_json_v_arr_len(keys)) {
+            var kn = _t_key_name(_t_at(keys, j));
+            if (_t_vec_has_str(vec_get(_t_seen_keys, i), kn) == 0) {
+                unwritten = unwritten + 1;
+                _t_say(path, " never wrote a key it declares: ", _t_cstr(kn));
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(undriven, 0, "every route's success path was driven");
+    assert_eq(unanswered, 0, "every status a route's ok lists was answered");
+    assert_eq(unwritten, 0, "every key a route declares was written, optional ones included");
+
+    agnostic_ready_reset();
+    agnostic_audit_close();
+    agnostic_store_close();
+    agnostic_webgui_reset();
+    sys_unlink(db);
+    sys_unlink(audit);
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    test_snapshot();
+    test_routes();
+    test_plugin_vocabulary();
+    test_bodies();
+    test_vocabularies();
+    test_errors();
+    test_cli();
+    test_probes();
+    test_responses();
+    return assert_summary();
+}
+
+var _agnostic_api_schema_test_exit = main();
+if (_agnostic_api_schema_test_exit > 0) { _agnostic_api_schema_test_exit = 1; }
+sys_exit_group(_agnostic_api_schema_test_exit);

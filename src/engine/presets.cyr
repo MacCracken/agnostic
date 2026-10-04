@@ -38,7 +38,10 @@
 # ## No preset-to-crew expansion here, deliberately
 #
 # A client that wants to run a preset does `GET /api/v1/presets/{name}`, takes the
-# `agents` array, and posts it to `POST /api/v1/crews`. Expanding it server-side
+# `agents` array, renames each `agent_key` to `key`, drops the refused broker fields
+# (`celery_queue`, `redis_prefix`), and posts it to `POST /api/v1/crews`. Posted verbatim
+# it is a 422; the WebGUI's `definitionFromPresetAgent` and `presetAgent` do exactly this,
+# and `skills/agnostic/SKILL.md` tells a coding agent to. Expanding it server-side
 # would give `POST /api/v1/crews` a **second source of agents** beside the one
 # M2 established — and `ORACLE-AUDIT.md` §3.3 is exactly what a second, silently
 # preferred source costs. One model, no fallback path.

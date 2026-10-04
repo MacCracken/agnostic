@@ -25,7 +25,19 @@ before porting any behaviour.
 
 ## v1.0 criteria
 
-- [ ] Public API frozen — every exported symbol documented and tested
+- [ ] Public API frozen — every exported symbol documented and tested. **The HTTP API's half is now
+      mechanical** (0.1.13, H5, [ADR 0015](../adr/0015-the-http-api-is-described-by-a-generated-schema.md),
+      [`docs/api/`](../api/README.md)). It is [`docs/api/generated/schema.json`](../api/generated/schema.json),
+      `agnostic api schema`'s output: every route's method, path, auth, permission, request fields,
+      success statuses and top-level response keys, plus the error codes, the dispatch ladder and the
+      vocabularies. How it is checked: `tests/api_schema.tcyr` fails when the generator, compiled
+      fresh, differs from the snapshot (`api/snapshot`); it drives every declared request part
+      through the dispatcher (`api/probes`), and every route's success path through the real mount,
+      checking response statuses and keys both ways (`api/responses`); CI runs
+      `gen-api-schema.sh --check` on the shipped DCE binary. From 1.0, removing or renaming anything
+      in it needs an ADR and a **Breaking** CHANGELOG entry. Still open for this criterion: the
+      exported Cyrius symbols' half, and what the schema leaves out (nested shapes, field types; see
+      "Later").
 - [ ] `python-port/` retired — the Cyrius tree has equal or better coverage
       (`first-party-standards.md:53`). ⚠ The benchmark half of that rule cannot be satisfied as
       written: `ORACLE-AUDIT.md` §4 shows the oracle's published numbers are invalid, so parity is
@@ -183,6 +195,11 @@ building it here would mean designing a tenant model before the identity model t
 meaning, and the oracle's identity surface is mostly dead code (M5's own warning). Crews, results
 and definitions are what M2 and M3 actually produce, and those are durable now.
 
+⛔ **Superseded at 0.1.13 by [ADR 0013](../adr/0013-a-crew-interrupted-by-a-restart-is-interrupted.md)**
+— a crew interrupted mid-flight now answers a terminal `interrupted`, not 404. Only terminal
+outcomes are still persisted; what a crew in flight leaves on disk is a row with no status. The note
+is kept as written, as the record of why:
+
 ⚠ **Only TERMINAL crew outcomes are persisted, and that is the design.** A crew runs on a detached
 thread; when the process dies the thread dies with it, so a PENDING or RUNNING crew is not
 resumable — it is gone. Writing non-terminal state would load, on the next start, a crew claiming to
@@ -307,7 +324,7 @@ This is agnosai **F1**. Settle the tool-registry seam (`handoff.md`) together wi
   with a 12-month removal window.
 - [ ] **A2A v1.0.x**, with signed Agent Cards. agnosai's callback POST is still unsent (agnosai
   F8).
-- [ ] `skills/agnostic/SKILL.md` (0.1.13, below) is the non-MCP route for coding agents and
+- [x] `skills/agnostic/SKILL.md` (0.1.13, H6 below) is the non-MCP route for coding agents and
   complements this surface.
 
 **Both MCP shapes stand (D5), on their own merit.** The original justification was preserving
@@ -474,6 +491,205 @@ Found at 0.1.12, recorded rather than fixed:
   Filed with kavach (`docs/development/issues/2026-10-03-pinned-exec-breaks-uutils-coreutils.md`)
   and recorded in agnosai's roadmap C. It matters to a deployment on such a host.
 
+Found at 0.1.13 (during H4's live check). All three are older than 0.1.13; the first two are fixed in
+it, the third is recorded rather than fixed:
+
+- [x] ~~**The audit chain does not link across a restart.** `agnostic_audit_open`
+  (`src/engine/audit.cyr`) starts a streaming chain with an empty head and never seeds it from the
+  last stored entry. So the first entry each process appends records an empty predecessor, and the
+  next start reports the chain altered (`intact: false`). Any audited action after a restart
+  triggers it, and since 0.1.13 so do the sweep's `crew.interrupted` entries. Seed the head from the
+  last loaded entry (libro has `chain_set_prev_hash`), and test append, reopen, append, reopen.~~
+  **Fixed at 0.1.13.** The open seeds the head from the last loaded entry
+  (`_agnostic_audit_seed_head_locked`), and `tests/audit.tcyr` `audit/durable-append` tests it,
+  mutation-checked. Live, on x86_64 and on the Pi, every start of two four-process sequences
+  answered `intact: true`. The fix also found that `bad_index` read the wrong offset of libro's
+  error and named entry 0 for every break; it now uses `error_index`. Trails written before 0.1.13
+  keep their breaks and are not rewritten (CHANGELOG 0.1.13, Fixed). The three items in "Found at
+  0.1.13 (while fixing the audit chain's restart link)" below were found fixing it.
+- [x] ~~**A crew named over 255 bytes is never durable.** `agnostic_crews.cname` is a patra `STR`,
+  which refuses a longer value, and requests accept names of up to 10,000 characters. Since 0.1.13
+  such a crew also leaves an in-flight row that every start retries, logging ERROR. The column is
+  never read: bind at most 255 bytes of it, cut on a UTF-8 boundary.~~
+  **Fixed at 0.1.13.** `_agnostic_crews_save_locked` binds at most the name's first 255 bytes, cut
+  on a character (`_agnostic_crews_fit_utf8`); no schema change, and the document, listing row and
+  in-flight row keep the whole name. `tests/crewstore.tcyr` `crewstore/long-name` and
+  `long-name-sweep` test it (+26), mutation-checked (CHANGELOG 0.1.13, Fixed).
+- [ ] `GET /api/v1/crews/{id}` for a crew this process holds carries `engine_mode` twice. The route
+  sets it, `agnostic_ledger_describe_a` sets it again, and bayan's object set appends a second key.
+  H5's `api/responses` compares a body's keys as a set, so it passes this; the fix should also make
+  that group assert no key appears twice in any answer.
+
+Found at 0.1.13 (while fixing the audit chain's restart link), recorded rather than fixed:
+
+- [ ] **A trail written before 0.1.13 can never verify clean again, and its verdict hides everything
+  after its first break.** Such a trail holds an entry with an empty `prev_hash` after each restart
+  that recorded something. `verify_chain` stops at the first failure, so `intact: false,
+  bad_index: N` is all an operator learns. A real alteration after entry N would not be reported.
+  The Audit view's banner (`src/webgui/plugins/audit/index.html:428`) also says the trail "was
+  altered while the server was not running", which is wrong for this kind of break.
+  - Reproduce: build `src/main.cyr` with `src/engine/audit.cyr` as at commit f28cb9a. Submit a crew
+    with `AGNOSTIC_LLM_URL` at a listener that never answers, `kill -9`, start, create a
+    definition, `kill -9`. Then start the current binary on the same files: `intact: false,
+    bad_index: 1`.
+  - Fix direction: walk the whole chain and report every break, not only the first. Name a break
+    whose entry hashes correctly and whose `prev_hash` is empty as a restart break, and anything
+    else as an alteration. libro's `verify_chain_from` takes the expected first link, so each
+    segment can be verified from its break. That is a wire change to `GET /api/v1/audit`, and the
+    banner should follow it.
+  - In the same route, the comment at `src/routes/definitions.cyr:283-288` still gives libro's
+    cached statements faulting on a pool worker as the reason the verdict is taken at open. libro
+    2.8.9 fixed that (see `src/engine/audit.cyr`), and the reason left is cost.
+- [ ] **A failed read at open verifies as intact and leaves the chain's head empty.**
+  `_agnostic_audit_open_locked` (`src/engine/audit.cyr:205-209`) reads with `patrastore_load_all`.
+  That is libro's legacy shape, which returns an empty vec when the query fails, and
+  `verify_chain` of an empty vec is 0. So a store with entries that cannot be read reports
+  `intact: true` with nothing verified. With nothing loaded there is no head to seed, so the next
+  entry links to "" and the following start reports a break there.
+  - Reproduce: read from the code; it needs a patra query failure at open, which no test injects.
+  - Fix direction: read with `patrastore_load_all_or_err` and check `libro_is_error`. Report the
+    trail as unverified, a state `GET /api/v1/audit` cannot express today, and log at ERROR that
+    the head is unknown.
+- [ ] **A failed write moves the chain's head anyway, so the next start reports tampering.**
+  `_agnostic_audit_record_locked` (`src/engine/audit.cyr:388`) calls `chain_append`, whose
+  `_chain_retain` (`lib/libro.cyr:2326-2333`) stores the new entry's hash as the head before
+  `patrastore_append` runs (line 394). When that write fails (lines 399-405) the entry is counted
+  as dropped, but the head is left on it. The next entry that is saved names a hash that is not in
+  the store, and the next open's `verify_chain` says "linkage broken": `intact: false`, "the store
+  was altered". Older than 0.1.13; found by the review of the restart fix. The module header's
+  "a failed append leaves no hole to find" (`audit.cyr:44-46`) now carries a ⚠ saying it is not
+  true of a failed write (`audit.cyr:50-56`), and the failure branch points to it.
+  - Reproduce: no test reaches it. `audit/gaps` records to a closed store, which returns before
+    `chain_append`. It needs a write that fails on an open store (patra fault injection), then a
+    write that succeeds, then a reopen.
+  - Fix direction: on a failed write, put the head back with
+    `chain_set_prev_hash(_agnostic_audit_chain, entry_prev_hash(e))`, so the next entry links to
+    the last saved one. A write that reports an error after its row landed would then fork the
+    chain, so decide that case first. `patrastore_append` (`lib/libro.cyr:6538`) refuses an
+    over-long field before touching patra, a clean refusal. Whether patra's `_exec_insert` can
+    return an error after `tbl_insert` (`lib/patra.cyr:5814`) wrote the row is not checked yet; that
+    is the case to settle, in patra if need be. Re-reading the store's last row to learn the real
+    head is exact but costs a full load (`patrastore_load_all`, which never frees). Add a test that
+    injects a failing write.
+
+Found at 0.1.13 (during H5's gate run), recorded rather than fixed. Older than 0.1.13:
+
+- [ ] **One warning on our own code is left, in a suite.** 0.1.12 says "the build prints no warning
+  on code", which holds for `src/`, but `cyrius test` still prints `warning:<source>:93:49: assigning
+  non-pointer to typed pointer` for `tests/jwt.tcyr:93` (`sig = agnostic_b64u_encode_a(a, mac, 32)`).
+  `sig` is typed `Str` by its initializer at `tests/jwt.tcyr:86` (`var sig = str_from("")`), the
+  same shape 0.1.12 fixed in `serve.cyr`. Reproduce: `cyrius test tests/jwt.tcyr 2>&1 | grep
+  'typed pointer'`. Fix: declare it `var sig: i64 = str_from("");`, as `serve.cyr` did.
+
+Found at 0.1.13 (during H5's fourth change), recorded rather than fixed. Older than 0.1.13:
+
+- [ ] **Request paths still allocate from the global bump, which has no `free()`.**
+  `src/http/response.cyr`'s header requires the per-request arena on every request path, error
+  arms included, and names the 404 as the leak the server can least afford. Measured with
+  `alloc_used()` around single dispatches, each served from its own arena, on a mounted server with
+  auth required: `/health` 0 bytes; a 404 16; a 401 16; any authenticated request 16; a failed
+  login 128; a successful login 696; each audited write (plugin-data `PUT` or `DELETE`) 416. The
+  bytes are kept until the process exits.
+  - Where: the router's refusal arms build their messages with `str_from`
+    (`src/http/router.cyr:510`, `:521`, `:530`, `:532`, `:558`, `:562`, `:578`, `:659`); a
+    principal with no tenant gets `str_from("")` (`src/auth/authn.cyr:316`); login names its two
+    fields, its four response keys and two of their values with `str_from`
+    (`src/routes/auth.cyr:56-57`, `:105-111`), and `agnostic_jwt_issue_a` its five claim keys (`src/auth/jwt.cyr:226-235`); each
+    audited call site passes `str_from(action)`, and `agnostic_audit_detail`
+    (`src/engine/audit.cyr:439`) and `_agnostic_pdata_detail` (`src/routes/plugindata.cyr:205`)
+    build with `str_builder_new()`.
+  - Reproduce: mount with auth required, then for each request take `alloc_used()` before and
+    after `agnostic_route_dispatch_a` with a fresh `arena_allocator(1048576)`, less the 16 bytes per
+    `str_from` the caller spends building its own path and body.
+  - Fix direction: `str_from_a(a, …)` on the request arena, or keys interned once at load like
+    `AGNOSTIC_JK_*`, for the router, authn, login and the JWT claims. The audit strings outlive the
+    request only if libro keeps them: check whether `chain_append` and the ring copy them before
+    moving them to the arena. libro's own entry (`chain_append` allocates one per append, 2.9.0
+    added an opt-in path that does not) is libro's to settle. Then add a guard that fails on the
+    regression: a suite asserting `alloc_used()` does not move across a dispatch of each refusal
+    arm and an authenticated GET.
+
+Found at 0.1.13 (during the audit-seed gate run), recorded rather than fixed. Older than 0.1.13:
+
+- [ ] **The suites write their stores to fixed `/tmp` paths and ignore `TMPDIR`.** 16 suites name
+  23 `"/tmp/agnostic-*.patra"` literals (e.g. `tests/audit.tcyr:9` `_T_AUDIT`,
+  `tests/restart.tcyr:15` `_T_RAUDIT`). Most unlink them only before use (`tests/audit.tcyr:15`),
+  not after, so a full `cyrius test` leaves 17 files, about 3.7 MB, in `/tmp`. Two runs at once on
+  one machine (two worktrees, two sessions) share each file, so one suite can open the other's
+  half-written store. `/tmp` is also a shared quota here, which is why the gates set `TMPDIR`.
+  - Reproduce: `TMPDIR=$HOME/.cache/agnostic-work cyrius test; ls /tmp/agnostic-*.patra`.
+  - Fix direction: build each path from `TMPDIR` (falling back to `/tmp`) plus the pid, through one
+    helper the suites share (there is no shared test include today), and unlink at the end of each
+    suite's `main` as `tests/restart.tcyr:114-115` already does.
+
+Found at 0.1.13 (during the integration pass, 2026-10-04), recorded rather than fixed. Older than
+0.1.13, and outside its items:
+
+- [ ] **`CONTRIBUTING.md` names a coverage gate CI does not run, and the tree does not meet.**
+  `CONTRIBUTING.md:32-34` lists `cyrius coverage --min 80` as "its own CI step", but
+  `.github/workflows/ci.yml` has no such step, and the gate fails: 330 of 476 functions referenced,
+  69% (306 of 451, 67%, at 0.1.12). It is reference coverage, a static floor: the route handlers
+  (`src/routes/*.cyr`), which the suites drive through `agnostic_route_dispatch_a`, count as
+  unreferenced, as do most of `src/cli.cyr` (2/7) and `src/server/serve.cyr` (2/7).
+  - Reproduce: `TMPDIR=$HOME/.cache/agnostic-work cyrius coverage --min 80` (exit 1, "coverage
+    gate FAILED: 69% < --min 80%").
+  - Fix direction: decide what the gate measures before wiring it. Either name the handlers the
+    suites reach by dispatch (a reference per route in the suite that drives it) and add the CI
+    step at 80, or say in `CONTRIBUTING.md` that it is a local report, not a CI gate.
+- [ ] **Two stale lines from earlier releases.**
+  - `cyrius.cyml:69-78` says the chain declares sigil 3.13.5 (agnosai 2.1.2), 3.12.18 (kavach
+    3.13.1) and 3.13.4 (libro 2.10.5), that the lock's sigil line "still names the 3.13.5 commit
+    agnosai declares", and that agreeing is "a recorded agnosai follow-up". Since 0.1.11/0.1.12 the
+    chain declares 3.13.7 throughout and `cyrius.lock:3` names sigil 3.13.7 (`2c8edf81`), as
+    `docs/development/state.md`'s Toolchain section says. Fix: rewrite the paragraph to the current
+    pins (comment only; no pin changes), at the next re-pin.
+  - `CONTRIBUTING.md:116` asks an issue for the "Rust version (`rustc --version`)", left from
+    scaffolding. Fix: `cyrius --version`, which also prints the manifest pin and any drift.
+
+Found at 0.1.13 (during the release verification, 2026-10-04), recorded rather than fixed. Older
+than 0.1.13:
+
+- [ ] **`BENCHMARKS.md` was last generated at 0.1.0.** It is `scripts/bench-history.sh`'s output
+  ("do not edit by hand"), and its "Latest" line still reads `59325f3` (dirty), version 0.1.0,
+  2026-08-20, with one benchmark, `noop`; `bench-history.csv` holds the same two rows.
+  `tests/agnostic.bcyr` has 16 benchmarks at 0.1.13, and `docs/development/state.md`'s Hardening
+  table lists `BENCHMARKS.md` as generated.
+  - Fix direction: run `./scripts/bench-history.sh` on a clean tree right after a tag, so the row
+    names a commit rather than "(dirty)". First check that its parser still reads `cyrius bench`'s
+    current lines (`<name>: <value><unit> avg`, units `ns`/`us`/`ms`/`s`). Then decide whether the
+    release process regenerates it each time, and say so in the Process or in `state.md`.
+- [ ] **`docs/development/handoff.md` §1 stops at 0.1.10.** Its release paragraphs end at 0.1.10's
+  views, and it does not mention a crew `interrupted` by a restart (ADR 0013), `agnostic api
+  schema` (ADR 0015), the agent skill or Swarm Command's one-agent baseline (ADR 0014). Its header
+  still says it was last refreshed at M5 (2026-08-23). At 0.1.13 its version line, its M5 figures,
+  its ADR list and §5's patra COL_STR rule were corrected; §1 is otherwise unchanged.
+  - Fix direction: rewrite §1 as a short current orientation that links `state.md` for figures
+    and the CHANGELOG for history, rather than adding a paragraph per release.
+- [ ] **patra clamps an over-length STR *query literal*** (found by CNAME-255, 2026-10-04).
+  `_str_hash` and `row_write_str` (`lib/patra.cyr:1706`, `:1758`) cut a literal over 255 bytes to
+  its 255-byte prefix. So a `WHERE` on a STR column given a longer literal hashes and compares as
+  that prefix. On a write, patra refuses an over-length value (`PATRA_ERR_ROWSZ`), so the two
+  paths disagree.
+  - Not reachable in agnostic today. Every STR it queries is capped below 255 bytes at the door:
+    tenant keys at 64, settings at 64 and 255, and crew ids are UUIDs.
+  - Fix direction: an upstream patra release that refuses an over-length literal the way it
+    refuses an over-length value. Fix it at source; do not wrap it here. Then re-pin.
+
+Open decisions and reviews, recorded 2026-10-04 at the 0.1.13 cut:
+
+- [ ] **Decision: should a change to the HTTP surface also update its two derived artefacts?** The
+  proposal is a clause in CLAUDE.md's Process step 5: "an API change regenerates
+  `docs/api/generated/schema.json` (`scripts/gen-api-schema.sh`) and updates
+  `skills/agnostic/SKILL.md` in the same change".
+  - CI already enforces the schema (`gen-api-schema.sh --check`). `check-skill.py` catches drift
+    in routes, methods, parameters, headers, response keys and marked lists, but not in prose about
+    statuses or limits.
+  - The H5 and H6 plans both recommended the clause. CLAUDE.md is the user's file, so it is the
+    user's call.
+- [ ] **Review ADR 0015** (`docs/adr/0015-*.md`, the API schema). It is marked Accepted, like every
+  ADR here, but was written and accepted without the user's review. ADRs 0013 and 0014 were
+  approved through their roadmap items; 0015 was not.
+
 ## Recorded 2026-10-03 — from the herdr and multi-agent landscape review
 
 Source: [`research/2026-10-03-herdr-and-multi-agent-landscape.md`](research/2026-10-03-herdr-and-multi-agent-landscape.md).
@@ -481,38 +697,151 @@ The H and B numbers below are that note's. Items that belong to a milestone were
 M6 (the reviewer preset and the tool-loop prerequisite), M7 (the target spec revisions) and M9
 (the approval roll-up). This section holds the rest.
 
-### Next release — 0.1.13 (cheap, agnostic-only, nothing waits on agnosai)
+### ✅ 0.1.13 — 2026-10-04 (cheap, agnostic-only, nothing waits on agnosai)
 
-Planned as 0.1.12; renumbered when 0.1.12 went out as the re-pin to agnosai 2.1.4.
+Planned as 0.1.12; renumbered when 0.1.12 went out as the re-pin to agnosai 2.1.4. Shipped
+2026-10-04 with H3–H6 and B3 done (CHANGELOG 0.1.13). The unchecked items below are follow-ups
+found during it; they stay open.
 
-- [ ] **H3 — an explicit gap signal on the event cursor.** The ledger keeps 256 events per crew.
+- [x] ~~**H3 — an explicit gap signal on the event cursor.** The ledger keeps 256 events per crew.
   When `GET /api/v1/crews/{id}/events?since=` asks for a cursor older than the oldest event
   kept, answer `events_lost: true` along with the oldest cursor still available. The client then
   re-reads `GET /api/v1/crews/{id}`. Today that gap is silent. Small: one comparison in the
-  events handler, one response field, a test, and a note in ADR 0009.
-- [ ] **H4 — an interrupted crew is `interrupted`, not 404.** Write the crew row at submit. At
+  events handler, one response field, a test, and a note in ADR 0009.~~ ✅ **Closed at 0.1.13,
+  with no wire change: delivered at 0.1.9 as `missed`** (ADR 0009). The premise was wrong. The
+  cursor parameter is `after`, not `since`, and the gap is not silent: a cursor older than the
+  window gets every event still held, from the oldest, and `missed`, the count of numbers after
+  it that the ring had already overwritten.
+  - `events_lost: true` would restate `missed > 0`, under a name that collides with
+    `lost_events` (events the bus dropped before they were numbered).
+  - The oldest cursor still available is `events[0].seq` whenever `missed > 0`, and `after=0`
+    already means "everything still held".
+  - The proposed re-read of `GET /api/v1/crews/{id}` recovers nothing mid-run: the engine holds
+    no task results until the crew ends. Both WebGUI consumers already make that read once the
+    crew ends, and it settles every task. A real mid-run resync is F3's per-task snapshot.
+  - 0.1.13 pins the gap over HTTP (`tests/crews_route.tcyr`, `crews/events-gap`), in the Crews
+    view (`tests/webgui/crews.test.mjs`) and in Swarm Command's live watch
+    (`tests/webgui/swarm.test.mjs`: counted once in EVENTS MISSED, every task still settled), and
+    says so in the events handler's comment.
+- [x] ~~**H4 — an interrupted crew is `interrupted`, not 404.** Write the crew row at submit. At
   start-up, before `/ready`, rewrite every non-terminal row to a terminal `interrupted`, keeping
   any finished-task results under ADR 0012's rule. Also add a "what survives a restart" table to
-  `docs/architecture/`.
-  - ⚠ **This revisits the M4 note** ("a crew interrupted mid-flight 404s after a restart"). The
-    objection M4 raised was a stale RUNNING loaded and latched on restart. That is met because
-    no non-terminal row survives start-up, and `interrupted` is itself terminal. It still needs
-    an ADR, and the user's sign-off on the revisit.
+  `docs/architecture/`.~~ ✅ **Done at 0.1.13 —
+  [ADR 0013](../adr/0013-a-crew-interrupted-by-a-restart-is-interrupted.md) and
+  [architecture 001](../architecture/001-what-survives-a-restart.md)**, signed off by the user. Two
+  corrections to the wording above:
+  - **No crew row at submit.** Submit writes a status-less row to a new table,
+    `agnostic_crew_inflight`, and the outcome write deletes it in the same critical section. At
+    mount, after the audit chain opens and before the server listens, each row left becomes a
+    terminal `interrupted` outcome through the ordinary write-once path, with a listing row and a
+    `crew.interrupted` audit entry. So `agnostic_crews` and `agnostic_crew_index` stay
+    terminal-only, nothing non-terminal is read back, and the ledger is never seeded from disk —
+    the M4 objection, met by construction.
+  - **There are no finished-task results to keep.** While a crew runs, agnostic holds none: the
+    engine keeps them in its runner until the crew ends, and `task_completed` carries no output
+    or usage. An interrupted crew keeps what was known at submit — name, scope, engine mode,
+    process, `tasks_submitted`, `submitted_at` — with `results: []`, zero usage, an `error`, and
+    `interrupted_at` instead of `finished_at`.
+  - Status `interrupted` is 6 (stored in `cstatus`, appended, never renumbered); `?status=interrupted`
+    filters the listing; Crews 0.1.1 and Swarm Command 0.5.0 know it (H4's part of 0.5.0 was
+    first numbered 0.4.1, never released on its own).
   - Resuming a crew is **not** part of this; it waits on agnosai F4.
-- [ ] **H5 — `agnostic api schema`.** The binary prints its route table, methods, request and
+- [ ] **H4 follow-up — one agnostic process per database file, enforced.** The start-up sweep
+  assumes it (so does the definition cache), and H4 makes sharing a database file destructive
+  rather than merely racy: a second process would sweep the first one's live crews to
+  `interrupted`. A non-blocking `flock` on a `<db>.owner` sidecar at mount, refusing to start when
+  it is held. Documented in ADR 0013 and architecture 001; not built.
+- [ ] **H4 follow-up — cancel answers 409, not 404, for a stored terminal crew.** Cancel needs a
+  ledger entry, so a crew from before a restart — an interrupted one included — answers 404 while
+  `GET /crews/{id}` answers 200. Answering 409 from the store would make the two agree.
+- [ ] **H4 follow-up — an interrupted crew keeps its finished results.** Possible once agnosai's
+  events carry a finished task's output and usage (F3) or with the durable crew log (F4); kept
+  under ADR 0012's rule without changing ADR 0013.
+- [x] ~~**H5 — `agnostic api schema`.** The binary prints its route table, methods, request and
   response field lists, and error-code catalogue as JSON. A test diffs that output against a
   checked-in snapshot, which turns the v1.0 criterion "public API frozen" into a mechanical
-  check.
-- [ ] **H6 — `skills/agnostic/SKILL.md`.** Teaches Claude Code, Codex or any SKILL.md-aware agent
+  check.~~ ✅ **Done at 0.1.13 —
+  [ADR 0015](../adr/0015-the-http-api-is-described-by-a-generated-schema.md),
+  [`docs/api/`](../api/README.md).**
+  - Done in four changes; 1 and 2 change neither behaviour nor the wire:
+    - 1: the routes are a table of rows the resolver walks (`agnostic_route_row_pattern` /
+      `agnostic_route_row_id`), at no measurable cost (`router/table`);
+    - 2: the error codes are a closed catalogue (`AgnosticErrorCode`; `agnostic_response_error_code_a`
+      takes a member, and an unlisted one answers 500 with no `code`; code `ec` is row `ec - 1` of a
+      table written only in sequence, so no gap can exist to hide one), the refused agent fields are a
+      table of rows (`agnostic_agent_def_refused_name`), and `agnostic_method_name` /
+      `agnostic_perm_name` name what the schema will emit (`http/error-codes`,
+      `agentdef/refuse-rows`, `perm/names`; the coded refusals' bodies pinned byte for byte).
+    - 3: `agnostic api schema` ([ADR 0015](../adr/0015-the-http-api-is-described-by-a-generated-schema.md)).
+      `src/http/schema.cyr` builds the document from those tables; `src/cli.cyr` is the binary's first
+      argument handling (no arguments serves as before, `help` exits 0, anything else exits 2);
+      the snapshot is `docs/api/generated/schema.json`, regenerated by `scripts/gen-api-schema.sh`
+      (`--check` in CI on the DCE binary, and in `check-clean.sh` when `build/agnostic` is current);
+      `tests/api_schema.tcyr` (134) diffs the generator against it, checks every `permissions.json`
+      route against the router and each grant's `self` (the parameters it pins to the plugin's own
+      id) against the plugin gate, drives every declared body, query parameter, header and ladder
+      rung through the dispatcher, and runs each command for its exit code; CI runs `help` and an
+      unknown argument on the binary. `docs/api/README.md` says what it covers and leaves out.
+    - 4: what each route answers. Each route gains `ok`, the statuses it answers with its own body
+      (`/ready` also 503), and `response`, `{kind, keys}`: `json` with the object's top-level keys,
+      `?` marking one a success can leave out; `html`; or `document` (a plugin's stored document,
+      verbatim, with its `ETag`). Declared beside the generator, since the handlers build bodies by
+      hand; a route with no declaration fails the document. `api/responses` (+14, 148 in the suite)
+      mounts the real server with auth required, logs in and drives every route's success path,
+      then checks both ways: each answer's status, kind and keys match the declaration, and every
+      route, status and declared key — optional ones too — is seen. Eleven mutations each fail a
+      named assertion.
+- [ ] **H5 follow-up — a 405 names the methods the path takes (`Allow`).** Older than H5, found
+  reviewing its first change. `src/http/router.cyr:530` answers `405 {"error":"method not allowed"}`
+  with no `Allow` header, and nothing in `src/server/serve.cyr` adds one, though RFC 9110 §15.5.6
+  says a 405 MUST carry it. Reproduce: `curl -i -X POST http://127.0.0.1:<port>/health`, or
+  `agnostic_response_headers` of `agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST,
+  str_from("/health"), ...)`, which is 0. Fix: now that the routes are rows, OR the arms of every
+  row whose path matched into a method mask in the match record in `agnostic_route_resolve_a`,
+  and write `Allow: GET, POST` from it on the 405 through the response's extra header lines
+  (`AGNOSTIC_RESP_HEADERS`), naming each method with Change 2's `agnostic_method_name`. Pin it in
+  `router/table`: every row's own path, sent with a method it lacks, lists exactly its arms.
+- [x] ~~**H6 — `skills/agnostic/SKILL.md`.** Teaches Claude Code, Codex or any SKILL.md-aware agent
   to drive agnostic: submit, poll by cursor, cancel, read usage and cost, and the refusal
   semantics (a 422 per refused field, `hierarchical` refused, placeholder `engine_mode`).
   Guardrails modelled on herdr's: never cancel a crew it did not submit, and stop when
-  `/ready` fails. Documentation only.
-- [ ] **B3 — a single-agent baseline in the Swarm Command estimator.** Beside each swarm's
+  `/ready` fails. Documentation only.~~ ✅ **Done at 0.1.13 —
+  [`skills/agnostic/SKILL.md`](../../skills/agnostic/SKILL.md), kept honest by
+  `scripts/check-skill.py` in `check-clean.sh`.**
+  - The refusal summary above was imprecise. `hierarchical` is a **400**, not a 422
+    (`src/engine/request.cyr`, `agnostic_crew_req_from_value_a`); a refused or unknown field is a
+    422. Also: `name` is required beside `agents` and `tasks`; only login is rate-limited, and no
+    `Retry-After` is sent; API keys are accepted but no route issues them; a preset document is not
+    a crew body (`agent_key`, `celery_queue` and `redis_prefix` are refused). The skill says each.
+  - It covers H4 (`interrupted`: the stop rule, the outcome, the listing filter, and the 404 that
+    events, plan and cancel give for a crew from before a restart) and H3's closure (`after=`,
+    `missed`). Every call in it was run against a loopback server: placeholder with auth off,
+    `AGNOSTIC_AUTH=required`, and a live engine whose gateway never answers, killed and restarted.
+  - `check-skill.py` reads `docs/api/generated/schema.json` (H5), not the router's source: every
+    route, method, query parameter and curl header the skill uses, each response example's keys
+    both ways, and each list marked `<!-- schema: … -->` (fields, refused fields, roles, statuses,
+    the process, priority and risk words) for completeness. 22 mutations each fail by name.
+  - Not caught by it: prose about statuses, limits and behaviour. Whether `CLAUDE.md`'s Process
+    step 5 should name the skill is the user's call.
+- [x] ~~**B3 — a single-agent baseline in the Swarm Command estimator.** Beside each swarm's
   estimate, show a one-agent run at an **equal token budget**. Client-side only (`index.html`'s
   headless estimator). The evidence: Tran & Kiela 2026 (a single agent matches or beats a
   multi-agent system at equal budget) and Anthropic (80% of variance is token spend). Labelled
-  SIM like every other estimate.
+  SIM like every other estimate.~~ ✅ **Done at 0.1.13 — Swarm Command 0.5.0,
+  [ADR 0014](../adr/0014-the-estimators-one-agent-baseline-is-its-own-model.md).**
+  - The baseline is its own small model, `soloRun`, not the Sim with one agent allowed. On each
+    seed it works the swarm's own plan one task at a time — same models, tools, regions and
+    failure model, no orchestrator, no coordination — capped at the tokens the swarm spent on that
+    seed. It is stored as `estimate.solo` and shown, labelled SIM with its assumption, on the card
+    and in the editor's ONE AGENT, SAME TOKENS box.
+  - The Sim is untouched: a test recomputes an estimate's swarm figures, and pins every
+    template's estimate at eight runs to 0.4's. Another pins every template's eight-run baseline,
+    the figures ADR 0014's table reports.
+  - What it shows on the templates, p50 over eight seeds: 88–98% of the swarm's tokens, 73–93% of
+    its cost, 2.5–8.9× its time. In this simulator tokens track work, not agents: orchestration
+    plus coordination is only 7–13% of a swarm's tokens. Anthropic measured a real multi-agent
+    system at about 15× a chat's tokens and a single agent at about 4×, so roughly 3–4× one agent.
+    Hence the per-agent context cost recorded under "Later" below.
 
 ### Waiting on agnosai (release agnosai, then re-pin)
 
@@ -520,7 +849,8 @@ Each of these is filed on agnosai's roadmap under **F** ("Past parity").
 - **F1 — tool loop:** M6's prerequisite.
 - **F2 — hierarchical wired:** agnostic then drops its `hierarchical` refusal (`src/engine/request.cyr:108-112`).
 - **F3 — approvals plus a lifecycle contract with `seq`:** absorbs the 0.1.9 agnosai follow-ups above (agnosai's B17), and
-  feeds M9's roll-up.
+  feeds M9's roll-up. It is also what would give a per-task snapshot that a reader who fell past the
+  event ring (H3's `missed`) can resync from mid-run.
 - **F4 — durable crew log:** turns H4's `interrupted` into resumable.
 - **F5 — budgets and caps:** brings back an `AGNOSTIC_CREW_MAX_CONCURRENT_TASKS` that is actually
   enforced.
@@ -528,8 +858,61 @@ Each of these is filed on agnosai's roadmap under **F** ("Past parity").
   id in, so one trace covers request → crew → task → tool.
 - **F7 — selection-score explain:** surfaced through `/api/v1/crews/{id}/plan`.
 
+### Next re-pin — agnosai 2.1.5 (agnostic 0.1.14)
+
+agnosai's working tree holds B17, F7 and F6, all gates green. The consumer halves below land once
+agnosai 2.1.5 is tagged and `[deps.agnosai]` moves to it. Recorded 2026-10-04 from the agnosai lane.
+
+- [ ] **Re-pin** `[deps.agnosai]` 2.1.4 → 2.1.5. Check the lock, run the full gates, and repeat
+  natively on `ssh pi`.
+- [ ] **B17 — crew events and status (agnosai ADR 022):**
+  - Each task's `task_completed` now arrives as it joins, and parallel workers emit `token` events.
+  - `token` events now carry the real crew id, and `metadata.agent` is written so `agent_cost_usd` is summed.
+  - A timeout now reports FAILED both in its event and in the registry.
+  - The registry now **stores RUNNING**, and on the cyclic-DAG / deadlock error arm it goes back to
+    PENDING. Verify that `agnostic_ledger_latch` and the collector handle RUNNING → PENDING (only a
+    terminal status latches), and add a test for it.
+  - Refresh the "registry never reports RUNNING" comments: `src/engine/crew.cyr:368-371` and
+    `src/engine/ledger.cyr:81, 469-470, 845-847` (lines as of 0.1.13).
+  - Refresh the Swarm Command workaround comments: `src/webgui/plugins/swarm/index.html:2880-2885,
+    3221-3222, 3332-3333` (lines as of 0.1.13, Swarm Command 0.5.0), then regenerate
+    `src/webgui_data.cyr`.
+  - Add a dated note to ADR 0009, and tick the 0.1.9 "agnosai follow-ups" line under M9.
+- [ ] **F7 — explain selection:** `GET /api/v1/crews/{id}/plan?explain=selection`, built on
+  `agnosai_explain_selection_a` and `agnosai_selection_to_value_a`.
+  - The router has to pass the raw path through.
+  - Tests in `crews_route`, `crew_tenancy` and `router`.
+  - Regenerate the API schema and update `SKILL.md`.
+  - The ADR on recomputing the explanation at read time takes the next free number (**0016**;
+    0013–0015 are used).
+- [ ] **F6 — one trace from request to tool (agnosai ADR 023):**
+  - Call `agnosai_crew_with_trace_parent(spec, agnostic_trace_current())` after
+    `agnostic_crew_spec_build`.
+  - At boot, call `agnosai_telemetry_init_export(…)` when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
+    (service name from `OTEL_SERVICE_NAME`, default `agnostic`). Call `agnosai_telemetry_shutdown`
+    on the shutdown path.
+  - Tighten `src/trace.cyr:126` from a length check to the W3C shape: dashes, lowercase hex,
+    non-zero ids.
+  - The F6 bullet above says "sakshi W3C trace id", but the trace id is agnostic's own thread-local
+    (`src/trace.cyr`). Correct that line when this lands.
+- [ ] **Decision, not yet taken: per-task selection hints.** This would add `required_tools`,
+  `complexity`, `domain` and `gpu_required` to the task request allow-list
+  (`src/engine/request.cyr:149-156`), forwarded with `agnosai_task_with_context`.
+  - Why it matters: without hints, agnosai's selection is degenerate. Complexity alone decides,
+    and the first agent with medium or unset complexity wins every task. F7's explanation will
+    show exactly this.
+  - Why it is open: it widens the public request ahead of the v1.0 API freeze.
+
 ### Later — recorded, not scheduled
 
+- **A per-agent context cost in the Swarm Command simulator** (recorded at B3, ADR 0014): the tokens
+  each new agent reads in before it works — its brief, the plan, its parent's context — as a
+  per-role or swarm-wide knob, **default 0, so no existing estimate changes**. Today a swarm's only
+  token overhead in the simulator is orchestration and lead coordination, 7–13% on the templates,
+  while Anthropic measured a multi-agent system at about 15× a chat's tokens (the landscape
+  review's figure) against about 4× for a single agent: roughly 3–4× one agent. So the B3
+  baseline's token gap is a floor. The knob is a change to the Sim's model; the
+  estimate test that pins 0.4's figures proves the default leaves every estimate as it was.
 - **MAST failure tags** (specification / inter-agent misalignment / verification) on failed crews
   in events and audit. Worth doing once F1–F3 make failures richer.
 - **External coding agents as crew members over ACP.** Claude Code or Codex would be driven as
@@ -537,6 +920,21 @@ Each of these is filed on agnosai's roadmap under **F** ("Past parity").
   commitment, and it only makes sense after F1.
 - **Not adopted from herdr:** coordinating by screen-scraping, and unsandboxed out-of-process
   plugins. agnostic's plugin model (ADRs 0004/0005/0007/0010) is already stronger.
+- **What the API schema leaves out** (recorded at H5's third change, ADR 0015;
+  `docs/api/README.md`, "Known gaps"). Each needs its source made a table first, or it would be a
+  hand-kept copy:
+  - field types and required-ness of each request field — today they are decoder code
+    (`src/engine/request.cyr`, `src/engine/agentdef.cyr`), not data;
+  - nested response shapes (H5's fourth change covers only top-level keys);
+  - a machine-readable `code` for the 422 refusals — `unknown_field` and `refused_field` — which
+    today are `{"error": …}` only, with four different message forms
+    (`src/engine/request.cyr:428`, `:243`, `src/engine/agentdef.cyr:339`,
+    `src/routes/plugins.cyr:76`, `src/routes/auth.cyr:53`);
+  - per-handler 4xx statuses — the route modules' "Route | Codes" headers and `state.md` keep them;
+  - the reverse of the declared parts: a query parameter or header a handler starts reading without
+    declaring it is caught only for the four known parameter names on GET routes
+    (`tests/api_schema.tcyr`, `api/probes`). Closing it means handlers read parameters and headers
+    through a per-route table the schema also reads.
 
 ## ~~Moving the cyrius pin to 6.6.13~~ (recorded 2026-10-02) — ✅ done at 0.1.10, at 6.6.14
 

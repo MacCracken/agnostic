@@ -213,7 +213,15 @@ caps and per-second prices, the budget, and the failure model. From a swarm's ca
 
 - **Simulate** it, on screen, deterministically (same seed, same run);
 - **Estimate** it — eight headless simulations on different seeds, reporting the spread of cost and
-  duration and how often it overspends — to price a swarm before running anything;
+  duration and how often it overspends — to price a swarm before running anything. Beside each
+  estimate is what **one agent** would do with the same tokens (since 0.1.13, Swarm Command 0.5.0,
+  [ADR 0014](../adr/0014-the-estimators-one-agent-baseline-is-its-own-model.md)): the same tasks one
+  at a time, on each seed limited to the tokens the swarm spent there — its cost, its time, how
+  often it ran out, and the tasks it left when it did (a run that runs out stops there, so its time
+  and cost cover only the work it did). It is labelled **SIM**: a simulation of time, tokens and
+  cost, not of the quality of an answer, and the simulator charges no context per new agent, so a
+  real swarm's extra tokens are likely higher than it shows. An estimate made before 0.5.0 has no
+  baseline until you estimate again;
 - **Run it live** — its tasks submitted to this server as a crew (one agent per role, or a preset's
   agents), watched as it runs, cancellable. When the crew ends Swarm Command shows **what it really
   cost**: the tokens agnostic metered for every task and the cost the LLM gateway reported — beside
@@ -228,7 +236,9 @@ view is switched on). A link to `#plugin/swarm?crew=<uuid>` watches that crew on
 A live run is recorded on its swarm **before** its crew is submitted, with the `Idempotency-Key` the
 submission carries, so closing the tab, a dropped answer or a timeout never loses track of a crew that
 may be costing money; a submission that was never answered is marked *unconfirmed*, never *refused*.
-Signing out mid-crew pauses the watch; signing in resumes it.
+Signing out mid-crew pauses the watch; signing in resumes it. A crew that a server restart cut short
+ends the watch as **INTERRUPTED** (since 0.1.13), each task it had not finished marked *Interrupted by
+a server restart*.
 
 Swarms are this plugin's documents (`swarm-<id>`), so they are per tenant, and every save carries the
 swarm's revision: if another tab saved it first, you are asked whether to overwrite it, keep both, or
@@ -238,8 +248,14 @@ own tab, Swarm Command keeps swarms in that browser instead, and cannot run live
 ## Crews
 
 Every crew in your tenant, newest first, a page at a time: **All**, **Active** (pending or running),
-**Completed**, **Failed**, **Cancelled** — the filter is applied by the server
+**Completed**, **Failed**, **Cancelled**, **Interrupted** — the filter is applied by the server
 (`GET /api/v1/crews?status=`), so every page is full. Running crews are re-listed every few seconds.
+
+An **interrupted** crew was running when the server stopped (since 0.1.13,
+[ADR 0013](../adr/0013-a-crew-interrupted-by-a-restart-is-interrupted.md)): it shows when it was
+accepted and when the restart declared it interrupted, says its work was lost, and has no results,
+tokens or cost — submit it again. What else a restart keeps or loses is
+[architecture 001](../architecture/001-what-survives-a-restart.md).
 
 Open one to see its **plan** (the tasks in request order, what each waits for), its **progress** as
 it happens (read by cursor — each event once, and any gap said out loud), each task's **result** with

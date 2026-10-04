@@ -30,9 +30,10 @@ Report privately through
 
 Please do **not** open a public issue for anything exploitable.
 
-Include what you have: the version (`cat VERSION` or `agnostic --version`),
-configuration relevant to the finding, a reproduction, and the impact you
-believe it has. A minimal reproduction is worth more than a long report.
+Include what you have: the version (`cat VERSION` in the source tree, or the
+`version` field of a running server's `GET /ready`), configuration relevant to
+the finding, a reproduction, and the impact you believe it has. A minimal
+reproduction is worth more than a long report.
 
 You should get an acknowledgement within a few days. Fixes ship in the next
 patch release; anything actively exploitable gets an out-of-band release.

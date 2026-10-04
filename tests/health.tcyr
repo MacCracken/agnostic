@@ -96,6 +96,126 @@ fn test_response_arena_exhaustion() {
     var tiny = arena_allocator(8);
     assert_eq(agnostic_response_json_a(tiny, HTTP_OK, 0), 0, "json_a returns 0 when the arena is full");
     assert_eq(agnostic_response_text_a(tiny, HTTP_OK, str_from("x")), 0, "text_a returns 0 when the arena is full");
+    assert_eq(agnostic_response_error_code_a(tiny, AGNOSTIC_EC_PLUGIN_OFF, str_from("x")), 0,
+      "error_code_a returns 0 when the arena is full");
+}
+
+# Whether the error code `ec` is named `name` and sent with `status`.
+fn _t_code_is(ec, name, status): i64 {
+    var got = agnostic_error_code_name(ec);
+    if (got == 0) { return 0; }
+    if (str_eq_cstr(str_from(got), name) != 1) { return 0; }
+    if (agnostic_error_code_status(ec) != status) { return 0; }
+    return 1;
+}
+
+fn test_error_codes() {
+    test_group("http/error-codes");
+
+    # ⭐ The catalogue is closed (0.1.13, H5): exactly these four codes, numbered from 1
+    # with no gap, each with its status. A client switches on `code`, so a code added,
+    # renamed or re-statused is an API change — and fails here first.
+    assert_eq(_t_code_is(AGNOSTIC_EC_PLUGIN_UNKNOWN, "plugin_unknown", HTTP_FORBIDDEN), 1, "1 is plugin_unknown, 403");
+    assert_eq(_t_code_is(AGNOSTIC_EC_PLUGIN_OFF, "plugin_off", HTTP_FORBIDDEN), 1, "2 is plugin_off, 403");
+    assert_eq(_t_code_is(AGNOSTIC_EC_PLUGIN_FORBIDDEN, "plugin_forbidden", HTTP_FORBIDDEN), 1,
+      "3 is plugin_forbidden, 403");
+    assert_eq(_t_code_is(AGNOSTIC_EC_REVISION, "revision", AGNOSTIC_HTTP_PRECONDITION_FAILED), 1, "4 is revision, 412");
+
+    # A caller listing the codes stops at the first unlisted value.
+    var n = 0;
+    while (agnostic_error_code_name(n + 1) != 0) { n = n + 1; }
+    assert_eq(n, 4, "listed from 1, the catalogue holds exactly four codes");
+
+    # ⭐ NO GAP, AND NOTHING PAST THE LAST. A code placed past an unlisted value (a fifth at
+    # 6, say) would be sent but never listed — the schema would not show it. The table rules
+    # that out by construction: a code is row `ec - 1`, a row is written only as the next
+    # one, and every lookup is bounds-checked against the row count. So these pin the
+    # construction rather than scan for its absence.
+    #
+    # The build refused no code. One added out of sequence (a fifth at 6, or at 70000) is
+    # refused a row, so it is never sent unlisted, but every use of it would be a 500; it
+    # fails here instead.
+    assert_eq(_agnostic_ec_refused, 0, "the build refused no code");
+    # A gap, a repeat, or a row past the storage cannot be written at all, and each refusal
+    # is counted.
+    assert_eq(_agnostic_ec_add(n, n + 2, "gap", HTTP_FORBIDDEN), n, "a code past a gap is refused a row");
+    assert_eq(_agnostic_ec_add(n, n, "again", HTTP_FORBIDDEN), n, "and so is a code repeating the last");
+    var cap = AGNOSTIC_ECROW_TABLE_BYTES / AGNOSTIC_ECROW_SIZE;
+    assert_eq(_agnostic_ec_add(cap, cap + 1, "full", HTTP_FORBIDDEN), cap, "and a row past the storage");
+    assert_eq(_agnostic_ec_refused, 3, "each refusal counted");
+
+    # The one bounds check every reader goes through gives no row at 0 or past the last. The
+    # table's unused rows read as zero, so a bound one row late would pass every name and
+    # status lookup; only the row itself shows it.
+    assert_eq(_agnostic_error_code_row(0), 0, "no row for 0");
+    assert_eq(_agnostic_error_code_row(n + 1), 0, "nor for the value past the last code");
+
+    # And no value outside 1 through n answers, however large. Probed at every power of two,
+    # either side of it, and negated, so a lookup that truncated or wrapped a value (2^32 + 1
+    # read as 1, say) fails here. "Outside" holds whether `<` is signed or not: either way a
+    # negative value is outside.
+    var stray = 0;
+    var b = 0;
+    while (b < 64) {
+        var d = 0;
+        while (d < 3) {
+            var v = (1 << b) + d - 1;
+            var sign = 0;
+            while (sign < 2) {
+                if (((v < 1) || (v > n))
+                  && ((agnostic_error_code_name(v) != 0) || (agnostic_error_code_status(v) != 0))) {
+                    stray = stray + 1;
+                }
+                v = 0 - v;
+                sign = sign + 1;
+            }
+            d = d + 1;
+        }
+        b = b + 1;
+    }
+    assert_eq(stray, 0, "no value but 1 through n is a code, at any power of two or beside one");
+    var dup = 0;
+    var i = 1;
+    while (i <= n) {
+        if (agnostic_error_code_status(i) == 0) { dup = dup + 100; }
+        var j = i + 1;
+        while (j <= n) {
+            if (str_eq_cstr(str_from(agnostic_error_code_name(i)), agnostic_error_code_name(j)) == 1) { dup = dup + 1; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(dup, 0, "every name is distinct and every code has a status");
+    assert_eq(agnostic_error_code_name(0), 0, "0 is not a code");
+    assert_eq(agnostic_error_code_status(0), 0, "and has no status");
+    assert_eq(agnostic_error_code_name(5), 0, "nor is the value past the last");
+    assert_eq(agnostic_error_code_status(5), 0, "which has no status either");
+    assert_eq(agnostic_error_code_name(0 - 1), 0, "nor a negative value");
+
+    # The wire: `{error, code}`, in that order, sent with the catalogue's status.
+    var a = arena_allocator(65536);
+    var r = agnostic_response_error_code_a(a, AGNOSTIC_EC_REVISION, str_from("read it again"));
+    assert_eq(agnostic_response_status(r), AGNOSTIC_HTTP_PRECONDITION_FAILED,
+      "a coded refusal takes its status from the catalogue");
+    assert_eq(str_eq_cstr(_t_body(a, r), "{\"error\":\"read it again\",\"code\":\"revision\"}"), 1,
+      "and its body is {error, code}");
+    var off = agnostic_response_error_code_a(a, AGNOSTIC_EC_PLUGIN_OFF, str_from("off"));
+    assert_eq(agnostic_response_status(off), HTTP_FORBIDDEN, "plugin_off is a 403");
+    assert_eq(str_eq_cstr(_t_body(a, off), "{\"error\":\"off\",\"code\":\"plugin_off\"}"), 1, "naming plugin_off");
+
+    # ⭐ FAIL CLOSED. A value the catalogue does not list is a 500 with no `code` — never a
+    # refusal carrying an empty or invented one, and never the caller's message.
+    var bad = agnostic_response_error_code_a(a, 99, str_from("looks like a refusal"));
+    assert_eq(agnostic_response_status(bad), HTTP_INTERNAL, "an unlisted code answers 500");
+    assert_eq(str_eq_cstr(_t_body(a, bad), "{\"error\":\"unknown error code\"}"), 1, "with no code field");
+    assert_eq(agnostic_response_status(agnostic_response_error_code_a(a, 0, str_from("x"))), HTTP_INTERNAL,
+      "and so does 0");
+    # The value just past the last code, through the constructor itself: the table's unused
+    # rows read as zero, so a bound one row late would answer name and status 0 — passing
+    # every lookup above — and send a refusal with status 0 and no code.
+    var past = agnostic_response_error_code_a(a, n + 1, str_from("x"));
+    assert_eq(agnostic_response_status(past), HTTP_INTERNAL, "and so does the value past the last code");
+    assert_eq(str_eq_cstr(_t_body(a, past), "{\"error\":\"unknown error code\"}"), 1, "with no code field either");
 }
 
 fn test_health_liveness() {
@@ -200,6 +320,7 @@ fn main() {
     test_reason_phrases();
     test_response_constructors();
     test_response_arena_exhaustion();
+    test_error_codes();
     test_health_liveness();
     test_ready_no_checks();
     test_ready_all_pass();

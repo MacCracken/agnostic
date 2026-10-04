@@ -13,10 +13,10 @@
 # crews and identity — `src/engine/store.cyr` says why one handle and one file. `skey`
 # carries the table's one index, because it is the only column anything looks up by.
 #
-# ⚠ **`COL_STR` is a fixed 256-byte slot that truncates SILENTLY** (`handoff.md` §5).
-# A cut key is a different key and a cut value is a different value, so both are
-# refused at the door rather than discovered on read: keys are `[a-z0-9][a-z0-9._-]*`
-# and at most `AGNOSTIC_SETTINGS_KEY_MAX` bytes, values at most
+# ⚠ **`COL_STR` is a fixed 256-byte slot, and patra REFUSES a longer value** (`handoff.md`
+# §5); before patra's 2026-08-18 audit it truncated silently, and a cut key was a different
+# key. Both are refused at the door, before the store is touched: keys are
+# `[a-z0-9][a-z0-9._-]*` and at most `AGNOSTIC_SETTINGS_KEY_MAX` bytes, values at most
 # `AGNOSTIC_SETTINGS_VALUE_MAX`.
 #
 # ## ⛔ The store lock, as everywhere else

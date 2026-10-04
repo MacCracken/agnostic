@@ -157,6 +157,26 @@ else
     printf '%s\n' "$out"
 fi
 
+# --- the agent skill: valid frontmatter, and only what the API schema says (0.1.13) ---
+# `skills/agnostic/SKILL.md` teaches a coding agent the HTTP API. Nothing compiles it, and
+# the server ignores a query parameter no handler reads, so a skill that spells the event
+# cursor `?since=` instead of `?after=` fails nowhere: the agent silently re-reads the whole
+# window on every poll. The roadmap's own H3 and H6 entries made that mistake. This checks
+# every route, method, query parameter, header, response example and marked list in the
+# skill against `docs/api/generated/schema.json`, which `tests/api_schema.tcyr` keeps equal
+# to the server's own tables — so it needs no build, and runs before CI's.
+#
+# Mutation-verified: `?since=`, a renamed route, a wrong method, a misspelled header, an
+# extra or missing key in a response example, a status or refused field the skill leaves
+# out (or the schema gains), and an uppercase `name` each fail by name.
+if ! out=$(python3 scripts/check-skill.py 2>&1); then
+    note "skill: skills/*/SKILL.md says something docs/api/generated/schema.json does not, or its frontmatter is invalid"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    fail=1
+else
+    printf '%s\n' "$out"
+fi
+
 # --- vet + deny: the dependency gates ------------------------------------
 if ! cyrius vet src/main.cyr >/dev/null 2>&1; then
     note "vet: src/main.cyr"
@@ -291,6 +311,37 @@ else
     printf '%s\n' "$out"
 fi
 
+# --- the API schema snapshot (0.1.13, ADR 0015) ------------------------------
+# `docs/api/generated/schema.json` is `agnostic api schema`'s output, committed: an API change
+# regenerates it in the same change. This runs `gen-api-schema.sh --check` — the binary's real
+# argument path — on `build/agnostic` when that binary is newer than src/ and cyrius.cyml.
+# **It never builds**: a build re-provisions lib/ and may rewrite the lock, and CI runs this
+# script before its Build step. So with no binary, or one older than a source edit, it says so
+# and skips — nothing is unchecked by that: `tests/api_schema.tcyr` compiles the generator
+# fresh and compares it with the snapshot on every `cyrius test`, and CI runs this same check
+# on the DCE binary right after its build (`.github/workflows/ci.yml`, "API schema matches the
+# snapshot").
+#
+# ⚠ lib/ is NOT in the freshness test: `cyrius deps`, `cyrius test` and `cyrius build` all
+# rewrite it, so its times say nothing about its content and the check would always skip. A
+# binary that predates a lib/ CONTENT change (a dep or toolchain bump) can therefore fail
+# here when the snapshot is current — rebuild it and re-run.
+#
+# Mutation-verified: one changed value in the snapshot fails this with the diff.
+_api_bin="build/agnostic"
+if [ ! -x "$_api_bin" ]; then
+    echo "gen-api-schema: skipped — no $_api_bin to ask (tests/api_schema.tcyr checks the source)"
+elif [ -n "$(find src cyrius.cyml -newer "$_api_bin" -print -quit 2>/dev/null)" ]; then
+    echo "gen-api-schema: skipped — $_api_bin is older than src/ or cyrius.cyml; rebuild to check it"
+elif ! out=$(./scripts/gen-api-schema.sh --check --bin "$_api_bin" 2>&1); then
+    note "gen-api-schema: docs/api/generated/schema.json differs from what $_api_bin prints —"
+    note "  the API changed (regenerate it), or the binary predates a lib/ change (rebuild it)"
+    printf '%s\n' "$out" | head -30 | sed 's/^/      /'
+    fail=1
+else
+    printf '%s\n' "$out"
+fi
+
 # --- the WebGUI's JavaScript (0.1.9) ---------------------------------------
 # The shell's host-bridge gate and each plugin's logic run under Node, against the pages'
 # own bytes (`tests/webgui/`). Until 0.1.9 that logic was tested once, by hand, and the
@@ -309,4 +360,4 @@ if [ "$fail" -ne 0 ]; then
     echo "cleanliness check FAILED"
     exit 1
 fi
-echo "cleanliness check OK — fmt, lint, doc, log lengths, store lock, vet, deny, deps --verify, lib snapshot, generated sources, webgui js all clean"
+echo "cleanliness check OK — fmt, lint, doc, log lengths, store lock, skill, vet, deny, deps --verify, lib snapshot, generated sources, api schema, webgui js all clean"

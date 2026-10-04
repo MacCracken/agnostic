@@ -4,6 +4,10 @@
 # died is GONE, not resumable, so persisting non-terminal state would load a
 # crew on the next start that claims to be running and never will be. Writing
 # only terminal outcomes removes that rather than guarding it.
+#
+# And since 0.1.13 (ADR 0013), what a restart does to a crew that was in flight:
+# its status-less in-flight row is turned into a terminal INTERRUPTED outcome by
+# the start-up sweep, and every outcome write clears the row it discharges.
 include "src/app.cyr"
 
 var _T_CREWDB = "/tmp/agnostic-crewstore-suite.patra";
@@ -49,7 +53,8 @@ fn test_non_terminal_is_refused() {
     # A PENDING or RUNNING crew belongs to a thread that dies with the process.
     # Storing one would mean the next start loads a crew that claims to be
     # running and never will be — and the ledger's terminal latch could never
-    # correct it, because the wrong value would be latched first.
+    # correct it, because the wrong value would be latched first. What a restart
+    # does with such a crew is INTERRUPTED (0.1.13), which is terminal.
     assert_eq(agnostic_crews_save(str_from("p"), str_from("n"), AGNOSTIC_CREW_PENDING, doc), 0,
       "a PENDING crew is refused");
     assert_eq(agnostic_crews_save(str_from("r"), str_from("n"), AGNOSTIC_CREW_RUNNING, doc), 0,
@@ -65,7 +70,10 @@ fn test_non_terminal_is_refused() {
       "FAILED is stored");
     assert_eq(agnostic_crews_save(str_from("x"), str_from("n"), AGNOSTIC_CREW_CANCELLED, doc), 1,
       "CANCELLED is stored");
-    assert_eq(agnostic_crews_count(), 3, "three terminal outcomes");
+    # 0.1.13 (ADR 0013): the status the start-up sweep writes is terminal, so it is stored too.
+    assert_eq(agnostic_crews_save(str_from("i"), str_from("n"), AGNOSTIC_CREW_INTERRUPTED, doc), 1,
+      "INTERRUPTED is stored");
+    assert_eq(agnostic_crews_count(), 4, "four terminal outcomes");
 }
 
 fn test_a_row_is_written_once() {
@@ -169,6 +177,323 @@ fn test_a_cancelled_crew_is_rewritten_with_its_results() {
     agnostic_ledger_reset();
 }
 
+# --- crews in flight across a restart (0.1.13, ADR 0013) -----------------------
+
+# Close the store and open it again — a different handle, nothing carried in memory.
+fn _t_reopen() {
+    agnostic_store_close();
+    patra_init();
+    agnostic_store_open(str_from(_T_CREWDB));
+    agnostic_crews_ensure();
+    return 0;
+}
+
+# A crew row naming `id` in `scope`, every other field empty.
+fn _t_row(a, id, scope) {
+    var row = agnostic_crew_row_new_a(a);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_CREW_ID, str_from(id));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_SCOPE, str_from(scope));
+    return row;
+}
+
+# The outcome stored for `id`, parsed in `a`, or 0.
+fn _t_doc(a, id) {
+    var d = agnostic_crews_doc_a(a, str_from(id));
+    if (d == 0) { return 0; }
+    return bayan_json_v_parse_buf_a(a, str_data(d), str_len(d));
+}
+
+fn test_inflight_is_cleared_by_the_outcome() {
+    test_group("crewstore/inflight");
+
+    _t_open();
+    var a = arena_allocator(262144);
+    var id = "66666666-6666-4666-8666-666666666666";
+    assert_eq(agnostic_crews_inflight_count(), 0, "nothing is in flight on a fresh store");
+    assert_eq(agnostic_crews_mark_inflight(str_from(id), str_from("acme"), str_from("job"), 1000, 2,
+        str_from("live"), str_from("sequential")), 1, "an accepted crew is marked in flight");
+    assert_eq(agnostic_crews_inflight_count(), 1, "and counted");
+    assert_eq(agnostic_crews_count(), 0, "with no outcome: the mark is not one");
+
+    # ⭐ The outcome discharges it — in the same critical section, so no caller has to.
+    var row = _t_row(a, id, "acme");
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_COMPLETED);
+    var doc = str_from("{\"crew_id\":\"66666666-6666-4666-8666-666666666666\",\"status\":\"completed\"}");
+    assert_eq(agnostic_crews_save_row(row, doc), 1, "its outcome is written");
+    assert_eq(agnostic_crews_inflight_count(), 0, "⭐ and the crew is no longer in flight");
+    assert_eq(str_eq(agnostic_crews_doc_a(a, str_from(id)), doc), 1, "the outcome reads back byte for byte");
+}
+
+# A crew that finishes before the submit path marks it: the outcome is stored first, so the
+# mark must write nothing — or the next start would call a finished crew interrupted.
+fn test_a_finished_crew_is_never_marked() {
+    test_group("crewstore/inflight-after-outcome");
+
+    _t_open();
+    var a = arena_allocator(262144);
+    var id = "77777777-7777-4777-8777-777777777777";
+    var row = _t_row(a, id, "_");
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_COMPLETED);
+    agnostic_crews_save_row(row, str_from("{\"status\":\"completed\"}"));
+    assert_eq(agnostic_crews_mark_inflight(str_from(id), str_from("_"), str_from("fast"), 1000, 1, 0, 0), 2,
+      "⭐ marking a crew whose outcome is already stored writes nothing, and says so");
+    assert_eq(agnostic_crews_inflight_count(), 0, "so it is not in flight");
+}
+
+# ⭐ THE SWEEP. Two crews were accepted and the process died before either had an outcome.
+# The next start turns each into a terminal INTERRUPTED outcome that keeps what was known
+# at submit — and never says when it finished, because it did not.
+fn test_the_sweep_interrupts_what_was_in_flight() {
+    test_group("crewstore/sweep");
+
+    _t_open();
+    agnostic_ledger_reset();
+    var a = arena_allocator(1048576);
+    var ida = "88888888-8888-4888-8888-888888888881";
+    var idb = "88888888-8888-4888-8888-888888888882";
+    var sub = 1759000000123;
+    agnostic_crews_mark_inflight(str_from(ida), str_from("acme"), str_from("nightly sweep"), sub, 3,
+      str_from("live"), str_from("sequential"));
+    agnostic_crews_mark_inflight(str_from(idb), str_from("_"), str_from("adhoc"), sub + 1, 1,
+      str_from("placeholder"), str_from("parallel"));
+
+    # The process died: a different handle, an empty ledger.
+    _t_reopen();
+    agnostic_ledger_reset();
+    assert_eq(agnostic_crews_inflight_count(), 2, "both crews are still in flight on disk");
+    assert_eq(agnostic_crews_interrupt_inflight(), 2, "⭐ the start-up sweep interrupts both");
+
+    var d = _t_doc(a, ida);
+    assert_neq(d, 0, "the crew has a stored outcome now, not a 404");
+    if (d == 0) { return 0; }   # the reads below need it; the failure is named above
+    assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_STATUS), "interrupted"), 1, "status interrupted");
+    assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_CREW_ID), ida), 1, "under its own id");
+    var res = bayan_json_v_obj_get_by_str(d, AGNOSTIC_JK_RESULTS);
+    assert_eq(bayan_json_v_is_arr(res), 1, "results is an array");
+    assert_eq(bayan_json_v_arr_len(res), 0, "and empty: agnostic held no result mid-run");
+    assert_eq(agnostic_req_int(d, AGNOSTIC_JK_TASK_COUNT, 0 - 1), 0, "task_count 0");
+    assert_eq(agnostic_req_int(d, AGNOSTIC_JK_TASKS_SUB, 0 - 1), 3, "tasks_submitted 3, as accepted");
+    assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_NAME), "nightly sweep"), 1, "its name");
+    assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_CREW_SCOPE), "acme"), 1, "its scope");
+    assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_MODE), "live"), 1, "its engine mode");
+    assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_PROCESS), "sequential"), 1, "its process");
+    assert_eq(agnostic_req_int(d, AGNOSTIC_JK_SUBMITTED_AT, 0 - 1), sub, "and when it was accepted");
+    assert_eq(bayan_json_v_obj_get_by_str(d, AGNOSTIC_JK_FINISHED_AT), 0,
+      "⭐ no finished_at: it did not finish, and the downtime is not run time");
+    assert_eq(bayan_json_v_obj_get_by_str(d, AGNOSTIC_JK_STARTED_AT), 0, "no started_at: not known");
+    assert_eq(agnostic_req_int(d, AGNOSTIC_JK_INTERRUPTED_AT, 0 - 1) > 0, 1, "interrupted_at says when it was declared");
+    var usage = bayan_json_v_obj_get_by_str(d, AGNOSTIC_JK_USAGE);
+    assert_eq(agnostic_req_int(usage, AGNOSTIC_JK_METERED, 0 - 1), 0, "usage: nothing metered");
+    var err = agnostic_req_str(d, AGNOSTIC_JK_ERROR);
+    assert_neq(err, 0, "an error says why");
+    assert_eq(str_contains(err, str_from("restarted")), 1, "— the server restarted");
+    var db = _t_doc(a, idb);
+    assert_neq(db, 0, "the other crew has an outcome too");
+    if (db == 0) { return 0; }
+    assert_eq(str_eq_cstr(agnostic_req_str(db, AGNOSTIC_JK_STATUS), "interrupted"), 1, "the other crew is interrupted too");
+    assert_eq(str_eq_cstr(agnostic_req_str(db, AGNOSTIC_JK_CREW_SCOPE), "_"), 1, "in its own scope");
+
+    var rows = agnostic_crews_index_in_a(a, str_from("acme"));
+    assert_eq(vec_len(rows), 1, "it is listed, from the durable index");
+    if (vec_len(rows) != 1) { return 0; }
+    var row = vec_get(rows, 0);
+    assert_eq(agnostic_crew_row_get(row, AGNOSTIC_CR_STATUS), AGNOSTIC_CREW_INTERRUPTED, "as interrupted");
+    assert_eq(agnostic_crew_row_get(row, AGNOSTIC_CR_FINISHED), 0, "with no finishing time");
+    assert_eq(agnostic_crew_row_get(row, AGNOSTIC_CR_TOKENS), 0 - 1, "no tokens known");
+    assert_eq(agnostic_crew_row_get(row, AGNOSTIC_CR_COST), 0 - 1, "no cost known");
+    assert_eq(agnostic_crew_row_get(row, AGNOSTIC_CR_NTASKS), 3, "and its task count");
+    assert_eq(agnostic_crews_inflight_count(), 0, "⭐ nothing is in flight any more");
+    assert_eq(agnostic_ledger_count(), 0, "and the ledger was never seeded from disk");
+
+    # Idempotent: a second start finds nothing to do and changes nothing.
+    var before = agnostic_crews_doc_a(a, str_from(ida));
+    _t_reopen();
+    assert_eq(agnostic_crews_interrupt_inflight(), 0, "a second sweep interrupts nothing");
+    assert_eq(str_eq(agnostic_crews_doc_a(a, str_from(ida)), before), 1, "and the outcome is byte-identical");
+    assert_eq(agnostic_crews_count(), 2, "two outcomes, written once each");
+}
+
+# The process stopped between writing a crew's outcome and deleting its in-flight row —
+# the bare `agnostic_crews_save` is exactly that state. The outcome stands.
+fn test_the_sweep_keeps_an_outcome_already_written() {
+    test_group("crewstore/sweep-keeps-outcome");
+
+    _t_open();
+    var a = arena_allocator(262144);
+    var id = "99999999-9999-4999-8999-999999999999";
+    agnostic_crews_mark_inflight(str_from(id), str_from("_"), str_from("done"), 1000, 1, 0, 0);
+    agnostic_crews_save(str_from(id), str_from("done"), AGNOSTIC_CREW_COMPLETED,
+      str_from("{\"crew_id\":\"99999999-9999-4999-8999-999999999999\",\"status\":\"completed\"}"));
+    assert_eq(agnostic_crews_inflight_count(), 1, "precondition: the outcome is stored and the row is still there");
+    _t_reopen();
+    assert_eq(agnostic_crews_interrupt_inflight(), 0, "⭐ the sweep interrupts nothing that has an outcome");
+    assert_eq(agnostic_crews_inflight_count(), 0, "it only deletes the row");
+    var d = _t_doc(a, id);
+    assert_neq(d, 0, "its outcome is still there");
+    if (d == 0) { return 0; }
+    assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_STATUS), "completed"), 1, "and the crew is still completed");
+}
+
+# ADR 0012 meets ADR 0013: a cancel latches and persists at once, which discharges the
+# in-flight row — so a restart while its last tasks run leaves it cancelled, not interrupted.
+fn test_a_cancelled_crew_stays_cancelled_across_a_restart() {
+    test_group("crewstore/cancel-then-restart");
+
+    _t_open();
+    agnostic_ledger_reset();
+    var a = arena_allocator(262144);
+    var id = str_from("aaaaaaaa-1111-4111-8111-111111111111");
+    var e = agnostic_ledger_record_owned(id, str_from("stopped"), 0, str_from("acme"), 0, 0);
+    assert_eq(agnostic_ledger_mark_inflight(e), 1, "the accepted crew is marked in flight");
+    assert_eq(agnostic_crews_inflight_count(), 1, "and counted");
+    agnostic_ledger_latch(e, AGNOSTIC_CREW_CANCELLED, 0, 0);
+    assert_eq(agnostic_crews_inflight_count(), 0, "the cancel's outcome clears the row");
+
+    _t_reopen();
+    agnostic_ledger_reset();
+    assert_eq(agnostic_crews_interrupt_inflight(), 0, "so a restart interrupts nothing");
+    var d = _t_doc(a, str_data(id));
+    assert_neq(d, 0, "its outcome is still there");
+    if (d == 0) { return 0; }
+    assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_STATUS), "cancelled"), 1, "⭐ the crew is still cancelled");
+}
+
+# --- a name longer than the outcome table's column (0.1.13) ---------------------
+
+# `unit` (a C string) repeated `count` times.
+fn _t_repeat(unit, count) {
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < count) {
+        str_builder_add_cstr(sb, unit);
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
+# An outcome document carrying `name` whole.
+fn _t_named_doc(name) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"");
+    str_builder_add(sb, name);
+    str_builder_add_cstr(sb, "\",\"status\":\"completed\"}");
+    return str_builder_build(sb);
+}
+
+# Whether `s` is a Str and equals `want` — 0, not a fault, when the read found nothing.
+fn _t_is(s, want) {
+    if (s == 0) { return 0; }
+    return str_eq(s, want);
+}
+
+# What `agnostic_crews.cname` holds for `id`, read straight from the table, or 0. Nothing
+# in agnostic reads that column; this is how the suite sees where a name was cut.
+fn _t_cname_a(a, id) {
+    agnostic_store_lock();
+    var r = 0;
+    var db = agnostic_store_db();
+    var st = 0;
+    if (db != 0) { st = patra_prepare(db, "SELECT cname FROM agnostic_crews WHERE crew_id = ?"); }
+    if (st != 0) {
+        patra_bind_text(st, 0, str_data(id), str_len(id));
+        var rs = patra_query_prepared(db, st);
+        patra_finalize(st);
+        if (rs != 0) {
+            if (patra_result_count(rs) == 1) { r = _agnostic_crews_str_a(a, rs, 0, 0); }
+            patra_result_free(rs);
+        }
+    }
+    agnostic_store_unlock();
+    return r;
+}
+
+# ⭐ A request may name a crew in up to 10,000 characters, and `agnostic_crews.cname` is a
+# patra STR: 255 bytes and a NUL, and patra REFUSES a longer value rather than cut it. Until
+# 0.1.13 such a crew's outcome was never stored. The column is never read, so the store
+# binds at most 255 bytes of it, cut on a character; the document keeps the name whole.
+fn test_a_long_name_is_stored() {
+    test_group("crewstore/long-name");
+
+    _t_open();
+    var a = arena_allocator(262144);
+
+    var id = str_from("bbbbbbbb-1111-4111-8111-111111111111");
+    var name = _t_repeat("x", 300);
+    var doc = _t_named_doc(name);
+    assert_eq(agnostic_crews_save(id, name, AGNOSTIC_CREW_COMPLETED, doc), 1,
+      "⭐ a crew named in 300 bytes is stored");
+    assert_eq(_t_is(agnostic_crews_doc_a(a, id), doc), 1, "its document reads back byte for byte, the whole name in it");
+    assert_eq(_t_is(_t_cname_a(a, id), str_sub(name, 0, 255)), 1, "the name column holds its first 255 bytes");
+
+    var id2 = str_from("bbbbbbbb-2222-4222-8222-222222222222");
+    var exact = _t_repeat("y", 255);
+    assert_eq(agnostic_crews_save(id2, exact, AGNOSTIC_CREW_COMPLETED, _t_named_doc(exact)), 1,
+      "a name of exactly 255 bytes is stored");
+    assert_eq(_t_is(_t_cname_a(a, id2), exact), 1, "and kept whole");
+
+    # 4-byte characters: 255 = 63 × 4 + 3, so a cut at 255 would split the 64th.
+    var id3 = str_from("bbbbbbbb-3333-4333-8333-333333333333");
+    var emoji = _t_repeat("\xf0\x9f\x98\x80", 80);
+    var edoc = _t_named_doc(emoji);
+    assert_eq(str_len(emoji), 320, "precondition: 80 characters in 320 bytes");
+    assert_eq(agnostic_crews_save(id3, emoji, AGNOSTIC_CREW_FAILED, edoc), 1, "⭐ a multi-byte name is stored");
+    assert_eq(_t_is(agnostic_crews_doc_a(a, id3), edoc), 1, "its document reads back byte for byte");
+    assert_eq(_t_is(_t_cname_a(a, id3), str_sub(emoji, 0, 252)), 1,
+      "⭐ the column holds 63 whole characters: the cut backs off to before the one it would split");
+
+    # 3-byte characters: 255 = 85 × 3, so the 86th starts exactly at the cut.
+    var id4 = str_from("bbbbbbbb-4444-4444-8444-444444444444");
+    var euro = _t_repeat("\xe2\x82\xac", 100);
+    assert_eq(agnostic_crews_save(id4, euro, AGNOSTIC_CREW_COMPLETED, _t_named_doc(euro)), 1, "a 300-byte name of 3-byte characters is stored");
+    assert_eq(_t_is(_t_cname_a(a, id4), str_sub(euro, 0, 255)), 1,
+      "and a cut that falls between characters keeps all 255 bytes");
+    assert_eq(agnostic_crews_count(), 4, "four outcomes");
+}
+
+# ⭐ What the defect did after 0.1.13's in-flight table: the mark (cname TEXT) was written but
+# the outcome never was, so every start retried the crew and logged an ERROR, forever.
+fn test_the_sweep_interrupts_a_long_named_crew() {
+    test_group("crewstore/long-name-sweep");
+
+    _t_open();
+    agnostic_ledger_reset();
+    var a = arena_allocator(1048576);
+    var ida = "cccccccc-1111-4111-8111-111111111111";
+    var idb = "cccccccc-2222-4222-8222-222222222222";
+    var lname = _t_repeat("z", 300);
+    var multi = _t_repeat("\xc3\xa9", 150);   # é, 2 bytes: 300 bytes, a cut at 255 inside one
+    assert_eq(agnostic_crews_mark_inflight(str_from(ida), str_from("acme"), lname, 1000, 2,
+        str_from("live"), str_from("sequential")), 1, "a crew named in 300 bytes is marked in flight");
+    assert_eq(agnostic_crews_mark_inflight(str_from(idb), str_from("_"), multi, 1001, 1,
+        str_from("live"), str_from("parallel")), 1, "and so is one named in 150 two-byte characters");
+
+    _t_reopen();
+    agnostic_ledger_reset();
+    assert_eq(agnostic_crews_inflight_count(), 2, "both are still in flight on disk");
+    assert_eq(agnostic_crews_interrupt_inflight(), 2, "⭐ the sweep interrupts both");
+    assert_eq(agnostic_crews_inflight_count(), 0, "⭐ and nothing is left in flight for the next start to retry");
+
+    var d = _t_doc(a, ida);
+    assert_neq(d, 0, "the long-named crew has a stored outcome");
+    if (d == 0) { return 0; }
+    assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_STATUS), "interrupted"), 1, "status interrupted");
+    assert_eq(_t_is(agnostic_req_str(d, AGNOSTIC_JK_NAME), lname), 1, "⭐ with its whole name, not the column's 255 bytes");
+    var db = _t_doc(a, idb);
+    assert_neq(db, 0, "the multi-byte-named crew has one too");
+    if (db == 0) { return 0; }
+    assert_eq(_t_is(agnostic_req_str(db, AGNOSTIC_JK_NAME), multi), 1, "with its whole name");
+
+    var rows = agnostic_crews_index_in_a(a, str_from("acme"));
+    assert_eq(vec_len(rows), 1, "it is listed");
+    if (vec_len(rows) != 1) { return 0; }
+    assert_eq(_t_is(agnostic_crew_row_get(vec_get(rows, 0), AGNOSTIC_CR_NAME), lname), 1,
+      "under its whole name: the listing reads its own column");
+
+    _t_reopen();
+    assert_eq(agnostic_crews_interrupt_inflight(), 0, "a second start has nothing to retry");
+    assert_eq(agnostic_crews_count(), 2, "two outcomes, written once each");
+}
+
 fn test_no_database_is_not_a_silent_success() {
     test_group("crewstore/no-db");
 
@@ -182,6 +507,10 @@ fn test_no_database_is_not_a_silent_success() {
         str_from("{}")), 0, "saving without a database reports failure");
     assert_eq(agnostic_crews_doc_a(a, str_from("z")), 0, "and nothing reads back");
     assert_eq(agnostic_crews_count(), 0, "and the count is 0, not a fault");
+    # 0.1.13: with no store, nothing is marked in flight and there is nothing to sweep.
+    assert_eq(agnostic_crews_mark_inflight(str_from("z"), 0, 0, 1, 1, 0, 0), 0, "marking reports failure");
+    assert_eq(agnostic_crews_inflight_count(), 0, "nothing is in flight");
+    assert_eq(agnostic_crews_interrupt_inflight(), 0, "and the sweep interrupts nothing, without a fault");
 }
 
 fn test_patra_init_leaves_the_log_level_alone() {
@@ -216,6 +545,13 @@ fn main() {
     test_a_row_is_written_once();
     test_outcomes_survive_a_reopen();
     test_a_cancelled_crew_is_rewritten_with_its_results();
+    test_inflight_is_cleared_by_the_outcome();
+    test_a_finished_crew_is_never_marked();
+    test_the_sweep_interrupts_what_was_in_flight();
+    test_the_sweep_keeps_an_outcome_already_written();
+    test_a_cancelled_crew_stays_cancelled_across_a_restart();
+    test_a_long_name_is_stored();
+    test_the_sweep_interrupts_a_long_named_crew();
     test_no_database_is_not_a_silent_success();
     agnostic_store_close();
     test_patra_init_leaves_the_log_level_alone();

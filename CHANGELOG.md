@@ -4,6 +4,985 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.13] — 2026-10-04
+
+**A crew a restart cut short is `interrupted`, and the binary describes its own HTTP API** — a crew
+accepted and never finished when the process stopped is, from the next start, in the terminal status
+`interrupted` instead of a 404 (H4, ADR 0013; ⚠ a new status value on the wire, and one agnostic
+process per database file is now load-bearing); `agnostic api schema` prints the HTTP API as one JSON
+document built from the server's own tables, and a committed snapshot the suite and CI check freezes
+it (H5, ADR 0015; ⚠ the binary now reads its arguments, and one it does not know exits 2 where 0.1.12
+ignored it and served); `skills/agnostic/SKILL.md` teaches a coding agent to drive agnostic, checked
+against that schema (H6); and Swarm Command 0.5.0 prices one agent at the swarm's own token spend
+beside every estimate, labelled SIM, with every existing estimate unchanged bit for bit (B3, ADR
+0014). H3 is closed with no wire change: 0.1.9 already delivered the event cursor's gap as `missed`,
+now pinned over HTTP and in both views. Two older defects H4 found are fixed: the audit chain links
+across a restart, where each process's first entry named no predecessor and the next start reported
+an untouched trail as altered (⚠ a trail written before 0.1.13 keeps its breaks); and a crew named
+over 255 bytes stores its outcome, where none was stored and it answered 404 after a restart.
+
+**31 suites, 2,347 assertions, 0 failed** — on x86_64 under the 6.6.14 pin and natively on aarch64
+(a Raspberry Pi, Ubuntu 26.04.1) — plus **77 JavaScript tests** under Node; 0.1.12 had 29, 1,885 and
+61. Cyrius 6.6.14, agnosai 2.1.4 and libro 2.10.6 are unchanged from 0.1.12, and `lib/` and
+`cyrius.lock` are byte-identical to it.
+
+### Added — a crew a restart interrupted answers `interrupted`, not 404 (H4, ADR 0013)
+
+- **Status `interrupted`.** A crew that was accepted and had no stored outcome when the process
+  stopped is, from the next start, in the terminal status `interrupted`. `GET /api/v1/crews/{id}`
+  answers it with 200, the listing shows it, and the audit trail records it. It is
+  `AGNOSTIC_CREW_INTERRUPTED` = 6. The number is stored in `cstatus`, so it was appended, and no
+  status is ever renumbered. `agnostic_status_is_terminal`, `agnostic_outcome_is_terminal` and
+  `agnostic_crew_status_to_wire` know it. The ledger never holds it.
+- **`agnostic_crew_inflight`, the ninth table.** Submit writes one row per accepted crew: its id,
+  scope, name, `submitted_at`, task count, engine mode and process. The row has **no status
+  column** and **no index**.
+  - `_agnostic_crews_save_row_locked` deletes the row in the critical section that writes the
+    crew's outcome, so the cancel latch, the collector and a poll all clear it.
+  - `agnostic_crews_mark_inflight` writes nothing for a crew whose outcome is already stored, so a
+    crew that finishes before it is marked leaves no row.
+  - If the mark cannot be written, it is logged at ERROR and the crew still runs, the same rule
+    `_agnostic_ledger_persist` follows.
+- **The start-up sweep (`agnostic_crews_interrupt_inflight`).** `agnostic_serve_mount` runs it after
+  the audit chain opens and before the server listens, so no request (`/ready` included) is
+  answered until it is done. For each row left, it writes a terminal outcome through the ordinary
+  write-once path (`agnostic_crews_interrupt_row`), with a listing row and a **`crew.interrupted`**
+  audit entry (WARNING, `crew_id=…`), and logs the count at WARN.
+  - A crew whose outcome was already written keeps it, and only its row is deleted.
+  - A write that fails keeps its row for the next start.
+- **What an interrupted crew says.** Its document has `results: []`, `task_count` 0, zero `usage`,
+  and an `error`: "the server restarted before this crew's outcome was recorded; its work was
+  lost". It keeps `name`, `scope`, `engine_mode`, `process`, `tasks_submitted` and `submitted_at`,
+  and adds **`interrupted_at`**. It has **no `started_at` and no `finished_at`**, because the
+  downtime is not run time. There are no finished-task results to keep: while a crew runs,
+  agnostic holds none.
+- **`GET /api/v1/crews?status=interrupted`**, and the 422 text lists it.
+
+### Added — Swarm Command 0.5.0: one agent at the same token spend, beside every estimate (B3, ADR 0014)
+
+- **A one-agent baseline in every estimate.** On each of the estimator's seeds, `estimateSpec` now
+  also runs `soloRun`: one agent working the swarm's own plan for that seed — the same tasks and
+  fan-out counts, built by the same `sc.build` on the same RNG — one task at a time. Each task gets
+  its role's model, rate, tools and region, under the same failure model. There is no orchestrator,
+  no coordination and nothing in parallel.
+  - **Its budget is the tokens the swarm spent on that seed**, paired run by run. A work step, or a
+    tool result larger than what is left, is cut where they run out, for its share of the work, so
+    a run that ran out spent all of them. What is left counts as unreached. Ratios to the swarm are
+    taken per seed, then the p50.
+  - It is **its own model, not the Sim with one agent allowed** (`maxActive = 1` is still a swarm:
+    an orchestrator, coordinating leads, a fresh agent per sub-task). Every number it restates from
+    the Sim's agent — 34, in 20 entries, from eleven Sim methods — is in one `SOLO` block, each
+    entry naming its method; a test fails, naming the entry, when the Sim's own number changes.
+  - A fan-out lead that fails before its split never makes its parts, as in the Sim, which creates
+    them at the split: one task failed, as the swarm counts it.
+- **Stored as `estimate.solo`**: tokens, cost and time (p50; cost also min and max, time also max),
+  the ratios to the swarm, failed and unreached tasks per run, and how many runs ran out of tokens
+  or were cut off. `normalizeEstimate` reads it back, clamped. An estimate saved by 0.4 reads back
+  with `solo: null`. There is no spec version change, and it adds about 330 bytes to a swarm.
+- **Shown, labelled SIM.**
+  - The library card adds a line: "1 agent, same tokens: ≈ $X · mm:ss (N× the swarm's time)", and
+    "out of tokens in k (x.x tasks left / run)" when that happened, since such a run's time and
+    cost cover only the work it did. That last part is not coloured as a warning: it is the
+    baseline's own outcome.
+  - The editor adds a **ONE AGENT, SAME TOKENS** box: cost, duration and tokens against the
+    swarm's, failed tasks, runs out of tokens, tasks left, and a fixed note. The note says what it
+    assumes and what it does not model: the quality of an answer, and the context each new agent
+    reads in; and that a run that ran out stops there. The heading's tooltip states the evidence.
+    The box is built by `soloBox`, a pure function the tests reach.
+  - An estimate without a baseline shows "No one-agent baseline in this estimate — Σ Estimate
+    again."
+- **Why.** Tran & Kiela (2026): at equal thinking-token budgets, one agent matches or beats a
+  multi-agent system on multi-hop reasoning. Anthropic (2025): token spend explains about 80% of
+  the variance in multi-agent results.
+- **What it shows**, p50 over eight seeds on the templates: one agent spends 88–98% of the swarm's
+  tokens and 73–93% of its cost, and takes 2.5–8.9× its time. Custom is $0.96 vs $1.33 at 2.5×,
+  refactor $5.28 vs $5.70 at 8.9×, research $4.34 vs $5.22 at 7.6×, incident $3.90 vs $4.83 at
+  6.3×. In this simulator tokens track the work, not the number of agents: orchestration plus
+  coordination is 7–13% of a swarm's tokens. So the token gap shown is a floor, and a per-agent
+  context cost (default 0) is recorded on the roadmap.
+- **Existing estimates are unchanged.** `Sim` is not touched. Every estimate's swarm figures are the
+  same simulations on the same seeds, bit for bit; a test recomputes them, and another pins every
+  template's eight-run estimate to 0.4's.
+- **Swarm Command 0.5.0** also carries H4's change (under Changed below, where it was first
+  numbered 0.4.1; no 0.4.1 was released). The manifest's description names the baseline.
+  `src/webgui_data.cyr` is regenerated: the page is 451,093 bytes, up from 434,017 at 0.1.12
+  (434,503 with H4's change).
+
+### Added — `agnostic api schema`: the binary describes its own HTTP API (H5, ADR 0015)
+
+- **`./build/agnostic api schema`** prints the HTTP API as one JSON document and exits 0. It is
+  built from the tables the server dispatches, authorises and decodes with, so it cannot list a
+  route, field or code the server does not have:
+  - `routes` — 27, one per method of each of the router's 21 rows, in resolution order: method,
+    path, `auth`, `permission`, `min_role`, the `plugin_permissions` that grant it (parsed from
+    the embedded `permissions.json`), the declared `body`, `query` and `headers`, and what the
+    route answers, `ok` and `response` (below). Each grant
+    is `{"name", "self"}`: `self` lists the path parameters it pins to the requesting plugin's own
+    id, so `storage` on the four plugin-data routes says `"self": ["id"]` — the gate's `:self` —
+    rather than claiming every plugin's documents;
+  - `bodies` — the crew, task, agent-definition, login and plugin-switch allow-lists, read from
+    the decoders' own functions, the twelve refused agent fields, and the plugin document's
+    32,768-byte object;
+  - `headers` — the five any request may carry; `errors` — the error body's keys, the four codes
+    from the closed catalogue with their statuses, and the eight rungs of the dispatch ladder;
+  - `vocabularies` — roles, permissions, process, priority, risk, crew status (`interrupted`
+    included, from H4) and its filter, and the plugin permission names. Each wire vocabulary is
+    walked through its `*_to_wire` until the spelling repeats, so a value appended with its own
+    arm is listed with no change to the generator.
+  - Left out on purpose: the version, anything from `AGNOSTIC_*`, `grants` wording, plugin
+    manifests, per-handler 4xx statuses and messages, field types, nested shapes, and response
+    headers other than a document's `ETag`.
+  - It reads no environment, opens no store and starts nothing, and is read before the
+    environment: an invalid `AGNOSTIC_PORT` neither changes it nor stops it. A document that cannot
+    be built whole, or written, exits 1 rather than printing a partial one.
+- **`docs/api/generated/schema.json`**, the output committed, and **`scripts/gen-api-schema.sh`**,
+  which regenerates it (`--check` compares parsed JSON and exits 1 with the diff; `--bin PATH`;
+  it never builds; it stops the binary after 60 seconds, since one that does not answer `api
+  schema` serves instead and would hang CI). [`docs/api/README.md`](docs/api/README.md) says what
+  each part means, what is generated, declared or left out, and the stability rule.
+- **What each route answers** (H5's fourth change). Each route entry ends with `ok`, the statuses it
+  answers with its own body — 202 for a submit, 201 for a new definition, 201 then 200 for a
+  plugin document's upsert, 200 elsewhere, and for `/ready` also 503, since "not ready" is its
+  answer in the same body (ADR 0001) — and `response`, `{"kind", "keys"}`. `kind` is `json` (an
+  object), `html` (the three WebGUI routes) or `document` (a plugin's stored document, verbatim,
+  with its `ETag`). For `json`, `keys` are the object's top-level keys in the order the handler
+  writes them; `key?` marks one a success can leave out (`next` on a last page, `replayed` on a
+  first submit, a crew's `started_at` before it starts, `bad_index` on an intact trail). A crew's
+  `GET` declares five keys every answer has and ten it may carry, since it answers from the ledger,
+  the store, or the record of a crew a restart interrupted. Declared beside the generator, as the
+  handlers build their bodies by hand; a route with no declaration fails the document, so a new
+  route cannot print an empty answer. Cost: +4,306 bytes of code on x86_64 (the file +4,920) and
+  +4,978 on aarch64 (the file +816), against a copy of the tree with only this change reverted,
+  both `CYRIUS_DCE=1`; nothing on the request path calls it.
+- **Three checks.** `tests/api_schema.tcyr` (new, 148) compiles the generator fresh and fails when
+  it differs from the snapshot. CI runs `gen-api-schema.sh --check` on the DCE binary after
+  "Verify ELF" (new step "API schema matches the snapshot"). `scripts/check-clean.sh` runs it too
+  when `build/agnostic` is newer than `src/` — it never builds, so in CI, where it runs before the
+  build, it skips. A second new CI step, "Command line exit codes", runs `help` (0, usage on
+  stdout) and an unknown argument (2, usage on stderr, nothing on stdout) on the binary, which
+  alone has `main`'s dispatch.
+- ⭐ **Every route `permissions.json` grants is now checked against the router**
+  (`api/plugin-vocabulary`). A route renamed in one but not the other used to stop being granted
+  with nothing saying so (ADR 0007); it now fails a named assertion from either side.
+- New modules `src/http/schema.cyr` (the generator) and `src/cli.cyr` (the command line).
+  `agnostic_login_fields_a` and `agnostic_plugin_fields_a` lose their leading `_`: the schema reads
+  them.
+
+### Added — `skills/agnostic/SKILL.md`: driving agnostic from a coding agent (H6)
+
+- **`skills/agnostic/SKILL.md`** is an Agent Skill (frontmatter `name: agnostic` and a
+  `description` saying when to use it) for Claude Code, Codex or any SKILL.md-aware agent. It covers
+  readiness, finding the auth mode, credentials (login, its 429 with no `Retry-After`, API keys no
+  route issues), the Host and JSON-only rules (ADR 0006), submitting a crew with an
+  `Idempotency-Key`, following it with `events?after=` and `missed` (ADR 0009), its outcome, usage
+  and cost, `interrupted` after a restart (ADR 0013), listing, cancelling, presets and agent
+  definitions, and the refusals: 400 for a value (`hierarchical` included), 422 for a shape or a
+  refused field, `unforwarded`, and placeholder `engine_mode`. Its eight guardrails follow herdr's
+  skill: stop when `/ready` fails, cancel only a crew it submitted, fix what an error names instead
+  of guessing, always send an `Idempotency-Key`, and spend only what the user asked for.
+- **`scripts/check-skill.py`**, run by `check-clean.sh` (so in CI's "Cleanliness check"). It checks
+  the skill against `docs/api/generated/schema.json` (H5), which the suite keeps equal to the
+  server's tables, so it needs no build and parses no Cyrius:
+  - the frontmatter is valid Agent Skills frontmatter, and the body is under 500 lines;
+  - every route, method, query parameter and curl header the skill uses is one the schema has for
+    that route. The server ignores a query parameter it does not read, so a misspelled cursor would
+    otherwise fail nowhere;
+  - each response example after a `<!-- schema: response METHOD /path -->` line has only keys the
+    route answers with, and every key it always answers with;
+  - each block after a `<!-- schema: a.b -->` line names every value of that schema list: the crew,
+    agent and task fields, the refused fields, the roles, the crew statuses and their filter, and
+    the process, priority and risk words. A status or field the server gains fails it until the
+    skill says what it means.
+  - Mutation-verified: 22 mutations, each alone, fail by name and the unmutated copy passes —
+    `?since=` for `?after=`, `/cancel` renamed, `POST` for `GET /api/v1/presets`, a curl cancel with
+    no `-X POST`, a misspelled `Idempotency-Key`, `?status=` on the events route, an extra key in
+    the 202 example, `crew_id` missing from the cancel example, a response example that is not JSON,
+    a marker naming a missing route or list, `interrupted` dropped from the filter, a refused field
+    dropped, an uppercase `name`, `<` in the description, the frontmatter's closing `---` gone, an
+    unknown frontmatter key, a body over 500 lines; and against a changed copy of the schema, a new
+    crew status, a new refused field, a renamed cursor and a new always-present key in the 202.
+
+### Fixed — the audit chain links across a restart
+
+Both defects are older than 0.1.13. The first has been there since the trail landed at M4.
+
+- **Each process's first entry now names the entry before it.** `_agnostic_audit_open_locked`
+  started libro's streaming chain with an empty head and never seeded it from the trail it had just
+  loaded. So the first entry each process appended recorded `""`, the genesis link, as its
+  predecessor. The next start's `verify_chain` failed there: the log said "verify: linkage broken"
+  and "audit chain failed verification at open; the store was altered", and `GET /api/v1/audit`
+  answered `intact: false` for a file nobody had touched. Any audited action after a restart did
+  this, and the sweep's `crew.interrupted` entries (H4, above) would have done it at every start
+  that found one. The open now sets the head to the last loaded entry's hash
+  (`chain_set_prev_hash`). It does this on a broken chain
+  too, so new entries continue the file as it is.
+- **`bad_index` names the entry that broke.** It was read from offset 24 of libro's error object.
+  libro 2.8.11 put a magic word at offset 0, which moved the index to 32 and left `field_name` at
+  24. So every broken chain was reported broken at entry 0: on `GET /api/v1/audit`, in the Audit
+  view's "first at entry #", and in the ERROR line's `entry=`. It is now read with libro's
+  `error_index` accessor, at open and on a re-verify. The reproduction for the first fix found it:
+  its break was at entry 1, and the server said 0.
+- ⚠ **A trail written before 0.1.13 keeps its breaks, and nothing rewrites it.** The file is the
+  evidence. A trail that recorded anything after a restart holds an entry with an empty
+  `prev_hash` at each such restart, so it still answers `intact: false`. `bad_index` is now the
+  real index: the first entry written after the first such restart. In a trail from a released
+  binary that is a `crew.submit`, `crew.cancel`, `auth.login`, `definition.*` or `plugin.*`
+  entry; no released binary wrote `crew.interrupted`.
+  - The log says "verify: linkage broken" just before the ERROR line. An edited entry says "verify:
+    hash mismatch" instead.
+  - While the break is among the newest 1,024 entries, the Audit view shows that entry's
+    `prev_hash` empty and marks it ✗. Its banner still says the trail "was altered while the
+    server was not running", which is wrong for this kind of break.
+  - Entries the upgraded binary writes link correctly. But verification stops at the first
+    break, so the verdict says nothing about any entry after it, and a later real alteration would
+    be hidden behind the old break.
+  - To get a verdict that means something again: stop the server, move the audit file
+    (`AGNOSTIC_AUDIT_PATH`, default `agnostic-audit.patra`) aside and keep it, then start. The new
+    trail begins at a genesis entry and verifies. The old file stays readable with libro, but
+    agnostic no longer serves it.
+  - A verdict that can tell this break from a tamper is a roadmap item.
+
+### Fixed — a crew named over 255 bytes is durable
+
+Older than 0.1.13: it has been there since the outcome table landed at M4. H4 found it.
+
+- **Its outcome is stored.** `agnostic_crews.cname` is a patra `STR`, which holds 255 bytes, and
+  patra refuses a longer value (`PATRA_ERR_ROWSZ`) rather than cut it. A request accepts a `name`
+  of up to 10,000 characters. So `_agnostic_crews_save_locked` failed for every crew named in more
+  than 255 bytes. Its outcome was never stored and it was not listed, and after a restart, or once
+  the ledger forgot it, `GET /api/v1/crews/{id}` answered 404. With H4's in-flight table (above),
+  its `interrupted` outcome would have failed the same way: the row stayed, and every start logged
+  "could not record an interrupted crew; it is retried at the next start" at ERROR.
+- The column is written but never read. The listing reads `agnostic_crew_index.cname` (TEXT), and
+  the stored document carries the whole name. So the store now binds at most the name's first 255
+  bytes, cut on a UTF-8 character boundary (`_agnostic_crews_fit_utf8`, the rule
+  `_agnostic_audit_fit_utf8` applies to the trail's kept copies). The schema does not change. The
+  document, the listing row and the in-flight row keep the whole name.
+- A crew that hit this before the upgrade has no stored outcome, and nothing can recover one.
+
+### Changed
+
+- ⚠ **The binary reads its arguments (H5).** Run bare it serves, exactly as before. `api schema`
+  prints the API; `help`, `--help` and `-h` print usage and exit 0; **any other argument prints
+  usage on stderr and exits 2, where 0.1.12 ignored it and served.** No documented invocation
+  passes one. Exit codes are 0 ok, 1 failure, 2 usage error. The arguments are read before the
+  environment, through the stdlib's `args` (already a declared dependency), which reserves 2 MiB
+  of bump memory once at start; only the pages it reads are committed.
+  - **Cost:** +13,888 bytes of code and +696 of data on x86_64 (the file +17,080, a page of
+    alignment), +16,288 and +696 on aarch64 (the file +696), against a copy of the tree with only
+    this change reverted, both `CYRIUS_DCE=1`. The request path is unchanged: nothing in it calls
+    the new modules.
+- ⚠ **A new value on the wire.** A crew interrupted by a restart answers 200 `interrupted`, where
+  it answered 404 until now. A client with an exhaustive switch on `status` must learn it.
+  `/events`, `/plan` and cancel still answer 404 for it, as for any crew from before a restart.
+- **The listing no longer hides a status past `unknown`.** `AGNOSTIC_CREWS_ANY` was the literal
+  63, and `_agnostic_crews_row_wanted` dropped any status above UNKNOWN. Either one would have hidden
+  every interrupted crew, even unfiltered. ANY is now derived from the highest status, and the
+  bound is INTERRUPTED.
+- **Crews 0.1.1.** It adds an **Interrupted** filter, the pill in the warning colour, and an
+  "Interrupted" fact from `interrupted_at`. A crew whose watch ends this way is settled, not
+  waited on.
+- **Swarm Command, H4's part of 0.5.0** (first numbered 0.4.1, never released on its own).
+  `CREW_TERMINAL` includes `interrupted`. Without it, `finalize()`
+  followed an interrupted crew's status forever as a crew still running. Each task the crew had
+  not finished resolves "Interrupted by a server restart", the result reads **CREW INTERRUPTED**,
+  and the crew list and run chips mark it as bad. The 404 message also names a crew a restart cut
+  short before 0.1.13. `src/webgui_data.cyr` is regenerated.
+- **Cost:** two more fdatasyncs per crew, both under the one store lock: the mark at submit and
+  the delete with the outcome. Start-up pays about four per interrupted crew. `tests/agnostic.bcyr`
+  gains `crew_inflight_mark_clear`: 159 µs for both at the cut, on tmpfs, which under-reports fsync.
+- ⚠ **One agnostic process per database file is now load-bearing.** A second process on the same
+  `AGNOSTIC_DB_PATH` would sweep the first one's live crews to `interrupted`. This is documented,
+  not enforced; the guard is a roadmap follow-up. A 0.1.12 binary opened on a 0.1.13 database
+  ignores the new table, hides `cstatus` 6 from its listing, and still serves the document on GET.
+- **The router resolves from a table of rows (H5, the first of its four changes), with no
+  behaviour change.** `agnostic_route_resolve_a` was an if-chain of 21 literal patterns. The routes
+  are now data: 21 rows of a pattern and the route id for GET, POST, PUT and DELETE, built once at
+  load into static storage, in the same order. The resolver walks them; every row goes through the
+  two-capture matcher, which leaves `param2` 0 for a one-parameter route as before; the 404/405
+  split is unchanged. `agnostic_route_row_pattern(i)` and `agnostic_route_row_id(i, method)` read
+  the same rows, so the API schema (a later H5 change) can list the routes without a copy.
+  - **Cost: none; slightly cheaper.** `tests/agnostic.bcyr`, x86_64, three interleaved runs each
+    side against a copy of the tree with the if-chain restored (the first if-chain run, ~5% high on
+    every bench, left out): first entry 108–109 → 107 ns, last 919–922 → 868–873 ns, a miss 781 →
+    723–726 ns, the two-capture document path 2.19 → 2.14–2.16 µs. The walk calls
+    `_agnostic_path_matches_at` directly; through the `agnostic_path_matches2_a` wrapper, as first
+    written, it measured ~4% slower than the if-chain on a miss (774–782 → 809–812 ns), one call
+    more per row.
+- **The error codes are a closed catalogue (H5, the second of its four changes), with no wire
+  change.** The four machine-readable `code`s were string literals at five call sites, each with its
+  status beside it. `enum AgnosticErrorCode` (`src/http/response.cyr`) now lists them, and a table
+  of rows built at load holds each one's name and status on a single line: `plugin_unknown`,
+  `plugin_off` and `plugin_forbidden` are 403, `revision` is 412. `agnostic_response_error_code_a(a,
+  ec, message)` takes a member where it took a status and a string, so no handler can send a code
+  the catalogue does not list; a value it does not list answers 500 "unknown error code" with no
+  `code`. `agnostic_error_code_name` and `agnostic_error_code_status` list the codes for the API
+  schema (Change 3). The bytes on the wire are unchanged, and now pinned in full.
+  - **No gap, by construction.** Code `ec` is row `ec - 1`. A row is written only as the next one,
+    so a code added out of sequence (a fifth at 6, say) is refused a row and counted, and every
+    lookup is bounds-checked against the row count. So the codes run 1, 2, 3 … with nothing
+    between or past them, and anything that lists them by stopping at the first unlisted value —
+    Change 3's schema generator — reaches every code the server can send. The rule is the table's
+    shape, not a range a test scans.
+  - **The agent definition's twelve refused fields are a table of rows** (name, message) in
+    `src/engine/agentdef.cyr`, built at load like the route table.
+    `agnostic_agent_def_refused_reason` walks the rows, and `agnostic_agent_def_refused_name(i)`
+    lists them, so the decoder and the schema read one list. Until now they were an if-chain
+    nothing could enumerate. Same names, same messages, same order.
+  - `agnostic_method_name` (`src/http/router.cyr`) and `agnostic_perm_name` (`src/auth/perm.cyr`)
+    name a method and a permission, for the schema to emit. Nothing dispatches or authorises by
+    them.
+  - **Cost.** +344 bytes of DCE binary on x86_64 and +352 on aarch64, against a copy of the tree
+    with only this change reverted. A scratch program (not in the tree) timed the refused-field
+    lookup both ways over a million keys, four runs each: a key that is not refused, which every
+    agent key costs, 303–306 → 313–315 ns; the last row 325–328 → 337–353 ns. That is about 10 ns
+    more per key, both making the same twelve string compares, and the two agreed on every row and
+    on the probe keys. The coded refusals have no bench; `plugin_gate_granted` measured 1.24 µs.
+
+### Tests
+
+**31 suites, 2,347 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin, on x86_64 and
+natively on aarch64), up from 29 and 1,885 at 0.1.12, and **77 JavaScript tests**
+(`./scripts/check-webgui-js.sh`), up from 61. Two suites are new, `tests/restart.tcyr` and
+`tests/api_schema.tcyr`.
+
+- **The event cursor's gap, over HTTP and in both views that read it (H3).** Until now only the
+  ledger suite asserted a non-zero `missed`; over HTTP, and in either view, only zero was.
+  - `tests/crews_route.tcyr` gains `crews/events-gap` (20 assertions). A crew's ring is fed 300
+    events, so it holds 45 to 300. Read from `after=10`, it answers 256 events from seq 45 to 300,
+    `next` 300, `missed` 34, `lost_events` 0 and `dropped_events` 44. `after=0` and no `after`
+    report `missed` 44, `after=43` misses 1 and `after=44` none. A cursor at or past the newest
+    reads nothing and gets `next` back unchanged.
+  - `tests/webgui/crews.test.mjs`: the fake answers `missed` as the server's ring does, and a new
+    test has the Crews view count a gap of 3 once, read on from the window, and settle the task
+    whose events were missed from the crew's outcome.
+  - `tests/webgui/swarm.test.mjs` +1, the same for Swarm Command, whose `missed` path only a
+    zero-missed fake reached: its fake now answers `missed` and `dropped_events` as the server
+    does, and a live watch that falls three events behind counts them once in `missed` and in
+    EVENTS MISSED (`dropped`), reads on from the window, and still settles every task, the one
+    whose events were missed included, from the outcome. Mutation-checked on a copy of the page:
+    `missed` assigned rather than added, `missed` ignored, or left out of `dropped`, each fails a
+    named assertion, and so does the fake answering `missed` 0.
+
+- **H4 (`interrupted`).** Every guard was mutation-checked: dropping it fails a named assertion.
+  - `tests/outcome.tcyr` +3: the wire arm, INTERRUPTED = 6, terminal.
+  - `tests/ledger.tcyr` +1: terminal.
+  - `tests/crewstore.tcyr` +58: INTERRUPTED stored; `crewstore/inflight` (the outcome clears the
+    row); `inflight-after-outcome` (a finished crew is never marked); ⭐ `sweep` (two crews,
+    reopened: every field of the document, the listing row, idempotent on a second start);
+    `sweep-keeps-outcome`; `cancel-then-restart` (ADR 0012's cancel stays cancelled); no store.
+  - `tests/crews_route.tcyr` +20: `crews/inflight-mark`; ⭐ `crews/interrupted-not-404` (POST,
+    restart, sweep, then GET 200 `interrupted`, and `/events`, `/plan` and cancel 404, listed, new
+    POST 202); and `crews/collector` ends with the row cleared.
+  - `tests/crew_tenancy.tcyr` +18: ⭐ `tenancy/interrupted` (acme reads and lists it, globex and
+    `_` get 404, `?status=interrupted` finds it, `active` does not); `list-status` takes the filter.
+  - **New suite `tests/restart.tcyr`** (14): the real `agnostic_serve_mount` on a database seeded
+    the way a killed process leaves one. The crew that never finished is `interrupted` and listed,
+    with exactly one `crew.interrupted` entry at warning naming it. The crew that finished stays
+    completed.
+  - JavaScript: `crews.test.mjs` +1 (a watched crew ends interrupted: filtered,
+    settled, not waited on), and `swarm.test.mjs` +1 (⭐ the watch ends INTERRUPTED and does not
+    poll forever). `drive()` now stops a source that never finished, so a failing test ends
+    instead of hanging the run.
+
+- **B3 (the one-agent baseline).** `tests/webgui/swarm.test.mjs` +12:
+  - deterministic: one seed and one budget, one outcome; another seed, another;
+  - every number `SOLO` restates is still in its Sim method's source; a change there fails, naming
+    the entry to change;
+  - the swarm's own plan on each seed: every task and part counted, and refactor's fan-out count
+    follows the seed;
+  - never past its budget: paired with the swarm's tokens, at 2,000 and at 0. With nothing failing
+    everything is done, and with every tool off it still finishes. A step is cut exactly where the
+    tokens run out; tool results far larger than what is left still leave a run out of tokens at
+    its budget, not short of it; and a fan-out lead that fails before its split is one failure, as
+    the Sim counts it;
+  - ⭐ an estimate paired seed by seed. The swarm's figures are recomputed from the Sim alone and
+    pinned to what 0.4 reported for the same swarm. The baseline is rebuilt from the same seeds and
+    per-seed budgets;
+  - ⭐ every template's estimate at the estimator's eight runs, pinned to 0.4's bit for bit;
+  - ⭐ every template's baseline at the estimator's eight runs, pinned bit for bit, and each one's
+    row of ADR 0014's table checked against it. The paired test rebuilds the baseline from `soloRun`
+    itself, so only this one sees `soloRun`'s own pricing and timing;
+  - a 0.4 estimate still reads, with `solo: null`; a baseline round-trips; a hostile one is clamped;
+  - the card's line is labelled SIM, absent without a baseline, and says "out of tokens", with the
+    tasks left, only when that happened;
+  - the editor's box is labelled SIM, never LIVE, and carries the note; the share of a swarm that
+    cost nothing is not shown; tasks left and cut off appear only when they happened; without a
+    baseline it says to estimate again;
+  - ⭐ where they are shown, rendered through the page's own `Launcher.card` and
+    `Editor.renderSide` against a stand-in for the few elements they touch: the card's estimate
+    ends with the SIM line, stale or not, and has none while estimating or without a baseline; the
+    editor's side panel holds the SIM box once, under the cost estimate and above the checks, none
+    while estimating or with no estimate, and the "estimate again" note for an estimate without
+    one. Unwiring either, or showing the box while estimating, fails a named test.
+
+- **H5, the route table.** `tests/router.tcyr` gains `router/table` (67 assertions); every earlier
+  router, route and dispatch assertion passes unchanged.
+  - 21 rows, nothing before the first or past the last, and room left for another row (a row
+    that does not fit is refused rather than written past the storage, so a full table fails here).
+  - ⭐ Every one of the 27 arms round-trips: its own pattern, with `x1` and `x2` for its
+    parameters, resolves to its own id and carries exactly those captures. A row that shadowed a
+    later one fails here.
+  - Every route id has an arm, and only the shell has two (`/ui`, `/ui/`).
+  - An unknown verb on a known path is a method mismatch and answers 405; on an unknown path it
+    is a miss.
+
+- **H5, the closed catalogues.** 63 assertions across six suites; every earlier assertion passes
+  unchanged.
+  - `tests/health.tcyr` gains `http/error-codes` (28): exactly four codes, numbered from 1, each
+    name and status pinned and every name distinct; 0, the value past the last and a negative value
+    are not codes; ⭐ the build refused no code, and a code past a gap, a code repeating the last
+    and a row past the storage are each refused a row and counted, so a code placed past a gap
+    (sent, but never listed) cannot be written; the lookup gives no row for 0 or for the value
+    past the last; ⭐ no value outside 1 through 4 answers at any power of two, either side of one
+    or negated, so a lookup that truncates or wraps a value (2^32 + 1 read as 1) fails here; a
+    coded refusal is `{error, code}`, in that order, with the catalogue's status; ⭐ an unlisted
+    value, 0, and the value just past the last code answer 500 with no `code` and without the
+    caller's message.
+    `http/response-exhaustion` +1: the coded constructor answers 0 on a full arena.
+  - ⭐ The wire, byte for byte, asserted against the old code first and passing unchanged after it:
+    `tests/webgui.tcyr` `plugins/rung` +3 (each plugin refusal's whole body) and
+    `tests/plugindata.tcyr` `plugindata/revisions` +2 (the stale PUT's and the stale DELETE's). Until
+    now no assertion read the `revision` code; the suite checked only the 412.
+  - `tests/agentdef.tcyr` gains `agentdef/refuse-rows` (16): the twelve names in order, nothing past
+    the last row or before the first, and each name refused by the decoder's own lookup with the
+    message that quotes it. `agentdef/refuse` +1 (`role` is not refused). `celery_task` was the one
+    refused field no assertion named.
+  - `tests/authz.tcyr` gains `perm/names` (8), and `tests/router.tcyr` `router/method` +4: each
+    method round-trips through its name, and NONE and the value past DELETE have none.
+
+- **The audit chain across a restart.** `tests/audit.tcyr` gains 24 assertions, for 112.
+  `audit/durable` reopened the trail and verified it, but never appended after the reopen, which
+  is where the chain broke.
+  - ⭐ `audit/durable-append` (18). One entry is recorded, the trail reopened, two more recorded,
+    and the trail reopened again. It is intact with no bad index, and it records. Then the file is
+    read straight through libro: four entries from three processes, the first the genesis, each
+    `prev_hash` the hash of the entry before it across both restarts, and `verify_chain` clean.
+  - `audit/tamper` asserts the edited entry is entry 1. It asserted `>= 0`, which the wrong
+    offset passed. A re-verify names the same entry (+2).
+  - `audit/tamper` then records on the altered trail, closes, and reads the file through libro:
+    the new entry's `prev_hash` is the last stored entry's hash, not `""` (+4). That pins seeding
+    a broken chain too, which keeps an old trail from gaining a new break at every restart.
+  - Mutation checks, each made alone and restored afterwards:
+    - without the seed, 6 assertions fail: the verdict, the bad index, three links and libro's pass;
+    - seeding only when the chain verified fails 1, the link after the altered trail's reopen;
+    - seeding from the first loaded entry instead of the last fails 3;
+    - either `error_index` read put back to `load64(err + 24)` fails a named assertion ("and the
+      failing entry is named", "at the same entry").
+
+- **A crew named over 255 bytes.** `tests/crewstore.tcyr` gains 26 assertions, for 123. Before the
+  fix, 12 of them failed, and the suite logged the sweep's ERROR line for both of its crews.
+  - `crewstore/long-name` (12). Four names are stored: 300 ASCII bytes, exactly 255 bytes, 80
+    four-byte characters (320 bytes) and 100 three-byte characters (300 bytes). Each document
+    reads back byte for byte. `cname`, read straight from the table, holds the first 255 bytes;
+    all 255; ⭐ 252, which is 63 whole characters, where a cut at 255 would split the 64th; and
+    255, where the cut falls between characters.
+  - ⭐ `crewstore/long-name-sweep` (14). Two crews are marked in flight, one named in 300 ASCII
+    bytes and one in 150 two-byte characters. After a reopen the sweep interrupts both, the
+    in-flight count reaches 0, both documents and the listing row keep the whole name, and a
+    second start has nothing to retry.
+  - Mutation checks, each made alone and restored afterwards:
+    - binding the whole name again (the defect) fails 12;
+    - cutting at 255 with no back-off fails 1, the 63 whole characters;
+    - backing off one byte too many fails 2;
+    - a cap of 256 fails 10.
+
+- **H5, `agnostic api schema`.** New suite `tests/api_schema.tcyr`, 148 assertions; every earlier
+  assertion passes unchanged.
+  - ⭐ `api/snapshot` (6): the generator's text is the same every time, ends in a newline, and is
+    exactly `docs/api/generated/schema.json` re-printed through the same bayan. On a difference it
+    prints the first differing line from both sides and the command that regenerates the snapshot.
+    The snapshot is read relative to the working directory (`cyrius test` runs at the repo root);
+    unreadable, it names the path and the command.
+  - `api/routes` (16): 27 routes, each with the eleven keys in order, each resolving through the
+    router to an id whose `agnostic_route_needs_auth` and `agnostic_perm_for_route` are what it
+    states; `min_role` viewer for read, operator for write, admin for admin; no duplicate; exactly
+    six public routes, and the audit trail and the plugin switch are admin.
+  - ⭐ `api/plugin-vocabulary` (10): every route in `permissions.json` matches exactly one schema
+    route (`:self` as any parameter), which lists the permission with `self` the route's parameters
+    the grant writes `:self` (worked out in the suite from the two paths), and the router resolves
+    it made concrete; the routes list exactly the grants the vocabulary holds, each `{name, self}`,
+    four of them pinning a parameter; the names in its order.
+  - `api/bodies` (13): each `fields` is its decoder's allow-list element by element; the twelve
+    refused fields are the decoder's table rows and each is refused; the plugin document's kind
+    and `AGNOSTIC_PLUGINDATA_DOC_MAX`; `items`; every body named exists and every body is used.
+  - `api/vocabularies` (22): each value round-trips through the real parser — `agnostic_role_parse`,
+    `agnostic_process_from_wire`, `agnostic_priority_from_wire`, `agnostic_risk_from_wire`,
+    `agnostic_crews_status_mask` (`1 << status`, and `active` is pending|running) — and each
+    parser refuses a probe value; status 6 is `interrupted`.
+  - `api/errors` (23): the codes are the catalogue's, with their statuses; the ladder's eight rungs
+    in order; and ⭐ seven of them driven through the dispatcher — body size, host, route, method,
+    plugin (with `plugin_unknown`), authn and media type — each answering its listed status, with
+    five pairs proving the order (a request two rungs would refuse is answered by the earlier one).
+    `authz` needs a stored identity; `tests/authz.tcyr` drives it.
+  - `api/cli` (24): no arguments and an unreadable command line serve; `api schema`; `help`,
+    `--help`, `-h`; `api` alone, a misspelling, an extra argument, `serve` and a missing argument
+    are usage errors. ⭐ Then each command is run against two capture files
+    (`agnostic_cli_run_on`, `agnostic_cli_run` with the streams passed in): a usage error exits 2
+    with usage on the complaints and nothing on the output; `help` exits 0 with usage on the output
+    and no complaint; `api schema` exits 0 with the whole document, byte for byte, and no
+    complaint; `api schema` and `help` on an output that cannot be written exit 1, the first saying
+    so.
+  - ⭐ `api/probes` (20), on throwaway stores under `$TMPDIR` named for the process and removed
+    after: each of the five routes taking an allow-listed body refuses `{"__probe__":1}` as an
+    unknown field and knows every field its declared body lists; the same inside a crew's
+    `agents[0]` and `tasks[0]`; a plugin document that is not an object is 422, one of exactly
+    `max_bytes` is stored and one byte more is 413; each of the six declared query parameters,
+    given an invalid value, is the handler's 422; every GET route answers the same with each of the
+    four known parameters it does not declare set; each of the four declared headers is read (an
+    invalid `Idempotency-Key` 422; a stale `If-Match` and `If-None-Match: *` 412 `revision`); and
+    ⭐ each grant with a `self`, driven through the plugin gate as the built-in `swarm` (which holds
+    `storage`), passes for its own id and is `plugin_forbidden` for `crews`'s, on all four
+    plugin-data routes.
+  - ⭐ `api/responses` (14), H5's fourth change. It runs the real `agnostic_serve_mount` with auth
+    required and a bootstrap administrator, on a fresh database where a "dead process" left one
+    crew in flight, so mount's start-up sweep interrupts it. It logs in, then drives every route's
+    success path: a submit and its replay under one `Idempotency-Key`, a parallel crew, plan, events
+    and polls until both finish, the interrupted crew, a cancel (submitted and cancelled at once
+    until one answers 200 — the placeholder engine can finish first, 409), both listing pages, all
+    18 presets, a definition's five routes, the trail and two pages of entries, the plugins and the
+    switch, a plugin document put twice (201, then 200), listed, read and deleted, and the three
+    WebGUI pages. Last, the trail is reopened after one byte of an entry is changed on disk
+    (`bad_index`), and a readiness check that always fails is registered (`/ready` 503).
+    - Every answer is checked as it comes: a status `ok` lists; a body of its kind (a `json`
+      object, an `html` page, or a `document` sent as `application/json` with an `ETag`); every key
+      not marked optional present; no key undeclared.
+    - ⭐ Then the other way: every route was driven, answered every status its `ok` lists, and
+      wrote every key it declares, optional ones included. A declaration nothing produces fails.
+
+### Verified
+
+- **Live, with the real binary, on x86_64 and natively on aarch64 (the Pi, Ubuntu).**
+  `AGNOSTIC_LLM_URL` pointed at a local listener that accepts connections and never answers, so a
+  crew hangs. A two-task crew was POSTed and seen `running`, then the server was killed with `kill -9`
+  and restarted.
+  - The restart logged "crews in flight at the last stop are now interrupted crews=1".
+  - `GET /api/v1/crews/{id}` answered 200 `interrupted` with its name, scope, engine mode, process,
+    `tasks_submitted` 2, `submitted_at` and `interrupted_at`, and no `started_at` or `finished_at`.
+  - The listing, and `?status=interrupted`, showed it; `?status=active` did not.
+  - `/api/v1/audit/entries` held `crew.interrupted` at warning, `crew_id=<id>`.
+  - `/events`, `/plan` and cancel answered 404.
+- **H4 in a browser.** Headless Chromium drove the real binary's WebGUI over CDP, after the same
+  `kill -9` and restart, with Crews and Swarm Command switched on.
+  - Crews 0.1.1, deep-linked to the crew, listed it with the INTERRUPTED pill in the warning colour
+    and offered the Interrupted filter. Its detail showed the error and the facts Submitted,
+    Interrupted, Process, Tasks "0 / 2 done", Tokens "not metered" and Cost "not priced", with no
+    Took.
+  - Swarm Command 0.5.0, following `#plugin/swarm?crew=<id>`, ended the watch **CREW INTERRUPTED**
+    with the error. No task line said "Interrupted by a server restart", because a crew from before
+    the restart has no plan to name its tasks; `swarm.test.mjs` covers a watch that began before it.
+  - No exception and no console error.
+- **Mutation checks.** Each of these, made alone, fails a named assertion, and the source was
+  restored byte for byte afterwards:
+  - INTERRUPTED dropped from `agnostic_status_is_terminal`: `crewstore/sweep`;
+  - the wire arm dropped: `crews/interrupted-not-404` reads `pending`;
+  - the in-flight DELETE dropped: `crewstore/inflight` and `crews/collector`;
+  - the outcome-exists branch in `interrupt_row` dropped: `crewstore/sweep-keeps-outcome`;
+  - ANY left at 63, or the listing bound left at UNKNOWN: `tenancy/interrupted`;
+  - `CREW_TERMINAL` without `interrupted`: the Swarm Command test ends with no summary;
+  - the sweep not called from `agnostic_serve_mount`: `restart/mount`;
+  - the in-flight mark skipped at submit: `crews/inflight-mark` and `crews/interrupted-not-404`
+    (GET answers 404).
+- **B3: existing estimates are bit-identical.** In Node, against the page as it was before the
+  change, `estimateSpec` returns byte-for-byte the same swarm fields for all four templates, at
+  four and at eight runs each; the eight-run figures are now pinned by a test. Against 0.1.12's
+  committed page (Swarm Command 0.4.0), 32 eight-run estimates — four templates, scales 1 and 2,
+  four seeds each — give the same swarm fields and `sig`. Moving the restated numbers into `SOLO`
+  left `soloRun` bit-identical over 5,768 runs (four templates, three scales, 60 seeds, six
+  budgets, and a harsher failure model).
+- **B3 mutation checks.** Each of these, made alone, fails a named test, and the page was restored
+  byte for byte afterwards:
+  - the baseline's RNG seeded without the template's hash: the plan test;
+  - the work step not cut at the budget, or a tool result taken past it: the budget test;
+  - every seed given the first run's budget: the ⭐ estimate test;
+  - the Sim's orchestrator rate nudged from 0.6 to 0.61: the ⭐ estimate test's pin;
+  - `normalizeEstimate` dropping `solo`, or its `out` not clamped to the run count: the store test;
+  - the card always saying "out of tokens", or not saying the tasks left: the line test;
+  - a fan-out lead that fails before its split counting its parts failed, or keeping them in the
+    total; a tool result that does not fit not taken, or taken whole: the budget test;
+  - a millisecond more same-region travel in the Sim, which left custom's four-run pin as it was:
+    the eight-run pins and the `SOLO` check; a `SOLO` number changed, or its Sim counterpart (the
+    retry share, a new agent's health, spawning, the lead's share, a phase's compute factor): the
+    `SOLO` check, and the pins where the Sim changed;
+  - the editor's box labelled LIVE, or without its hint, its note, the guard on a zero-cost
+    share, or its tasks-left and cut-off rows: the box test;
+  - in `soloRun`, a work step's tokens or a tool result's left unpriced, no token priced at all, the
+    compute multiplier dropped, or the region's speed dropped from a step's length or from its
+    progress: the ⭐ baseline pin, alone. Each of these passed every other test.
+- **B3 in a browser, inside agnostic.** Headless Chromium 153 drove the real binary's `/ui` over
+  CDP, with `AGNOSTIC_AUTH=required`, an administrator and a viewer, and Swarm Command switched on.
+  So the page ran in the shell's sandboxed iframe and kept its swarms on the server through the
+  host bridge. Both frames were watched.
+  - **As the administrator**, each template was customized, saved, and estimated with Σ ESTIMATE on
+    its card. Every card showed the SIM line under the swarm's figures. Every EDIT showed the ONE
+    AGENT, SAME TOKENS box, tagged SIM, with its note and the evidence tooltip. For research: $4.34
+    · 84% of the swarm, 17:45 · 7.6×, 749k · 98%, 4 of 8 out of tokens, 0.5 tasks left per run;
+    the card read "out of tokens in 4 (0.5 tasks left / run)".
+  - **Stored as computed.** Each template's stored estimate, the swarm's figures and `solo` alike,
+    equals Node's `estimateSpec` on the same stored swarm bit for bit, and its `sig` matches. The
+    four baselines are the ones the ⭐ test pins.
+  - **An estimate from 0.4.** One stored estimate was stripped of `solo` through the API and the
+    library reloaded. The card had no line, and EDIT said "No one-agent baseline in this estimate
+    — Σ Estimate again."
+  - **As the viewer**, NEW SWARM and EDIT were disabled. Σ ESTIMATE on that card showed the SIM
+    line and the same baseline on screen. The stored document was not written: its ETag and its
+    estimate were unchanged, still without `solo`.
+  - No uncaught exception and no console error or warning in either frame. The only logged errors
+    were the shell's two 401s for `/api/v1/plugins` while signed out.
+  - An earlier run drove the standalone page (file://, swarms in browser storage) through the same
+    estimate, save and strip, with the same figures and no exception.
+- **H5 route-table mutation checks.** Each of these, made alone, fails `router/table` (the first
+  also `router/definitions` and `router/definition-dispatch`), and `src/http/router.cyr` was
+  restored byte for byte afterwards:
+  - an arm dropped (DELETE on `/api/v1/agents/definitions/:key`): 26 arms, id 13 has none;
+  - the storage too small for every row: 20 rows, no room left, id 19 has no arm;
+  - the `/ui/` row dropped: the shell has one arm;
+  - the resolver on the one-capture matcher: the document routes (21, 22, 23) lose `param2`;
+  - a shadowing row (`/api/v1/crews/:id/:verb`, POST) inserted before cancel: cancel's path
+    resolves to the crew GET.
+- **H5 catalogue mutation checks.** Each of these, made alone, fails a named assertion, and the
+  source was restored byte for byte afterwards:
+  - `plugin_off` sent as 412: `http/error-codes` (2) and `plugins/rung` ("a switched-off plugin is
+    refused");
+  - an unlisted code answered 403 with the caller's message: `http/error-codes` (5);
+  - a fifth code: `http/error-codes` ("exactly four codes", and the value past the last);
+  - a fifth code past a gap (6, leaving 5 unlisted), and one at 70000: `http/error-codes` ("the
+    build refused no code"; each is refused a row, so never sent). The catalogue's first form, an
+    if-chain the suite probed from -256 to 65535, passed every assertion with a code at 70000
+    returned from the chain; the table has no way to write one;
+  - the table's next-row rule dropped: "a code past a gap is refused a row"; its storage bound
+    dropped: "and a row past the storage"; a refusal left uncounted: "each refusal counted"; the
+    storage one row short of the four: "4 is revision, 412" and "the build refused no code";
+  - the lookup bounded one row late: "nor for the value past the last code"; its lower bound
+    dropped: "no row for 0" (the suite then faults reading that row, so it reaches no verdict);
+    the lookup truncating to 32 bits: "no value but 1 through n is a code, at any power of two or
+    beside one";
+  - two refused rows given each other's messages: `agentdef/refuse-rows` ("each is refused, with
+    the message that names it");
+  - the `celery_task` row dropped: `agentdef/refuse-rows` (7), and nothing else;
+  - the refused table's storage one row short: `agentdef/refuse` ("workflow_mode refused") and
+    `agentdef/refuse-rows` (2);
+  - `agnostic_perm_name` answering `super_admin`: `perm/names`; `agnostic_method_name` answering
+    `PATCH` for PUT: `router/method`.
+- **H5's catalogues natively on aarch64 (the Pi).** The six suites this change touched, cross-built
+  with `CYRIUS_DCE=1 cyrius build --aarch64`, pass with the same counts as on x86_64: `agentdef` 130,
+  `authz` 69, `health` 74 (re-run once the error codes became a table), `plugindata` 144, `router`
+  151, `webgui` 203.
+- **H5, the route table against the if-chain it replaced.** A scratch program (not in the tree)
+  compiled 0.1.12's `agnostic_route_resolve_a`, renamed, beside the table walk and compared the
+  two on 4,299,876 (method, path) probes: GET, POST, PUT, DELETE, an unknown method and a
+  non-method value, over every path of up to four segments drawn from the route vocabulary and an
+  empty segment, with and without a leading slash, a trailing slash, `?`, a query string and a
+  fragment, and deeper paths under `/api/v1`, the plugin documents and `/ui/plugins`. Every
+  probe gave the same id, the same 404/405 flag and the same captures; all 26 route ids and the
+  miss were reached. With one row's POST arm dropped it reports 38 differences, so it can fail.
+  - Live, the shipped DCE binary against one built from the same tree with the if-chain restored,
+    on x86_64 and natively on aarch64 (the Pi): 35 paths × GET, POST, PUT, DELETE, PATCH and
+    OPTIONS, 210 requests each, gave the same status and content type every time, on both
+    machines. The table costs 1,344 bytes of binary on each architecture.
+- **The audit chain across restarts, live, with the DCE binary on x86_64 and natively on aarch64
+  (the Pi).** Two sequences ran on each machine. Each runs four processes on one trail, stopped
+  twice with `kill -9` and once with SIGTERM.
+  - Crews, with `AGNOSTIC_LLM_URL` at a listener that never answers. A crew is submitted. After the
+    restart, the sweep records `crew.interrupted`, then a definition is created and a second crew
+    submitted. After the next restart, the sweep records the second crew's `crew.interrupted` and
+    a definition is created.
+  - Definitions only: create; then replace and delete; then create.
+  - Every start answered `intact: true` and logged no linkage error. `/api/v1/audit/entries`
+    showed each start's first entry naming, as `prev_hash`, the hash of the last entry before the
+    restart.
+  - The crew sequence on a binary built from the same tree with `audit.cyr` as at HEAD: the third
+    start answered `intact: false, bad_index: 0`. Entries 1 and 4, each start's
+    `crew.interrupted`, had an empty `prev_hash`.
+  - That trail, opened by the fixed binary twice with a definition created each time, answered
+    `intact: false, bad_index: 1` both times. The two new entries linked to the entries before
+    them.
+
+- **H5 schema mutation checks.** Each of these, made alone, fails `api/snapshot` and — all but the
+  first — a named assertion in another group of `tests/api_schema.tcyr`. Each was run against the
+  final suite, and the source was restored byte for byte afterwards (checksums compared):
+  - a field added to the login allow-list: `api/snapshot` alone, as intended — the schema reads the
+    list, so only the snapshot can see the API changed;
+  - `/api/v1/audit/entries` renamed in the router only: `api/plugin-vocabulary` (3: no single
+    route, the router does not resolve it, 18 grants listed against 19);
+  - the same route renamed in `permissions.json` only: `api/plugin-vocabulary` (the same 3);
+  - the plugin switch declared as taking a `login` body: `api/probes` ("accepts every field its
+    declared body lists as known", 2) and `api/bodies` (the switch body unused);
+  - the events route declaring a `limit` it does not read: `api/probes` (the count, and "an
+    invalid value is a 422");
+  - the crew listing no longer declaring `status`: `api/probes` (the count, and "every GET route
+    answers the same with each known parameter it does not declare set");
+  - a plugin-document GET declaring `if-match`: `api/probes` (the count, and the 412);
+  - the ladder declaring `route` before `host`: `api/errors` (the order);
+  - `agnostic_crew_status_to_wire` losing its `interrupted` arm: `api/vocabularies` (seven
+    statuses; status 6). The first form of the suite crashed here on a missing element instead of
+    failing; its accessors now read a missing string as empty, so a damaged document gets a verdict.
+  - One changed value in the snapshot: `gen-api-schema.sh --check` exits 1 with the diff, and
+    `check-clean.sh` fails on it; and `api/snapshot` prints the differing line from both sides and
+    the command that regenerates it.
+- **H5 response mutation checks.** Each of these, made alone, fails a named assertion in
+  `api/responses` (and `api/snapshot`, where the declaration moved); the source was restored byte for
+  byte afterwards (checksums compared):
+  - a handler dropping a key (the definitions listing's `total`): "left out a key it declares" and
+    "never wrote a key it declares";
+  - a handler writing an undeclared key (the plugin switch): "wrote a key it does not declare";
+  - a declaration dropping a key (`changed`): the same;
+  - a declaration adding a key nothing writes (`nope?`): "never wrote a key it declares";
+  - an optional key declared required (the listing's `next`): "left out a key it declares";
+  - a new definition declared as answering 200: "answered a status its ok does not list";
+  - `/ready` without 503: the same;
+  - a status declared and never answered (201 on a definition's `GET`): "never answered a status
+    its ok lists";
+  - a plugin document declared `html`: "is not an html page";
+  - a document sent without its `ETag`: "sends no ETag";
+  - a route with no key declaration (cancel): the whole document fails, so `api/snapshot` and every
+    group reading it fail.
+- **H5 command and grant mutation checks.** Each, made alone, fails what it names; the source was
+  restored byte for byte afterwards (compared with `cmp`):
+  - A usage error answering 0 rather than 2 — a mutant every gate let through before `api/cli`
+    ran the commands: "a usage error exits 2". `help` answering 2: "help exits 0". A failed write
+    answering 0: "api schema that cannot write its output exits 1". Usage for a usage error
+    written to the output: `api/cli` (2, the output not empty and the complaints without usage).
+  - Every grant's `self` emitted empty: `api/snapshot`, `api/plugin-vocabulary` (2: the grant's
+    `self` on four routes, and the count of pinning grants) and `api/probes` (the count).
+  - The plugin gate no longer putting the plugin's id in place of `:self`
+    (`src/webgui/plugins.cyr`): `api/probes` ("the gate agrees", naming the four routes on which
+    `swarm` reached `crews`'s documents).
+  - `gen-api-schema.sh --check --bin` a stand-in binary that never exits, as a serving one would:
+    exit 1 after 60 seconds, saying so; one that ignores SIGTERM is killed 5 seconds later, exit 1.
+- **H5, the command, live.** The DCE binary run bare with no `AGNOSTIC_*` but a port and two store
+  paths served `/health` and `/api/v1/presets` 200 and shut down gracefully on SIGTERM; with
+  `AGNOSTIC_PORT=bad` it still refuses to start (exit 1). `api schema` printed the same bytes with
+  `AGNOSTIC_PORT=notaport` set; `help`, `--help`, `-h` exited 0; `serve`, `api` and `api schema
+  extra` exited 2; `api schema > /dev/full` exited 1 with "could not write the API schema".
+- **H5 natively on aarch64 (the Pi).** `tests/api_schema.tcyr`, cross-built with `CYRIUS_DCE=1
+  cyrius build --aarch64`, passed 134 of 134 after the third change and 148 of 148 after the fourth
+  (`api/responses` mounting, logging in and driving every route there, in 7.5 s). Each time the
+  aarch64 DCE binary's `api schema` was byte for byte the committed snapshot. After the third
+  change, CI's "Command line exit codes" step, run there as written, passed (`help` 0 with usage on
+  stdout, an unknown argument 2 with usage on stderr only); after the fourth, `help` exited 0 and
+  an unknown argument 2.
+- **H6, every call in the skill, live.** The 0.1.13 binary on loopback, with its stores under
+  `~/.cache`, in three passes, each assertion against the bytes the skill shows:
+  - Placeholder, auth off (60 checks): `/ready`, the auth probe (200), the section 4 crew (202 with
+    exactly the eight keys, `placeholder`), its replay (`replayed: true`), the same key over the
+    same JSON re-serialised (422), a malformed key, `hierarchical` (400, "must be one of"),
+    `agent_key`, `task`, `tasks[1].agent` and `agents[0].x` (422 with the skill's messages), missing
+    `name`, `max_concurrency` without `parallel`, a cycle and non-JSON (400), `"gpu_required":
+    "false"` (422), `focus` in `unforwarded`; the events cursor (`after=0`, then `next` reads
+    nothing), `?since=` returning the same whole window as no parameter, `after=-1` (422); the
+    outcome (no `token` events and `usage.metered_tasks` 0 in placeholder), an uppercase id, the plan,
+    the listing with `?status=active`, `completed`, `interrupted` and `before=next`; cancel of a
+    finished crew (409), without `Content-Type` (415), of an unknown id (404); a non-loopback `Host`
+    (403) and `localhost` (200); 405 and 404; a preset's agents verbatim (422 on `agent_key`) and
+    through the skill's four steps (202); a definition's round trip, and its `definition` object
+    submitted as an agent (202).
+  - `AGNOSTIC_AUTH=required` with a bootstrap login: the probe 401, login 200 as `super_admin`,
+    a Bearer submit 202, a garbage Bearer and an unknown `ApiKey` 401, 401 before 415, and the sixth
+    login attempt in a row, the first having succeeded, answered 429 with no `Retry-After`.
+  - A live engine whose gateway accepts and never answers: a crew `running` with `results: []` and
+    `task_count` 0; a running crew cancelled (200, then 409); `kill -9` and a restart on the same
+    store, after which the running crew answered `interrupted` exactly as the skill's example shows,
+    was listed under `?status=interrupted`, and its events, plan and cancel answered 404, while the
+    cancelled crew still answered `cancelled`.
+- **The release's changes together (2026-10-04), from a clean state, in CI's order** with
+  `TMPDIR` under `~/.cache`: the toolchain matches the 6.6.14 pin; `lib sync --full`, `deps`,
+  `lock-check.sh --no-resolve`, `check-symbols.sh` (1,063 definitions across 50 files) and
+  `check-clean.sh` pass; the DCE build is 6,186,712 bytes on x86_64 (6,136,064 at 0.1.12) and
+  7,443,720 on aarch64 (7,356,208); CI's two new steps pass on it; `cyrius test` passes 31 suites,
+  2,347 assertions; and `cyrius bench` gives every one of 0.1.12's benchmarks at or below its
+  0.1.12 figure (the routes 108 / 851 / 715 ns and 2.11 µs, the plugin rung 1.23 µs, a 50-entry
+  audit page 27.1 µs). `cyrius.lock` and `lib/` were byte for byte as before the run.
+  - Every suite, cross-built with `CYRIUS_DCE=1 cyrius build --aarch64`, passed natively on the Pi
+    (Ubuntu 26.04.1) with the x86_64 counts: 31 suites, 2,347 assertions.
+  - The DCE binary, live on loopback against a gateway that never answers: two crews submitted
+    (one named in 150 two-byte characters), `kill -9`, restart. Both answered `interrupted`, the
+    long name whole (300 bytes); `?status=interrupted` listed both; events, plan and cancel
+    answered 404; the start logged `crews=2` and no ERROR. The trail answered `intact: true` at
+    the second start, and again at a third, after a definition was created and the server stopped
+    with SIGTERM.
+- **The cut (2026-10-04)**, after `scripts/version-bump.sh 0.1.13`, every CI step again in CI's order
+  with `TMPDIR` under `~/.cache`, with the same results: no toolchain drift; `lock-check.sh
+  --no-resolve` matched a clean tag resolution (9 commit pins); `check-symbols.sh` 1,063 definitions
+  across 50 files; `check-clean.sh` clean, with 77 JavaScript tests; the DCE builds 6,186,712 bytes
+  (x86_64) and 7,443,720 (aarch64), byte counts unchanged; `gen-api-schema.sh --check` and the exit
+  codes on the binary; `cyrius test` 31 suites, 2,347 assertions, 0 failed; and `cyrius bench`'s 16
+  benchmarks (the routes 109 / 864 / 720 ns and 2.12 µs, the plugin rung 1.24 µs, a 50-entry audit
+  page 28.5 µs). CI's security scan and docs checks pass. `cyrius.lock` and `lib/` are byte for
+  byte 0.1.12's. `/ready` answers `"version":"0.1.13"` on x86_64 and, from the aarch64 DCE binary,
+  natively on the Pi, where `help` exits 0, an unknown argument 2 with nothing on stdout, and `api
+  schema` prints the committed snapshot.
+- **The release verification (2026-10-04)**, after the cut, which changed only docs and test
+  comments: every suite, cross-built again from this tree with `CYRIUS_DCE=1 cyrius build
+  --aarch64`, passed natively on the Pi (Ubuntu 26.04.1), 31 suites and 2,347 assertions, 0 failed,
+  each exiting 0. The x86_64 DCE build is again 6,186,712 bytes; `check-clean.sh` passes, with 77
+  JavaScript tests; `/ready` answers `"version":"0.1.13"`; and `agnostic --version` exits 2.
+
+### Known — found during this release, older than it, not fixed here
+
+Each is an open item on the roadmap ("Found at 0.1.13", and H4's and H5's follow-ups), with where it
+is and, where it applies, how to reproduce it and the fix direction. H4 found three older defects; two of them, the audit
+chain not linking across a restart and a crew named over 255 bytes never being durable, are fixed in
+this release (see Fixed above).
+
+- **`GET /api/v1/crews/{id}` for a crew this process holds carries `engine_mode` twice.** The route
+  sets it and `agnostic_ledger_describe_a` sets it again: bayan's object set appends a second key
+  rather than replacing the first. Stored documents, and the interrupted one, carry it once.
+- **The audit chain** (found fixing its restart link): a trail written before 0.1.13 keeps its
+  breaks, and verification stops at the first one (see Fixed above); a failed read at open
+  verifies as intact; a failed write leaves the chain's head on the entry it did not save, so the
+  next start reports tampering.
+- **Request paths still allocate from the global bump**, which has no `free()`: 16 bytes for a 404,
+  a 401 or any authenticated request, 696 for a successful login, 416 per audited write (H5).
+- **A 405 carries no `Allow` header** (H5).
+- **`cyrius test` still prints one warning on our code**, `tests/jwt.tcyr:93` "assigning
+  non-pointer to typed pointer".
+- **The suites write their stores to fixed `/tmp` paths and ignore `TMPDIR`**; a full run leaves 17
+  files there.
+- **One agnostic process per database file is assumed, not enforced** (H4, see Changed above).
+- **`CONTRIBUTING.md` names a coverage gate CI does not run, and the tree does not meet it.**
+  `cyrius coverage --min 80` fails at 69% (330 of 476 functions; 67% at 0.1.12): it counts
+  references, and the route handlers the suites reach through the dispatcher count as unreferenced.
+- **Stale lines and pages from earlier releases.** `cyrius.cyml`'s comment on the folded sigil
+  still describes the chain declaring 3.13.5; `CONTRIBUTING.md` asks an issue for the Rust version;
+  `BENCHMARKS.md` was last generated at 0.1.0, with one benchmark of today's 16; and
+  `docs/development/handoff.md` §1 stops at 0.1.10.
+
+### Docs
+
+- **ADR 0014** (the swarm estimator's one-agent baseline is its own model, at the swarm's token
+  spend), indexed. The roadmap ticks B3 and records a follow-up under "Later": a per-agent context
+  cost in the simulator, default 0 so no estimate changes, because the simulator's 7–13% swarm
+  overhead understates real systems': Anthropic measured a multi-agent system at about 15× a
+  chat's tokens against about 4× for a single agent, roughly 3–4× one agent. `docs/development/state.md`, the
+  plugins guide (the Estimate bullet) and the README describe the baseline. The page's header
+  comments and `soloRun`'s comment say what it is, and why it is not the Sim with one agent.
+- **ADR 0013** (a crew a restart interrupted answers `interrupted`, not 404) and **architecture
+  note 001** (what survives a restart: every kind of state, where it lives, what the next start does
+  with it; one process per database file; downgrading). The architecture index lists it.
+- **Roadmap.** The M4 note "a crew interrupted mid-flight 404s after a restart" is marked superseded
+  by ADR 0013, its text kept. H4 is ticked, with two corrections: the mechanism is a status-less
+  in-flight table, not a crew row at submit, and there are no finished-task results to keep. Its
+  three follow-ups are recorded as open items: the one-process-per-database guard, cancel answering
+  409 for a stored terminal crew, and keeping finished results once agnosai F3/F4 carry them.
+  "Found at 0.1.13" records the three older defects H4 found; the audit chain's and the crew
+  name's are now ticked (Fixed above).
+- `docs/development/state.md` (nine tables, the persistence rule, the route table, the plugins),
+  `docs/guides/webgui-plugins.md` (the Interrupted filter, and what Swarm Command shows) and the
+  README say the same.
+  Source comments in `crewstore.cyr`, `crew.cyr`, `ledger.cyr`, `outcome.cyr`, `routes/crews.cyr`
+  and `serve.cyr` describe the new rule.
+- **H3 is closed with no wire change: 0.1.9 delivered it as `missed`.** Since 0.1.9, an `after`
+  older than the oldest of a crew's 256 held events gets every event still held, from the oldest,
+  and `missed`. The roadmap's `events_lost: true` would restate `missed > 0` under a name that
+  collides with `lost_events`, and the re-read it proposed (`GET /crews/{id}`) carries no task
+  results until the crew ends.
+  - The roadmap marks H3 closed with those reasons, and its F3 entry names the per-task snapshot
+    a reader past the ring could resync from mid-run.
+  - The 2026-10-03 research note carries a dated correction: the parameter is `after=`, not
+    `since=`, and the gap is not silent.
+  - The events handler's comment (`src/routes/crews.cyr`) says what a reader does with
+    `missed` > 0, and how a cursor past the newest is answered.
+  - The README names `missed`, and state.md's route row names the gap signal.
+- **H5, the route table.** The router's header says the table is now literally one, with the
+  re-measured costs, and that the next route added should re-measure. The comment on
+  `agnostic_method_from` said an unknown verb 404s; on a known path it answers 405, as the new test
+  pins. `src/auth/perm.cyr` cited `router.cyr:323`, which had gone stale; it names the function
+  instead. `docs/development/state.md` records the 0.1.13 measurement beside the earlier ones.
+- **H5, the closed catalogues.** `src/http/response.cyr` gains a section on why the codes are an
+  enum, appended and never renumbered, and how the table of rows makes "no gap" its shape rather
+  than a rule; `agnostic_plugin_gate_a` and the plugin-data handlers name catalogue members. The roadmap's H5 entry records Change 2 as done, and
+  `docs/development/state.md` counts its tests.
+- **H5, `agnostic api schema`.**
+  - **ADR 0015** (the HTTP API is described by a schema generated from the server's own tables,
+    and a snapshot freezes it), indexed.
+  - **`docs/api/README.md`** (new): every key of the document, what is generated, declared and left
+    out, the three checks, the known gaps, and the stability rule — before 1.0 a snapshot change is
+    an ordinary change with a CHANGELOG line; from 1.0 a removal or rename needs an ADR and a
+    Breaking entry.
+  - The README's API section and `docs/guides/getting-started.md` name the command.
+  - The roadmap ticks H5, pointing to ADR 0015 and `docs/api/`, with what each of the four changes
+    did. The v1.0 criterion "Public API frozen" now says how the HTTP half is checked — the snapshot
+    in the suite and on the shipped binary in CI, every declared request part driven through the
+    dispatcher, and every route's response statuses and keys checked both ways on the real mount —
+    and what is still open for it. "Later" records what the schema leaves out (field types and
+    required-ness, nested shapes, a code for the 422 refusals, per-handler statuses, and the
+    reverse of the declared request parts).
+  - The fourth change: ADR 0015's Decision describes it, why the keys are declared rather than read
+    (a table the handlers build with would rewrite each one), and the alternative; `docs/api/README.md`
+    gains `ok`, `response`, the three kinds, what `?` means, the one refusal carrying more than
+    `error` and `code` (a crew accepted but unable to start: 503 with `crew_id` and `status`), and
+    the new gaps (keys a handler writes only in a state the sweep does not reach; a key written
+    twice, which a set comparison cannot see). The duplicate-`engine_mode` roadmap item says its
+    fix should add that check.
+  - Found while measuring for the fourth change and recorded on the roadmap, not fixed here: request
+    paths still allocate from the global bump. A 404, a 401 and every authenticated request keep 16
+    bytes each, a successful login 696 and each audited write 416, against `response.cyr`'s own
+    rule (router refusal arms, authn, login, JWT claims, audit details; file:line there).
+  - `docs/development/state.md`: the two modules in the source table, the schema as the
+    machine-readable surface above the route table, the suite, and a Hardening row.
+  - `src/main.cyr`'s doubled "Entry point." comment is replaced by one that says it reads its
+    arguments first.
+- **The audit chain across a restart.**
+  - Architecture note 001's audit row says the next entry links to the last stored one, and a new
+    section says what the audit defect was and what a trail written before 0.1.13 shows.
+  - The roadmap ticks the item. It records three follow-ups as open items: a verdict that can tell
+    an old restart break from a tamper, a failed read at open that verifies as intact, and a failed
+    write that leaves the chain's head on the entry it did not save, so the next start reports
+    tampering (older than 0.1.13, found reviewing this fix).
+  - `src/engine/audit.cyr`'s header and the seed's comment say why the head is seeded and what
+    the value's lifetime is. The header's "a failed append leaves no hole to find" now carries a ⚠
+    that a failed write is the exception, and the failure branch points to it. The comment on `agnostic_audit_bad_index` said the index was at offset
+    24, and now says why it is read with the accessor.
+  - ADR 0011 is unchanged: it decides how the newest entries are read, not how the chain links.
+- **A crew named over 255 bytes.**
+  - Architecture note 001's known-defect section becomes a section saying what the defect was and
+    that it is fixed. The roadmap ticks the item. `src/engine/crewstore.cyr`'s header and the
+    save's comment say what `cname` holds and why.
+  - `docs/development/handoff.md` §5 said patra's `COL_STR` truncates silently. patra has refused
+    a longer value since its 2026-08-18 audit, which is how this defect lost whole outcomes rather
+    than cutting names. The note now says so and how to bind a `STR`. The comments in
+    `src/engine/settings.cyr`, `src/engine/plugindata.cyr` and `tests/webgui.tcyr` that repeated
+    the old claim are corrected; their door checks were right either way.
+- **H6, the skill.**
+  - The README's API section links `skills/agnostic/SKILL.md` and says how to install it (a
+    symlink into the agent's skills folder); `docs/guides/getting-started.md` points to it.
+  - The roadmap ticks H6, with what its own wording had wrong (`hierarchical` is a 400; `name` is
+    required; only login is rate-limited; no route issues API keys; a preset is not a crew body),
+    and the M7 bullet that names the skill. The 2026-10-03 research note carries a dated correction.
+  - Three src comments contradicted the skill and are corrected, no behaviour change:
+    `src/engine/crew.cyr` and `src/config.cyr` said `/ready` reports the engine mode, which only
+    crew responses carry; `src/engine/presets.cyr` said a preset's agents can be posted as a crew's,
+    which needs `agent_key` renamed and `celery_queue`/`redis_prefix` dropped first.
+  - `docs/development/state.md`: the gate list, a line under the crew-surface table, and a Hardening
+    row.
+- **The release as a whole.** `docs/development/state.md` is refreshed for 0.1.13: its header,
+  Version, Toolchain and Dependencies (nothing moved), and the Source, Tests and Hardening totals
+  re-measured at the cut (31 suites, 2,347 assertions, 77 JavaScript tests, 1,063 definitions
+  across 50 files, 27,314 lines), each beside 0.1.12's; 0.1.12's source was 25,572 lines,
+  re-measured from its tag, where state.md had said 25,570. The roadmap's 0.1.13 tranche is marked
+  shipped, its open follow-ups kept. Architecture note 001 and `docs/development/handoff.md` (now
+  fifteen ADRs) no longer call 0.1.13 unreleased or count twelve. This entry's Known section lists
+  every older defect the release recorded rather than fixed. H4's Swarm Command change is named as
+  part of 0.5.0 here and on the roadmap, since no 0.4.1 was released.
+  - The roadmap records two more "Found at 0.1.13" sections: the integration pass's (the coverage
+    gate `CONTRIBUTING.md` names, and stale lines in `cyrius.cyml` and `CONTRIBUTING.md`) and the
+    release verification's (`BENCHMARKS.md`, and `docs/development/handoff.md` §1). Known above
+    lists all four.
+  - The roadmap gains "Next re-pin — agnosai 2.1.5 (agnostic 0.1.14)": the re-pin, and the
+    consumer halves of agnosai's B17 (crew events and status; its registry stores RUNNING), F7
+    (`/plan?explain=selection`) and F6 (one trace from request to tool), with an open decision on
+    per-task selection hints.
+  - From the release verification. `SECURITY.md` asked a reporter for `agnostic --version`, which
+    since this release prints usage and exits 2; it now asks for `cat VERSION` or the `version`
+    field of `GET /ready`. `docs/development/handoff.md`'s version line named 0.1.10 and now
+    points to `VERSION`, its M5 figures say they are M5's and point to `state.md`, and its refresh
+    log records 0.1.13. The roadmap's file:line references for the 405 and for B17's comments are
+    re-derived from this tree. `state.md`'s gate list names `gen-api-schema.sh --check` and no
+    longer reads as if `gen-webgui.sh --check` ran `check-skill.py`; its Node line, and the header
+    of `tests/webgui/swarm.test.mjs`, say the fakes answer as 0.1.13's server does; that file's
+    pinned-estimate test names the page its figures were read from, Swarm Command 0.4.0's.
+
 ## [0.1.12] — 2026-10-03
 
 **Re-pin to agnosai 2.1.4.** The build prints no warning on code, down from five at 0.1.11:

@@ -23,6 +23,7 @@ class FakeAgnostic {
     this.events = new Map();  // id → [{seq, at_ms, type, data}]
     this.status = new Map();  // id → live status for /events
     this.held = new Set();    // ids the ledger holds (events and plan answer)
+    this.oldest = new Map();  // id → the oldest seq the window still holds (absent: 1)
     this.calls = [];
     this.cancelAnswer = 200;
   }
@@ -71,10 +72,14 @@ class FakeAgnostic {
     }
     if ((m = bare.match(/^\/api\/v1\/crews\/([0-9a-f-]{36})\/events$/)) && method === 'GET') {
       if (!this.held.has(m[1])) return this.answer(404, { error: 'crew not found' });
+      // As the server's ring answers: what is still held after the cursor, and how many
+      // numbers after it had already left the window (`missed`).
       const after = Number(q.get('after') || 0);
-      const evs = this.events.get(m[1]).filter((e) => e.seq > after);
-      return this.answer(200, { crew_id: m[1], status: this.status.get(m[1]), events: evs, next: this.events.get(m[1]).length,
-        missed: 0, lost_events: 0, dropped_events: 0 });
+      const oldest = this.oldest.get(m[1]) || 1;
+      const evs = this.events.get(m[1]).filter((e) => e.seq > Math.max(after, oldest - 1));
+      return this.answer(200, { crew_id: m[1], status: this.status.get(m[1]), events: evs,
+        next: Math.max(after, this.events.get(m[1]).length), missed: Math.max(0, oldest - (after + 1)),
+        lost_events: 0, dropped_events: oldest - 1 });
     }
     if ((m = bare.match(/^\/api\/v1\/crews\/([0-9a-f-]{36})\/cancel$/)) && method === 'POST') {
       if (this.cancelAnswer !== 200) return this.answer(this.cancelAnswer, { error: 'no' });
@@ -241,6 +246,45 @@ test('an open crew: plan, progress by cursor, then the results and what they cos
   assert.equal(fake.calls.filter((c) => c.path.includes('/events')).length, polls, 'and it stops polling');
 });
 
+test('events that left the window are counted, and the outcome settles their tasks', async () => {
+  // H3: a reader that falls behind the server's window is told how far (`missed`) and gets
+  // what is still held, from the oldest. Nothing mid-run can recover the events it lost —
+  // the crew's own document carries no task results until it ends — so the task they were
+  // about stays as last seen until the final read settles it.
+  const fake = new FakeAgnostic();
+  const id = fake.addCrew(5, 'running');
+  fake.plans.set(id, { crew_id: id, process: 'sequential', agents: [],
+    tasks: [{ task_id: 't-a', index: 0, description: 'one', dependencies: [] },
+            { task_id: 't-b', index: 1, description: 'two', dependencies: [] }] });
+  fake.emit(id, 'crew_started', { task_count: 2 });
+  fake.emit(id, 'task_started', { task_id: 't-a' });
+  fake.emit(id, 'task_completed', { task_id: 't-a', status: 'completed' });
+  fake.emit(id, 'task_started', { task_id: 't-b' });
+  fake.oldest.set(id, 4);
+  const d = new C.CrewDetail(hostFor(fake), id, { pollMs: 5 });
+  await d.start();
+  assert.equal(d.missed, 3, 'the three events that left the window are counted');
+  assert.equal(d.tasks[0].status, 'pending', 'the task they were about is stale mid-run');
+  assert.equal(d.tasks[1].status, 'running', 'what was still held is applied');
+  assert.equal(d.events.length, 1, 'and only it is listed');
+  await tick(15);
+  const evCalls = fake.calls.filter((c) => c.path.includes('/events'));
+  assert.ok(evCalls.length >= 2);
+  assert.match(evCalls[1].path, /[?&]after=4(&|$)/, 'the reader goes on from the window, not from 0');
+
+  fake.emit(id, 'task_completed', { task_id: 't-b', status: 'completed' });
+  fake.emit(id, 'crew_completed', { status: 'completed' });
+  Object.assign(fake.docs.get(id), { status: 'completed',
+    results: [{ task_id: 't-a', status: 'completed', output: 'a' }, { task_id: 't-b', status: 'completed', output: 'b' }] });
+  fake.status.set(id, 'completed');
+  await tick(30);
+  assert.equal(d.waiting(), false);
+  assert.equal(d.finalRead, true, 'the end is read once more');
+  assert.equal(d.tasks[0].status, 'completed', 'which settles the task whose events were missed');
+  assert.equal(d.tasks[0].output, 'a');
+  assert.equal(d.missed, 3, 'and the gap is counted once, not again on every later poll');
+});
+
 test('cost is shown only when a call was priced; tokens only when metered', async () => {
   const fake = new FakeAgnostic();
   const id = fake.addCrew(2, 'completed');
@@ -284,6 +328,48 @@ test('cancel: the crew stays watched until its last tasks report, and their resu
   await d2.start();
   assert.equal((await d2.cancel()).message, 'It had already finished.');
   d2.stop();
+});
+
+test('a crew a server restart interrupted ends interrupted: filtered, settled, never waited on', async () => {
+  // agnostic 0.1.13 (ADR 0013): a crew accepted before a restart that had no outcome answers
+  // 200 `interrupted` — terminal, no finished_at, its work lost — where it used to answer 404.
+  assert.ok(C.FILTERS.some((f) => f.id === 'interrupted' && f.status === 'interrupted'), 'an Interrupted filter');
+  assert.equal(C.paramsFor('interrupted', ''), 'status=interrupted');
+
+  const fake = new FakeAgnostic();
+  const id = fake.addCrew(6, 'running', { tasks_submitted: 2 });
+  fake.plans.set(id, { crew_id: id, process: 'sequential', agents: [],
+    tasks: [{ task_id: 't-a', index: 0, description: 'one', dependencies: [] },
+            { task_id: 't-b', index: 1, description: 'two', dependencies: [] }] });
+  fake.emit(id, 'crew_started', { task_count: 2 });
+  fake.emit(id, 'task_started', { task_id: 't-a' });
+  const d = new C.CrewDetail(hostFor(fake), id, { pollMs: 5 });
+  await d.start();
+  assert.equal(d.waiting(), true, 'watched while it runs');
+
+  // The server restarts: its ledger is gone (events 404) and the crew answers interrupted.
+  fake.held.delete(id);
+  Object.assign(fake.docs.get(id), { status: 'interrupted', results: [], task_count: 0, tasks_submitted: 2,
+    usage: { total_tokens: 0, metered_tasks: 0, costed_tasks: 0 }, interrupted_at: 5000,
+    error: "the server restarted before this crew's outcome was recorded; its work was lost" });
+  fake.crews.find((c) => c.crew_id === id).status = 'interrupted';
+  await tick(30);
+  assert.equal(d.status, 'interrupted', 'the final read says interrupted');
+  assert.equal(d.waiting(), false, '⭐ and it is not waited on: it will never run');
+  assert.equal(d.notFound, false, 'it is not "no such crew"');
+  const s = d.summary();
+  assert.equal(s.took, null, 'no took: the downtime is not run time');
+  assert.equal(s.interrupted, 5000, 'when it was declared interrupted');
+  assert.match(s.error, /restarted/, 'and the error says why');
+  assert.equal(s.tokens, null, 'nothing metered');
+  const polls = fake.calls.filter((c) => c.path.includes('/events')).length;
+  await tick(20);
+  assert.equal(fake.calls.filter((c) => c.path.includes('/events')).length, polls, 'and it stops polling');
+
+  const list = new C.CrewList(hostFor(fake));
+  await list.load('interrupted');
+  assert.match(fake.calls.at(-1).path, /[?&]status=interrupted(&|$)/, 'the filter is the server\'s');
+  assert.deepEqual(list.crews.map((c) => c.crew_id), [id]);
 });
 
 test('a crew of another tenant, or none, is not found', async () => {

@@ -95,6 +95,7 @@ var AGNOSTIC_JK_SUBMITTED_AT  = str_from("submitted_at");
 var AGNOSTIC_JK_STARTED_AT    = str_from("started_at");
 var AGNOSTIC_JK_FINISHED_AT   = str_from("finished_at");
 var AGNOSTIC_JK_CREW_SCOPE    = str_from("scope");
+var AGNOSTIC_JK_INTERRUPTED_AT = str_from("interrupted_at");   # 0.1.13, ADR 0013
 var AGNOSTIC_JV_SEQUENTIAL    = str_from("sequential");
 var AGNOSTIC_JV_PARALLEL      = str_from("parallel");
 var AGNOSTIC_JV_DAG           = str_from("dag");
@@ -201,10 +202,15 @@ fn agnostic_ledger_count(): i64 {
 # one takes an outcome record and this one takes a bare status — and the guard
 # in `agnostic_ledger_latch` must read the *stored* status, before any outcome
 # exists to wrap it.
+#
+# INTERRUPTED (0.1.13) is never latched: the ledger never holds it, and only the
+# start-up sweep writes it. Its arm is here so `_agnostic_crews_save_locked`, which
+# refuses anything this calls non-terminal, accepts the sweep's outcome.
 fn agnostic_status_is_terminal(s): i64 {
     if (s == AGNOSTIC_CREW_COMPLETED) { return 1; }
     if (s == AGNOSTIC_CREW_FAILED)    { return 1; }
     if (s == AGNOSTIC_CREW_CANCELLED) { return 1; }
+    if (s == AGNOSTIC_CREW_INTERRUPTED) { return 1; }
     return 0;
 }
 
@@ -673,7 +679,8 @@ fn agnostic_ledger_latch(e, status, error, results): i64 {
     # ⚠ **Persisted outside the lock, on the one transition that matters.** This
     # is the single point where a crew becomes terminal — the latch refuses every
     # later write — so it is exactly where durability belongs, and doing it here
-    # means no caller has to remember.
+    # means no caller has to remember. Writing the outcome also clears the crew's
+    # in-flight row (0.1.13), so the next start does not call it interrupted.
     #
     # The patra call is deliberately NOT under `_agnostic_ledger_mutex`: holding
     # our lock across a library that takes its own is how a lock-order hazard
@@ -683,11 +690,13 @@ fn agnostic_ledger_latch(e, status, error, results): i64 {
     return 1;
 }
 
-# Write a now-terminal entry to the durable store.
+# Write a now-terminal entry to the durable store — the outcome, its listing row, and
+# (0.1.13) the deletion of its in-flight row, in one critical section.
 #
 # Failure is logged and counted by the store, not raised: a crew that ran
 # correctly should not be reported as failed because the disk was full. What it
-# costs is that the outcome 404s after a restart, which is true rather than wrong.
+# costs is that the crew answers `interrupted` after a restart, as its in-flight
+# row is still there — true rather than wrong (ADR 0013).
 fn _agnostic_ledger_persist(e): i64 {
     if (agnostic_store_is_open() == 0) { return 0; }
     var o = agnostic_ledger_outcome_a(default_alloc(), e);
@@ -701,6 +710,66 @@ fn _agnostic_ledger_persist(e): i64 {
     var row = agnostic_ledger_row_a(default_alloc(), e);
     if (row == 0) { return 0; }
     return agnostic_crews_save_row(row, doc);
+}
+
+# Record a just-accepted crew as in flight (0.1.13, ADR 0013): its id, scope, name,
+# when it was accepted, its task count, engine mode and process, in
+# `agnostic_crew_inflight`. A restart before the crew's outcome is written turns that
+# row into an INTERRUPTED outcome, instead of the 404 an unrecorded crew answers.
+#
+# Allocates nothing of its own: every string is the entry's or interned. Takes no ledger lock
+# across the store — the accessors take and release it, as `_agnostic_ledger_persist`
+# does. Returns `agnostic_crews_mark_inflight`'s answer (1 written, 2 already finished,
+# 0 not written), or 0 for a null entry or when no database is open.
+fn agnostic_ledger_mark_inflight(e): i64 {
+    if (e == 0) { return 0; }
+    if (agnostic_store_is_open() == 0) { return 0; }
+    var ntasks = 0 - 1;
+    var process = 0;
+    var spec = agnostic_ledger_spec(e);
+    if (spec != 0) {
+        process = agnostic_engine_process_to_wire(agnosai_process_kind(agnosai_crew_process(spec)));
+        var tasks = agnosai_crew_tasks(spec);
+        ntasks = 0;
+        if (tasks != 0) { ntasks = vec_len(tasks); }
+    }
+    return agnostic_crews_mark_inflight(agnostic_ledger_crew_id(e), agnostic_ledger_scope(e),
+      agnostic_ledger_name(e), agnostic_ledger_submitted_ms(e), ntasks, agnostic_ledger_mode(e), process);
+}
+
+# The stored document for a crew a restart interrupted, in `a` (0.1.13, ADR 0013): `row`
+# is the crew as its in-flight row recorded it, `at_ms` when it was declared interrupted.
+#
+# An outcome like any other — `crew_id`, status `interrupted`, `task_count` 0,
+# `results: []`, zero `usage`, and an `error` saying the server restarted before the
+# outcome was recorded — plus what was known at submit: `name`, `scope`, `engine_mode`,
+# `process`, `tasks_submitted` and `submitted_at` (each only when recorded), and
+# `interrupted_at`. ⚠ **No `started_at` and no `finished_at`**: when it stopped is not
+# known, and a finishing time of "when the server came back" would show the downtime as
+# run time. Nothing it finished is kept: agnostic holds no task result until a crew ends.
+#
+# Returns the encoded document, or 0 on exhaustion.
+fn agnostic_crew_interrupted_doc_a(a, row, at_ms): i64 {
+    if (row == 0) { return 0; }
+    var o = agnostic_outcome_new_a(a, agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID),
+      AGNOSTIC_CREW_INTERRUPTED, AGNOSTIC_OC_INTERRUPTED_MSG, 0);
+    if (o == 0) { return 0; }
+    var v = agnostic_outcome_to_value_a(a, o);
+    if (v == 0) { return 0; }
+    var name = agnostic_crew_row_get(row, AGNOSTIC_CR_NAME);
+    if (name != 0) { bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_NAME, bayan_json_v_str_new_a(a, name)); }
+    var scope = agnostic_crew_row_get(row, AGNOSTIC_CR_SCOPE);
+    if (scope != 0) { bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_CREW_SCOPE, bayan_json_v_str_new_a(a, scope)); }
+    var mode = agnostic_crew_row_get(row, AGNOSTIC_CR_MODE);
+    if (mode != 0) { bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_MODE, bayan_json_v_str_new_a(a, mode)); }
+    var proc = agnostic_crew_row_get(row, AGNOSTIC_CR_PROCESS);
+    if (proc != 0) { bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_PROCESS, bayan_json_v_str_new_a(a, proc)); }
+    var nt = agnostic_crew_row_get(row, AGNOSTIC_CR_NTASKS);
+    if (nt >= 0) { bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_TASKS_SUB, bayan_json_v_int_new_a(a, nt)); }
+    var sub = agnostic_crew_row_get(row, AGNOSTIC_CR_SUBMITTED);
+    if (sub > 0) { bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_SUBMITTED_AT, bayan_json_v_int_new_a(a, sub)); }
+    bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_INTERRUPTED_AT, bayan_json_v_int_new_a(a, at_ms));
+    return agnostic_encode_a(a, v);
 }
 
 # How many task results a results vec holds: 0 for none at all.

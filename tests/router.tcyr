@@ -35,6 +35,24 @@ fn test_method_parse() {
     assert_eq(agnostic_method_from(str_from("PATCH")), AGNOSTIC_METHOD_NONE, "unknown verb is NONE");
     assert_eq(agnostic_method_from(str_from("get")), AGNOSTIC_METHOD_NONE, "methods are case-sensitive per RFC");
     assert_eq(agnostic_method_from(str_from("")), AGNOSTIC_METHOD_NONE, "empty is NONE");
+
+    # 0.1.13 (H5): the inverse, which the API schema names each route's method with. Every
+    # method round-trips through its name; NONE and anything past DELETE have none.
+    var m = AGNOSTIC_METHOD_GET;
+    var bad = 0;
+    while (m <= AGNOSTIC_METHOD_DELETE) {
+        var name = agnostic_method_name(m);
+        if (name == 0) {
+            bad = bad + 1;
+        } elif (agnostic_method_from(str_from(name)) != m) {
+            bad = bad + 1;
+        }
+        m = m + 1;
+    }
+    assert_eq(bad, 0, "each method's name parses back to it");
+    assert_eq(str_eq_cstr(str_from(agnostic_method_name(AGNOSTIC_METHOD_DELETE)), "DELETE"), 1, "DELETE is DELETE");
+    assert_eq(agnostic_method_name(AGNOSTIC_METHOD_NONE), 0, "NONE has no name");
+    assert_eq(agnostic_method_name(AGNOSTIC_METHOD_DELETE + 1), 0, "nor does a value past DELETE");
 }
 
 fn test_path_matching() {
@@ -122,6 +140,147 @@ fn test_resolve() {
     m = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_POST, str_from("/health"));
     assert_eq(agnostic_route_match_id(m), AGNOSTIC_ROUTE_NONE, "wrong method does not resolve");
     assert_eq(agnostic_route_match_method_mismatch(m), 1, "wrong method is flagged as a mismatch, not a miss");
+}
+
+# The method for `k` = 0..3, in the table's column order.
+fn _t_method(k): i64 {
+    if (k == 0) { return AGNOSTIC_METHOD_GET; }
+    if (k == 1) { return AGNOSTIC_METHOD_POST; }
+    if (k == 2) { return AGNOSTIC_METHOD_PUT; }
+    return AGNOSTIC_METHOD_DELETE;
+}
+
+# A concrete path for `pattern`: its first `:name` segment becomes `x1`, its second `x2`.
+fn _t_concrete(pattern): i64 {
+    var sb = str_builder_new();
+    var caps = 0;
+    var i = 0;
+    while ((load8(pattern + i) & 0xFF) != 0) {
+        var c = load8(pattern + i) & 0xFF;
+        if (c == 58) {
+            caps = caps + 1;
+            str_builder_putc(sb, 120);          # 'x'
+            str_builder_putc(sb, 48 + caps);    # '1', '2'
+            while ((load8(pattern + i) & 0xFF) != 0 && (load8(pattern + i) & 0xFF) != 47) { i = i + 1; }
+        } else {
+            str_builder_putc(sb, c);
+            i = i + 1;
+        }
+    }
+    return str_builder_build(sb);
+}
+
+# How many `:name` segments `pattern` has.
+fn _t_captures(pattern): i64 {
+    var n = 0;
+    var i = 0;
+    while ((load8(pattern + i) & 0xFF) != 0) {
+        if ((load8(pattern + i) & 0xFF) == 58) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# 1 when match `m` carries exactly what `_t_concrete` put in a pattern with `caps`
+# parameters: `x1` as param and `x2` as param2, and 0 where there is none.
+fn _t_carries(m, caps): i64 {
+    var p1 = agnostic_route_match_param(m);
+    var p2 = agnostic_route_match_param2(m);
+    if (caps == 0) {
+        if (p1 != 0 || p2 != 0) { return 0; }
+        return 1;
+    }
+    if (p1 == 0) { return 0; }
+    if (str_eq_cstr(p1, "x1") != 1) { return 0; }
+    if (caps == 1) {
+        if (p2 != 0) { return 0; }
+        return 1;
+    }
+    if (p2 == 0) { return 0; }
+    return str_eq_cstr(p2, "x2");
+}
+
+# How many arms of the table hold `id`.
+fn _t_arms_of(id): i64 {
+    var n = 0;
+    var i = 0;
+    while (agnostic_route_row_pattern(i) != 0) {
+        var k = 0;
+        while (k < 4) {
+            if (agnostic_route_row_id(i, _t_method(k)) == id) { n = n + 1; }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn test_route_table() {
+    test_group("router/table");
+
+    var a = arena_allocator(1048576);
+
+    var rows = 0;
+    while (agnostic_route_row_pattern(rows) != 0) { rows = rows + 1; }
+    assert_eq(rows, 21, "21 rows: 20 paths, `/ui` listed with and without its slash");
+    assert_eq(agnostic_route_row_pattern(21), 0, "past the last row there is no pattern");
+    assert_eq(agnostic_route_row_pattern(0 - 1), 0, "nor before the first");
+    assert_eq(agnostic_route_row_id(21, AGNOSTIC_METHOD_GET), AGNOSTIC_ROUTE_NONE, "nor an id");
+    # ⚠ A row that would not fit is refused rather than written past the storage, so
+    # a full table may have dropped one: the build must leave room for another.
+    assert_eq((rows + 1) * AGNOSTIC_RR_SIZE <= AGNOSTIC_RR_TABLE_BYTES, 1,
+      "the table has room for another row, so none was refused");
+
+    # ⭐ Every arm round-trips: its own pattern, made concrete, resolves to its own id,
+    # with its captures. An earlier row that shadowed a later one would fail here.
+    # A failure prints `got` (what resolved) against `expected` (the arm's id).
+    var arms = 0;
+    var i = 0;
+    while (i < rows) {
+        var pattern = agnostic_route_row_pattern(i);
+        var path = _t_concrete(pattern);
+        var caps = _t_captures(pattern);
+        var k = 0;
+        while (k < 4) {
+            var id = agnostic_route_row_id(i, _t_method(k));
+            if (id != AGNOSTIC_ROUTE_NONE) {
+                arms = arms + 1;
+                var m = agnostic_route_resolve_a(a, _t_method(k), path);
+                assert_eq(agnostic_route_match_id(m), id, "a row's own path resolves to its own id");
+                var carried = AGNOSTIC_ROUTE_NONE;
+                if (_t_carries(m, caps) == 1) { carried = id; }
+                assert_eq(carried, id, "and carries x1 as param, x2 as param2, 0 where there is none");
+            }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(arms, 27, "27 arms: 26 route ids, the shell's twice");
+
+    # Every route id has an arm, and only the shell has two (`/ui`, `/ui/`). A failure
+    # prints the first id at fault as `got`.
+    var missing = 0;
+    var doubled = 0;
+    var id2 = AGNOSTIC_ROUTE_HEALTH;
+    while (id2 <= AGNOSTIC_ROUTE_AUDIT_ENTRIES) {
+        var n = _t_arms_of(id2);
+        if (n == 0 && missing == 0) { missing = id2; }
+        if (n > 1 && id2 != AGNOSTIC_ROUTE_UI_SHELL && doubled == 0) { doubled = id2; }
+        id2 = id2 + 1;
+    }
+    assert_eq(missing, 0, "every route id from HEALTH to AUDIT_ENTRIES has an arm");
+    assert_eq(doubled, 0, "no id but the shell's has two arms");
+    assert_eq(_t_arms_of(AGNOSTIC_ROUTE_UI_SHELL), 2, "the shell has two: /ui and /ui/");
+
+    # ⚠ An unknown verb is NONE, and no row has an arm for it: on a known path it is a
+    # method mismatch — 405, like any method the path lacks — and on an unknown one a miss.
+    var m2 = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_NONE, str_from("/api/v1/crews"));
+    assert_eq(agnostic_route_match_id(m2), AGNOSTIC_ROUTE_NONE, "an unknown verb resolves to nothing");
+    assert_eq(agnostic_route_match_method_mismatch(m2), 1, "on a known path it is a mismatch");
+    m2 = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_NONE, str_from("/nope"));
+    assert_eq(agnostic_route_match_method_mismatch(m2), 0, "on an unknown path it is a miss");
+    var r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_NONE, str_from("/health"), str_from(""), 1048576, 0);
+    assert_eq(agnostic_response_status(r), HTTP_METHOD_NOT_ALLOWED, "so it answers 405, not 404");
 }
 
 fn test_needs_auth() {
@@ -336,6 +495,7 @@ fn main() {
     test_named_param();
     test_query_stripping();
     test_resolve();
+    test_route_table();
     test_needs_auth();
     test_dispatch();
     test_body_limit();

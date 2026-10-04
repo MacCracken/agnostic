@@ -11,6 +11,7 @@
 #      durable index, and its stored outcome is still scoped.
 #   4. `Idempotency-Key`: the same key and body answers the same crew; the same key with
 #      another body is refused; keys do not cross scopes.
+#   5. A crew a restart interrupted (0.1.13) is still scoped, listed and filtered.
 include "src/app.cyr"
 
 var _T_DB = "/tmp/agnostic-crew-tenancy-suite.patra";
@@ -250,6 +251,10 @@ fn test_listing_filters_by_status() {
     assert_eq(_t_count(a, "status=running", 0), 1, "one running");
     assert_eq(_t_count(a, "status=active", 0), 2, "active is pending and running together");
     assert_eq(_t_count(a, "status=unknown", 0), 0, "and nothing is unknown");
+    # 0.1.13: a status a restart writes is a filter like the rest — here, matching none.
+    assert_eq(agnostic_response_status(_t_list(a, "status=interrupted", 0)), HTTP_OK,
+      "status=interrupted is a filter, not a 422");
+    assert_eq(_t_count(a, "status=interrupted", 0), 0, "and nothing here was interrupted");
 
     # The filter holds across pages.
     var p1 = _t_list(a, "status=active&limit=1", 0);
@@ -273,6 +278,69 @@ fn test_listing_filters_by_status() {
     assert_eq(agnostic_response_status(_t_list(a, "status=Completed", 0)), AGNOSTIC_HTTP_UNPROCESSABLE,
       "status names are lowercase, as the wire spells them");
     agnostic_ledger_reset();
+}
+
+# ⭐ 0.1.13 (ADR 0013): a crew a restart interrupted is still its tenant's — read, listed and
+# filtered as `interrupted` by acme, and as invisible as ever to everyone else.
+fn test_an_interrupted_crew_stays_its_tenants() {
+    test_group("tenancy/interrupted");
+    _t_open();
+    var a = arena_allocator(4194304);
+
+    agnostic_argon_pool_init();
+    var k = alloc(32);
+    var i = 0;
+    while (i < 32) { store8(k + i, 110 + i); i = i + 1; }
+    agnostic_jwt_set_secret(k, 32);
+    var ua = agnostic_users_create_a(a, str_from("op3@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("acme"));
+    var ug = agnostic_users_create_a(a, str_from("op3@globex.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("globex"));
+    var ta = agnostic_jwt_issue_a(a, ua, AGNOSTIC_ROLE_OPERATOR, str_from("acme"), 600);
+    var tg = agnostic_jwt_issue_a(a, ug, AGNOSTIC_ROLE_OPERATOR, str_from("globex"), 600);
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    var acme = _t_submit(a, _t_ctx(a, ta, 0), _T_BODY);
+    assert_neq(acme, 0, "an acme operator submits a crew");
+
+    # The process dies before the crew's outcome is written; the next start sweeps it.
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_store_close();
+    patra_init();
+    agnostic_store_open(str_from(_T_DB));
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_crews_ensure();
+    agnostic_engine_init(agnostic_config_from_env());
+    assert_eq(agnostic_crews_interrupt_inflight(), 1, "the start-up sweep interrupts it");
+
+    var g = _t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, ""), "", _t_ctx(a, ta, 0));
+    assert_eq(agnostic_response_status(g), HTTP_OK, "acme reads its interrupted crew");
+    if (agnostic_response_status(g) == HTTP_OK) {
+        assert_eq(str_eq_cstr(agnostic_req_str(agnostic_response_body(g), AGNOSTIC_JK_STATUS), "interrupted"), 1,
+          "as interrupted");
+    }
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, ""), "", _t_ctx(a, tg, 0))),
+      HTTP_NOT_FOUND, "⭐ globex cannot — the stored document carries acme's scope");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, ""), "", 0)), HTTP_NOT_FOUND,
+      "nor can the default scope");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+
+    # ⭐ Listed unfiltered: a mask that stopped at UNKNOWN would hide it here.
+    var la = _t_listed(_t_list(a, 0, _t_ctx(a, ta, 0)));
+    assert_eq(bayan_json_v_arr_len(la), 1, "⭐ acme's unfiltered listing includes it");
+    if (bayan_json_v_arr_len(la) == 1) {   # the reads below need it; the failure is named above
+        var item = bayan_json_v_arr_get(la, 0);
+        assert_eq(str_eq(agnostic_req_str(item, AGNOSTIC_JK_CREW_ID), acme), 1, "that crew");
+        assert_eq(str_eq_cstr(agnostic_req_str(item, AGNOSTIC_JK_STATUS), "interrupted"), 1, "with status interrupted");
+        assert_eq(bayan_json_v_obj_get_by_str(item, AGNOSTIC_JK_FINISHED_AT), 0, "no finished_at: it did not finish");
+        assert_eq(bayan_json_v_obj_get_by_str(item, AGNOSTIC_JK_TOTAL_TOK), 0, "no total_tokens: nothing was metered");
+        assert_eq(bayan_json_v_obj_get_by_str(item, AGNOSTIC_JK_COST_MICRO), 0, "no cost_micro_usd: nothing was priced");
+        assert_eq(agnostic_req_int(item, AGNOSTIC_JK_TASKS_SUB, 0 - 1), 1, "and its task count");
+    }
+    assert_eq(_t_count(a, "status=interrupted", _t_ctx(a, ta, 0)), 1, "status=interrupted finds it");
+    assert_eq(_t_count(a, "status=active", _t_ctx(a, ta, 0)), 0, "active does not: it will never run");
+    assert_eq(_t_count(a, 0, _t_ctx(a, tg, 0)), 0, "and globex lists nothing");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
 }
 
 # A crew document persisted before 0.1.9 has no scope: it is the default scope's.
@@ -345,6 +413,7 @@ fn main() {
     test_crews_belong_to_their_tenant();
     test_listing_pages_by_cursor();
     test_listing_filters_by_status();
+    test_an_interrupted_crew_stays_its_tenants();
     test_legacy_document_is_the_default_scope();
     test_idempotency_key();
     agnostic_store_close();
