@@ -157,12 +157,22 @@ of 0 or more), `focus`, `allow_delegation` (a boolean).
 
 - `focus` and `allow_delegation` are kept but shape nothing; the 202 names them in `unforwarded`.
 - `tools` are names only. The engine does not call tools yet.
-- You do not assign agents to tasks. The engine picks an agent for each task.
+- You do not assign agents to tasks. The engine picks an agent for each task by scoring every agent
+  against the task's hints (below): tools, complexity, domain and GPU. Without hints the agents tie
+  on everything but complexity, and the first agent whose complexity is medium (or unset) wins
+  every task.
+  `GET /api/v1/crews/{id}/plan?explain=selection` (section 7) shows the scores.
 
-<!-- schema: bodies.task.fields vocabularies.priority vocabularies.risk -->
+<!-- schema: bodies.task.fields vocabularies.priority vocabularies.risk vocabularies.complexity -->
 **Task**: `description` is required. Optional: `expected_output`, `priority` (`background`, `low`,
 `normal`, `high`, `critical`), `risk` (`low`, `medium`, `high`), `dependencies` (indices into
 `tasks`, at most 64, never itself, no cycles; `dag` runs a task after the tasks it depends on).
+Hints for choosing its agent: `required_tools` (an array of tool names, at most 64), `complexity`
+(`low`, `medium`, `high`), `domain` (compared with each agent's, ignoring case) and `gpu_required`
+(a boolean).
+
+- Hints are also shown to the model: they go into the task's context, which the engine puts in the
+  prompt. Send only what you would let the model read.
 
 **The 202:**
 
@@ -233,15 +243,16 @@ curl -sS "$AGNOSTIC_URL/api/v1/crews/$CREW/events?after=0" -H "Authorization: Be
   window on every call.
 - `status` is the crew's status now; this call refreshes it.
 - `type` is `crew_started`, `task_started` (with the agent's key, or null), `token` (a task's whole
-  text in one event, in `live` sequential crews only), `task_completed` (with `task_id` and
-  `status`) or `crew_completed`.
+  text in one event, for each task the model answered: none in a `placeholder` crew),
+  `task_completed` (with `task_id` and `status`) or `crew_completed`.
 - `missed` above 0 means more than 256 events arrived after your cursor and the oldest were
   overwritten. You were still given everything held, oldest first: do not reconstruct the rest,
   carry on from `next`, and let the outcome (section 7) settle every task once the crew ends.
   `lost_events` were dropped before they were numbered, and `dropped_events` counts both kinds.
-- Events are progress, not the outcome. A `parallel` or `dag` crew reports a whole wave as started at
-  once, and its `crew_completed` can say `completed` for a crew recorded `failed` after a timeout.
-  The outcome is section 7.
+- Events are progress, not the outcome. A `parallel` or `dag` crew announces its tasks as each batch
+  starts and reports a batch's `task_completed` in the order its tasks were dispatched, so a
+  `task_started` can come after a `task_completed`: track each task by its `task_id`. The outcome
+  is section 7.
 - Poll at most once a second, since the server collects events every 200 ms, and slower for a long
   crew. Run one poller per crew.
 <!-- schema: vocabularies.crew_status -->
@@ -303,6 +314,13 @@ curl -sS "$AGNOSTIC_URL/api/v1/crews/$CREW" -H "Authorization: Bearer $AGNOSTIC_
 - `GET /api/v1/crews/{id}/plan` gives the agents and tasks the engine holds, each task with its
   `task_id`, `index` and `dependencies`. It answers 404 for a crew from before a restart, even when
   the outcome above still answers.
+- `GET /api/v1/crews/{id}/plan?explain=selection` also says why each task got its agent. Each task
+  gains `selection`: `winner` (`index`, `agent_key`), `candidate_count`, and `candidates`, best
+  first, each with its `total` and five `scores` (`tool_coverage`, `complexity`, `gpu`, `domain`,
+  `personality`). The answer gains `scorer` (the five `weights`, and the factors it cannot measure
+  yet) and `candidate_limit`, how many candidates each task lists: a large crew lists fewer, never
+  fewer than the winner. Add `&task=N` (a task's `index`) to explain one task over the whole roster.
+  `explain` other than `selection`, or `task` without it, is a 422.
 
 ## 8. Usage and cost
 

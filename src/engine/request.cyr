@@ -25,15 +25,19 @@
 # ## The dependency graph is validated here, and that is load-bearing
 #
 # `agnostic_crew_req_has_cycle` is not politeness. `agnosai_crew_runner_run`
-# returns 0 on exactly one arm — a cyclic DAG — and on that arm
-# `_agnosai_orch_finish_err` deletes the cancel flag and returns **without
-# touching the crew map**, which `_agnosai_orch_register` has already seeded with
-# PENDING. The blocking caller sees the 0 and can report a 500;
-# `_agnosai_orch_submit_thread` discards it. Submitting a cyclic graph through
-# the async path therefore produces a crew that reports `pending` forever.
+# returns 0 on its error arm — a cyclic DAG, or a dependency naming a task the spec
+# does not hold — and on that arm `_agnosai_orch_finish_err` stores **no outcome**:
+# since agnosai 2.1.5 (its ADR 022) it puts back the PENDING that
+# `_agnosai_orch_register` seeded and the run had moved to RUNNING. The blocking
+# caller sees the 0 and can report a 500; `_agnosai_orch_submit_thread` discards
+# it. Submitting such a graph through the async path therefore produces a crew
+# that reports `pending` forever.
 #
-# Rejecting the cycle at the front door makes that arm unreachable through
-# Agnostic. `src/engine/ledger.cyr` is the second line for the same failure.
+# Rejecting the cycle here, with every dependency a range-checked index into the
+# request's own tasks, makes that arm unreachable through Agnostic — since agnosai
+# 2.1.6. Through 2.1.5 a failed branch beside a successful one reached it anyway
+# (see `src/engine/ledger.cyr`). `src/engine/ledger.cyr` is the second line for the
+# same failure.
 #
 # ## The agent model lives in `src/engine/agentdef.cyr`
 #
@@ -75,15 +79,52 @@ enum AgnosticCrewReqOff {
     AGNOSTIC_CQ_SIZE        = 40;
 }
 
-# A decoded task — 40 bytes. `dependencies` is a vec of **indices into the
+# A decoded task — 72 bytes. `dependencies` is a vec of **indices into the
 # request's task list**, resolved to engine task ids only when the spec is built.
+#
+# The last four are the task's **selection hints** (0.1.14, ADR 0017): what the
+# engine's selector scores each agent against. Each is optional — 0, or
+# `AGNOSTIC_REQ_UNSET` for the two integers, when the request left it out.
 enum AgnosticTaskReqOff {
     AGNOSTIC_TQ_DESCRIPTION     = 0;
     AGNOSTIC_TQ_EXPECTED_OUTPUT = 8;
     AGNOSTIC_TQ_PRIORITY        = 16;
     AGNOSTIC_TQ_RISK            = 24;
     AGNOSTIC_TQ_DEPENDENCIES    = 32;
-    AGNOSTIC_TQ_SIZE            = 40;
+    AGNOSTIC_TQ_REQ_TOOLS       = 40;   # vec of tool-name Strs, or 0
+    AGNOSTIC_TQ_COMPLEXITY      = 48;   # AGNOSTIC_COMPLEXITY_*, or AGNOSTIC_REQ_UNSET
+    AGNOSTIC_TQ_DOMAIN          = 56;   # Str, or 0
+    AGNOSTIC_TQ_GPU_REQUIRED    = 64;   # 1, 0, or AGNOSTIC_REQ_UNSET
+    AGNOSTIC_TQ_SIZE            = 72;
+}
+
+# A task's complexity, as the selector compares it with an agent's (0.1.14, ADR 0017).
+var AGNOSTIC_COMPLEXITY_LOW    = 0;
+var AGNOSTIC_COMPLEXITY_MEDIUM = 1;
+var AGNOSTIC_COMPLEXITY_HIGH   = 2;
+
+# The task-context keys the engine's selector reads (`agnosai_rank_agents`). They are
+# the engine's names; agnostic sends them under no other.
+var AGNOSTIC_JK_REQ_TOOLS = str_from("required_tools");
+
+# The wire spelling of a task complexity. An unknown value answers `low`, the first,
+# so the schema's vocabulary walk stops (`src/http/schema.cyr`).
+fn agnostic_complexity_to_wire(c): i64 {
+    if (c == AGNOSTIC_COMPLEXITY_MEDIUM) { return str_from("medium"); }
+    if (c == AGNOSTIC_COMPLEXITY_HIGH)   { return str_from("high"); }
+    return str_from("low");
+}
+
+# A task complexity from its wire spelling, or -1 for an unrecognised one.
+#
+# ⚠ **-1, not the engine's fallback.** agnosai reads any complexity it does not
+# recognise as medium (`agnosai_complexity_level`), so a typo'd `"hihg"` would be
+# scored as medium and nothing would say so. Here it is a 400 naming the three.
+fn agnostic_complexity_from_wire(s: Str): i64 {
+    if (str_eq_cstr(s, "low") == 1)    { return AGNOSTIC_COMPLEXITY_LOW; }
+    if (str_eq_cstr(s, "medium") == 1) { return AGNOSTIC_COMPLEXITY_MEDIUM; }
+    if (str_eq_cstr(s, "high") == 1)   { return AGNOSTIC_COMPLEXITY_HIGH; }
+    return 0 - 1;
 }
 
 # The process modes Agnostic accepts on the wire.
@@ -108,8 +149,8 @@ fn agnostic_process_to_wire(p): i64 {
 # `hierarchical` is deliberately absent. The engine accepts the mode, warns
 # "hierarchical mode not yet implemented", and runs sequentially  #skip-lint: quotes the engine's own warning
 # — so accepting the word here would advertise a mode Agnostic does not have and
-# silently give the caller a different one. Tracked against roadmap M2; it
-# becomes acceptable the day the engine implements it.
+# silently give the caller a different one. Tracked as agnosai F2 (roadmap, "Waiting on
+# agnosai"); it becomes acceptable the day the engine implements it.
 fn agnostic_process_from_wire(s: Str): i64 {
     if (str_eq_cstr(s, "sequential") == 1) { return AGNOSTIC_PROCESS_SEQUENTIAL; }
     if (str_eq_cstr(s, "parallel") == 1)   { return AGNOSTIC_PROCESS_PARALLEL; }
@@ -154,6 +195,11 @@ fn agnostic_task_req_fields_a(a): i64 {
     agnostic_field_a(a, f, "priority");
     agnostic_field_a(a, f, "risk");
     agnostic_field_a(a, f, "dependencies");
+    # The selection hints (0.1.14, ADR 0017).
+    agnostic_field_a(a, f, "required_tools");
+    agnostic_field_a(a, f, "complexity");
+    agnostic_field_a(a, f, "domain");
+    agnostic_field_a(a, f, "gpu_required");
     return f;
 }
 
@@ -224,6 +270,194 @@ fn agnostic_task_req_dependencies(t): i64 {
     return load64(t + AGNOSTIC_TQ_DEPENDENCIES);
 }
 
+# A task's required tools as a vec of Strs, or 0 when it named none.
+fn agnostic_task_req_required_tools(t): i64 {
+    if (t == 0) { return 0; }
+    return load64(t + AGNOSTIC_TQ_REQ_TOOLS);
+}
+
+# A task's complexity (`AGNOSTIC_COMPLEXITY_*`), or AGNOSTIC_REQ_UNSET.
+fn agnostic_task_req_complexity(t): i64 {
+    if (t == 0) { return AGNOSTIC_REQ_UNSET; }
+    return load64(t + AGNOSTIC_TQ_COMPLEXITY);
+}
+
+# A task's domain, or 0.
+fn agnostic_task_req_domain(t): i64 {
+    if (t == 0) { return 0; }
+    return load64(t + AGNOSTIC_TQ_DOMAIN);
+}
+
+# Whether a task needs a GPU: 1, 0, or AGNOSTIC_REQ_UNSET.
+fn agnostic_task_req_gpu_required(t): i64 {
+    if (t == 0) { return AGNOSTIC_REQ_UNSET; }
+    return load64(t + AGNOSTIC_TQ_GPU_REQUIRED);
+}
+
+# Decode a task's four selection hints onto `t` (0.1.14, ADR 0017). Returns 1, or 0
+# with a rejection stored.
+#
+# What the engine's selector scores each agent of the roster against
+# (`agnosai_rank_agents`), and without which it cannot tell agents apart: tool
+# coverage, complexity alignment, domain match and GPU capability. Every one is
+# checked at the door, because the engine checks none in a way a caller would see:
+#
+#   * `required_tools`: an array of strings of 1 to `AGNOSTIC_REQ_MAX_HINT` bytes, at most
+#     `AGNOSTIC_REQ_MAX_TOOLS` of them. The
+#     engine reads an array holding anything but strings as **no requirement** and
+#     scores every agent full coverage — a malformed list makes every agent look
+#     MORE suitable. An empty array is accepted and means what it says: no
+#     requirement. Names are carried verbatim, like an agent's `tools`: there is no
+#     tool registry to check them against yet (M6).
+#   * `complexity`: `low`, `medium` or `high`. The engine reads anything else as
+#     medium, silently.
+#   * `domain`: 1 to `AGNOSTIC_REQ_MAX_HINT` bytes, compared case-insensitively with each
+#     agent's.
+#
+# And all four together, rendered as the engine renders a task's context, must fit the
+# engine's prompt-input cap — past it the model would see them cut off.
+#   * `gpu_required`: a boolean. `"true"` is a 422, as everywhere here.
+#
+# Global allocator: the hints become the engine task's context, which outlives the
+# request.
+fn _agnostic_task_req_hints_a(a, v, index, t, out): i64 {
+    var tv = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_REQ_TOOLS);
+    if (tv != 0) {
+        if (bayan_json_v_is_null(tv) != 1) {
+            if (bayan_json_v_is_arr(tv) != 1) {
+                _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
+                  "tasks[", index, "]: 'required_tools' must be an array of strings");
+                return 0;
+            }
+            var n = bayan_json_v_arr_len(tv);
+            if (n > AGNOSTIC_REQ_MAX_TOOLS) {
+                _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
+                  "tasks[", index, "]: too many required_tools");
+                return 0;
+            }
+            var tools = vec_new();
+            var i = 0;
+            while (i < n) {
+                var e = bayan_json_v_arr_get(tv, i);
+                if (bayan_json_v_is_str(e) != 1) {
+                    _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
+                      "tasks[", index, "]: 'required_tools' must be an array of strings");
+                    return 0;
+                }
+                var name = bayan_json_v_str(e);
+                if (str_len(name) == 0 || str_len(name) > AGNOSTIC_REQ_MAX_HINT) {
+                    _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
+                      "tasks[", index, "]: each of 'required_tools' must be 1 to 256 bytes");
+                    return 0;
+                }
+                vec_push(tools, str_clone(name));
+                i = i + 1;
+            }
+            store64(t + AGNOSTIC_TQ_REQ_TOOLS, tools);
+        }
+    }
+
+    var cx = agnostic_opt_str(v, AGNOSTIC_JK_COMPLEXITY, 0 - 1);
+    if (cx == 0) {
+        _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
+          "tasks[", index, "]: 'complexity' must be a string");
+        return 0;
+    }
+    if (cx != 0 - 1) {
+        var level = agnostic_complexity_from_wire(cx);
+        if (level < 0) {
+            _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
+              "tasks[", index, "]: 'complexity' must be one of low, medium, high");
+            return 0;
+        }
+        store64(t + AGNOSTIC_TQ_COMPLEXITY, level);
+    }
+
+    var dom = agnostic_opt_str(v, AGNOSTIC_JK_DOMAIN, 0 - 1);
+    if (dom == 0) {
+        _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
+          "tasks[", index, "]: 'domain' must be a string");
+        return 0;
+    }
+    if (dom != 0 - 1) {
+        if (str_len(dom) == 0 || str_len(dom) > AGNOSTIC_REQ_MAX_HINT) {
+            _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
+              "tasks[", index, "]: 'domain' must be 1 to 256 bytes");
+            return 0;
+        }
+        store64(t + AGNOSTIC_TQ_DOMAIN, str_clone(dom));
+    }
+
+    var gpu = _agnostic_opt_bool(v, "gpu_required");
+    if (gpu == AGNOSTIC_REQ_UNSET - 1) {
+        _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
+          "tasks[", index, "]: 'gpu_required' must be a boolean");
+        return 0;
+    }
+    store64(t + AGNOSTIC_TQ_GPU_REQUIRED, gpu);
+
+    # ⚠ **Measured as the engine will render them.** The hints are the task's context, and
+    # agnosai renders the context into the prompt pretty-printed (`_agnosai_crew_build_request`)
+    # and then cuts it at `AGNOSAI_MAX_INPUT_LENGTH` with a log warning only — selection would
+    # use every hint while the model saw a JSON array cut in half. 64 names of 256 bytes fit
+    # unless escaping inflates them, so the rendering itself is what is checked.
+    var size = _agnostic_task_req_hints_rendered_len_a(a, t);
+    if (size < 0) {
+        _agnostic_reject_at(a, out, HTTP_INTERNAL,
+          "tasks[", index, "]: could not measure the selection hints");
+        return 0;
+    }
+    if (size > AGNOSAI_MAX_INPUT_LENGTH) {
+        _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
+          "tasks[", index, "]: the selection hints exceed the engine's 50000-byte context once rendered");
+        return 0;
+    }
+    return 1;
+}
+
+# How long task `t`'s selection hints are once rendered as the engine renders a task's
+# context — pretty JSON, indent 2 — or 0 when it has none. The JSON is built in `a`; key
+# order may differ from the engine's map order, which changes no length.
+#
+# ⚠ **-1 when `a` ran out, never 0.** 0 means "nothing to render", which passes the cap; an
+# exhausted arena reading as 0 would wave through exactly the oversized hints this measures.
+fn _agnostic_task_req_hints_rendered_len_a(a, t): i64 {
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0 - 1; }
+    var any = 0;
+    var tools = load64(t + AGNOSTIC_TQ_REQ_TOOLS);
+    if (tools != 0) {
+        var arr = bayan_json_v_arr_new_a(a);
+        var i = 0;
+        while (i < vec_len(tools)) {
+            bayan_json_v_arr_push_a(a, arr, bayan_json_v_str_new_a(a, vec_get(tools, i)));
+            i = i + 1;
+        }
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_REQ_TOOLS, arr);
+        any = 1;
+    }
+    var cx = load64(t + AGNOSTIC_TQ_COMPLEXITY);
+    if (cx != AGNOSTIC_REQ_UNSET) {
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_COMPLEXITY,
+          bayan_json_v_str_new_a(a, agnostic_complexity_to_wire(cx)));
+        any = 1;
+    }
+    var dom = load64(t + AGNOSTIC_TQ_DOMAIN);
+    if (dom != 0) {
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_DOMAIN, bayan_json_v_str_new_a(a, dom));
+        any = 1;
+    }
+    var gpu = load64(t + AGNOSTIC_TQ_GPU_REQUIRED);
+    if (gpu != AGNOSTIC_REQ_UNSET) {
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_GPU_REQ, bayan_json_v_bool_new_a(a, gpu));
+        any = 1;
+    }
+    if (any == 0) { return 0; }
+    var s = bayan_json_v_build_pretty_a(a, obj, 2);
+    if (s == 0) { return 0 - 1; }
+    return str_len(s);
+}
+
 # Decode one task object.
 #
 # Global allocator for the same reason `agnostic_agent_def_decode_a` uses it:
@@ -270,6 +504,10 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
     store64(t + AGNOSTIC_TQ_PRIORITY, AGNOSTIC_REQ_UNSET);
     store64(t + AGNOSTIC_TQ_RISK, AGNOSTIC_REQ_UNSET);
     store64(t + AGNOSTIC_TQ_DEPENDENCIES, vec_new());
+    store64(t + AGNOSTIC_TQ_REQ_TOOLS, 0);
+    store64(t + AGNOSTIC_TQ_COMPLEXITY, AGNOSTIC_REQ_UNSET);
+    store64(t + AGNOSTIC_TQ_DOMAIN, 0);
+    store64(t + AGNOSTIC_TQ_GPU_REQUIRED, AGNOSTIC_REQ_UNSET);
 
     var eo = agnostic_opt_str(v, str_from("expected_output"), 0 - 1);
     if (eo == 0) {
@@ -314,6 +552,8 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
         }
         store64(t + AGNOSTIC_TQ_RISK, rv);
     }
+
+    if (_agnostic_task_req_hints_a(a, v, index, t, out) == 0) { return 0; }
 
     var deps_v = bayan_json_v_obj_get_by_str(v, str_from("dependencies"));
     if (deps_v != 0) {
@@ -572,6 +812,41 @@ fn agnostic_crew_req_unforwarded_a(a, r): i64 {
     return arr;
 }
 
+# Put a decoded task's selection hints into engine task `t`'s context (0.1.14, ADR 0017),
+# under the selector's own keys and as the JSON values it reads (`agnosai_rank_agents`). A
+# hint the request left out is not written, so the selector's default for an absent key
+# applies: no tool requirement, complexity medium, any domain, no GPU needed.
+#
+# ⚠ **The context is the task's prompt preamble too.** agnosai renders every context key
+# into the model request (`_agnosai_crew_build_request`), so a hinted task's prompt says
+# what it was hinted with — and that request is also hoosh's cache key. ADR 0017 records it.
+#
+# Global allocator: the values are the engine task's, and outlive the request.
+fn _agnostic_task_spec_hints(t, tr): i64 {
+    var tools = agnostic_task_req_required_tools(tr);
+    if (tools != 0) {
+        var arr = bayan_json_v_arr_new();
+        var i = 0;
+        while (i < vec_len(tools)) {
+            bayan_json_v_arr_push(arr, bayan_json_v_str_new(vec_get(tools, i)));
+            i = i + 1;
+        }
+        agnosai_task_with_context(t, AGNOSTIC_JK_REQ_TOOLS, arr);
+    }
+    var cx = agnostic_task_req_complexity(tr);
+    if (cx != AGNOSTIC_REQ_UNSET) {
+        agnosai_task_with_context(t, AGNOSTIC_JK_COMPLEXITY,
+          bayan_json_v_str_new(agnostic_complexity_to_wire(cx)));
+    }
+    var dom = agnostic_task_req_domain(tr);
+    if (dom != 0) { agnosai_task_with_context(t, AGNOSTIC_JK_DOMAIN, bayan_json_v_str_new(dom)); }
+    var gpu = agnostic_task_req_gpu_required(tr);
+    if (gpu != AGNOSTIC_REQ_UNSET) {
+        agnosai_task_with_context(t, AGNOSTIC_JK_GPU_REQ, bayan_json_v_bool_new(gpu));
+    }
+    return t;
+}
+
 # Build the engine crew spec a decoded submission describes.
 #
 # **Two passes over the task list, and the second one is not optional.**
@@ -627,6 +902,7 @@ fn agnostic_crew_spec_build(r): i64 {
         if (p != AGNOSTIC_REQ_UNSET) { agnosai_task_with_priority(t, p); }
         var rk = agnostic_task_req_risk(tr);
         if (rk != AGNOSTIC_REQ_UNSET) { agnosai_task_with_risk(t, rk); }
+        _agnostic_task_spec_hints(t, tr);
         vec_push(tasks, t);
         i = i + 1;
     }

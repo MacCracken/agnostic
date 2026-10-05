@@ -110,6 +110,70 @@ fn test_str_eq_ci() {
     assert_eq(agnostic_str_eq_ci(str_from("any"), str_from("anyy")), 0, "Str/Str length differs");
 }
 
+# The OTLP endpoint (0.1.14, ADR 0018): what agnostic exports spans to, or refuses to start on.
+# The exporter posts best-effort and ignores every answer, so a typo here would lose every span
+# in silence — the parser is the only place a mistake can be named.
+fn test_parse_otlp_endpoint() {
+    test_group("config/otlp_endpoint");
+
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://localhost:4318")), 1, "the sidecar form");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("https://otlp.example.com")), 1, "https");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("HTTPS://otlp.example.com:443/v1/traces")), 1,
+      "the scheme in any case, with a port and a path");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://[::1]:4318")), 1, "an IPv6 literal host");
+
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("localhost:4318")), 0, "no scheme is refused");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("grpc://localhost:4317")), 0,
+      "another scheme is refused — the exporter speaks OTLP/HTTP");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://")), 0, "a scheme alone is refused");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http:///v1/traces")), 0, "no host is refused");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://local host")), 0, "a space is refused");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from(" http://localhost")), 0, "so is a leading one");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://localhost\t")), 0, "and a control byte");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://:4318")), 0,
+      "an empty host is refused (sandhi's parser, which the exporter posts through)");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://collector:abc")), 0, "so is a port that is not a number");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://user:pass@collector:4318")), 0,
+      "userinfo is refused: a token belongs in OTEL_EXPORTER_OTLP_HEADERS");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://collector:4318?x=1")), 0,
+      "a query is refused: v1/traces would land after it");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://collector:4318#f")), 0, "and a fragment");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://localhost:4318/")), 1, "a trailing slash is a base");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("https://gw.example.com/otlp")), 1, "and so is a base path");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("")), 0, "empty is not an endpoint");
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "http://h/");
+    var i = 0;
+    while (i < AGNOSTIC_OTLP_ENDPOINT_MAX) { str_builder_add_cstr(sb, "a"); i = i + 1; }
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_builder_build(sb)), 0, "past the length cap is refused");
+
+    # The config block: a malformed endpoint is what `agnostic_config_invalid` reports, and the
+    # accessor never hands it to the exporter.
+    var c = agnostic_config_from_env();
+    store64(c + AGNOSTIC_CFG_OTLP, 0 - 1);
+    assert_eq(agnostic_config_invalid(c), 1, "a malformed endpoint refuses to start");
+    assert_eq(agnostic_config_otlp_endpoint(c), 0, "and reads as off");
+    store64(c + AGNOSTIC_CFG_OTLP, 0);
+    assert_eq(agnostic_config_invalid(c), 0, "unset is valid, and off");
+    assert_neq(agnostic_config_otel_service(c), 0, "the service name is never 0");
+    assert_eq(agnostic_config_otel_service(0) != 0, 1, "not even for a null block");
+    assert_eq(str_eq_cstr(agnostic_config_otel_service(0), "agnostic"), 1,
+      "and defaults to agnostic, not the library's agnosai");
+    assert_eq(agnostic_config_otlp_as_is(0), 0, "a null block's endpoint is the generic base");
+    store64(c + AGNOSTIC_CFG_OTLP_AS_IS, 1);
+    assert_eq(agnostic_config_otlp_as_is(c), 1, "and the per-signal flag reads back");
+
+    # The inference call's ceiling (0.1.14): 0 means agnosai's own; a malformed or zero value
+    # (stored -1) refuses to start rather than leave a call unbounded.
+    assert_eq(agnostic_config_llm_timeout_secs(0), 0, "a null block keeps agnosai's ceilings");
+    store64(c + AGNOSTIC_CFG_LLM_SECS, 0 - 1);
+    assert_eq(agnostic_config_invalid(c), 1, "a malformed AGNOSTIC_LLM_TIMEOUT_SECS refuses to start");
+    assert_eq(agnostic_config_llm_timeout_secs(c), 0, "and reads as unset");
+    store64(c + AGNOSTIC_CFG_LLM_SECS, 120);
+    assert_eq(agnostic_config_invalid(c), 0, "a value in range is valid");
+    assert_eq(agnostic_config_llm_timeout_secs(c), 120, "and reads back");
+}
+
 fn main() {
     alloc_init();
     test_parse_port();
@@ -117,6 +181,7 @@ fn main() {
     test_parse_bool();
     test_parse_level();
     test_str_eq_ci();
+    test_parse_otlp_endpoint();
     return assert_summary();
 }
 

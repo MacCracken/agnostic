@@ -142,10 +142,13 @@ and the lists it marks. A snapshot change that fails there means the skill needs
 ## Known gaps
 
 - The declared parts are checked one way: a declaration that is false fails, but a query parameter
-  or header a handler starts reading without declaring it is caught only when it is one of the four
-  parameter names the suite knows (`limit`, `status`, `before`, `after`) on a GET route.
+  or header a handler starts reading without declaring it is caught only when it is one of the six
+  parameter names the suite knows (`limit`, `status`, `before`, `after`, `explain`, `task`) on a GET
+  route.
 - No field types or required-ness, no nested response shapes, and no machine-readable code for the
-  422 refusals (unknown or refused field): they live in decoder code, not in a table.
+  422 refusals (unknown or refused field): they live in decoder code, not in a table. So the shape of the
+  plan's per-task `selection` and the types of a task's selection hints (0.1.14) are documented in
+  SKILL.md and ADRs 0016–0017; the schema lists the hints' names and `complexity`'s values.
 - Response keys are declared, not read from the handlers. `api/responses` checks them both ways, but
   only on the answers it drives: a key a handler writes only in a state the sweep does not reach
   would not be seen.

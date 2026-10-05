@@ -47,7 +47,7 @@
 # part of what an operator reads. A chain that verifies clean with a non-zero
 # drop count has not told you everything.
 #
-# ⚠ **A write that fails is the exception (roadmap, "Found at 0.1.13").**
+# ⚠ **A write that fails is the exception (roadmap, "Audit chain").**
 # `chain_append` moves the head to the new entry before `patrastore_append` runs,
 # and a failed write does not move it back, so the next entry saved names a hash
 # the store never got and the next open reports the store altered. A record

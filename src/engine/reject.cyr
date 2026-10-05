@@ -45,6 +45,12 @@ var AGNOSTIC_REQ_MAX_DEPS       = 64;
 var AGNOSTIC_REQ_MAX_CONCURRENCY = 64;
 var AGNOSTIC_REQ_DEFAULT_CONCURRENCY = 4;
 
+# The longest tool name in a task's `required_tools`, and the longest task `domain` — the
+# selection hints (0.1.14, ADR 0017). Identifiers, not prose: an agent's tool names and
+# domain are what they are matched against. Kept well under the engine's prompt-input cap
+# (`AGNOSAI_MAX_INPUT_LENGTH`), which the rendered hints are also checked against whole.
+var AGNOSTIC_REQ_MAX_HINT = 256;
+
 # The unset sentinel for an optional integer field.
 #
 # ⚠ **-1, not 0.** 0 is a legal priority (`AGNOSAI_PRIORITY_BACKGROUND`) and a

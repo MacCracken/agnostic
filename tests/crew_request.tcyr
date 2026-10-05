@@ -316,9 +316,9 @@ fn test_cycles_are_refused() {
 
     # ⭐ THE PERMANENTLY-PENDING CREW, STOPPED AT THE FRONT DOOR.
     #
-    # `agnosai_crew_runner_run` returns 0 on exactly one arm — a cyclic DAG — and
-    # `_agnosai_orch_finish_err` then returns WITHOUT touching the crew map, which
-    # `_agnosai_orch_register` already seeded with PENDING.
+    # `agnosai_crew_runner_run` returns 0 on its error arm — a cyclic DAG among
+    # them — and `_agnosai_orch_finish_err` then stores no outcome: it puts back the
+    # PENDING `_agnosai_orch_register` seeded (agnosai 2.1.5, ADR 022).
     # `_agnosai_orch_submit_thread` discards that return, so a cyclic graph
     # submitted asynchronously reports `pending` forever.
     #
@@ -408,6 +408,202 @@ fn test_spec_build() {
       AGNOSTIC_REQ_DEFAULT_CONCURRENCY, "parallel without max_concurrency uses the default");
 }
 
+# A body with one task carrying `hints` — a JSON fragment — and two agents the selector can
+# tell apart only by what the task asks for.
+fn _t_hinted(hints): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"h\",\"agents\":[");
+    str_builder_add_cstr(sb, "{\"key\":\"web\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"playwright\"],\"domain\":\"web\"},");
+    str_builder_add_cstr(sb, "{\"key\":\"load\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"k6\"],\"domain\":\"performance\",\"complexity\":\"high\",\"gpu_required\":true}");
+    str_builder_add_cstr(sb, "],\"tasks\":[{\"description\":\"x\"");
+    str_builder_add_cstr(sb, hints);
+    str_builder_add_cstr(sb, "}]}");
+    return str_cstr(str_builder_build(sb));
+}
+
+# The status a body with task hints `hints` is refused with, or 0 when it decodes.
+fn _t_hint_status(a, hints): i64 {
+    var rj: i64[1];
+    var r = _t_decode(a, _t_hinted(hints), &rj);
+    if (r != 0) { return 0; }
+    return agnostic_reject_status(load64(&rj));
+}
+
+# The index of the agent the engine's selector ranks first for task 0 of `body`'s spec.
+fn _t_picked(a, hints): i64 {
+    var rj: i64[1];
+    var r = _t_decode(a, _t_hinted(hints), &rj);
+    if (r == 0) { return 0 - 1; }
+    var spec = agnostic_crew_spec_build(r);
+    var ranked = agnosai_rank_agents(agnosai_crew_agents(spec), vec_get(agnosai_crew_tasks(spec), 0));
+    return agnosai_scored_index(vec_get(ranked, 0));
+}
+
+# ⭐ The task's selection hints (0.1.14, ADR 0017): decoded strictly, forwarded into the engine
+# task's context under the selector's own keys, and what the selector then decides by.
+fn test_selection_hints() {
+    test_group("request/hints");
+
+    var a = arena_allocator(262144);
+    var rj: i64[1];
+    var r = _t_decode(a, _t_hinted(",\"required_tools\":[\"k6\",\"jq\"],\"complexity\":\"high\",\"domain\":\"Performance\",\"gpu_required\":true"), &rj);
+    assert_neq(r, 0, "a task with all four hints decodes");
+    var t = vec_get(agnostic_crew_req_tasks(r), 0);
+    assert_eq(vec_len(agnostic_task_req_required_tools(t)), 2, "required_tools decoded");
+    assert_eq(agnostic_task_req_complexity(t), AGNOSTIC_COMPLEXITY_HIGH, "complexity decoded");
+    assert_eq(str_eq_cstr(agnostic_task_req_domain(t), "Performance"), 1, "domain decoded, case kept");
+    assert_eq(agnostic_task_req_gpu_required(t), 1, "gpu_required decoded");
+
+    var spec = agnostic_crew_spec_build(r);
+    var ctx = agnosai_task_context(vec_get(agnosai_crew_tasks(spec), 0));
+    var tools = map_get(ctx, str_from("required_tools"));
+    assert_eq(bayan_json_v_is_arr(tools), 1, "required_tools reaches the engine as an array");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_arr_get(tools, 0)), "k6"), 1, "of the names sent");
+    assert_eq(str_eq_cstr(bayan_json_v_str(map_get(ctx, str_from("complexity"))), "high"), 1,
+      "complexity as its wire name");
+    assert_eq(str_eq_cstr(bayan_json_v_str(map_get(ctx, str_from("domain"))), "Performance"), 1, "domain as sent");
+    assert_eq(bayan_json_v_bool(map_get(ctx, str_from("gpu_required"))), 1, "gpu_required as a boolean");
+
+    # A task that names no hint gets no context key: the selector's own defaults apply.
+    var plain = _t_decode(a, _t_valid(), &rj);
+    var pctx = agnosai_task_context(vec_get(agnosai_crew_tasks(agnostic_crew_spec_build(plain)), 0));
+    var stray = 0;
+    if (pctx != 0) {
+        if (map_get(pctx, str_from("required_tools")) != 0) { stray = stray + 1; }
+        if (map_get(pctx, str_from("complexity")) != 0) { stray = stray + 1; }
+        if (map_get(pctx, str_from("domain")) != 0) { stray = stray + 1; }
+        if (map_get(pctx, str_from("gpu_required")) != 0) { stray = stray + 1; }
+    }
+    assert_eq(stray, 0, "an unhinted task carries no hint key");
+
+    # ⭐ What they are for. With no hint only complexity separates the two — the task reads as
+    # medium — so `web` (medium by default) beats `load` (high); each hint alone moves the task
+    # to the agent that matches it.
+    assert_eq(_t_picked(a, ""), 0, "no hints: complexity alone decides, for the medium agent");
+    assert_eq(_t_picked(a, ",\"required_tools\":[\"k6\"]"), 1, "required_tools picks the agent with the tool");
+    assert_eq(_t_picked(a, ",\"domain\":\"PERFORMANCE\""), 1, "domain picks the agent in it, case-insensitively");
+    assert_eq(_t_picked(a, ",\"complexity\":\"high\""), 1, "complexity picks the agent that matches it");
+    assert_eq(_t_picked(a, ",\"gpu_required\":true"), 1, "gpu_required picks the agent with a GPU");
+    assert_eq(_t_picked(a, ",\"required_tools\":[\"playwright\"],\"domain\":\"web\""), 0,
+      "and hints for the other agent pick it");
+
+    # Accepted edges: an empty tool list (no requirement), null for any hint (absent).
+    assert_eq(_t_hint_status(a, ",\"required_tools\":[]"), 0, "an empty required_tools is no requirement");
+    assert_eq(_t_hint_status(a, ",\"required_tools\":null,\"complexity\":null,\"domain\":null,\"gpu_required\":null"), 0,
+      "null is absent");
+    assert_eq(_t_hint_status(a, ",\"gpu_required\":false"), 0, "gpu_required false is accepted");
+
+    # Refused, each by name — the engine would have read every one of these silently.
+    assert_eq(_t_hint_status(a, ",\"required_tools\":\"k6\""), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "required_tools that is not an array is 422");
+    assert_eq(_t_hint_status(a, ",\"required_tools\":[\"k6\",7]"), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "one non-string entry is 422 — the engine would score every agent full coverage");
+    assert_eq(_t_hint_status(a, ",\"required_tools\":[\"\"]"), HTTP_BAD_REQUEST, "an empty tool name is 400");
+    var many = str_builder_new();
+    str_builder_add_cstr(many, ",\"required_tools\":[");
+    var i = 0;
+    while (i <= AGNOSTIC_REQ_MAX_TOOLS) {
+        if (i > 0) { str_builder_add_cstr(many, ","); }
+        str_builder_add_cstr(many, "\"t\"");
+        i = i + 1;
+    }
+    str_builder_add_cstr(many, "]");
+    assert_eq(_t_hint_status(a, str_cstr(str_builder_build(many))), HTTP_BAD_REQUEST,
+      "more than the tool cap is 400");
+    assert_eq(_t_hint_status(a, ",\"complexity\":\"hihg\""), HTTP_BAD_REQUEST,
+      "a complexity typo is 400 — the engine would read it as medium");
+    assert_eq(_t_hint_status(a, ",\"complexity\":\"HIGH\""), HTTP_BAD_REQUEST, "wire names are lowercase");
+    assert_eq(_t_hint_status(a, ",\"complexity\":3"), AGNOSTIC_HTTP_UNPROCESSABLE, "a complexity number is 422");
+    assert_eq(_t_hint_status(a, ",\"domain\":\"\""), HTTP_BAD_REQUEST, "an empty domain is 400");
+    assert_eq(_t_hint_status(a, ",\"domain\":5"), AGNOSTIC_HTTP_UNPROCESSABLE, "a domain number is 422");
+    assert_eq(_t_hint_status(a, ",\"gpu_required\":\"true\""), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "gpu_required as a string is 422, never read as true");
+
+    # The length caps: identifiers, at most AGNOSTIC_REQ_MAX_HINT bytes each.
+    var longname = str_builder_new();
+    str_builder_add_cstr(longname, ",\"required_tools\":[\"");
+    var j = 0;
+    while (j <= AGNOSTIC_REQ_MAX_HINT) { str_builder_add_cstr(longname, "t"); j = j + 1; }
+    str_builder_add_cstr(longname, "\"]");
+    assert_eq(_t_hint_status(a, str_cstr(str_builder_build(longname))), HTTP_BAD_REQUEST,
+      "a tool name one byte past the cap is 400");
+    var longdom = str_builder_new();
+    str_builder_add_cstr(longdom, ",\"domain\":\"");
+    j = 0;
+    while (j <= AGNOSTIC_REQ_MAX_HINT) { str_builder_add_cstr(longdom, "d"); j = j + 1; }
+    str_builder_add_cstr(longdom, "\"");
+    assert_eq(_t_hint_status(a, str_cstr(str_builder_build(longdom))), HTTP_BAD_REQUEST,
+      "and so is a domain");
+
+    # ⭐ Rendered as the engine renders them: 64 names of 256 control bytes each are within
+    # every per-field cap, but escaped (\u0001 is six bytes) they come to ~98 KB — past the
+    # engine's 50,000-byte prompt-input cap, where the model would see them cut in half.
+    var esc = str_builder_new();
+    str_builder_add_cstr(esc, ",\"required_tools\":[");
+    var k = 0;
+    while (k < AGNOSTIC_REQ_MAX_TOOLS) {
+        if (k > 0) { str_builder_add_cstr(esc, ","); }
+        str_builder_add_cstr(esc, "\"");
+        j = 0;
+        while (j < AGNOSTIC_REQ_MAX_HINT) { str_builder_add_cstr(esc, "\\u0001"); j = j + 1; }
+        str_builder_add_cstr(esc, "\"");
+        k = k + 1;
+    }
+    str_builder_add_cstr(esc, "]");
+    var big = arena_allocator(8388608);
+    assert_eq(_t_hint_status(big, str_cstr(str_builder_build(esc))), HTTP_BAD_REQUEST,
+      "hints past the engine's context cap once rendered are 400");
+    reset_via(big);
+    var full = str_builder_new();
+    str_builder_add_cstr(full, ",\"required_tools\":[");
+    k = 0;
+    while (k < AGNOSTIC_REQ_MAX_TOOLS) {
+        if (k > 0) { str_builder_add_cstr(full, ","); }
+        str_builder_add_cstr(full, "\"");
+        j = 0;
+        while (j < AGNOSTIC_REQ_MAX_HINT) { str_builder_add_cstr(full, "t"); j = j + 1; }
+        str_builder_add_cstr(full, "\"");
+        k = k + 1;
+    }
+    str_builder_add_cstr(full, "]");
+    assert_eq(_t_hint_status(big, str_cstr(str_builder_build(full))), 0,
+      "while every cap at its limit, in plain names, fits");
+    reset_via(big);
+    # ⚠ And an arena too small to render them in answers -1, which refuses — never 0, which
+    # would read as "nothing to render" and wave them through.
+    var hr = _t_decode(big, _t_hinted(",\"domain\":\"performance\""), &rj);
+    assert_neq(hr, 0, "a hinted task decodes");
+    var ht = vec_get(agnostic_crew_req_tasks(hr), 0);
+    assert_eq(_agnostic_task_req_hints_rendered_len_a(arena_allocator(64), ht), 0 - 1,
+      "measuring in an arena that runs out is -1, not 'fits'");
+    assert_eq(_agnostic_task_req_hints_rendered_len_a(big, ht) > 0, 1, "and in one that does not, a length");
+    reset_via(big);
+
+    reset_via(a);
+    var bad = _t_decode(a, _t_hinted(",\"complexity\":\"hihg\""), &rj);
+    assert_eq(bad, 0, "refused");
+    assert_eq(_t_has(agnostic_reject_message(load64(&rj)), "tasks[0]"), 1, "naming the task");
+    assert_eq(_t_has(agnostic_reject_message(load64(&rj)), "low, medium, high"), 1, "and the levels");
+}
+
+# An agent's empty domain is no domain (0.1.14): the engine compares a STATED domain, and ""
+# matches nothing, so an agent saved with "" would lose every task that names a domain.
+fn test_empty_agent_domain_is_absent() {
+    test_group("request/empty-domain");
+    var a = arena_allocator(262144);
+    var rj: i64[1];
+    var r = _t_decode(a,
+      "{\"name\":\"d\",\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\",\"domain\":\"\"},{\"key\":\"b\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"domain\":\"performance\"}]}",
+      &rj);
+    assert_neq(r, 0, "an empty agent domain is accepted");
+    var spec = agnostic_crew_spec_build(r);
+    var agents = agnosai_crew_agents(spec);
+    assert_eq(agnosai_agent_domain(vec_get(agents, 0)), 0, "and reaches the engine as no domain");
+    var ranked = agnosai_rank_agents(agents, vec_get(agnosai_crew_tasks(spec), 0));
+    assert_eq(agnosai_scored_index(vec_get(ranked, 0)), 0,
+      "so it ties with the agent that has none, and the first still wins");
+}
+
 fn test_bounds_match_the_engine() {
     test_group("request/bounds");
 
@@ -418,6 +614,9 @@ fn test_bounds_match_the_engine() {
     assert_eq(AGNOSTIC_REQ_MAX_STRING <= AGNOSAI_CREW_MAX_STRING_LEN, 1, "string cap is at or below the engine's");
     assert_eq(AGNOSTIC_REQ_MAX_CONCURRENCY <= AGNOSAI_CREW_MAX_CONCURRENCY, 1,
       "concurrency cap is at or below the engine's");
+    # A task's hints in plain names, every cap at its limit, fit the engine's prompt-input cap.
+    assert_eq(AGNOSTIC_REQ_MAX_TOOLS * (AGNOSTIC_REQ_MAX_HINT + 8) + AGNOSTIC_REQ_MAX_HINT + 128
+      < AGNOSAI_MAX_INPUT_LENGTH, 1, "the hint caps leave room under the engine's context cap");
 }
 
 fn main() {
@@ -437,6 +636,8 @@ fn main() {
     test_cycles_are_refused();
     test_required_scalars();
     test_spec_build();
+    test_selection_hints();
+    test_empty_agent_domain_is_absent();
     test_bounds_match_the_engine();
     return assert_summary();
 }

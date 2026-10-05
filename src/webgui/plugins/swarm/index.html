@@ -2486,7 +2486,7 @@ const SOLO = {
 };
 
 /**
- * One agent, given the tokens the swarm spent: the estimator's baseline (roadmap B3, ADR 0014).
+ * One agent, given the tokens the swarm spent: the estimator's baseline (landscape review B3, ADR 0014).
  *
  * It works the plan the Sim builds on `seed` — `sc.build` on the same RNG, so the same tasks and
  * fan-out counts — one task at a time. Each task runs with its role's model, rate, tools and region,
@@ -2878,10 +2878,13 @@ class ReadOnlySink extends CommandSink {
  *
  *     crew_started   → the orchestrator reports the run
  *     task_started   → a unit of the agent the engine chose walks to the task and works it (a clone
- *                      when that agent is already busy; in a parallel crew, beyond the concurrency
- *                      limit the task waits as queued — the engine reports a whole wave at once)
- *     token          → the task's output (the engine sends the whole text as one token event; a
- *                      parallel or DAG crew sends none, and its outputs arrive with the outcome)
+ *                      when that agent is already busy). Since agnosai 2.1.5 a parallel or DAG
+ *                      task is announced when its batch is dispatched, never more than the
+ *                      concurrency limit at once; past the limit a task still waits as queued,
+ *                      for a crew from an engine that announced a whole wave up front
+ *     token          → the task's output (the engine sends the whole text as one token event, for a
+ *                      task the model answered — in every process since agnosai 2.1.5; a
+ *                      placeholder task sends none, and its output arrives with the outcome)
  *     task_completed → task done or failed; the unit returns to HQ (a clone retires)
  *     crew_completed → mission over; GET /crews/{id} fills in results, usage and anything missed
  *
@@ -3218,8 +3221,10 @@ class LiveCrewSource extends EventSource {
   taskStarted(engineId, description, agentKey, at) {
     const t = this.bind(engineId, description);
     if (t.status !== 'pending') return;
-    // A parallel crew publishes a whole wave of task_started before any of it runs; past its
-    // concurrency limit a task is shown queued rather than as one more unit at work.
+    // Past a parallel crew's concurrency limit a task is shown queued rather than as one more
+    // unit at work. Since agnosai 2.1.5 the engine announces a task when its batch starts, so a
+    // live crew gets here only when its task_completed events were missed; an engine that
+    // announced a whole wave up front got here every time.
     const cap = this.plan && this.plan.process === 'parallel' && this.plan.maxConcurrency > 0 ? this.plan.maxConcurrency : Infinity;
     if (this.activeCount() >= cap) {
       t.status = 'queued';
@@ -3329,8 +3334,8 @@ class LiveCrewSource extends EventSource {
         if (!t) continue;
         if (res.usage && typeof res.usage === 'object') { t.usage = res.usage; if (Number.isInteger(res.usage.total_tokens)) metered++; }
         const out = typeof res.output === 'string' ? res.output : (id && this.outputs.get(id)) || '';
-        // Parallel and DAG crews publish no token events: their outputs arrive only here,
-        // often for tasks a task_completed event already settled.
+        // A task with no token event — placeholder output, or one the event ring overwrote —
+        // gets its output only here, often after a task_completed event already settled it.
         if (out && !t.output && (t.status === 'done' || t.status === 'failed')) t.output = out;
         this.resolve(t, typeof res.status === 'string' ? res.status : st === 'completed' ? 'completed' : 'failed', out);
       }

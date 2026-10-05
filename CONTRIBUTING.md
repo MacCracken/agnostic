@@ -62,8 +62,8 @@ things break the mirror deliberately:
   namespace, so directory nesting carries no scoping — it is organisational only.
 
 The module tree is recorded in `docs/architecture/` and
-`docs/development/roadmap.md` as each milestone lands, rather than being fixed up
-front.
+`docs/development/state.md` as each milestone lands, rather than being fixed up
+front. The roadmap holds only open work; what shipped is in `CHANGELOG.md`.
 
 ## Development Guidelines
 
@@ -104,7 +104,7 @@ feat(tools): add OWASP compliance scanner
 fix(mcp): return the crew id on submit, not the local uuid
 refactor(api): fold the two crew-status paths into one
 test(reports): cover the quality-trend aggregation
-docs: update roadmap with M2 progress
+docs: drop the shipped M6 items from the roadmap
 ```
 
 ## Reporting Issues
@@ -113,7 +113,7 @@ Open an issue with:
 - What you expected
 - What happened
 - Minimal reproduction steps
-- Rust version (`rustc --version`)
+- Toolchain version (`cyrius --version`, which also prints the manifest pin and any drift)
 
 ## Security
 

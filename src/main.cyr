@@ -33,7 +33,7 @@ fn main() {
     # AGNOSTIC_PORT never applied is a worse outcome than a startup failure that
     # names the problem.
     if (agnostic_config_invalid(cfg) == 1) {
-        println("agnostic: invalid configuration — check AGNOSTIC_* environment values");
+        println("agnostic: invalid configuration — check AGNOSTIC_* and OTEL_EXPORTER_OTLP_* values");
         return 1;
     }
 

@@ -444,7 +444,8 @@ fn test_crew_started_is_noticed() {
     assert_eq(agnostic_ledger_started_ms(e) >= agnostic_ledger_submitted_ms(e), 1,
       "crew_started does, no earlier than acceptance");
 
-    # The engine's registry never says RUNNING; the ledger's collected crew_started does.
+    # A recorded start reads an engine PENDING as RUNNING. Until agnosai 2.1.5 the registry
+    # never said RUNNING, and the collected crew_started was the only sign of a start.
     assert_eq(agnostic_crew_live_status(AGNOSTIC_CREW_PENDING, 0), AGNOSTIC_CREW_PENDING,
       "pending with no crew_started stays pending");
     assert_eq(agnostic_crew_live_status(AGNOSTIC_CREW_PENDING, 7), AGNOSTIC_CREW_RUNNING,
@@ -458,6 +459,65 @@ fn test_crew_started_is_noticed() {
     agnostic_ledger_latch(e, AGNOSTIC_CREW_COMPLETED, 0, 0);
     assert_eq(agnostic_ledger_finished_ms(e) >= agnostic_ledger_started_ms(e), 1,
       "the terminal latch stamps when it finished");
+}
+
+# The registry's RUNNING is a start too, and agnostic's status never goes back to pending
+# (0.1.14). Since agnosai 2.1.5 (its ADR 022) the registry stores RUNNING when it hands the
+# crew to its runner — before `crew_started` is published — and on its error arm (a cyclic
+# DAG, a dependency on a task the spec does not hold) puts PENDING back. agnostic's front
+# door makes that arm unreachable since agnosai 2.1.6 (through 2.1.5 a failed branch
+# reached it); this holds the ledger to the right answer regardless.
+fn test_registry_running_is_a_start() {
+    test_group("ledger/registry-running");
+
+    agnostic_ledger_reset();
+    var bus = agnosai_event_bus_new();
+    var id = _t_id(25);
+    var e = agnostic_ledger_record(id, str_from("c"), agnosai_event_bus_subscribe(bus, id));
+    assert_eq(agnostic_crew_observed_status(e, AGNOSTIC_CREW_PENDING), AGNOSTIC_CREW_PENDING,
+      "a registry PENDING with no start recorded is pending");
+    assert_eq(agnostic_ledger_started_ms(e), 0, "and records no start");
+
+    # RUNNING seen before crew_started is collected: running, and started_at with it.
+    assert_eq(agnostic_crew_observed_status(e, AGNOSTIC_CREW_RUNNING), AGNOSTIC_CREW_RUNNING,
+      "a registry RUNNING is running");
+    var t0 = agnostic_ledger_started_ms(e);
+    assert_eq(t0 >= agnostic_ledger_submitted_ms(e), 1, "and records the start, no earlier than acceptance");
+    assert_eq(agnostic_ledger_latch(e, AGNOSTIC_CREW_RUNNING, 0, 0), 1, "which latches");
+
+    # crew_started collected afterwards keeps the first start.
+    _t_send(bus, id, "crew_started", 1, 1);
+    agnostic_ledger_drain(e);
+    assert_eq(agnostic_ledger_started_ms(e), t0, "a later crew_started keeps the first start");
+    assert_eq(agnostic_ledger_note_started(e), 0, "and a second note records nothing");
+
+    # ⭐ The RUNNING → PENDING edge: the engine goes back, agnostic does not.
+    var back = agnostic_crew_observed_status(e, AGNOSTIC_CREW_PENDING);
+    assert_eq(back, AGNOSTIC_CREW_RUNNING, "a registry PENDING after RUNNING still reads running");
+    agnostic_ledger_latch(e, back, 0, 0);
+    assert_eq(agnostic_ledger_status(e), AGNOSTIC_CREW_RUNNING, "so the ledger never latches pending again");
+    # ⭐ Nor when a concurrent refresh computed PENDING before the start was recorded and latches
+    # it afterwards: the latch itself reads a PENDING over a recorded start as RUNNING (0.1.14).
+    assert_eq(agnostic_ledger_latch(e, AGNOSTIC_CREW_PENDING, 0, 0), 1, "a stale PENDING is written");
+    assert_eq(agnostic_ledger_status(e), AGNOSTIC_CREW_RUNNING, "as RUNNING, under the ledger's lock");
+
+    # A terminal observation and an unknown one still stand as reported.
+    assert_eq(agnostic_crew_observed_status(e, AGNOSTIC_CREW_UNKNOWN), AGNOSTIC_CREW_UNKNOWN,
+      "unknown stands");
+    assert_eq(agnostic_crew_observed_status(e, AGNOSTIC_CREW_FAILED), AGNOSTIC_CREW_FAILED,
+      "and so does a terminal status");
+    assert_eq(agnostic_ledger_note_started(0), 0, "a null entry notes nothing");
+
+    # A crew cancelled before its thread ran publishes crew_started afterwards: no start is
+    # stamped after the finish, so no view computes a negative run time (0.1.14).
+    var cid = _t_id(26);
+    var c = agnostic_ledger_record(cid, str_from("c"), agnosai_event_bus_subscribe(bus, cid));
+    agnostic_ledger_latch(c, AGNOSTIC_CREW_CANCELLED, 0, 0);
+    assert_neq(agnostic_ledger_finished_ms(c), 0, "the cancel finished it");
+    _t_send(bus, cid, "crew_started", 1, 1);
+    agnostic_ledger_drain(c);
+    assert_eq(agnostic_ledger_started_ms(c), 0, "a crew_started collected after the finish stamps nothing");
+    assert_eq(agnostic_ledger_note_started(c), 0, "and nor does the registry's RUNNING");
 }
 
 # What the collector sweeps: anything not yet terminal, and anything whose subscription
@@ -515,6 +575,7 @@ fn main() {
     test_ring_allocates_nothing_per_event();
     test_lost_is_not_trimmed();
     test_crew_started_is_noticed();
+    test_registry_running_is_a_start();
     test_live_entries();
     return assert_summary();
 }

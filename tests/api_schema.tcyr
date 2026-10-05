@@ -738,6 +738,19 @@ fn test_vocabularies() {
     assert_eq(bad, 0, "each risk level parses back to its value");
     assert_eq(agnostic_risk_from_wire(str_from("nope")), 0 - 1, "and the parser refuses another");
 
+    # A task's complexity hint (0.1.14, ADR 0017): the engine reads anything else as medium,
+    # so the parser refuses it rather than let a typo through.
+    var cx = _t_get(v, "complexity");
+    assert_eq(bayan_json_v_arr_len(cx), 3, "three complexity levels");
+    bad = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(cx)) {
+        if (agnostic_complexity_from_wire(_t_at(cx, i)) != i) { bad = bad + 1; }
+        i = i + 1;
+    }
+    assert_eq(bad, 0, "each complexity level parses back to its value");
+    assert_eq(agnostic_complexity_from_wire(str_from("hihg")), 0 - 1, "and the parser refuses another");
+
     var st = _t_get(v, "crew_status");
     assert_eq(bayan_json_v_arr_len(st), AGNOSTIC_CREW_INTERRUPTED + 1,
       "seven crew statuses, pending (0) to interrupted (6)");
@@ -993,6 +1006,8 @@ fn _t_bad_query(name) {
     if (str_eq_cstr(name, "before") == 1) { return "x"; }
     if (str_eq_cstr(name, "status") == 1) { return "nope"; }
     if (str_eq_cstr(name, "after") == 1) { return "-1"; }
+    if (str_eq_cstr(name, "explain") == 1) { return "nope"; }
+    if (str_eq_cstr(name, "task") == 1) { return "x"; }
     return 0;
 }
 
@@ -1126,11 +1141,12 @@ fn test_probes() {
         i = i + 1;
     }
     assert_eq(unknown_q, 0, "the suite knows an invalid value for every declared query parameter");
-    assert_eq(queried, 6, "six declared: limit, status, before on crews; after on events; limit, before on audit");
+    assert_eq(queried, 8,
+      "eight declared: limit, status, before on crews; after on events; explain, task on plan; limit, before on audit");
     assert_eq(query_bad, 0, "and each is read: an invalid value is a 422");
 
     # And the other way, for the names above: a GET route ignores each one it does not declare.
-    # This half of the check knows only these four names; a handler that starts reading a NEW
+    # This half of the check knows only these six names; a handler that starts reading a NEW
     # parameter without declaring it is not caught (`docs/api/README.md`, "Known gaps").
     var ignored_bad = 0;
     i = 0;
@@ -1147,6 +1163,8 @@ fn test_probes() {
             if (_t_arr_has(gq, str_from("status")) == 0) { str_builder_add_cstr(qsb, "&status=nope"); }
             if (_t_arr_has(gq, str_from("before")) == 0) { str_builder_add_cstr(qsb, "&before=x"); }
             if (_t_arr_has(gq, str_from("after")) == 0) { str_builder_add_cstr(qsb, "&after=-1"); }
+            if (_t_arr_has(gq, str_from("explain")) == 0) { str_builder_add_cstr(qsb, "&explain=nope"); }
+            if (_t_arr_has(gq, str_from("task")) == 0) { str_builder_add_cstr(qsb, "&task=x"); }
             var qpath = str_builder_build(qsb);
             var with_q = agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, qpath, "", 0));
             if (plain != with_q) {
@@ -1592,6 +1610,8 @@ fn test_responses() {
     _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id/events", _t_crew_url(cid, "/events"), "", cx);
     _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id/plan", _t_crew_url(cid, "/plan"), "", cx);
     _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id/plan", _t_crew_url(par, "/plan"), "", cx);
+    # And explained (0.1.14, ADR 0016): `scorer` and `candidate_limit` are written only then.
+    _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id/plan", _t_crew_url(cid, "/plan?explain=selection"), "", cx);
     assert_eq(_t_settle(a, cid, cx), 1, "the crew finishes");
     assert_eq(_t_settle(a, par, cx), 1, "and so does the parallel one");
     _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id/events", _t_crew_url(cid, "/events?after=1"), "", cx);
@@ -1599,10 +1619,26 @@ fn test_responses() {
 
     # Cancel races the placeholder engine, which can finish first (409, a refusal): a crew is
     # submitted and cancelled at once until one answers 200.
+    #
+    # ⚠ The crew has as many tasks as a request may (0.1.14). Placeholder tasks take
+    # microseconds, so a two-task crew is usually done before its cancel arrives — and since
+    # 0.1.14 the cancel refreshes first and the engine (agnosai 2.1.6) refuses a finished crew,
+    # so that race is now lost honestly, where until then a cancel "won" it by relabelling a
+    # crew that had already completed. A thousand tasks keeps the crew running long enough.
+    var bigsb = str_builder_new();
+    str_builder_add_cstr(bigsb, "{\"name\":\"cancel me\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[");
+    var bt = 0;
+    while (bt < AGNOSTIC_REQ_MAX_TASKS) {
+        if (bt > 0) { str_builder_add_cstr(bigsb, ","); }
+        str_builder_add_cstr(bigsb, "{\"description\":\"t\"}");
+        bt = bt + 1;
+    }
+    str_builder_add_cstr(bigsb, "]}");
+    var big_crew = str_cstr(str_builder_build(bigsb));
     var cancelled = 0;
     var tries = 0;
     while (cancelled == 0 && tries < 64) {
-        var k = _t_crew_id(_t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", "/api/v1/crews", _T_CREW, cx));
+        var k = _t_crew_id(_t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", "/api/v1/crews", big_crew, cx));
         var rc = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, _t_crew_url(k, "/cancel"), str_from(""),
           _T_MAXB, cx);
         if (agnostic_response_status(rc) != AGNOSTIC_HTTP_CONFLICT) {

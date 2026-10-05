@@ -221,7 +221,10 @@
         }
       ],
       "body": null,
-      "query": [],
+      "query": [
+        "explain",
+        "task"
+      ],
       "headers": [],
       "ok": [
         200
@@ -234,7 +237,9 @@
           "process",
           "max_concurrency?",
           "agents",
-          "tasks"
+          "tasks",
+          "scorer?",
+          "candidate_limit?"
         ]
       }
     },
@@ -753,7 +758,11 @@
         "expected_output",
         "priority",
         "risk",
-        "dependencies"
+        "dependencies",
+        "required_tools",
+        "complexity",
+        "domain",
+        "gpu_required"
       ]
     },
     "agent_definition": {
@@ -898,6 +907,11 @@
       "critical"
     ],
     "risk": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "complexity": [
       "low",
       "medium",
       "high"

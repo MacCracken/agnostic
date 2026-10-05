@@ -67,6 +67,12 @@ fn agnostic_trace_generate_a(a): i64 {
     _agnostic_trace_counter = _agnostic_trace_counter + 1;
     var span = clock_epoch_ns() ^ (_agnostic_trace_counter * 0x9E3779B97F4A7C15);
 
+    # An all-zero trace id or span id is INVALID in W3C Trace Context, and the engine
+    # would refuse the traceparent and start a new trace (0.1.14). Drawing one is a
+    # 2^-64 event; the guard is two compares.
+    if (hi == 0 && lo == 0) { lo = 1; }
+    if (span == 0) { span = 1; }
+
     store8(buf, 48);      # '0'
     store8(buf + 1, 48);  # '0'
     store8(buf + 2, 45);  # '-'
@@ -105,6 +111,23 @@ fn agnostic_trace_clear(): i64 {
     return 0;
 }
 
+# Whether `s` is a traceparent this server honours (0.1.14, ADR 0018): W3C Trace Context
+# Level 1, version `00` — exactly 55 bytes, `-` at offsets 2, 35 and 52, lowercase hex
+# everywhere else, and a trace id and a parent id that are not all zeros.
+#
+# ⚠ **The engine's parser, not a copy of its rule.** Every crew a request submits joins
+# the request's trace (`agnostic_crew_submit_owned`), and agnosai parses the value with
+# `agnosai_otlp_span_context_parse_a` when the crew starts, starting a NEW trace for one
+# it refuses. Asking that same function here is what makes "agnostic accepted it" and
+# "the crew joined it" one fact: a value only one of them accepted would put a request's
+# log lines in one trace and its crew's spans in another. It answers a 32-byte span
+# context in `a`, or 0; only whether it is 0 is used.
+fn agnostic_trace_valid_a(a, s): i64 {
+    if (s == 0) { return 0; }
+    if (agnosai_otlp_span_context_parse_a(a, s) == 0) { return 0; }
+    return 1;
+}
+
 # Establish the trace id for an inbound request and return it.
 #
 # Honours an inbound `traceparent` header so a trace started upstream continues
@@ -122,8 +145,8 @@ fn agnostic_trace_begin_a(a, buf, blen): i64 {
         var s = str_from_a(a, raw);
         # Only accept a well-formed traceparent. A malformed one is discarded
         # rather than propagated — forwarding garbage corrupts every downstream
-        # span too.
-        if (str_len(s) == AGNOSTIC_TRACE_LEN) { tp = s; }
+        # span too. Until 0.1.14 this checked the length alone.
+        if (agnostic_trace_valid_a(a, s) == 1) { tp = s; }
     }
     if (tp == 0) { tp = agnostic_trace_generate_a(a); }
     agnostic_trace_set(tp);

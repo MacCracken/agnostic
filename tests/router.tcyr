@@ -131,6 +131,16 @@ fn test_resolve() {
     m = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, str_from("/health?x=1"));
     assert_eq(agnostic_route_match_id(m), AGNOSTIC_ROUTE_HEALTH, "query string does not prevent resolution");
 
+    # The plan route takes a query since 0.1.14 (`?explain=selection&task=N`, ADR 0016): it
+    # resolves with one, and the dispatcher hands the handler the raw path — a bad `explain`
+    # is the handler's 422, decided before the crew is looked up.
+    m = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET,
+      str_from("/api/v1/crews/6ba7b810-9dad-11d1-80b4-00c04fd430c8/plan?explain=selection&task=0"));
+    assert_eq(agnostic_route_match_id(m), AGNOSTIC_ROUTE_CREW_PLAN, "a plan with a query resolves");
+    assert_eq(agnostic_response_status(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+          str_from("/api/v1/crews/6ba7b810-9dad-11d1-80b4-00c04fd430c8/plan?explain=nope"), str_from(""), 1048576, 0)),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "and its query reaches the handler");
+
     m = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, str_from("/nope"));
     assert_eq(agnostic_route_match_id(m), AGNOSTIC_ROUTE_NONE, "unknown path does not resolve");
     assert_eq(agnostic_route_match_method_mismatch(m), 0, "unknown path is not a method mismatch");

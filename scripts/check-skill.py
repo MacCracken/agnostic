@@ -5,7 +5,7 @@ Added at 0.1.13 (H6). `skills/agnostic/SKILL.md` teaches a coding agent agnostic
 API. Nothing compiles it, and the server IGNORES a query parameter no handler reads
 (`src/http/codec.cyr`, "Query strings"). A skill that spells the event cursor `?since=`
 for `?after=` therefore fails nowhere: the agent silently re-reads the whole window on
-every poll. The roadmap's own H3 and H6 entries made exactly that mistake.
+every poll. The H3 and H6 plans of 0.1.13 made exactly that mistake.
 
 The reference is `docs/api/generated/schema.json`, the output of `agnostic api schema`
 (ADR 0015). `tests/api_schema.tcyr` keeps it equal to the server's own tables, so checking

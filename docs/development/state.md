@@ -2,7 +2,16 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-10-04, at **0.1.13** — H3 (closed: the cursor's gap is `missed`), H4 (a crew a
+> Last refreshed: 2026-10-04, at **0.1.14** — the re-pin to **agnosai 2.1.6** and its consumer
+> halves: crew events and status say what happened (agnosai's B17), `/plan?explain=selection` shows
+> why each task got its agent (ADR 0016), a task carries selection hints (ADR 0017), and every crew
+> joins its request's trace, with opt-in OTLP export (ADR 0018). agnosai 2.1.6 was released from what
+> this release's review found in 2.1.5: bounded inference and export calls, a stranded DAG that ends
+> FAILED, and a finished crew that cannot be cancelled. Cyrius 6.6.14 and libro 2.10.6 did not move;
+> the lock moved by agnosai's two lines. Version, Toolchain, Dependencies, Source, the route table,
+> Tests and Hardening were refreshed then, their totals re-measured at the cut with every CI gate in
+> CI's order, every suite natively on the Pi, and a sibling-free, empty-cache certification.
+> Before that, 2026-10-04 at **0.1.13** — H3 (closed: the cursor's gap is `missed`), H4 (a crew a
 > restart interrupted answers `interrupted`, ADR 0013), B3 (Swarm Command 0.5.0's one-agent baseline,
 > ADR 0014), H5 (`agnostic api schema`, ADR 0015), H6 (`skills/agnostic/SKILL.md`), and two older
 > fixes (the audit chain links across a restart; a crew named over 255 bytes is stored). No dependency
@@ -27,7 +36,7 @@
 
 ## Version
 
-**0.1.13** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.14** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -38,10 +47,12 @@ line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
   reproduced `lib/` and the lock byte for byte; CI's gates and both DCE builds passed there —
   at 0.1.10, 0.1.11 and 0.1.12. At 0.1.13 nothing moved: `lib sync --full` + `deps` left `lib/`
   and the lock byte-identical to 0.1.12's, and `lock-check.sh --no-resolve` matched a clean tag
-  resolution (9 commit pins).
+  resolution (9 commit pins). At 0.1.14 only agnosai moved (2.1.4 → 2.1.6): the lock by its commit
+  pin and `lib/agnosai.cyr`'s hash, `lib/agnosai.cyr` byte-identical to the tag's
+  `dist/agnosai.cyr`, and the empty-cache replica reproduced `lib/` and the lock byte for byte.
 
 ✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.14 folds **sigil 3.13.7** and
-**patra 1.15.1**. Since 0.1.11 the deps declare exactly those: agnosai (2.1.4 now) declares sigil 3.13.7,
+**patra 1.15.1**. Since 0.1.11 the deps declare exactly those: agnosai (2.1.6 now) declares sigil 3.13.7,
 and libro 2.10.6 declares sigil 3.13.7 and patra 1.15.1. So every commit pin the lock records on a
 folded module names the bytes `lib/` holds; at 0.1.10 the sigil line named agnosai 2.1.2's 3.13.5
 while `lib/sigil.cyr` was the fold's 3.13.7. Since 0.1.12 no dep pins a module off the fold: kavach
@@ -81,18 +92,18 @@ block is therefore an override pin, which this repo does not carry.
 
 | dep | pin | how it arrives |
 |---|---|---|
-| `agnosai` | **2.1.4** | direct, `git` + `tag` + `modules` — pins every dep below at its latest |
+| `agnosai` | **2.1.6** | direct, `git` + `tag` + `modules` — pins every dep below at its latest |
 | `libro` | **2.10.6** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
-| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.4 |
-| `ai-hwaccel` / `tyche` / `kavach` | **2.4.1** / **1.1.0** / **3.13.2** | transitive via agnosai 2.1.4 |
+| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.6 |
+| `ai-hwaccel` / `tyche` / `kavach` | **2.4.1** / **1.1.0** / **3.13.2** | transitive via agnosai 2.1.6 |
 | `sigil` | **3.13.7** (folded) | folded stdlib (`[deps].stdlib`); agnosai and libro declare the same 3.13.7 |
 | `patra` | **1.15.1** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.15.1 |
 
 `cyrius.lock` — **119 files locked, 9 commit pins** (every dep above; agnosai, kavach and
-ai-hwaccel moved at 0.1.12, and none at 0.1.13), plus a trailing `cyrius 6.6.14` line recording the toolchain that wrote it.
-agnosai 2.1.4 — and ai-hwaccel 2.4.1, samay 1.1.6 and kavach 3.13.2 before it — was certified the
-same way before its tag: its full CI steps in a sibling-free replica against an empty dep cache
-(agnosai: 99 suites, 8,065 assertions). Every tag was confirmed on the GitHub remote before the lock was
+ai-hwaccel moved at 0.1.12, none at 0.1.13, and agnosai alone at 0.1.14), plus a trailing `cyrius 6.6.14` line recording the toolchain that wrote it.
+agnosai 2.1.6 — and 2.1.5 and 2.1.4, and ai-hwaccel 2.4.1, samay 1.1.6 and kavach 3.13.2 before
+them — was certified the same way before its tag: its full CI steps in a sibling-free replica
+against an empty dep cache (agnosai 2.1.6: 99 suites, 8,611 assertions, coverage 99%). Every tag was confirmed on the GitHub remote before the lock was
 written, and a sibling-free resolution from an empty dep cache reproduced `lib/` and the lock
 byte for byte.
 
@@ -109,14 +120,14 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 50 files, 27,314 lines, 1,063 top-level definitions (0.1.13; 48
-files, 25,572 lines and 965 at 0.1.12, re-measured from its tag), all `agnostic_*`-prefixed. 11,656 of those lines
-are generated: `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,819 — five embedded pages
-and the plugin permission vocabulary).
+the real surface (0.1.10)** — 50 files, 28,093 lines, 1,104 top-level definitions (0.1.14; 27,314
+lines and 1,063 at 0.1.13), all `agnostic_*`-prefixed. 11,661 of those lines are generated:
+`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,824 — five embedded pages and the plugin
+permission vocabulary).
 
-**Tests: 31 suites, 2,347 assertions, 0 failed** (`cyrius test`, 0.1.13; 29 and 1,885 at
-0.1.12), plus **77 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 61 at 0.1.12) — **and
-the same 31 suites natively on aarch64** (Raspberry Pi 4). Gates green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant
+**Tests: 31 suites, 2,543 assertions, 0 failed** (`cyrius test`, 0.1.14; 2,347 at 0.1.13), plus
+**77 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; unchanged since 0.1.13) — **and the
+same 31 suites natively on aarch64** (Raspberry Pi 4). Gates green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant
 check, is evaluated per shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
 which since 0.1.10 verifies every plugin's copy of the bridge client; the WebGUI's JavaScript; and,
 since 0.1.13, `check-skill.py`, the agent skill against the API schema, and `gen-api-schema.sh
@@ -237,12 +248,12 @@ The crew surface, and what each code means:
 
 | route | codes |
 |---|---|
-| `POST /api/v1/crews` | **202** accepted (`task_ids`; `replayed` for a repeated `Idempotency-Key`) · 400 semantic · 422 shape or key reused over another body · 503 engine down |
+| `POST /api/v1/crews` | **202** accepted (`task_ids`; `replayed` for a repeated `Idempotency-Key`); a task may carry selection hints — `required_tools`, `complexity`, `domain`, `gpu_required` (0.1.14, ADR 0017); the crew joins the request's trace (0.1.14, ADR 0018) · 400 semantic · 422 shape or key reused over another body · 503 engine down |
 | `GET /api/v1/crews` | 200 — the caller's tenant's crews, newest first; `?limit=` `?before=` (0.1.9), `?status=` (0.1.10; `interrupted` since 0.1.13) · 422 |
 | `GET /api/v1/crews/{id}` | 200 (with `usage`, times, `scope`); **`interrupted`** for a crew a restart cut short, where it answered 404 before 0.1.13 (ADR 0013) · 404 never submitted **or another tenant's** · 422 malformed id |
 | `POST /api/v1/crews/{id}/cancel` | 200 · 404 · **409 already terminal** · 422 · 503 |
 | `GET /api/v1/crews/{id}/events` | 200 — refreshed first (0.1.8); `?after=N` cursor, `seq`/`at_ms`, `next`, `missed`, `lost_events` (0.1.9); a cursor older than the window gets every event still held and `missed` > 0 (the H3 gap signal) · 404 · 422 |
-| `GET /api/v1/crews/{id}/plan` | 200 — agents and tasks with engine ids (0.1.9) · 404 not held · 422 |
+| `GET /api/v1/crews/{id}/plan` | 200 — agents and tasks with engine ids (0.1.9) and each task's hints (0.1.14); `?explain=selection[&task=N]`: each task's ranked candidates with their five scores, the `scorer`, a `candidate_limit` (0.1.14, ADR 0016) · 404 not held · 422 (also a bad `explain` or `task`) |
 | `GET /api/v1/presets` | 200 — summaries, not documents |
 | `GET /api/v1/presets/{name}` | 200 · 404 unknown name |
 | `GET /api/v1/agents/definitions` | 200 |
@@ -533,7 +544,7 @@ in this repo (`222`) and in agnosai (`8,038`) double-counted it.
 
 ## Dependency layout
 
-**agnosai 2.1.4** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
+**agnosai 2.1.6** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
 than called over HTTP. Everything crew/task/agent/scheduling-shaped lives there;
 Agnostic owns the product tier. Versions and pins: see the table under
 [Dependencies](#dependencies) above.
@@ -572,7 +583,7 @@ Agnostic is built to stand on its own, not as a required layer.
 | agent skill (0.1.13) | `skills/agnostic/SKILL.md`; `scripts/check-skill.py` in `check-clean.sh` checks its frontmatter, and every route, method, query parameter, curl header, response example and `<!-- schema: … -->` list against `docs/api/generated/schema.json`; 22 mutations, each failing by name |
 | views (0.1.10) | [ADR 0010](../adr/0010-views-link-through-the-shell-and-share-one-bridge-client.md): a navigate only to a view that is switched on, params in a fixed alphabet (`shell.test.mjs`); every plugin's bridge client verified byte for byte by the generator |
 | aarch64 (0.1.10) | every suite and the server run natively on a Raspberry Pi 4 before an aarch64 artifact ships |
-| symbols | `check-symbols.sh` OK — 1,063 top-level definitions across 50 files, no duplicates, all prefixed (0.1.13; 965 across 48 at 0.1.12) |
+| symbols | `check-symbols.sh` OK — 1,104 top-level definitions across 50 files, no duplicates, all prefixed (0.1.14; 1,063 at 0.1.13) |
 | security | CI `security` job clean |
 | baseline benches | `bench-history.csv` seeded — `noop` 2 ns @ `830216c` |
 | documented | `BENCHMARKS.md` generated |
@@ -736,32 +747,14 @@ at least 0.1.3):
   principal's tenant could turn into another user's mid-request).
   `check-store-lock.py` rule 3 forbids the pattern.
 
-⛔ **aarch64: the server dies at startup, and 12 of 27 suites die, with SIGBUS — root-caused on
-real hardware at 0.1.7, a cyrius layout defect, filed upstream.** Run natively on the Pi 4 (`ssh
-pi`): 15 suites pass (717 assertions); `audit`, `authn`, `authstore`, `authz`, `crews_route`,
-`crypto`, `jwt`, `loginguard`, `loginroute`, `serve_mount`, `store_concurrency` and `webgui` crash —
-every suite that reaches sigil's crypto init. 0.1.6 is identical, so this is the "SIGBUS under qemu"
-recorded since 0.1.3, not a regression. **0.1.8 adds `plugindata` to the list** — at the same
-`ldaxr`, when its route group first initialises crypto, after its validator, guard, two-capture
-router, store and limit groups have passed natively; `codec` and `router` (touched at 0.1.8) still
-pass on the Pi.
-
-- **Mechanism (gdb on the Pi):** `ldaxr x4, [x0]` on `x0 = 0xa200f6` — an `atomic_cas` on sigil's
-  `_sha_ni_probe_lock`, which is not 8-aligned. aarch64 faults on a misaligned exclusive or
-  acquire/release access; x86 does not, which is why every x86 gate is green.
-- **Why it is misaligned:** a typed-array global (`var a: u8[N]`) occupies exactly `N` bytes and the
-  NEXT global is not re-aligned. sankoch (folded; arrives through agnosai's sidecar) declares
-  `u8[363]`, `u8[217]` and `u8[50]` — 630 bytes, ≡ 6 mod 8 — and **1,101 of the program's 1,962
-  globals** sit misaligned after them, twelve of them used atomically (eleven sigil init flags,
-  `_crypto_tls_inited` among them — the first thing mount touches — and majra's job counter).
-- **Filed:** `cyrius/docs/development/issues/2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md`,
-  with a 15-line repro (`8 363 3`, then SIGBUS on the Pi). No consumer-side work-around is sane: the
-  offset comes from a module agnostic does not include itself and the victims are private flags in
-  another.
-- **The aarch64 artifact is WITHHELD since 0.1.7** — not released, not uploaded by CI, `cross_bins`
-  commented out — by decision, as a temporary exception to the release checklist. CI still
-  cross-builds it as a compile gate. Restore it (steps in `cyrius.cyml` and `release.yml`) once a
-  cyrius release aligns globals and every suite passes natively on the Pi.
+✅ **aarch64 — the SIGBUS of 0.1.7–0.1.9 is fixed upstream, and the artifact is released again.**
+Root-caused on the Pi at 0.1.7: a typed-array global (`var a: u8[N]`) left the next global
+unaligned, and sankoch's `u8[363]`/`u8[217]`/`u8[50]` misaligned 1,101 globals after them — twelve
+used atomically, sigil's crypto init flags among them — so `ldaxr` faulted on aarch64 (never on
+x86). Filed as `cyrius/docs/development/issues/2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md`
+and fixed in cyrius 6.6.13 (I9): every global now starts at its natural alignment. Since 0.1.10
+(6.6.14) `agnostic-aarch64` is released again, and every suite and the server run natively on the Pi
+4 (`ssh pi`) at each release.
 
 ⚠ **Only terminal crew outcomes are stored, and a crew in flight is an obligation, not a
 status** (0.1.13, [ADR 0013](../adr/0013-a-crew-interrupted-by-a-restart-is-interrupted.md)).
@@ -774,16 +767,16 @@ at submit and losing results, usage and cost. Until 0.1.13 such a crew answered 
 restart. ⚠ This assumes **one agnostic process per `AGNOSTIC_DB_PATH`**: a second one would sweep
 the first one's live crews (not enforced; a roadmap follow-up).
 
-⚠ **Two sibling-library defects are worked around, both filed upstream
-2026-08-21.** `patra_init` stomps the host's log level (saved/restored in
-`store.cyr`); libro's `PatraStore` caches prepared statements that fault on any
-thread but the opener's, so audit verification runs once at open. Both
-work-arounds carry a pointer to the filing and can be removed when they land.
+✅ **The two sibling-library work-arounds of 2026-08-21 are gone** (removed 2026-08-22, see
+Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log level, and libro
+2.8.9 stopped a `PatraStore` read from another thread killing the process.
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). **M5 — identity and tenancy.** Two things it
-inherits:
+See [`roadmap.md`](roadmap.md). After 0.1.14: cyrius 6.6.15 through its sibling chain (kavach and
+libro, bote, agnosai, then agnostic), agnosai's F1 tool loop (M6's prerequisite, with the
+tool-registry decision of `handoff.md` §8), and the agnostic-only follow-ups recorded at 0.1.13 and
+0.1.14. The notes below were written for M5 and remain true.
 
 ✅ **patra's single index per table does NOT bind here — corrected 2026-08-21.**
 The earlier note said M5 needs users by id *and* by email and would therefore
@@ -825,9 +818,8 @@ a message naming the missing capability rather than accepting and dropping it.
   COMPLETED. Closed by disclosure (`engine_mode` on every response, a WARN at
   mount), not by type — so any *new* surface that reports crew output must
   disclose it too.
-- **The crew routes are unauthenticated.** `agnostic_route_needs_auth` answers 1
-  for all four, but the dispatch ladder's auth rung is still a comment until M5.
-  The default bind is loopback, which is the only thing standing in front of them.
-- **Results are memory-resident and capped.** The ledger retains 1,024 crews and
-  256 progress events each; beyond that a poll answers `unknown` rather than a
-  wrong answer. Durable results are M4's.
+- ~~**The crew routes are unauthenticated.**~~ The dispatch ladder's auth rung has been wired
+  since M5, and crews belong to their tenant since 0.1.9 (ADR 0008).
+- **The ledger is memory-resident and capped.** It retains 1,024 crews and 256 progress events
+  each. Terminal outcomes are durable since M4 (and an interrupted crew since 0.1.13), so a crew
+  the ledger dropped still answers from the store; only its events and plan are gone.

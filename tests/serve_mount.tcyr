@@ -172,6 +172,45 @@ fn test_the_transport_rules() {
       "byte for byte as it was written — spacing included");
 }
 
+# OTLP export starts only when configured, and stopping it is safe either way (0.1.14, ADR
+# 0018). Driven through the config block, since `lib/` has no setenv.
+fn test_telemetry_export() {
+    test_group("serve/telemetry");
+
+    # Off by construction, not by the environment: a shell that exports
+    # OTEL_EXPORTER_OTLP_ENDPOINT (wherever a collector runs) must not turn this into "on".
+    var offc = _t_mount_cfg();
+    store64(offc + AGNOSTIC_CFG_OTLP, 0);
+    var off = agnostic_serve_telemetry_start(offc);
+    assert_neq(off, 0, "with no endpoint the start still answers a guard");
+    assert_eq(agnosai_tracing_guard_exporter(off), 0, "over no exporter");
+    assert_eq(agnosai_telemetry_exporter(), 0, "and no span is ever recorded");
+    assert_eq(agnostic_serve_telemetry_stop(off), 0, "stopping it is a no-op");
+    assert_eq(agnostic_serve_telemetry_stop(0), 0, "as is stopping nothing");
+
+    # A closed port: nothing is listening, so the exporter's posts fail — which must never
+    # matter to the server. Nothing is posted here anyway: no span is queued.
+    var c = _t_mount_cfg();
+    store64(c + AGNOSTIC_CFG_OTLP, str_from("http://127.0.0.1:9"));
+    var on = agnostic_serve_telemetry_start(c);
+    assert_neq(agnosai_tracing_guard_exporter(on), 0, "with an endpoint an exporter runs");
+    assert_eq(agnosai_telemetry_exporter(), agnosai_tracing_guard_exporter(on),
+      "and it is the process's exporter, the one every span site enqueues into");
+    assert_eq(str_eq_cstr(str_from(agnosai_otlp_exporter_url(agnosai_tracing_guard_exporter(on))),
+        "http://127.0.0.1:9/v1/traces"), 1, "the generic endpoint is a base: v1/traces is appended");
+    agnostic_serve_telemetry_stop(on);
+    assert_eq(agnosai_telemetry_exporter(), 0, "stopping it clears the process's exporter");
+
+    # The per-signal OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is posted to exactly as given.
+    store64(c + AGNOSTIC_CFG_OTLP, str_from("http://127.0.0.1:9/custom"));
+    store64(c + AGNOSTIC_CFG_OTLP_AS_IS, 1);
+    var tr = agnostic_serve_telemetry_start(c);
+    assert_eq(str_eq_cstr(str_from(agnosai_otlp_exporter_url(agnosai_tracing_guard_exporter(tr))),
+        "http://127.0.0.1:9/custom"), 1, "a traces endpoint is used as-is");
+    agnostic_serve_telemetry_stop(tr);
+    assert_eq(agnosai_telemetry_exporter(), 0, "and stops the same way");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -179,6 +218,7 @@ fn main() {
     test_a_workers_first_hash_keeps_its_tls();
     test_the_handler_survives_a_missing_arena();
     test_the_transport_rules();
+    test_telemetry_export();
     agnostic_audit_close();
     agnostic_store_close();
     return assert_summary();

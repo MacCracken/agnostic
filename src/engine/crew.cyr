@@ -17,8 +17,8 @@
 #
 # ## ⚠ The submit ordering is load-bearing in two places
 #
-# `agnostic_crew_submit` does: **build spec → subscribe → submit → record → mark
-# in flight.** None of the middle three may move:
+# `agnostic_crew_submit` does: **build spec (joined to the request's trace) → subscribe →
+# submit → record → mark in flight.** None of the middle three may move:
 #
 #   * **Subscribe before submit.** `agnosai_event_bus_subscribe` creates the
 #     channel if it is absent, and `_agnosai_orch_register` — inside submit —
@@ -96,6 +96,93 @@ var AGNOSTIC_CREW_LOST_MSG = str_from("the engine no longer holds this crew and 
 var AGNOSTIC_MODE_LIVE        = str_from("live");
 var AGNOSTIC_MODE_PLACEHOLDER = str_from("placeholder");
 
+# --- explaining agent selection (0.1.14, ADR 0016) ------------------------------
+
+# How many candidates one explanation renders, across all the tasks it covers. A crew's
+# tasks share it equally, each getting at least its winner, so one answer explains at most
+# this many tasks: see `agnostic_crew_explain_limit`.
+var AGNOSTIC_EXPLAIN_MAX_CANDIDATES = 256;
+
+# The scratch one task's scoring runs in. agnosai scores every agent of the roster
+# against the task — 56 bytes an entry, at most `AGNOSTIC_REQ_MAX_AGENTS` (100) of them,
+# with the vec's growth and the task's `required_tools` (at most
+# `AGNOSTIC_REQ_MAX_TOOLS`) — about 9 KiB at the caps, so 32 KiB is room to spare.
+var AGNOSTIC_EXPLAIN_SCRATCH_BYTES = 32768;
+
+# The scratch arena and the lock that serialises it, built at mount.
+#
+# ⚠ **One scratch, reset per task, not the request's arena.** Scoring needs every agent
+# against every task — up to 100 × 1000 entries, 5.6 MB — and a request arena that
+# overflows spills to the global bump, which never frees: every explanation of a large
+# crew would leak that much. Only the rendered candidates go into the request's arena,
+# and `AGNOSTIC_EXPLAIN_MAX_CANDIDATES` bounds those — and, through
+# `agnostic_crew_explain_limit`, how many tasks one answer explains.
+var _agnostic_explain_scratch = 0;
+var _agnostic_explain_mutex = 0;
+
+# Build the explanation scratch. Mount time only, from `agnostic_engine_init`. Returns 1,
+# or 0 when it could not be allocated — then an explanation answers 0 and its route a 500.
+fn agnostic_crew_explain_init(): i64 {
+    if (_agnostic_explain_mutex == 0) { _agnostic_explain_mutex = mutex_new(); }
+    if (_agnostic_explain_scratch == 0) {
+        _agnostic_explain_scratch = arena_allocator(AGNOSTIC_EXPLAIN_SCRATCH_BYTES);
+    }
+    if (_agnostic_explain_mutex == 0 || _agnostic_explain_scratch == 0) { return 0; }
+    return 1;
+}
+
+# How many candidates each of `explained` tasks renders, from a roster of `agents`: the
+# whole roster when `explained` × `agents` fits `AGNOSTIC_EXPLAIN_MAX_CANDIDATES`, else an
+# equal share of it — never fewer than one, the winner. **0 when `explained` is past the
+# budget**: even one candidate a task would exceed it, and the route refuses rather than
+# render more than it promises. That bounds an answer at the budget's candidates plus one
+# `selection` wrapper per explained task, whatever the crew (ADR 0016).
+fn agnostic_crew_explain_limit(explained, agents): i64 {
+    if (agents <= 0) { return 0; }
+    if (explained > AGNOSTIC_EXPLAIN_MAX_CANDIDATES) { return 0; }
+    if (explained <= 0) { return agents; }
+    var k = AGNOSTIC_EXPLAIN_MAX_CANDIDATES / explained;
+    if (k > agents) { k = agents; }
+    return k;
+}
+
+# How the engine's selector ranks the agents of `spec` for its task `index`, as JSON in
+# `a`: `{"winner", "candidate_count", "candidates": [...]}` (agnosai's
+# `agnosai_selection_to_value_a`), the best `limit` candidates. 0 when `index` is out of
+# range or memory ran out.
+#
+# ⚠ **Recomputed, not recorded** (ADR 0016). The engine keeps only each task's winner.
+# The ranking is a pure function of the roster and the task, and nothing writes either
+# once the crew is built, so `candidates[0]` is the agent the task ran with. agnosai names
+# the three changes that would end that (hierarchical delegation, learning-driven
+# selection, a stateful personality); each would have to record the selection instead.
+fn agnostic_crew_explain_task_a(a, spec, index, limit): i64 {
+    if (spec == 0) { return 0; }
+    var tasks = agnosai_crew_tasks(spec);
+    var agents = agnosai_crew_agents(spec);
+    if (tasks == 0 || agents == 0) { return 0; }
+    if (index < 0 || index >= vec_len(tasks)) { return 0; }
+    if (_agnostic_explain_scratch == 0) { return 0; }
+
+    # The scratch is shared, so it is held from the reset until the candidates are copied
+    # out into `a`. agnosai takes no lock of its own on this path; the one call that can
+    # log — a malformed `required_tools`, which the decoder refuses — logs through sakshi,
+    # which takes no lock agnostic holds here.
+    mutex_lock(_agnostic_explain_mutex);
+    reset_via(_agnostic_explain_scratch);
+    var explained = agnosai_explain_selection_a(_agnostic_explain_scratch, agents,
+      vec_get(tasks, index));
+    var out = agnosai_selection_to_value_a(a, explained, agents, limit);
+    mutex_unlock(_agnostic_explain_mutex);
+    return out;
+}
+
+# The selector itself, as JSON in `a`: `{"weights", "unmeasured"}`. 0 when `a` is
+# exhausted.
+fn agnostic_crew_scorer_a(a): i64 {
+    return agnosai_selection_scorer_to_value_a(a);
+}
+
 # Stand up the engine. Mount time only, before any worker exists.
 #
 # ⚠ **Registration order is a correctness requirement.** The orchestrator and bus
@@ -130,6 +217,18 @@ fn agnostic_engine_init(cfg): i64 {
     var url = agnostic_config_llm_url(cfg);
     if (url != 0) {
         agnosai_orchestrator_with_llm_url(o, url, agnostic_config_llm_api_key(cfg));
+        # The inference call's ceilings (0.1.14; agnosai 2.1.6 gave the call any). Unset keeps
+        # agnosai's: connect 10 s, each read or write 300 s, the exchange 600 s. A shorter
+        # exchange bounds the other two with it. Mount time: the block is read lock-free.
+        var llm_secs = agnostic_config_llm_timeout_secs(cfg);
+        if (llm_secs > 0) {
+            var total_ms = llm_secs * 1000;
+            var io_ms = 300000;
+            if (io_ms > total_ms) { io_ms = total_ms; }
+            var connect_ms = 10000;
+            if (connect_ms > total_ms) { connect_ms = total_ms; }
+            agnosai_hoosh_set_timeouts(connect_ms, io_ms, total_ms);
+        }
     } else {
         # ⚠ **A placeholder run is indistinguishable from a real one by its
         # results alone.** With no gateway, `agnosai_execute_task` takes its
@@ -146,6 +245,11 @@ fn agnostic_engine_init(cfg): i64 {
     }
 
     agnostic_ledger_init();
+    # The scratch `?explain=selection` scores in (0.1.14, ADR 0016). Not fatal: without it
+    # only an explanation fails, with a 500, and every crew still runs.
+    if (agnostic_crew_explain_init() == 0) {
+        sakshi_warn("could not allocate the selection-explanation scratch; explain answers 500", 73);
+    }
     _agnostic_engine_cfg = cfg;
     _agnostic_orchestrator = o;
     return 1;
@@ -220,6 +324,12 @@ fn agnostic_crew_submit_owned(r, out_entry, scope: Str, idem: Str, fprint: Str):
 
     var spec = agnostic_crew_spec_build(r);
     if (spec == 0) { return AGNOSTIC_SUBMIT_SPEC_FAILED; }
+    # The crew joins the submitting request's trace (0.1.14, ADR 0018): its workflow, agent,
+    # chat and tool spans become children of the request's traceparent, under the trace id
+    # every log line of the request carries. agnosai keeps a copy — the request's arena is
+    # reset before an asynchronous crew runs — and serialises none of it. 0 on a thread with
+    # no request (a suite, the collector) leaves the crew a root trace of its own.
+    agnosai_crew_with_trace_parent(spec, agnostic_trace_current());
 
     # Minted by `agnosai_crew_new`, i.e. by the engine. Agnostic generates no
     # crew ids — see the module header.
@@ -363,15 +473,25 @@ fn agnostic_crew_poll_a(a, crew_id: Str): i64 {
 }
 
 # The status to latch for what the engine reported, given when (if ever) the ledger
-# collected the crew's `crew_started` — epoch ms, or 0.
+# recorded the crew's start — epoch ms, or 0.
 #
-# ⚠ The engine's registry goes from PENDING straight to a terminal state; it never
-# says RUNNING. So a crew whose `crew_started` has been collected is RUNNING whatever
-# the registry says (0.1.9). Only PENDING is upgraded — a terminal observation, and an
-# UNKNOWN one, always stand as reported.
+# A crew whose start is recorded is RUNNING whatever the registry says (0.1.9). Only
+# PENDING is upgraded — a terminal observation, and an UNKNOWN one, always stand as
+# reported. Until agnosai 2.1.5 the registry went from PENDING straight to a terminal
+# state, so this was the only way agnostic said `running`. Since then (agnosai ADR 022)
+# the registry stores RUNNING too, and on one error arm moves RUNNING → PENDING; with
+# the start recorded at the first RUNNING (`agnostic_crew_observed_status`), that edge
+# reads as RUNNING here, so agnostic's own status never goes back to `pending`.
 fn agnostic_crew_live_status(observed, started_ms): i64 {
     if (observed == AGNOSTIC_CREW_PENDING && started_ms != 0) { return AGNOSTIC_CREW_RUNNING; }
     return observed;
+}
+
+# The status to latch for engine status `observed` of the crew ledger entry `e` holds,
+# recording the crew's start first when the engine says RUNNING (0.1.14).
+fn agnostic_crew_observed_status(e, observed): i64 {
+    if (observed == AGNOSTIC_CREW_RUNNING) { agnostic_ledger_note_started(e); }
+    return agnostic_crew_live_status(observed, agnostic_ledger_started_ms(e));
 }
 
 # Bring a crew's ledger entry up to date — rungs 2 to 4 above — without building
@@ -392,8 +512,7 @@ fn agnostic_crew_refresh_a(a, entry, crew_id: Str): i64 {
         var state = agnosai_orchestrator_crew(_agnostic_orchestrator, crew_id);
         if (state != 0) {
             var observed = agnostic_outcome_from_state_a(a, state);
-            var status = agnostic_crew_live_status(agnostic_outcome_status(observed),
-              agnostic_ledger_started_ms(entry));
+            var status = agnostic_crew_observed_status(entry, agnostic_outcome_status(observed));
             agnostic_ledger_latch(entry, status,
               agnostic_outcome_error(observed),
               agnostic_outcome_results(observed));
@@ -431,9 +550,17 @@ fn agnostic_crew_refresh_a(a, entry, crew_id: Str): i64 {
 # And an already-terminal crew is refused rather than relabelled — the latch in
 # `agnostic_ledger_latch` would refuse the write anyway, but reporting
 # `ALREADY_TERMINAL` says why instead of reporting a success that did nothing.
-fn agnostic_crew_cancel(crew_id: Str): i64 {
+#
+# ⚠ **Refreshed first** (0.1.14). The collector sweeps every 200 ms, so the ledger can lag
+# the engine: a crew that finished a moment ago still reads `running`, and one that started
+# a moment ago has no start recorded. Without the refresh, the first was cancelled — the
+# engine's registry took CANCELLED over its COMPLETED, and the next refresh gave the
+# cancelled crew all of its completed results — and the second got a start stamped after
+# its finish. `a` holds the refresh's transient outcome.
+fn agnostic_crew_cancel_a(a, crew_id: Str): i64 {
     var entry = agnostic_ledger_entry(crew_id);
     if (entry == 0) { return AGNOSTIC_CANCEL_NOT_SUBMITTED; }
+    agnostic_crew_refresh_a(a, entry, crew_id);
     if (agnostic_status_is_terminal(agnostic_ledger_status(entry)) == 1) {
         return AGNOSTIC_CANCEL_ALREADY_TERMINAL;
     }
@@ -443,6 +570,11 @@ fn agnostic_crew_cancel(crew_id: Str): i64 {
     # the error object it built. This is not a truthy success flag, and reading
     # it as one would invert the branch.
     if (agnosai_orchestrator_cancel_crew(_agnostic_orchestrator, crew_id) != 0) {
+        # The crew may have finished between the refresh and the cancel: say so if it did.
+        agnostic_crew_refresh_a(a, entry, crew_id);
+        if (agnostic_status_is_terminal(agnostic_ledger_status(entry)) == 1) {
+            return AGNOSTIC_CANCEL_ALREADY_TERMINAL;
+        }
         agnostic_log_kv_str(SK_WARN, "cancel refused: engine does not know this crew", 46,
           "crew_id", 7, crew_id);
         return AGNOSTIC_CANCEL_ENGINE_UNKNOWN;
@@ -453,4 +585,10 @@ fn agnostic_crew_cancel(crew_id: Str): i64 {
     agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from("crew.cancel"),
       agnostic_audit_detail("crew_id", crew_id));
     return AGNOSTIC_CANCEL_OK;
+}
+
+# `agnostic_crew_cancel_a` with the refresh's outcome on the global allocator — for suites
+# and callers without a request arena. The route uses the request's arena.
+fn agnostic_crew_cancel(crew_id: Str): i64 {
+    return agnostic_crew_cancel_a(default_alloc(), crew_id);
 }

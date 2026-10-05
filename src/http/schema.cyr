@@ -61,6 +61,7 @@ enum AgnosticSchVocab {
     AGNOSTIC_SCHV_PRIORITY    = 2;
     AGNOSTIC_SCHV_RISK        = 3;
     AGNOSTIC_SCHV_CREW_STATUS = 4;
+    AGNOSTIC_SCHV_COMPLEXITY  = 5;
 }
 
 # --- building blocks ----------------------------------------------------------
@@ -305,6 +306,10 @@ fn _agnostic_sch_query_a(a, id): i64 {
         q = _agnostic_sch_name_a(a, q, "before");
     }
     if (id == AGNOSTIC_ROUTE_CREW_EVENTS) { q = _agnostic_sch_name_a(a, q, "after"); }
+    if (id == AGNOSTIC_ROUTE_CREW_PLAN) {
+        q = _agnostic_sch_name_a(a, q, "explain");
+        q = _agnostic_sch_name_a(a, q, "task");
+    }
     if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) {
         q = _agnostic_sch_name_a(a, q, "limit");
         q = _agnostic_sch_name_a(a, q, "before");
@@ -407,7 +412,9 @@ fn _agnostic_sch_keys_a(a, id): i64 {
         return _agnostic_sch_words_a(a, k, "crew_id status events next missed lost_events dropped_events");
     }
     if (id == AGNOSTIC_ROUTE_CREW_PLAN) {
-        return _agnostic_sch_words_a(a, k, "crew_id name? process max_concurrency? agents tasks");
+        k = _agnostic_sch_words_a(a, k, "crew_id name? process max_concurrency? agents tasks");
+        # Only with `?explain=selection` (0.1.14, ADR 0016).
+        return _agnostic_sch_words_a(a, k, "scorer? candidate_limit?");
     }
     if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return _agnostic_sch_words_a(a, k, "token token_type expires_in role"); }
     if (id == AGNOSTIC_ROUTE_PRESET_LIST) { return _agnostic_sch_words_a(a, k, "presets total"); }
@@ -587,6 +594,7 @@ fn _agnostic_sch_wire_a(a, kind, v): i64 {
     if (kind == AGNOSTIC_SCHV_PRIORITY) { return agnosai_task_priority_to_wire_a(a, v); }
     if (kind == AGNOSTIC_SCHV_RISK) { return agnosai_task_risk_to_wire_a(a, v); }
     if (kind == AGNOSTIC_SCHV_CREW_STATUS) { return agnostic_crew_status_to_wire(v); }
+    if (kind == AGNOSTIC_SCHV_COMPLEXITY) { return agnostic_complexity_to_wire(v); }
     return 0;
 }
 
@@ -659,6 +667,8 @@ fn _agnostic_sch_vocabularies_a(a, cat): i64 {
     v = _agnostic_sch_put_a(a, v, "process", _agnostic_sch_vocab_a(a, AGNOSTIC_SCHV_PROCESS));
     v = _agnostic_sch_put_a(a, v, "priority", _agnostic_sch_vocab_a(a, AGNOSTIC_SCHV_PRIORITY));
     v = _agnostic_sch_put_a(a, v, "risk", _agnostic_sch_vocab_a(a, AGNOSTIC_SCHV_RISK));
+    # A task's complexity hint (0.1.14, ADR 0017).
+    v = _agnostic_sch_put_a(a, v, "complexity", _agnostic_sch_vocab_a(a, AGNOSTIC_SCHV_COMPLEXITY));
     v = _agnostic_sch_put_a(a, v, "crew_status", _agnostic_sch_vocab_a(a, AGNOSTIC_SCHV_CREW_STATUS));
     v = _agnostic_sch_put_a(a, v, "crew_status_filter", filter);
     v = _agnostic_sch_put_a(a, v, "plugin_permissions", _agnostic_sch_catalogue_names_a(a, cat));

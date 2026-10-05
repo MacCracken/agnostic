@@ -96,6 +96,41 @@ fn test_generate_exhausted_arena() {
     assert_eq(t, 0, "generate returns 0 rather than a half-built Str when the arena is full");
 }
 
+# Which inbound traceparents are honoured (0.1.14, ADR 0018): exactly the ones the engine's own
+# parser accepts, so a request's log lines and its crew's spans share one trace id.
+fn test_valid() {
+    test_group("trace/valid");
+    var a = arena_allocator(65536);
+
+    var spec = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    assert_eq(agnostic_trace_valid_a(a, str_from(spec)), 1, "the W3C specification's example");
+    assert_eq(agnostic_trace_valid_a(a, str_from("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00")), 1,
+      "not sampled is still valid (and honoured downstream)");
+    assert_eq(agnostic_trace_valid_a(a, agnostic_trace_generate_a(a)), 1, "every id this server mints");
+
+    assert_eq(agnostic_trace_valid_a(a, 0), 0, "no header");
+    assert_eq(agnostic_trace_valid_a(a, str_from("00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01")), 0,
+      "uppercase hex: no conforming sender writes it");
+    assert_eq(agnostic_trace_valid_a(a, str_from("01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")), 0,
+      "another version");
+    assert_eq(agnostic_trace_valid_a(a, str_from("ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")), 0,
+      "the forbidden version");
+    assert_eq(agnostic_trace_valid_a(a, str_from("00-00000000000000000000000000000000-00f067aa0ba902b7-01")), 0,
+      "an all-zero trace id");
+    assert_eq(agnostic_trace_valid_a(a, str_from("00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01")), 0,
+      "an all-zero parent id");
+    assert_eq(agnostic_trace_valid_a(a, str_from("00_4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")), 0,
+      "a separator out of place");
+    assert_eq(agnostic_trace_valid_a(a, str_from("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-0g")), 0,
+      "flags that are not hex");
+    assert_eq(agnostic_trace_valid_a(a, str_from("00-4bf92f3577b34da6a3ce929d0e0e473-00f067aa0ba902b7-01")), 0,
+      "one byte short — the length check alone let 55-byte garbage through until 0.1.14");
+    assert_eq(agnostic_trace_valid_a(a, str_from("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01x")), 0,
+      "one byte long");
+    assert_eq(agnostic_trace_valid_a(a, str_from("zz-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-zzzzzzzzzzzzzzzz-zz")), 0,
+      "55 bytes of garbage");
+}
+
 fn main() {
     alloc_init();
     # See the header — without this the first trace_set segfaults.
@@ -105,6 +140,7 @@ fn main() {
     test_set_current_roundtrip();
     test_generate();
     test_generate_exhausted_arena();
+    test_valid();
     return assert_summary();
 }
 

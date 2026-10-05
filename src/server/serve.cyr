@@ -537,6 +537,34 @@ fn agnostic_serve_mount(cfg): i64 {
     return agnostic_serve_options(cfg);
 }
 
+# Start OTLP span export when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (0.1.14, ADR 0018), and
+# return the guard `agnostic_serve_telemetry_stop` flushes — a guard with export off when it
+# is not, so the stop is unconditional.
+#
+# `agnosai_telemetry_init_export`, not `agnosai_telemetry_init_tracing`: the latter also sets
+# sakshi's level and REPLACES its emit hook, and agnostic installs its own JSON hook
+# (`src/log.cyr`) and level from AGNOSTIC_LOG_*. This one starts the exporter and touches
+# nothing else; it logs the endpoint and service name it exports to at INFO.
+#
+# ⚠ **After the signal mask**, like the collector: the exporter is a thread, and a thread
+# created before `agnostic_serve_install_signals` would take SIGTERM itself and the server
+# would never see its shutdown.
+fn agnostic_serve_telemetry_start(cfg): i64 {
+    if (agnostic_config_otlp_as_is(cfg) == 1) {
+        return agnosai_telemetry_init_export_traces(agnostic_config_otlp_endpoint(cfg),
+          agnostic_config_otel_service(cfg));
+    }
+    return agnosai_telemetry_init_export(agnostic_config_otlp_endpoint(cfg),
+      agnostic_config_otel_service(cfg));
+}
+
+# Flush the spans still queued and stop the exporter — the guard from
+# `agnostic_serve_telemetry_start`. A no-op when export is off.
+fn agnostic_serve_telemetry_stop(g): i64 {
+    if (g == 0) { return 0; }
+    return agnosai_telemetry_shutdown(g);
+}
+
 # Bind and serve until the stop flag is set. Returns 0 on a graceful stop.
 #
 # `run_pooled` and not `run`/`run_async`: only the pooled worker populates the
@@ -553,12 +581,16 @@ fn agnostic_serve(cfg): i64 {
     # collector that cannot start is survivable: crews are then refreshed only when
     # polled, which is how every release before 0.1.9 ran.
     agnostic_collector_start(&_agnostic_serve_stop);
+    # OTLP span export, when configured (0.1.14, ADR 0018) — after the mask, for the same reason.
+    var telemetry = agnostic_serve_telemetry_start(cfg);
 
     var port = agnostic_config_port(cfg);
     var addr = agnostic_config_addr(cfg);
     agnostic_log_kv_int(SK_INFO, "listening", 9, "port", 4, port);
 
     var rc = sandhi_server_run_pooled(addr, port, &agnostic_serve_handler, 0, o);
+    # The last batch is the one most likely to explain the stop: flush it, whatever rc says.
+    agnostic_serve_telemetry_stop(telemetry);
     if (rc == 0) { sakshi_info("server shut down gracefully", 27); }
     return rc;
 }

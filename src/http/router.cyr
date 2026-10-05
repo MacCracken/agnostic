@@ -600,7 +600,8 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
         return agnostic_route_crew_events_a(a, agnostic_route_match_param(m), path, ctx);
     }
     if (id == AGNOSTIC_ROUTE_CREW_PLAN) {
-        return agnostic_route_crew_plan_a(a, agnostic_route_match_param(m), ctx);
+        # The raw path, query and all: `?explain=selection` and `?task=` (0.1.14).
+        return agnostic_route_crew_plan_a(a, agnostic_route_match_param(m), path, ctx);
     }
 
     if (id == AGNOSTIC_ROUTE_DEF_LIST) { return agnostic_route_definitions_list_a(a); }

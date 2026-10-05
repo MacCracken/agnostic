@@ -8,12 +8,12 @@
 > dependency and embedding rules at 0.1.7, the transport and plugin rules at 0.1.8, the
 > crew-surface and plugin-rung rules at 0.1.9, and the view, kit and toolchain rules at 0.1.10.
 > §6 was refreshed again at 0.1.11, for the re-pin to agnosai 2.1.3 and libro 2.10.6, and at
-> 0.1.12, for agnosai 2.1.4 (kavach 3.13.2, ai-hwaccel 2.4.1).
+> 0.1.12, for agnosai 2.1.4 (kavach 3.13.2, ai-hwaccel 2.4.1), and at 0.1.14 for agnosai 2.1.6.
 > §1 notes the WebGUI (0.1.7), its plugin platform (0.1.8), the server-checked plugins and
 > tenant-scoped crews of 0.1.9, and the views of 0.1.10; §2 and §6 moved to cyrius 6.6.14 then.
 > At 0.1.13 the ADR list gained 0013–0015, §5's patra `COL_STR` rule was corrected, and §1's
-> version line and M5 figures were made to point at `VERSION` and `state.md`; the rest of §1
-> still stops at 0.1.10 (roadmap, "Found at 0.1.13").
+> version line and M5 figures were made to point at `VERSION` and `state.md`. At 0.1.14 §1 gained
+> 0.1.11–0.1.14, the ADR list 0016–0018, and §5's modules-less `[deps.X]` rule its 6.6.13 fix.
 
 Read in this order:
 
@@ -21,10 +21,10 @@ Read in this order:
 |---|---|
 | **this file** | Where the port is, how to build it correctly, what to do next |
 | [`state.md`](state.md) | Live numbers — versions, surface area, dep set, gates |
-| [`roadmap.md`](roadmap.md) | M0–M9 sequencing and per-milestone gates |
+| [`roadmap.md`](roadmap.md) | Open work through v1.0 (M6–M9), what waits on agnosai and other siblings, and the settled decisions |
 | [`../../CYRIUS-PORT-BRIEF.md`](../../CYRIUS-PORT-BRIEF.md) | Research snapshot (2026-08-19): language notes, dep stack, **§7 decisions — binding** |
 | [`../../ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) | 86 verified defects in the Python oracle. §3 gated M2, §2.2 gated M3; **§3.15 is what M6's gate now measures** |
-| [`../adr/`](../adr/) | Fifteen ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server, views that link through the shell with one bridge client, audit entries read from a bounded copy, a cancelled crew keeping its finished results, a crew a restart interrupted answering `interrupted`, the estimator's one-agent baseline as its own model, the HTTP API described by a generated schema |
+| [`../adr/`](../adr/) | Eighteen ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server, views that link through the shell with one bridge client, audit entries read from a bounded copy, a cancelled crew keeping its finished results, a crew a restart interrupted answering `interrupted`, the estimator's one-agent baseline as its own model, the HTTP API described by a generated schema, agent selection explained by recomputing it, selection hints on a task, and crews joining their request's trace with OTLP export |
 
 ---
 
@@ -77,6 +77,17 @@ it can write) and **Audit trail** (the chain's verdict and its newest entries). 
 other through the shell — `#plugin/<id>?<params>` — and every plugin carries one bridge client,
 verified byte for byte by the generator (ADR 0010). A cancelled crew keeps its finished work
 (ADR 0012). The aarch64 artifact is released again.
+
+**0.1.11 and 0.1.12 were re-pins** (agnosai 2.1.3 and 2.1.4, libro 2.10.6). **0.1.13** closed the
+cheap half of the 2026-10-03 landscape review: a crew a restart cut short answers `interrupted` (ADR
+0013), `agnostic api schema` and a committed snapshot freeze the HTTP API (ADR 0015),
+`skills/agnostic/SKILL.md` teaches a coding agent to drive it, and Swarm Command prices one agent at
+the swarm's own spend (ADR 0014). **0.1.14** took agnosai 2.1.5's consumer halves, on 2.1.6, which
+bounds the inference and export calls: crew events and status say what happened (agnosai's B17),
+`/plan?explain=selection` shows why each task got its agent (ADR 0016), a task carries the hints
+that selection weighs (ADR 0017), and every crew joins its request's trace, with OTLP export from
+the OpenTelemetry environment (ADR 0018). What waits on agnosai next — F1's tool loop first — is in
+the roadmap's "Waiting on agnosai".
 
 The version is the one in `VERSION` — see `CHANGELOG.md`. Per decision #4 the port's
 milestones ship together as **1.0.0** (§4).
@@ -183,8 +194,8 @@ cheap version of M4's "path-traversal validation on every externally-derived
 path" bullet. Do not widen the character set.
 
 ⚠ **`patra` constraints to design around, not discover:** one index per table,
-per-write fsync by default, and single-writer. All three are in the M5 section of
-the roadmap and they apply to M4's tables just as much.
+per-write fsync by default, and single-writer. The roadmap's M8 note on report storage
+records all three, and they apply to M4's tables just as much.
 
 ### Carried forward, still open
 
@@ -295,11 +306,13 @@ then, against a real requirement. Out of scope for v1.0.
 
 **Added at 0.1.7:**
 
-- **A `[deps.X]` without `modules` does nothing — silently.** `cyrius deps` clones a dep
-  only when it lists `modules`, so a block with `git` + `tag` alone is never visited and
-  a transitive declaration of the same name resolves instead. This repo's four
+- **A `[deps.X]` without `modules` did nothing — silently — before cyrius 6.6.13.** `cyrius
+  deps` cloned a dep only when it listed `modules`, so a block with `git` + `tag` alone was never
+  visited and a transitive declaration of the same name resolved instead. This repo's four
   "not optional" pre-pins were inert for their whole life. Filed upstream
-  (`2026-10-01-git-dep-without-modules-silently-inert.md`).
+  (`2026-10-01-git-dep-without-modules-silently-inert.md`) and fixed in 6.6.13 (I10): such a block
+  now means `modules = ["dist/X.cyr"]` — and the root's tag wins — or `cyrius deps` warns by name.
+  So it is an override pin, which this repo does not carry.
 - **Root deps resolve first, then their own deps breadth-first in MANIFEST ORDER, and the
   first declaration of a name wins.** That is why `[deps.libro]` sits after
   `[deps.agnosai]`: whenever the two declare different sigils, agnosai's (the fold's) must be the
@@ -439,10 +452,10 @@ already filed from this port.
 
 | Repo | Version | How it arrives |
 |---|---|---|
-| `agnosai` | **2.1.4** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below at its latest |
+| `agnosai` | **2.1.6** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below at its latest |
 | `libro` | **2.10.6** | direct since 0.1.7 (`modules`, after agnosai) — the audit chain |
-| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.4 |
-| `ai-hwaccel` / `tyche` / `kavach` | **2.4.1** / **1.1.0** / **3.13.2** | transitive via agnosai 2.1.4 |
+| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.6 |
+| `ai-hwaccel` / `tyche` / `kavach` | **2.4.1** / **1.1.0** / **3.13.2** | transitive via agnosai 2.1.6 |
 | `sigil` | **3.13.7** | folded into the 6.6.14 stdlib; agnosai and libro declare the same 3.13.7 |
 | `patra` | **1.15.1** | folded into the 6.6.14 stdlib; libro declares the same version |
 
@@ -454,6 +467,8 @@ bump: a pushed *commit* is not a pushed *tag*.
 
 ⚠ **To move a dep agnosai owns, release agnosai** — as 2.1.2 did for bote and majra, 2.1.3
 for bote 3.3.16 (which brought libro 2.10.6), and 2.1.4 for kavach 3.13.2 and ai-hwaccel 2.4.1.
+2.1.5 and 2.1.6 moved none (their locks are 2.1.4's byte for byte). The next move is cyrius 6.6.15's chain
+(roadmap, "Moving the cyrius pin to 6.6.15").
 A root block "ahead of" agnosai works only if it lists `modules` (§5), and it then has
 to be kept in step by hand; the four that existed through 0.1.6 never took effect.
 
@@ -467,7 +482,7 @@ Do not add it back.
 ### ✅ No `[deps.patra]` hold at this pin
 
 6.6.14 folds patra 1.15.1 and sigil 3.13.7, and since 0.1.11 the deps declare exactly those:
-libro 2.10.6 declares patra 1.15.1 and sigil 3.13.7, and agnosai 2.1.4 declares sigil 3.13.7 (so,
+libro 2.10.6 declares patra 1.15.1 and sigil 3.13.7, and agnosai 2.1.6 declares sigil 3.13.7 (so,
 since 0.1.12, does kavach 3.13.2).
 `cyrius deps` refuses to overwrite a folded leaf ("refusing to overwrite stdlib leaf"), so
 `lib/sigil.cyr` and `lib/patra.cyr` are the fold's bytes and `lib/` matches the snapshot with

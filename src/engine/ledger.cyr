@@ -6,23 +6,28 @@
 # two engine behaviours become visible that a blocking call never sees.
 #
 # **1. The engine forgets finished crews.** `_agnosai_orch_evict_locked`
-# (`lib/agnosai.cyr:32110`) drops **every finished crew** from the registry once
+# (`lib/agnosai.cyr:33501` at agnosai 2.1.5) drops **every finished crew** from the registry once
 # it holds `AGNOSAI_MAX_RETAINED_CREWS` (1000). After that
 # `agnosai_orchestrator_crew` answers 0 — the same 0 it answers for an id that
 # never existed. Without a ledger, a crew that completed successfully and a crew
 # that was never submitted are the same 404, and the client cannot tell "your
 # results expired" from "you typo'd the id".
 #
-# **2. One engine failure never reaches the registry at all.** When
-# `agnosai_crew_runner_run` returns 0 — the cyclic-DAG arm —
-# `_agnosai_orch_finish_err` deletes the cancel flag and returns without
-# touching the crew map, which `_agnosai_orch_register` has already seeded with
-# **PENDING**. On the blocking path the caller sees the 0 and reports a 500. On
-# the *submit* path `_agnosai_orch_submit_thread` discards the return value, so
-# the registry keeps saying `pending` for a crew that has definitively failed —
-# forever. Agnostic closes that at the front door by rejecting a cyclic graph
-# before submitting (see `agnostic_crew_submit`), and the ledger is the belt to
-# that pair of braces.
+# **2. One engine failure never reaches a terminal state.** When
+# `agnosai_crew_runner_run` returns 0 — a cyclic DAG, or a DAG whose dependency
+# names a task the spec does not hold — `_agnosai_orch_finish_err` stores no
+# outcome. Since agnosai 2.1.5 (its ADR 022) the registry says RUNNING while the
+# runner works and that arm puts **PENDING** back, so the crew moves RUNNING →
+# PENDING and stays there. On the blocking path the caller sees the 0 and reports
+# a 500. On the *submit* path `_agnosai_orch_submit_thread` discards the return
+# value, so the registry says `pending` for a crew that has definitively failed —
+# forever. Agnostic closes that at the front door: a submission's dependencies are
+# range-checked task indices and a cyclic graph is refused (see
+# `agnostic_crew_req_has_cycle`), and the ledger is the belt to that pair of braces.
+# ⚠ Through agnosai 2.1.5 a THIRD way in got past both: a DAG with a failed branch
+# beside a successful one took the deadlock arm, because the runner's failure flag
+# was per wave, and such a crew read `running` here forever. agnosai 2.1.6 ends that
+# run FAILED, as any failed run (its CHANGELOG; agnostic 0.1.14's review found it).
 #
 # ## The latch, and why it is the whole point
 #
@@ -78,7 +83,7 @@ enum AgnosticLedgerEntryOff {
     AGNOSTIC_LE_NEXT_SEQ  = 64;   # the number the next event gets; events taken = NEXT_SEQ - 1
     AGNOSTIC_LE_T0_MS     = 72;   # monotonic ms when the crew was accepted
     AGNOSTIC_LE_SUBMITTED = 80;   # epoch ms when the crew was accepted
-    AGNOSTIC_LE_STARTED   = 88;   # epoch ms when `crew_started` was taken off the bus, or 0
+    AGNOSTIC_LE_STARTED   = 88;   # epoch ms agnostic first saw the crew start, or 0
     AGNOSTIC_LE_FINISHED  = 96;   # epoch ms when the status latched terminal, or 0
     AGNOSTIC_LE_SPEC      = 104;  # the engine's crew spec — its tasks and agents — or 0
     AGNOSTIC_LE_MODE      = 112;  # "live" or "placeholder" when the crew was accepted, or 0
@@ -466,14 +471,42 @@ fn agnostic_ledger_submitted_ms(e): i64 {
     return load64(e + AGNOSTIC_LE_SUBMITTED);
 }
 
-# When `crew_started` was taken off the bus, in epoch milliseconds, or 0 when it has
-# not been — the engine's registry never reports RUNNING, so this is how agnostic knows.
+# When agnostic first saw the crew start, in epoch milliseconds, or 0 while it has not:
+# whichever came first of its `crew_started` taken off the bus and the engine's
+# registry reporting RUNNING (`agnostic_ledger_note_started`). The registry says RUNNING
+# only since agnosai 2.1.5 (its ADR 022); before that `crew_started` was the only sign.
 fn agnostic_ledger_started_ms(e): i64 {
     if (e == 0) { return 0; }
     mutex_lock(_agnostic_ledger_mutex);
     var t = load64(e + AGNOSTIC_LE_STARTED);
     mutex_unlock(_agnostic_ledger_mutex);
     return t;
+}
+
+# Record that the crew has started, now, unless a start is already recorded. Returns 1
+# when this call recorded it, 0 when one was already there (or `e` is null).
+#
+# Called when the engine's registry reports RUNNING (0.1.14). Since agnosai 2.1.5 the
+# registry stores RUNNING when it hands the crew to its runner, just BEFORE the runner
+# publishes `crew_started` — so a poll can see RUNNING before the event is collected.
+# Stamping here keeps `running` and `started_at` together on every answer, and it is
+# what makes agnostic's status one-way: once a start is recorded,
+# `agnostic_crew_live_status` reads an engine PENDING as RUNNING, so the registry's
+# RUNNING → PENDING edge (ADR 022's error arm) never reaches the wire.
+#
+# ⚠ Never after the crew finished: a crew cancelled before its thread ran still publishes
+# `crew_started` once it does, and a start stamped then would land after `finished_at` — a
+# negative run time in every view. Such a crew never started, as far as anyone can say.
+fn agnostic_ledger_note_started(e): i64 {
+    if (e == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var noted = 0;
+    if (load64(e + AGNOSTIC_LE_STARTED) == 0 && load64(e + AGNOSTIC_LE_FINISHED) == 0) {
+        store64(e + AGNOSTIC_LE_STARTED, agnostic_epoch_ms());
+        noted = 1;
+    }
+    mutex_unlock(_agnostic_ledger_mutex);
+    return noted;
 }
 
 # When the status latched terminal, in epoch milliseconds, or 0 while it has not.
@@ -668,6 +701,14 @@ fn agnostic_ledger_latch(e, status, error, results): i64 {
         _agnostic_ledger_persist_again(e);
         return 2;
     }
+    # ⚠ **The upgrade is made HERE, under the lock, as well as in the caller** (0.1.14). The
+    # collector and a poll refresh the same entry concurrently; one can read the registry's
+    # PENDING before the crew advanced, lose the race to the other — which records the start
+    # and latches RUNNING — and then latch its stale PENDING over it. A recorded start makes
+    # PENDING read RUNNING in the store itself, so no interleaving moves the status back.
+    if (status == AGNOSTIC_CREW_PENDING && load64(e + AGNOSTIC_LE_STARTED) != 0) {
+        status = AGNOSTIC_CREW_RUNNING;
+    }
     store64(e + AGNOSTIC_LE_STATUS, status);
     if (error != 0) { store64(e + AGNOSTIC_LE_ERROR, error); }
     if (results != 0) { store64(e + AGNOSTIC_LE_RESULTS, results); }
@@ -842,9 +883,9 @@ fn agnostic_ledger_row_a(a, e): i64 {
 # doing now, which is what a progress reader is asking for. Nothing is allocated — the
 # ring was allocated with the entry — which is what fixed the per-event leak (0.1.9).
 #
-# `crew_started` is the one event the ledger reads: the engine's registry goes from
-# PENDING straight to a terminal state, so this is the only evidence a crew is RUNNING
-# (`agnostic_crew_refresh_a`).
+# `crew_started` is the one event the ledger reads: it records when the crew started,
+# unless the registry's RUNNING was seen first (`agnostic_ledger_note_started`), and a
+# recorded start is what `agnostic_crew_live_status` reads a PENDING as RUNNING by.
 fn _agnostic_ledger_push_event_locked(e, ev, now_ms): i64 {
     var seq = load64(e + AGNOSTIC_LE_NEXT_SEQ);
     var slot = load64(e + AGNOSTIC_LE_RING)
@@ -852,7 +893,8 @@ fn _agnostic_ledger_push_event_locked(e, ev, now_ms): i64 {
     store64(slot + AGNOSTIC_LS_AT, now_ms - load64(e + AGNOSTIC_LE_T0_MS));
     store64(slot + AGNOSTIC_LS_EV, ev);
     store64(e + AGNOSTIC_LE_NEXT_SEQ, seq + 1);
-    if (load64(e + AGNOSTIC_LE_STARTED) == 0) {
+    # Not once the crew finished — see `agnostic_ledger_note_started`.
+    if (load64(e + AGNOSTIC_LE_STARTED) == 0 && load64(e + AGNOSTIC_LE_FINISHED) == 0) {
         var t = agnosai_crew_event_event_type(ev);
         if (t != 0) {
             if (str_eq_cstr(t, "crew_started") == 1) {

@@ -4,6 +4,278 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.14] — 2026-10-05
+
+**Re-pin to agnosai 2.1.6 — 2.1.5's three consumer halves, plus selection hints on a task, and the
+fixes an adversarial review of all of it found, five of them in agnosai itself.**
+- **The plan explains each task's agent** (F7, ADR 0016): `GET /api/v1/crews/{id}/plan?explain=selection[&task=N]`.
+- **A task can say what its agent needs** (ADR 0017): `required_tools`, `complexity`, `domain` and
+  `gpu_required` on each task of `POST /api/v1/crews`. Before this, agnosai's selector could tell
+  agents apart only by complexity, and the first medium agent won every task.
+- **A crew joins its request's trace, and spans can leave the process** (F6, ADR 0018): each crew
+  carries the request's `traceparent`, and `OTEL_EXPORTER_OTLP_ENDPOINT` switches on OTLP export.
+- **Crew status and events say what happened** (B17, agnosai ADR 022), and agnostic's status never
+  goes backward even where agnosai's now can.
+- **Inference calls and span export are bounded** (agnosai 2.1.6): each posts from a reused arena
+  under finite timeouts, where 2.1.5 left ~256 KiB on the never-freed heap per call and could wait
+  forever. `AGNOSTIC_LLM_TIMEOUT_SECS` sets the inference ceiling.
+
+⚠ Wire-visible, all additive except the traceparent check: two query parameters and two optional
+keys on the plan route; four optional fields on a task, which also appear in the plan; a
+`complexity` vocabulary in the schema; a stricter inbound `traceparent` (a value agnosai would
+refuse is now replaced, as a malformed one always was); `token` events for every LLM-answered task,
+and parallel/DAG events per batch (agnosai's change). ⚠ A malformed `OTEL_EXPORTER_OTLP_ENDPOINT`
+now refuses to start.
+
+**31 suites, 2,543 assertions, 0 failed** — on x86_64 under the 6.6.14 pin and natively on aarch64
+(the Raspberry Pi, Ubuntu 26.04.1) — plus **77 JavaScript tests**; 0.1.13 had 31, 2,347 and 77.
+Cyrius 6.6.14 and libro 2.10.6 are unchanged; the lock moved by agnosai's line alone.
+
+### Changed — re-pin to agnosai 2.1.6
+
+- **`[deps.agnosai]` 2.1.4 → 2.1.6.** Neither 2.1.5 nor 2.1.6 changed a dependency: their
+  `cyrius.cyml` and `cyrius.lock` are byte-identical to 2.1.4's, so `cyrius.lock` moved by exactly
+  two lines — the agnosai commit pin and `lib/agnosai.cyr`'s hash, which is byte-identical to the
+  tag's `dist/agnosai.cyr`. 119 files, 9 commit pins. The work was first done and tested against
+  2.1.5 (tag `5855060`); 2.1.6 was released from what the review below found.
+- agnosai 2.1.5 renamed its GenAI span functions (its *Breaking*); agnostic called none of them.
+- Two stale lines the roadmap scheduled for this re-pin: the `cyrius.cyml` paragraph about which
+  sigil the chain declares (all of it declares the 3.13.7 fold since 0.1.12), and `CONTRIBUTING.md`
+  asking for `rustc --version` (now `cyrius --version`).
+
+### Changed — crew status and events say what happened (B17, agnosai ADR 022)
+
+What agnosai 2.1.5 changed, as an agnostic client sees it:
+
+- A `parallel` or `dag` task's `task_started` arrives when its batch starts, and its
+  `task_completed` as it is joined, in dispatch order — so a `task_started` can follow a
+  `task_completed`. Before, a whole wave was announced up front and completed after its last batch.
+- Every task the model answers sends its `token` event in every process (before: sequential only),
+  and `token` events name their crew.
+- A timed-out crew's `crew_completed` says `failed`, as its outcome always did.
+- The engine's registry now says RUNNING while a crew runs, and on one error arm goes back to
+  PENDING.
+
+What agnostic changed for it:
+
+- **`agnostic_ledger_note_started`.** The registry stores RUNNING just before the runner publishes
+  `crew_started`, so a poll could see `running` before the event is collected — `running` with no
+  `started_at`. The start is now recorded at whichever comes first. And since a recorded start
+  reads an engine PENDING as RUNNING (`agnostic_crew_live_status`, 0.1.9), the registry's new
+  RUNNING → PENDING edge never reaches agnostic's wire: agnostic's status only moves forward. The
+  edge is unreachable through agnostic anyway — dependencies are range-checked indices and cycles
+  are refused — and `ledger/registry-running` holds the ledger to it regardless.
+- Comments that said "the registry never reports RUNNING" or "returns 0 on exactly one arm"
+  (`crew.cyr`, `ledger.cyr`, `request.cyr`, `crew_request.tcyr`, `ledger.tcyr`), and two
+  `lib/agnosai.cyr` line citations, now say what 2.1.5 does. ADR 0009 has a dated note.
+- **Swarm Command** (comments only, still 0.5.0): its event map no longer says the engine announces
+  a whole wave at once or that parallel crews send no tokens. Its queued-unit fallback stays, for a
+  crew whose `task_completed` events were missed.
+- **SKILL.md** §6: tokens come from every task the model answers; a `task_started` can follow a
+  `task_completed`; the timeout caveat is gone.
+
+### Added — why each task got its agent: `/plan?explain=selection` (F7, ADR 0016)
+
+- **`GET /api/v1/crews/{id}/plan?explain=selection`.** Each task gains `selection`, agnosai's
+  rendering of its ranking: `winner` (`index`, `agent_key`), `candidate_count`, and `candidates`,
+  best first, each with its `total` and the five `scores` it folds — `tool_coverage`, `complexity`,
+  `gpu`, `domain`, `personality`. The answer gains `scorer` (the five `weights`, and `unmeasured`:
+  personality, until agnosai ports bhava) and `candidate_limit`. The floats are agnosai's raw f64s:
+  Σ weight × score in the listed order is `total` exactly.
+- **`&task=N`** explains only task `N` (its `index`), over the whole roster.
+- **Recomputed, not recorded.** agnosai keeps only each task's winner; selection is a pure function
+  of the roster and the task, so recomputing it is exact, and `candidates[0]` is the agent the task
+  ran with — `crews/plan-explain` checks each task's winner against the agent its `task_started`
+  event named. agnosai names the changes that would end this (hierarchical delegation,
+  learning-driven selection, a stateful personality); ADR 0016 says what then replaces it.
+- **Bounded.** Scoring every agent against every task is up to 5.6 MB at the request caps, and the
+  request arena spills to memory that is never freed. So scoring runs in one 32 KiB scratch built at
+  mount, reset per task under its own mutex, and only the rendered candidates go into the request's
+  arena: 256 per answer (`AGNOSTIC_EXPLAIN_MAX_CANDIDATES`), shared equally between the explained
+  tasks and never fewer than the winner — so one answer explains at most 256 tasks, and a larger
+  crew is explained a task at a time (`&task=N`; without it, a 422 saying so). Fifty explanations
+  allocate nothing on the global bump.
+- **Refused, 422:** `explain` other than `selection` (empty included), a `task` that is not a
+  non-negative integer, `task` without `explain`, a `task` past the crew's last, and a whole crew of
+  more than 256 tasks without `task`. Another tenant's
+  crew is 404, explained or not.
+- The router hands the plan route its raw path, as it does the events route. The schema declares
+  `explain` and `task` and the keys `scorer?` and `candidate_limit?`; `api/probes` now knows eight
+  query parameters and checks six names the other way.
+
+### Added — a task says what its agent needs: selection hints (ADR 0017)
+
+The user's decision of 2026-10-04, open since 0.1.13.
+
+- **Four optional task fields**, each checked strictly, because agnosai reads each one silently:
+  - `required_tools` — an array of tool names of 1 to 256 bytes, at most 64. Anything but strings in
+    it is a 422 (the engine would read it as no requirement and score every agent full coverage).
+    `[]` is no requirement.
+  - `complexity` — `low`, `medium` or `high`; anything else is a 400 (the engine would read it as
+    medium). A new schema vocabulary, `vocabularies.complexity`.
+  - `domain` — 1 to 256 bytes, compared with each agent's ignoring case.
+  - `gpu_required` — a boolean.
+- **Forwarded into the engine task's context** under the selector's own keys
+  (`_agnostic_task_spec_hints`); a hint left out writes nothing, so a request without hints selects
+  exactly as 0.1.13 did. `request/hints` shows each hint alone moving a task to the agent that
+  matches it.
+- **Shown back** on `GET /api/v1/crews/{id}/plan`, each task with the hints it was given.
+- ⚠ **The model reads the hints.** agnosai renders a task's whole context into its prompt, so a
+  hinted task's prompt carries them (and hoosh caches on that request body). SKILL.md says so.
+
+### Added — one trace from request to tool, and OTLP export (F6, ADR 0018)
+
+- **Each crew joins the trace of the request that submitted it**: `agnostic_crew_submit_owned`
+  calls `agnosai_crew_with_trace_parent(spec, agnostic_trace_current())`, so the crew's
+  `invoke_workflow`, `invoke_agent`, `chat` and `execute_tool` spans are children of the request's
+  `traceparent`, under the trace id every log line of the request carries.
+- **OTLP span export** starts when `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (a complete URL, as-is) or
+  `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL, `v1/traces` appended — agnosai 2.1.6) is set;
+  `OTEL_SERVICE_NAME` names the service, `agnostic` by default; `OTEL_EXPORTER_OTLP_HEADERS` is read
+  by agnosai's exporter. It uses `agnosai_telemetry_init_export`, which leaves agnostic's log hook
+  and level alone; it starts after the signal mask and is flushed and stopped when the server stops.
+  Off, nothing is built.
+- ⚠ **A malformed endpoint refuses to start**, like a malformed `AGNOSTIC_*` value: the exporter
+  ignores every answer, so a typo would otherwise lose every span silently. The check is sandhi's
+  own URL parser, plus no userinfo, query or fragment.
+- ⚠ **The inbound `traceparent` is checked by agnosai's own parser**
+  (`agnosai_otlp_span_context_parse_a`: W3C Trace Context Level 1, version `00`, lowercase hex,
+  non-zero ids), where 0.1.13 checked its length. A value agnosai would refuse is replaced by a
+  minted one, so a request's logs and its crew's spans never land in different traces. Minted ids
+  are forced non-zero.
+
+### Fixed at review — and in agnosai 2.1.6
+
+An adversarial review of the work above (five lenses — B17, F7, hints, F6, docs — each finding
+re-derived by an independent skeptic: 15 confirmed, 0 refuted) found:
+
+- **In agnosai 2.1.5, fixed at the source as 2.1.6:**
+  - its OTLP exporter left ~258 KiB of RSS per batch on the never-freed global bump and had no
+    timeouts, so a collector that never answered blocked it — and the server's stop — for good;
+    its two flushers could share one batch's memory; and it read a generic endpoint with a path
+    as a complete URL, so `https://gw/otlp` posted to `/otlp`;
+  - its inference call had the same leak (~256 KiB per call, plus five parse trees of the answer)
+    and no timeout at all — a hung gateway held a task forever;
+  - a `dag` crew with a failed branch beside a successful one took its deadlock arm, so in
+    agnostic it read `running` forever — never finished, never stored, swept every 200 ms;
+  - cancelling a crew that had just finished relabelled it `cancelled`, and agnostic then reported
+    its completed results under that status.
+- **In agnostic:**
+  - `?explain=selection` on a crew of more than 256 tasks rendered past its budget: the whole crew
+    is now a 422 naming `&task=N`, and any one task still answers;
+  - an agent's `"domain": ""` made it lose every task that named a domain: it is read as no domain;
+  - a task's hints could exceed the engine's 50,000-byte prompt-context cap, which agnosai cuts
+    silently: tool names and the domain are capped at 256 bytes, and the rendered hints are
+    measured exactly as the engine renders them (failing closed when they cannot be);
+  - the OTLP endpoint check let through URLs the exporter cannot use (no host, userinfo, a query,
+    an upper-case scheme with no path): it now also refuses userinfo, query and fragment and asks
+    sandhi's own URL parser;
+  - a concurrent refresh could latch a stale `pending` over `running`: the latch itself reads a
+    PENDING over a recorded start as RUNNING;
+  - a start collected after a crew was cancelled was stamped after its finish (a negative run time
+    in both views): no start is stamped once a crew has finished;
+  - a cancel could land on a crew the engine had already finished, inside the collector's 200 ms:
+    the cancel refreshes first, and answers 409 if the engine got there first;
+  - `serve_mount` read `OTEL_EXPORTER_OTLP_ENDPOINT` from the shell running it: its "off" case is
+    off by construction.
+- **Configuration that came with 2.1.6:** `AGNOSTIC_LLM_TIMEOUT_SECS` (1–86400; 0 or malformed refuses
+  to start) sets the inference call's whole-exchange ceiling and bounds its connect (10 s) and
+  per-read (300 s) ceilings by it; unset keeps agnosai's 600 s. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+  a complete URL, is read as-is and wins over the generic base.
+
+
+### Tests
+
+**+196 assertions, all in existing suites** (2,347 → 2,543; 31 suites).
+
+- `tests/crews_route.tcyr` +70: `crews/plan-explain` (every task's winner is the agent its
+  `task_started` named; the scores fold to `total`; `&task=N`; each refusal), `plan-explain-limit`,
+  `plan-explain-budget` (fifty explanations allocate nothing on the global bump; a crew past 256
+  tasks is a 422 without `task`, and any one task still answers), `plan-hints`, `trace-parent`
+  (the crew carries the request's own traceparent, copied out of the request's arena; a crew
+  submitted outside a request is a root trace), `cancel-refreshes` (a crew the engine finished
+  before the ledger saw it is refused, stays completed, and its start is no later than its
+  finish), `llm-timeout`.
+- `tests/crew_request.tcyr` +44: `request/hints` (each hint alone moves a task to the agent that
+  matches it; each malformed one refused, 400 or 422, never read as a default), `request/empty-domain`, and the hint bounds,
+  including rendered hints past the engine's prompt-context cap and an arena too small to measure
+  them (refused, never let through).
+- `tests/config.tcyr` +33: `config/otlp_endpoint` (scheme in any case, a host required, userinfo,
+  query and fragment refused, the per-signal endpoint winning and used as-is) and
+  `AGNOSTIC_LLM_TIMEOUT_SECS` (1–86400; 0 or malformed refuses to start).
+- `tests/ledger.tcyr` +17: `ledger/registry-running` (RUNNING before `crew_started`, and an engine
+  PENDING after a recorded start, both read as `running` with `started_at`), a stale `pending`
+  never latched over `running`, and no start stamped after a finish.
+- `tests/trace.tcyr` +14: `trace/valid`, agnosai's parser on the W3C shape, and minted ids non-zero.
+- `tests/serve_mount.tcyr` +11: `serve/telemetry` — with no endpoint nothing is built and no span
+  recorded; a generic endpoint is a base (`v1/traces` appended) and a per-signal one is used as-is;
+  stopping clears the process's exporter; the "off" case no longer reads the caller's shell.
+- `tests/api_schema.tcyr` +3 (eight query parameters, six checked by name both ways; the
+  `complexity` vocabulary; the explained plan in the responses sweep — its cancel probe now holds a
+  1,000-task crew, since 2.1.6 refuses to cancel a crew that has finished), `tests/router.tcyr` +2
+  (the plan route resolves with a query and is handed the raw path), `tests/crew_tenancy.tcyr` +2
+  (another tenant's crew is 404, explained or not).
+
+### Verified
+
+- **Live, with the release binary** (DCE, x86_64), a stub OpenAI-compatible gateway and a stub OTLP
+  collector on loopback:
+  - A two-task crew submitted with `traceparent: 00-4bf92f35…-00f067aa0ba902b7-01`, one task hinted
+    `required_tools: ["scanner"]`, `domain: "Security"`, `complexity: "high"`, completed with both
+    results and metered usage. `/plan` showed the hints back; `?explain=selection` named
+    `sec-auditor` for the hinted task (0.925 against 0.342) and `web-tester`, the first medium
+    agent, for the other — the agents each `task_started` event named.
+  - `explain=nope`, `task` without `explain` and a `task` past the last each answered 422.
+  - Cancelling the finished crew answered 409; a crew held in its inference call answered `running`,
+    was cancelled (200, `cancelled`, with `started_at` and `finished_at`), and a second cancel
+    answered 409.
+  - With `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<port>/otlp` the collector received
+    `POST /otlp/v1/traces`, `application/json`, `service.name` from `OTEL_SERVICE_NAME`. The crew's
+    `invoke_workflow` span carried the inbound trace id with the inbound span id as its parent, and
+    its `invoke_agent` and `chat` spans descended from it. A crew sent an all-zero trace id ran in a
+    minted trace instead.
+  - With `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=…/custom/traces` beside a generic endpoint, every span
+    went to `/custom/traces`, as-is.
+  - SIGTERM drained, flushed the exporter and exited 0. An endpoint with userinfo, and
+    `AGNOSTIC_LLM_TIMEOUT_SECS=0`, each refused to start (exit 1, naming `AGNOSTIC_*` and
+    `OTEL_EXPORTER_OTLP_*`).
+- **Natively on aarch64** (the Pi): every suite, cross-built from this tree, with the counts above;
+  the server binary answers `help` 0 and a usage error 2.
+- **Certified** in a sibling-free replica with an empty dep cache, CI's steps in CI's order: `lib/`
+  and the lock reproduced byte for byte, `lock-check.sh --no-resolve`, symbols, the DCE build, the
+  API schema on the binary, `check-clean.sh`, the command line's exit codes and the aarch64
+  cross-build. agnosai 2.1.6 was certified the same way before its tag (99 suites, 8,611
+  assertions, coverage 99%).
+
+### Docs
+
+- ADRs **0016** (a selection explanation is recomputed at read time), **0017** (a task carries
+  selection hints) and **0018** (crews join the request trace; export is opt-in); a dated note on
+  **0009** for agnosai's B17.
+- `skills/agnostic/SKILL.md`: events (§6), `?explain=selection` (§7), the four hints and that the
+  model reads them.
+- `docs/api/README.md`'s Known gaps; `docs/api/generated/schema.json` regenerated.
+- `docs/development/roadmap.md` is forward-facing only from this release (1,058 lines to 633):
+  shipped items are removed rather than ticked (they are in this file), settled decisions are kept
+  in one section, and open items, grouped by area, keep their reproduce steps and fix direction.
+  The comments and docs that pointed at its removed sections now point at where each item lives:
+  `request.cyr`, `audit.cyr`, `presets.cyr`, Swarm Command's estimator comment (with
+  `src/webgui_data.cyr` regenerated), `check-skill.py`, `check-clean.sh`, `handoff.md`,
+  `CONTRIBUTING.md` and ADR 0018.
+- `docs/development/handoff.md` §1 gained 0.1.11–0.1.14 and §6 the 2.1.6 pin; `state.md` refreshed;
+  `CONTRIBUTING.md` asks for `cyrius --version`.
+
+### Known
+
+- agnostic exports no span of its own, so when it mints the traceparent the crew's workflow span
+  names a parent that is never exported (ADR 0018). Recorded on the roadmap.
+- An exporter batch still leaves ~480 B, and an inference call ~2.6 KB including the reply it keeps,
+  on the global bump: sandhi's own dispatch path (16 B is the stdlib's `sockaddr_in`). Recorded on
+  agnosai's roadmap, to be filed with sandhi.
+- An agent definition's `complexity` is still free text (ADR 0017). Recorded.
+- cyrius **6.6.15** is tagged, with TLS 1.3 fixes (CVE-70, CVE-71) that reach agnostic's outbound
+  HTTPS. It needs kavach, libro, bote and agnosai released on it first; the plan is on the roadmap.
+
 ## [0.1.13] — 2026-10-04
 
 **A crew a restart cut short is `interrupted`, and the binary describes its own HTTP API** — a crew

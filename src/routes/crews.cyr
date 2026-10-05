@@ -15,7 +15,7 @@
 # | `POST /api/v1/crews/{id}/cancel` | 200 cancelled · 404 never submitted |
 # |  | 409 already terminal · 422 malformed id · 503 engine does not know it |
 # | `GET /api/v1/crews/{id}/events[?after=N]` | 200 · 404 · 422 (also a malformed `after`) |
-# | `GET /api/v1/crews/{id}/plan` | 200 · 404 not held (or never submitted) · 422 |
+# | `GET /api/v1/crews/{id}/plan[?explain=selection[&task=N]]` | 200 · 404 not held (or never submitted) · 422 |
 # | `GET /api/v1/crews[?limit=&before=&status=]` | 200 — the caller's tenant's crews, newest first · 422 |
 #
 # Every crew route answers 404 for a crew of ANOTHER tenant, exactly as for one never
@@ -71,6 +71,11 @@ var AGNOSTIC_JK_EXPECTED     = str_from("expected_output");
 var AGNOSTIC_JK_PRIORITY     = str_from("priority");
 var AGNOSTIC_JK_DEPENDENCIES = str_from("dependencies");
 var AGNOSTIC_JK_MAX_CONC     = str_from("max_concurrency");
+
+# The plan route's selection explanation (0.1.14, ADR 0016).
+var AGNOSTIC_JK_SELECTION       = str_from("selection");
+var AGNOSTIC_JK_SCORER          = str_from("scorer");
+var AGNOSTIC_JK_CANDIDATE_LIMIT = str_from("candidate_limit");
 
 # Normalise a path-supplied crew id to the canonical form both registries key on.
 # Returns 0 when it is not a well-formed UUID.
@@ -380,7 +385,7 @@ fn agnostic_route_crew_cancel_a(a, id: Str, ctx): i64 {
         return _agnostic_crew_not_found_a(a);
     }
 
-    var rc = agnostic_crew_cancel(key);
+    var rc = agnostic_crew_cancel_a(a, key);
 
     if (rc == AGNOSTIC_CANCEL_NOT_SUBMITTED) { return _agnostic_crew_not_found_a(a); }
     if (rc == AGNOSTIC_CANCEL_ALREADY_TERMINAL) {
@@ -500,27 +505,107 @@ fn agnostic_route_crew_events_a(a, id: Str, path: Str, ctx): i64 {
     return agnostic_response_json_a(a, HTTP_OK, obj);
 }
 
+# `obj` with the hint `key` the engine task's context `ctx` holds, when it holds one.
+fn _agnostic_crew_plan_hint_a(a, obj, ctx, key: Str): i64 {
+    var v = map_get(ctx, key);
+    if (v != 0) { bayan_json_v_obj_set_a(a, obj, key, v); }
+    return obj;
+}
+
+# A plan task `to` with the selection hints engine task `t` was given (0.1.14, ADR 0017),
+# read back from its context under the keys the request sent them as. A hint the request
+# left out is left out here too. The values are the engine's, borrowed, not copied.
+fn _agnostic_crew_plan_hints_a(a, to, t): i64 {
+    var ctx = agnosai_task_context(t);
+    if (ctx == 0) { return to; }
+    _agnostic_crew_plan_hint_a(a, to, ctx, AGNOSTIC_JK_REQ_TOOLS);
+    _agnostic_crew_plan_hint_a(a, to, ctx, AGNOSTIC_JK_COMPLEXITY);
+    _agnostic_crew_plan_hint_a(a, to, ctx, AGNOSTIC_JK_DOMAIN);
+    _agnostic_crew_plan_hint_a(a, to, ctx, AGNOSTIC_JK_GPU_REQ);
+    return to;
+}
+
 # `GET /api/v1/crews/{id}/plan` — what a crew was asked to do (0.1.9).
 #
 # `{crew_id, name, process, max_concurrency?, agents[], tasks[]}`: the crew as the engine
 # holds it — the agents it was given (`key, name, role, llm_model?`) and its tasks in
 # REQUEST order (`task_id, index, description, expected_output?, priority,
-# dependencies[]`), each dependency an index into `tasks`. `task_id` is the engine's id,
+# dependencies[]`, and since 0.1.14 the selection hints it was given: `required_tools?,
+# complexity?, domain?, gpu_required?`), each dependency an index into `tasks`. `task_id` is the engine's id,
 # the one every progress event and result names, so a watcher binds the events of ANY
 # crew to its tasks by id — without having submitted it, and without matching
 # descriptions, which two tasks may share.
 #
 # Read from the ledger, which holds the engine's spec in memory only: a crew from before
 # the last restart answers 404 here while `GET /crews/{id}` still answers its outcome.
-fn agnostic_route_crew_plan_a(a, id: Str, ctx): i64 {
+#
+# ## `?explain=selection[&task=N]` — why each task got its agent (0.1.14, ADR 0016)
+#
+# Each task (or only task `N`, an index into `tasks`) gains `selection`: agnosai's
+# `{winner, candidate_count, candidates: [{index, agent_key, total, scores: {...}}]}`, the
+# roster ranked best first, so `candidates[0]` is the agent the task ran with. The answer
+# gains `scorer` (`{weights, unmeasured}`) and `candidate_limit`: how many candidates each
+# explained task lists, `AGNOSTIC_EXPLAIN_MAX_CANDIDATES` shared equally between them and
+# never fewer than one (`agnostic_crew_explain_limit`). `candidate_count` always says how
+# many agents were scored, so a shortened list is visible; `task=N` lists the whole roster.
+# A crew of more tasks than the budget is explained one task at a time: without `task` it
+# is a 422 saying so, which is what keeps every answer within the budget.
+#
+# Both parameters are read before the crew is looked up, so a bad value is a 422 whatever
+# the crew: `explain` other than `selection`, `task` that is not a non-negative integer, or
+# `task` without `explain` — it would change nothing, and silently doing nothing with a
+# parameter is what this port refuses. A `task` past the crew's last task is a 422 too.
+fn agnostic_route_crew_plan_a(a, id: Str, path: Str, ctx): i64 {
     var key = _agnostic_crew_key_a(a, id);
     if (key == 0) { return _agnostic_crew_bad_id_a(a); }
+    var explain = 0;
+    var ev = agnostic_query_get_a(a, path, "explain");
+    if (ev != 0) {
+        if (str_eq_cstr(ev, "selection") == 0) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+              str_from_a(a, "'explain' must be 'selection'"));
+        }
+        explain = 1;
+    }
+    var only = 0 - 1;
+    if (agnostic_query_get_a(a, path, "task") != 0) {
+        only = agnostic_query_uint_a(a, path, "task", 0);
+        if (only < 0) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+              str_from_a(a, "'task' must be a task's index: a non-negative integer"));
+        }
+        if (explain == 0) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+              str_from_a(a, "'task' applies only with explain=selection"));
+        }
+    }
+
     var entry = agnostic_ledger_entry_in(key, agnostic_reqctx_scope(ctx));
     if (entry == 0) { return _agnostic_crew_not_found_a(a); }
     var spec = agnostic_ledger_spec(entry);
     if (spec == 0) {
         return agnostic_response_error_a(a, HTTP_NOT_FOUND,
           str_from_a(a, "this crew's plan is not held; its outcome is at GET /api/v1/crews/{id}"));
+    }
+    var limit = 0;
+    if (explain == 1) {
+        var tc = agnosai_crew_tasks(spec);
+        var tcount = 0;
+        if (tc != 0) { tcount = vec_len(tc); }
+        if (only >= tcount) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+              str_from_a(a, "'task' is past this crew's last task"));
+        }
+        var ac = agnosai_crew_agents(spec);
+        var acount = 0;
+        if (ac != 0) { acount = vec_len(ac); }
+        var explained = tcount;
+        if (only >= 0) { explained = 1; }
+        if (explained > AGNOSTIC_EXPLAIN_MAX_CANDIDATES) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+              str_from_a(a, "this crew has more tasks than one explanation covers (256): name one with &task=N"));
+        }
+        limit = agnostic_crew_explain_limit(explained, acount);
     }
 
     var obj = bayan_json_v_obj_new_a(a);
@@ -603,10 +688,24 @@ fn agnostic_route_crew_plan_a(a, id: Str, ctx): i64 {
             d = d + 1;
         }
         bayan_json_v_obj_set_a(a, to, AGNOSTIC_JK_DEPENDENCIES, deps);
+        _agnostic_crew_plan_hints_a(a, to, t);
+        if (explain == 1) {
+            if (only < 0 || only == j) {
+                var sel = agnostic_crew_explain_task_a(a, spec, j, limit);
+                if (sel == 0) { return 0; }
+                bayan_json_v_obj_set_a(a, to, AGNOSTIC_JK_SELECTION, sel);
+            }
+        }
         bayan_json_v_arr_push_a(a, tasks, to);
         j = j + 1;
     }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TASKS, tasks);
+    if (explain == 1) {
+        var scorer = agnostic_crew_scorer_a(a);
+        if (scorer == 0) { return 0; }
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_SCORER, scorer);
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CANDIDATE_LIMIT, bayan_json_v_int_new_a(a, limit));
+    }
     return agnostic_response_json_a(a, HTTP_OK, obj);
 }
 

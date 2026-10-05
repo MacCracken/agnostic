@@ -31,8 +31,8 @@ stdlib = [
     #
     # ⚠ **Declaring it changes nothing today, and that is the point.** sigil
     # already reaches the compile unit transitively — agnosai declares
-    # `[deps.sigil]` at 3.12.9 — and the duplicate-fn warning count is identical
-    # with and without this line, measured. It is here so that a future agnosai
+    # `[deps.sigil]` (3.13.7 at 2.1.6; 3.12.9 when this was measured) — and the
+    # duplicate-fn warning count was identical with and without this line. It is here so that a future agnosai
     # which stops depending on sigil cannot silently take the crypto tier away
     # from the identity surface. Same defensive reasoning the `sakshi` note in
     # `scripts/check-clean.sh` records.
@@ -66,16 +66,16 @@ stdlib = [
 # changed: agnostic's own code uses no `Result`/`Option`/`Either` at all.
 # 2.0.8 pins kavach 3.12.5 + libro 2.10.x, which are migrated. Move both.
 #
-# ⚠ The folded copies WIN, not the chain's. 6.6.14 folds **sigil 3.13.7** (6.6.12
-# folded 3.13.5) and **patra 1.15.1**. The chain declares sigil 3.13.5 (agnosai
-# 2.1.2), 3.12.18 (kavach 3.13.1) and 3.13.4 (libro 2.10.5), and patra 1.15.1
-# (libro 2.10.5). `cyrius deps` refuses to overwrite a folded stdlib leaf with a
+# ⚠ The folded copies WIN, not the chain's. 6.6.14 folds **sigil 3.13.7** and
+# **patra 1.15.1**. `cyrius deps` refuses to overwrite a folded stdlib leaf with a
 # dep's artifact ("refusing to overwrite stdlib leaf"), so `lib/sigil.cyr` /
 # `lib/patra.cyr` stay the 6.6.14 snapshot — byte-identical to the toolchain's own
-# `lib/` — and `check-clean.sh` stays green. The lock's sigil line still names the
-# 3.13.5 commit agnosai declares: it records what the chain asked for; its hash of
-# `lib/sigil.cyr` is of the bytes kept. An agnosai that declares 3.13.7 makes the
-# two agree (a recorded agnosai follow-up), not a pin here.
+# `lib/` — and `check-clean.sh` stays green. Since 0.1.12 the whole chain declares
+# exactly the folds — sigil 3.13.7 from agnosai (2.1.6 now), kavach 3.13.2 and libro
+# 2.10.6, patra 1.15.1 from libro — so the skipped artifacts are the folds' own bytes
+# and the lock's sigil and patra lines name the commits `lib/` holds. A chain that
+# declares a sigil or patra the pin does not fold is red in either direction: move
+# the pin and the chain together (the 6.5.34 and 6.6.2 notes above).
 #
 # ⛔ From 6.6.11 on, agnosai must be ≥ 2.1.1. 6.6.11 checks enum qualifiers, and
 # agnosai 2.1.0 still spells kavach's renamed enum `Backend.NOOP` / `.WASM` /
@@ -99,7 +99,7 @@ stdlib = [
 # ai-hwaccel or tyche arrives with an agnosai release that pins it.
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
-tag = "2.1.4"
+tag = "2.1.6"
 modules = ["dist/agnosai.cyr"]
 
 # libro — the audit chain `src/engine/audit.cyr` calls directly. Through 0.1.6 it

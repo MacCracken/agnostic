@@ -2,7 +2,7 @@
 #
 # ## Agnostic's library is canonical, and it is not AgnosAI's
 #
-# Decided 2026-08-20 (roadmap M3). The two sets are not two versions of one
+# Decided 2026-08-20 (roadmap, "Settled decisions"). The two sets are not two versions of one
 # library — they are unrelated content sharing a naming scheme. 18 each, 15 names
 # collide, and **not one** of the 15 has a matching description, agent roster or
 # tool vocabulary. Agnostic's documents name 38 PascalCase QA tool classes;

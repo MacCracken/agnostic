@@ -444,7 +444,11 @@ fn _agnostic_ad_opt_str(a, out, index, v, key: Str, e, which): i64 {
     var c = str_clone(s);
     if (which == 0) { agnosai_agent_with_name(e, c); }
     if (which == 1) { agnosai_agent_with_backstory(e, c); }
-    if (which == 2) { agnosai_agent_with_domain(e, c); }
+    # ⚠ An EMPTY domain is no domain (0.1.14). The engine scores an agent with no domain 1.0
+    # against any task's domain, but compares a stated one — and "" matches nothing, so since
+    # tasks can name a domain (ADR 0017) an agent saved with "" would lose every one of them.
+    # Read as absent rather than refused: stored definitions are decoded by this same path.
+    if (which == 2 && str_len(c) > 0) { agnosai_agent_with_domain(e, c); }
     if (which == 3) { agnosai_agent_with_complexity(e, c); }
     if (which == 4) { agnosai_agent_with_llm_model(e, c); }
     return 1;

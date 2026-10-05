@@ -796,7 +796,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
 </html>
 ";
 
-# --- src/webgui/plugins/swarm/index.html — 451093 bytes ----------------------
+# --- src/webgui/plugins/swarm/index.html — 451561 bytes ----------------------
 var _AGNOSTIC_WEBGUI_ASSET_01 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -3285,7 +3285,7 @@ const SOLO = {
 };
 
 /**
- * One agent, given the tokens the swarm spent: the estimator's baseline (roadmap B3, ADR 0014).
+ * One agent, given the tokens the swarm spent: the estimator's baseline (landscape review B3, ADR 0014).
  *
  * It works the plan the Sim builds on `seed` — `sc.build` on the same RNG, so the same tasks and
  * fan-out counts — one task at a time. Each task runs with its role's model, rate, tools and region,
@@ -3677,10 +3677,13 @@ class ReadOnlySink extends CommandSink {
  *
  *     crew_started   → the orchestrator reports the run
  *     task_started   → a unit of the agent the engine chose walks to the task and works it (a clone
- *                      when that agent is already busy; in a parallel crew, beyond the concurrency
- *                      limit the task waits as queued — the engine reports a whole wave at once)
- *     token          → the task's output (the engine sends the whole text as one token event; a
- *                      parallel or DAG crew sends none, and its outputs arrive with the outcome)
+ *                      when that agent is already busy). Since agnosai 2.1.5 a parallel or DAG
+ *                      task is announced when its batch is dispatched, never more than the
+ *                      concurrency limit at once; past the limit a task still waits as queued,
+ *                      for a crew from an engine that announced a whole wave up front
+ *     token          → the task's output (the engine sends the whole text as one token event, for a
+ *                      task the model answered — in every process since agnosai 2.1.5; a
+ *                      placeholder task sends none, and its output arrives with the outcome)
  *     task_completed → task done or failed; the unit returns to HQ (a clone retires)
  *     crew_completed → mission over; GET /crews/{id} fills in results, usage and anything missed
  *
@@ -4017,8 +4020,10 @@ class LiveCrewSource extends EventSource {
   taskStarted(engineId, description, agentKey, at) {
     const t = this.bind(engineId, description);
     if (t.status !== 'pending') return;
-    // A parallel crew publishes a whole wave of task_started before any of it runs; past its
-    // concurrency limit a task is shown queued rather than as one more unit at work.
+    // Past a parallel crew's concurrency limit a task is shown queued rather than as one more
+    // unit at work. Since agnosai 2.1.5 the engine announces a task when its batch starts, so a
+    // live crew gets here only when its task_completed events were missed; an engine that
+    // announced a whole wave up front got here every time.
     const cap = this.plan && this.plan.process === 'parallel' && this.plan.maxConcurrency > 0 ? this.plan.maxConcurrency : Infinity;
     if (this.activeCount() >= cap) {
       t.status = 'queued';
@@ -4128,8 +4133,8 @@ class LiveCrewSource extends EventSource {
         if (!t) continue;
         if (res.usage && typeof res.usage === 'object') { t.usage = res.usage; if (Number.isInteger(res.usage.total_tokens)) metered++; }
         const out = typeof res.output === 'string' ? res.output : (id && this.outputs.get(id)) || '';
-        // Parallel and DAG crews publish no token events: their outputs arrive only here,
-        // often for tasks a task_completed event already settled.
+        // A task with no token event — placeholder output, or one the event ring overwrote —
+        // gets its output only here, often after a task_completed event already settled it.
         if (out && !t.output && (t.status === 'done' || t.status === 'failed')) t.output = out;
         this.resolve(t, typeof res.status === 'string' ? res.status : st === 'completed' ? 'completed' : 'failed', out);
       }
@@ -10764,7 +10769,7 @@ fn agnostic_webgui_asset_bytes(i): i64 {
 # The `i`th page's length in bytes, as the generator counted it, or 0.
 fn agnostic_webgui_asset_len(i): i64 {
     if (i == 0) { return 39929; }
-    if (i == 1) { return 451093; }
+    if (i == 1) { return 451561; }
     if (i == 2) { return 49191; }
     if (i == 3) { return 38876; }
     if (i == 4) { return 26068; }
@@ -10774,7 +10779,7 @@ fn agnostic_webgui_asset_len(i): i64 {
 # The SHA-256 of the `i`th page's source file, lowercase hex, or 0.
 fn agnostic_webgui_asset_sha256(i): i64 {
     if (i == 0) { return "648fe9a771661148353e0aa1dc0052a079de169dcd50e6379b16472f006795a4"; }
-    if (i == 1) { return "bccb10e2da40ac6249bdf86f4296ef984f7e30fcd012dda82ae6dfb8f16ff4a6"; }
+    if (i == 1) { return "1ab2dfc36ba2af5c485aef0e1edd11850a333a2593966a86836288304a8d14d9"; }
     if (i == 2) { return "087a2560aa70056975b77ef0b593566709de00c0e7c0999042598b67208abd00"; }
     if (i == 3) { return "fdcdea3e97cfa7bc34fc240b489c8ef85bd105d36f3a7302b7fa774d1cd6d11c"; }
     if (i == 4) { return "7414db44ebe8ce144a1125e404848cdc274406c6440e55384c20f55af83776fe"; }
@@ -10794,7 +10799,7 @@ fn agnostic_webgui_asset_path(i): i64 {
 # The Content-Security-Policy the `i`th page is served with, or 0.
 fn agnostic_webgui_asset_csp(i): i64 {
     if (i == 0) { return "default-src 'none'; script-src 'sha256-bYYKB5LjVZ9/bMt48VUA0ybhegZ34CAu8JB5qDsSeh0=' 'sha256-7aaIEcGQDDIHI9mAjtdfnZC3ZgV1rxmVx/xdAXvmUMA='; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"; }
-    if (i == 1) { return "default-src 'none'; script-src 'sha256-/QW2UOTetHrCZ06mP/CESxUKiCQxWkxo/IUoYIfL6Rk='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 1) { return "default-src 'none'; script-src 'sha256-mQa9I5A63J5e2qKYEppLrjWFD3tzmlmvJizBf6l9mZw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 2) { return "default-src 'none'; script-src 'sha256-Kco0lad01dc9cHA11GAv3UseDEy63mc46vnB8lN5UNw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 3) { return "default-src 'none'; script-src 'sha256-pKC6q/x2N0KntteEH7sEOIYmWkBr6Pb5U+70veBNd30='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 4) { return "default-src 'none'; script-src 'sha256-pN9GIg8MhioPnBnmoZg63PAPmynulcTsAKabcXWRjVE='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }

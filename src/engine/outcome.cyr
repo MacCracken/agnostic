@@ -31,7 +31,7 @@
 #
 # It would be comfortable to think §3.1 was a Python-ism — `all([])` is `True`,
 # and that is a language wart. It is not. `agnosai_crew_runner_run`
-# (`lib/agnosai.cyr:31410`) computes its status as:
+# (`lib/agnosai.cyr:33254` at agnosai 2.1.5) computes its status as:
 #
 #     var status = AGNOSAI_CREW_COMPLETED;
 #     ... else { for (var i = 0; i < vec_len(results); i = i + 1) {

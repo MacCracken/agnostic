@@ -271,6 +271,43 @@ fn test_cancel_never_relabels_what_it_did_not_cancel() {
       "the route answers 409, not a 200 claiming it cancelled something");
 }
 
+# The ledger lags the engine by up to a collector sweep. A cancel that arrives in that window
+# for a crew the engine has already COMPLETED is a 409, not a relabelling (0.1.14): the cancel
+# refreshes first. Before 0.1.14 it latched CANCELLED and the next refresh handed the
+# "cancelled" crew every completed result.
+fn test_cancel_refreshes_before_it_latches() {
+    test_group("crews/cancel-refreshes");
+
+    var a = arena_allocator(262144);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var id = agnostic_req_str(_t_json(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", _T_BODY), AGNOSTIC_JK_CREW_ID);
+    assert_neq(id, 0, "the crew is accepted");
+    if (id == 0) { return 0; }
+    # Wait on the ENGINE, never touching the ledger: no poll, no collector.
+    var tries = 0;
+    var done = 0;
+    while (tries < 500 && done == 0) {
+        var st = agnosai_orchestrator_crew(agnostic_engine_orchestrator(), id);
+        if (st != 0) {
+            if (agnosai_crew_state_status(st) == AGNOSAI_CREW_COMPLETED) { done = 1; }
+        }
+        if (done == 0) { sleep_ms(5); }
+        tries = tries + 1;
+    }
+    assert_eq(done, 1, "the engine completed the crew");
+    var e = agnostic_ledger_entry(id);
+    assert_eq(agnostic_status_is_terminal(agnostic_ledger_status(e)), 0, "while the ledger has not seen it yet");
+
+    assert_eq(agnostic_crew_cancel_a(a, id), AGNOSTIC_CANCEL_ALREADY_TERMINAL,
+      "a crew the engine already finished is refused, not cancelled");
+    assert_eq(agnostic_ledger_status(e), AGNOSTIC_CREW_COMPLETED, "and it stays completed");
+    assert_eq(agnostic_ledger_started_ms(e) <= agnostic_ledger_finished_ms(e), 1,
+      "with its start no later than its finish");
+}
+
 fn test_cancel_a_live_crew_stops_it() {
     test_group("crews/cancel-live");
 
@@ -815,6 +852,319 @@ fn test_task_ids_and_plan() {
     assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_CREW_PLAN), AGNOSTIC_PERM_READ, "reading a plan is READ");
 }
 
+# Three agents a task can tell apart only by complexity: the task says none, which the engine
+# reads as medium, so a2 ("medium") aligns fully and a1 ("low") and a3 ("high") by two thirds.
+var _T_PICK = "{\"name\":\"pick\",\"process\":\"sequential\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"low\"},{\"key\":\"a2\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"medium\"},{\"key\":\"a3\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"high\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\"}]}";
+
+# The key of `obj`'s `field` object's `agent_key`, or 0.
+fn _t_key_of(obj, field) {
+    var o = bayan_json_v_obj_get_by_cstr(obj, field);
+    if (o == 0) { return 0; }
+    return bayan_json_v_str(bayan_json_v_obj_get_by_cstr(o, "agent_key"));
+}
+
+# `GET /crews/{id}/plan?explain=selection[&task=N]` (0.1.14, ADR 0016): why each task got its
+# agent, recomputed from the crew's spec — and the recomputation names the agent that ran.
+fn test_plan_explains_selection() {
+    test_group("crews/plan-explain");
+
+    var a = arena_allocator(1048576);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var acc = _t_json(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", _T_PICK);
+    var id = agnostic_req_str(acc, AGNOSTIC_JK_CREW_ID);
+    assert_neq(id, 0, "the crew is accepted");
+    if (id == 0) { return 0; }
+
+    # Without `explain`, the plan is as it was: no selection, no scorer.
+    var plain = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+        _t_crew_url(id, "/plan"), str_from(""), 1048576, 0));
+    assert_eq(bayan_json_v_obj_get_by_cstr(plain, "scorer"), 0, "a plain plan has no scorer");
+    assert_eq(bayan_json_v_obj_get_by_cstr(
+        bayan_json_v_arr_get(bayan_json_v_obj_get_by_cstr(plain, "tasks"), 0), "selection"), 0,
+      "and no task has a selection");
+
+    var r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+      _t_crew_url(id, "/plan?explain=selection"), str_from(""), 1048576, 0);
+    assert_eq(agnostic_response_status(r), HTTP_OK, "explain=selection answers 200");
+    var plan = agnostic_response_body(r);
+    assert_eq(agnostic_req_int(plan, AGNOSTIC_JK_CANDIDATE_LIMIT, 0 - 1), 3,
+      "two tasks of three agents fit the budget: every candidate is listed");
+    var tasks = bayan_json_v_obj_get_by_cstr(plan, "tasks");
+    var t0 = bayan_json_v_arr_get(tasks, 0);
+    var sel = bayan_json_v_obj_get_by_cstr(t0, "selection");
+    assert_neq(sel, 0, "each task has a selection");
+    assert_eq(str_eq_cstr(_t_key_of(sel, "winner"), "a2"), 1, "the medium agent wins a task that names no complexity");
+    assert_eq(agnostic_req_int(sel, str_from("candidate_count"), 0 - 1), 3, "every agent was scored");
+    var cands = bayan_json_v_obj_get_by_cstr(sel, "candidates");
+    assert_eq(bayan_json_v_arr_len(cands), 3, "and every one is listed");
+    var c0 = bayan_json_v_arr_get(cands, 0);
+    var c1 = bayan_json_v_arr_get(cands, 1);
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_cstr(c0, "agent_key")), "a2"), 1,
+      "best first: candidates[0] is the winner");
+    assert_eq(agnostic_req_int(c0, str_from("index"), 0 - 1), 1, "named by its index in agents too");
+    var s0 = bayan_json_v_obj_get_by_cstr(c0, "scores");
+    var s1 = bayan_json_v_obj_get_by_cstr(c1, "scores");
+    assert_eq(bayan_json_v_float(bayan_json_v_obj_get_by_cstr(s0, "complexity")), f64_from(1),
+      "the winner's complexity alignment is 1");
+    assert_eq(bayan_json_v_float(bayan_json_v_obj_get_by_cstr(s1, "complexity")),
+      f64_sub(f64_from(1), f64_div(f64_from(1), f64_from(3))), "a runner-up's is two thirds");
+    assert_eq(f64_gt(bayan_json_v_float(bayan_json_v_obj_get_by_cstr(c0, "total")),
+        bayan_json_v_float(bayan_json_v_obj_get_by_cstr(c1, "total"))), 1, "and the totals rank them");
+
+    # The scorer, once: its weights fold the scores into the total, in the order listed.
+    var scorer = bayan_json_v_obj_get_by_cstr(plan, "scorer");
+    assert_neq(scorer, 0, "the answer carries the scorer");
+    var w = bayan_json_v_obj_get_by_cstr(scorer, "weights");
+    var total = f64_mul(bayan_json_v_float(bayan_json_v_obj_get_by_cstr(w, "tool_coverage")),
+      bayan_json_v_float(bayan_json_v_obj_get_by_cstr(s0, "tool_coverage")));
+    total = f64_add(total, f64_mul(bayan_json_v_float(bayan_json_v_obj_get_by_cstr(w, "complexity")),
+        bayan_json_v_float(bayan_json_v_obj_get_by_cstr(s0, "complexity"))));
+    total = f64_add(total, f64_mul(bayan_json_v_float(bayan_json_v_obj_get_by_cstr(w, "gpu")),
+        bayan_json_v_float(bayan_json_v_obj_get_by_cstr(s0, "gpu"))));
+    total = f64_add(total, f64_mul(bayan_json_v_float(bayan_json_v_obj_get_by_cstr(w, "domain")),
+        bayan_json_v_float(bayan_json_v_obj_get_by_cstr(s0, "domain"))));
+    total = f64_add(total, f64_mul(bayan_json_v_float(bayan_json_v_obj_get_by_cstr(w, "personality")),
+        bayan_json_v_float(bayan_json_v_obj_get_by_cstr(s0, "personality"))));
+    assert_eq(total, bayan_json_v_float(bayan_json_v_obj_get_by_cstr(c0, "total")),
+      "sum of weight x score, in the listed order, is the winner's total exactly");
+    var um = bayan_json_v_obj_get_by_cstr(scorer, "unmeasured");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_arr_get(um, 0)), "personality"), 1,
+      "and it says personality is not measured yet");
+
+    # One task only: that task is explained, over the whole roster; the other is not.
+    var one = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+        _t_crew_url(id, "/plan?explain=selection&task=1"), str_from(""), 1048576, 0));
+    var ot = bayan_json_v_obj_get_by_cstr(one, "tasks");
+    assert_eq(bayan_json_v_obj_get_by_cstr(bayan_json_v_arr_get(ot, 0), "selection"), 0, "task=1 leaves task 0 alone");
+    assert_neq(bayan_json_v_obj_get_by_cstr(bayan_json_v_arr_get(ot, 1), "selection"), 0, "and explains task 1");
+
+    # Refusals, before and after the crew is found.
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan?explain=nope")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "an explain other than selection is 422");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan?explain=")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "and so is an empty one");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan?task=0")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "task without explain would change nothing: 422");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan?explain=selection&task=-1")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a negative task is 422");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan?explain=selection&task=2")),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a task past the last is 422");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET,
+        str_from("/api/v1/crews/6ba7b810-9dad-11d1-80b4-00c04fd430c8/plan?explain=selection")), HTTP_NOT_FOUND,
+      "a crew never submitted is still 404");
+
+    # ⭐ The recomputation names the agent that actually ran each task: wait for the crew, then
+    # read each task_started's agent off the event cursor.
+    var tries = 0;
+    var body = 0;
+    while (tries < 200) {
+        body = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+            _t_crew_url(id, ""), str_from(""), 1048576, 0));
+        if (str_eq_cstr(agnostic_req_str(body, AGNOSTIC_JK_STATUS), "completed") == 1) { break; }
+        sleep_ms(10);
+        tries = tries + 1;
+    }
+    assert_eq(str_eq_cstr(agnostic_req_str(body, AGNOSTIC_JK_STATUS), "completed"), 1, "the crew completes");
+    var evs = bayan_json_v_obj_get_by_cstr(agnostic_response_body(agnostic_route_dispatch_a(a,
+          AGNOSTIC_METHOD_GET, _t_crew_url(id, "/events"), str_from(""), 1048576, 0)), "events");
+    var matched = 0;
+    var started = 0;
+    var i = 0;
+    while (i < bayan_json_v_arr_len(evs)) {
+        var ev = bayan_json_v_arr_get(evs, i);
+        if (str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_cstr(ev, "type")), "task_started") == 1) {
+            started = started + 1;
+            var d = bayan_json_v_obj_get_by_cstr(ev, "data");
+            var tid = bayan_json_v_str(bayan_json_v_obj_get_by_cstr(d, "task_id"));
+            var j = 0;
+            while (j < bayan_json_v_arr_len(tasks)) {
+                var pt = bayan_json_v_arr_get(tasks, j);
+                if (str_eq(agnostic_req_str(pt, AGNOSTIC_JK_TASK_ID), tid) == 1) {
+                    if (str_eq(_t_key_of(bayan_json_v_obj_get_by_cstr(pt, "selection"), "winner"),
+                        bayan_json_v_str(bayan_json_v_obj_get_by_cstr(d, "agent"))) == 1) {
+                        matched = matched + 1;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    assert_eq(started, 2, "both tasks started");
+    assert_eq(matched, 2, "each with the agent its explanation names as the winner");
+
+    # Scoring runs in the shared scratch, so explaining allocates nothing on the global bump
+    # beyond what the response itself needs. ⚠ `alloc_used` is process-wide, and the crew's
+    # detached engine thread can still be finishing up (closing its channel, logging) after its
+    # status reads completed. So: five rounds of fifty, and one clean round passes. A per-call
+    # allocation would show in every round; another thread's tail shows in one or two.
+    var b = arena_allocator(1048576);
+    var spec = agnostic_ledger_spec(agnostic_ledger_entry(id));
+    var built = 0;
+    var clean_rounds = 0;
+    var round = 0;
+    while (round < 5) {
+        var before = alloc_used();
+        var k = 0;
+        while (k < 50) {
+            reset_via(b);
+            if (agnostic_crew_explain_task_a(b, spec, k % 2, 0) != 0) { built = built + 1; }
+            k = k + 1;
+        }
+        if (alloc_used() == before) { clean_rounds = clean_rounds + 1; }
+        round = round + 1;
+    }
+    assert_eq(clean_rounds > 0, 1, "fifty explanations allocate nothing on the global bump");
+    assert_eq(built, 250, "and each was built");
+    assert_eq(agnostic_crew_explain_task_a(b, spec, 2, 0), 0, "a task past the last explains nothing");
+    assert_eq(agnostic_crew_explain_task_a(b, 0, 0, 0), 0, "and nor does no spec");
+}
+
+# Two agents and two tasks: one task names no hint, the other asks for `load`'s tool and domain.
+var _T_HINTED = "{\"name\":\"hinted\",\"agents\":[{\"key\":\"web\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"playwright\"]},{\"key\":\"load\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"k6\"],\"domain\":\"performance\"}],\"tasks\":[{\"description\":\"plain\"},{\"description\":\"soak\",\"required_tools\":[\"k6\"],\"complexity\":\"medium\",\"domain\":\"performance\",\"gpu_required\":false}]}";
+
+# The plan says what each task was hinted with, and the explanation shows the hints at work
+# (0.1.14, ADR 0017).
+fn test_plan_shows_hints() {
+    test_group("crews/plan-hints");
+
+    var a = arena_allocator(1048576);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var id = agnostic_req_str(_t_json(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", _T_HINTED), AGNOSTIC_JK_CREW_ID);
+    assert_neq(id, 0, "a crew with hinted tasks is accepted");
+    if (id == 0) { return 0; }
+    var plan = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+        _t_crew_url(id, "/plan?explain=selection"), str_from(""), 1048576, 0));
+    var tasks = bayan_json_v_obj_get_by_cstr(plan, "tasks");
+    var plain = bayan_json_v_arr_get(tasks, 0);
+    var soak = bayan_json_v_arr_get(tasks, 1);
+
+    var echoed = 0;
+    if (bayan_json_v_obj_get_by_cstr(plain, "required_tools") != 0) { echoed = echoed + 1; }
+    if (bayan_json_v_obj_get_by_cstr(plain, "complexity") != 0) { echoed = echoed + 1; }
+    if (bayan_json_v_obj_get_by_cstr(plain, "domain") != 0) { echoed = echoed + 1; }
+    if (bayan_json_v_obj_get_by_cstr(plain, "gpu_required") != 0) { echoed = echoed + 1; }
+    assert_eq(echoed, 0, "a task with no hints shows none");
+    var rt = bayan_json_v_obj_get_by_cstr(soak, "required_tools");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_arr_get(rt, 0)), "k6"), 1, "a hinted task shows its tools");
+    assert_eq(str_eq_cstr(agnostic_req_str(soak, str_from("complexity")), "medium"), 1, "its complexity");
+    assert_eq(str_eq_cstr(agnostic_req_str(soak, str_from("domain")), "performance"), 1, "its domain");
+    assert_eq(bayan_json_v_is_bool(bayan_json_v_obj_get_by_cstr(soak, "gpu_required")), 1,
+      "and gpu_required, false included");
+
+    assert_eq(str_eq_cstr(_t_key_of(bayan_json_v_obj_get_by_cstr(plain, "selection"), "winner"), "web"), 1,
+      "unhinted, the tie goes to the first agent");
+    var ss = bayan_json_v_obj_get_by_cstr(soak, "selection");
+    assert_eq(str_eq_cstr(_t_key_of(ss, "winner"), "load"), 1, "hinted, the agent with the tool and domain wins");
+    var c1 = bayan_json_v_arr_get(bayan_json_v_obj_get_by_cstr(ss, "candidates"), 1);
+    var sc = bayan_json_v_obj_get_by_cstr(c1, "scores");
+    assert_eq(bayan_json_v_float(bayan_json_v_obj_get_by_cstr(sc, "tool_coverage")), f64_from(0),
+      "and the runner-up's scores say why: no coverage");
+    assert_eq(bayan_json_v_float(bayan_json_v_obj_get_by_cstr(sc, "domain")), f64_from(1),
+      "while an agent with no domain is never penalised for it");
+}
+
+# A crew joins the trace of the request that submitted it (0.1.14, ADR 0018): the engine's spec
+# carries the request's traceparent, so the crew's spans are its children. The server sets the
+# thread's trace in `agnostic_serve_handler`; here it is set by hand, as a worker would hold it.
+fn test_submit_joins_the_request_trace() {
+    test_group("crews/trace-parent");
+
+    var a = arena_allocator(262144);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var tp = str_from("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+    agnostic_trace_set(tp);
+    var id = agnostic_req_str(_t_json(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", _T_BODY), AGNOSTIC_JK_CREW_ID);
+    agnostic_trace_clear();
+    assert_neq(id, 0, "the crew is accepted");
+    if (id == 0) { return 0; }
+    var got = agnosai_crew_trace_parent(agnostic_ledger_spec(agnostic_ledger_entry(id)));
+    assert_neq(got, 0, "the crew carries a traceparent");
+    assert_eq(str_eq(got, tp), 1, "the request's own");
+    assert_neq(got, tp, "as a copy: the request's arena is reset before an async crew runs");
+
+    var root = agnostic_req_str(_t_json(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", _T_BODY), AGNOSTIC_JK_CREW_ID);
+    assert_eq(agnosai_crew_trace_parent(agnostic_ledger_spec(agnostic_ledger_entry(root))), 0,
+      "a crew submitted outside any request is a root trace of its own");
+}
+
+# A crew of more tasks than one explanation covers is explained a task at a time: the whole
+# crew is a 422 naming `task=N`, and any one task still answers (0.1.14, ADR 0016).
+fn test_explain_refuses_past_the_budget() {
+    test_group("crews/plan-explain-budget");
+
+    var a = arena_allocator(1048576);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"big\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[");
+    var i = 0;
+    while (i <= AGNOSTIC_EXPLAIN_MAX_CANDIDATES) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "{\"description\":\"t\"}");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "]}");
+    var id = agnostic_req_str(agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST,
+          str_from("/api/v1/crews"), str_builder_build(sb), 1048576, 0)), AGNOSTIC_JK_CREW_ID);
+    assert_neq(id, 0, "a crew of one task more than the budget is accepted");
+    if (id == 0) { return 0; }
+    var r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan?explain=selection"),
+      str_from(""), 1048576, 0);
+    assert_eq(agnostic_response_status(r), AGNOSTIC_HTTP_UNPROCESSABLE, "explaining all of it is a 422");
+    assert_eq(str_contains_cstr(agnostic_req_str(agnostic_response_body(r), AGNOSTIC_JK_ERROR), "task=N"), 1,
+      "that says to name one task");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan?explain=selection&task=256")), HTTP_OK,
+      "and any one task is explained");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan")), HTTP_OK, "the plain plan is unaffected");
+}
+
+# The candidate budget: every candidate while the crew fits it, an equal share past it, and
+# never fewer than the winner.
+fn test_explain_limit() {
+    test_group("crews/plan-explain-limit");
+    assert_eq(agnostic_crew_explain_limit(2, 3), 3, "small crews list the whole roster");
+    assert_eq(agnostic_crew_explain_limit(1, 100), 100, "one task lists all of the largest roster");
+    assert_eq(agnostic_crew_explain_limit(10, 100), AGNOSTIC_EXPLAIN_MAX_CANDIDATES / 10,
+      "past the budget each task gets an equal share");
+    assert_eq(agnostic_crew_explain_limit(AGNOSTIC_EXPLAIN_MAX_CANDIDATES, 100), 1, "never fewer than the winner");
+    assert_eq(agnostic_crew_explain_limit(AGNOSTIC_EXPLAIN_MAX_CANDIDATES + 1, 100), 0,
+      "and past the budget, nothing: the route refuses rather than render more than it promises");
+    assert_eq(agnostic_crew_explain_limit(1000, 100), 0, "a crew at the task cap is explained a task at a time");
+    assert_eq(agnostic_crew_explain_limit(0, 5), 5, "no tasks: the roster");
+    assert_eq(agnostic_crew_explain_limit(5, 0), 0, "no agents: nothing");
+    assert_eq(AGNOSTIC_EXPLAIN_MAX_CANDIDATES >= AGNOSTIC_REQ_MAX_AGENTS, 1,
+      "the budget lists a whole roster of the largest size for one task");
+}
+
+# The inference call's ceiling reaches agnosai (0.1.14): AGNOSTIC_LLM_TIMEOUT_SECS with a
+# gateway configured sets agnosai's chat timeouts at mount, and bounds the other two by it.
+fn test_llm_timeout_reaches_the_engine() {
+    test_group("crews/llm-timeout");
+
+    var before = agnosai_hoosh_total_timeout_ms();
+    var cfg = agnostic_config_from_env();
+    store64(cfg + AGNOSTIC_CFG_LLM_URL, str_from("http://127.0.0.1:1"));
+    store64(cfg + AGNOSTIC_CFG_LLM_SECS, 5);
+    agnostic_engine_reset();
+    assert_eq(agnostic_engine_init(cfg), 1, "the engine mounts with a gateway and a ceiling");
+    assert_eq(agnosai_hoosh_total_timeout_ms(), 5000, "the call's whole-exchange ceiling is the configured one");
+    agnosai_hoosh_set_timeouts(AGNOSAI_HOOSH_CONNECT_MS, AGNOSAI_HOOSH_IO_MS, AGNOSAI_HOOSH_TOTAL_MS);
+    assert_eq(agnosai_hoosh_total_timeout_ms(), before, "restored for the suites after this one");
+    agnostic_engine_reset();
+}
+
 fn test_readiness_registers_the_engine() {
     test_group("crews/ready");
 
@@ -850,6 +1200,7 @@ fn main() {
     test_poll_reports_a_real_outcome();
     test_cancel_never_relabels_what_it_did_not_cancel();
     test_cancel_a_live_crew_stops_it();
+    test_cancel_refreshes_before_it_latches();
     test_events_route();
     test_events_route_status_is_current();
     test_events_cursor();
@@ -858,6 +1209,12 @@ fn main() {
     test_submit_marks_the_crew_in_flight();
     test_an_interrupted_crew_is_not_404();
     test_task_ids_and_plan();
+    test_plan_explains_selection();
+    test_plan_shows_hints();
+    test_explain_limit();
+    test_explain_refuses_past_the_budget();
+    test_submit_joins_the_request_trace();
+    test_llm_timeout_reaches_the_engine();
     test_readiness_registers_the_engine();
     return assert_summary();
 }

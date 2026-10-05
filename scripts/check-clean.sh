@@ -161,7 +161,7 @@ fi
 # `skills/agnostic/SKILL.md` teaches a coding agent the HTTP API. Nothing compiles it, and
 # the server ignores a query parameter no handler reads, so a skill that spells the event
 # cursor `?since=` instead of `?after=` fails nowhere: the agent silently re-reads the whole
-# window on every poll. The roadmap's own H3 and H6 entries made that mistake. This checks
+# window on every poll. The H3 and H6 plans of 0.1.13 made that mistake. This checks
 # every route, method, query parameter, header, response example and marked list in the
 # skill against `docs/api/generated/schema.json`, which `tests/api_schema.tcyr` keeps equal
 # to the server's own tables — so it needs no build, and runs before CI's.

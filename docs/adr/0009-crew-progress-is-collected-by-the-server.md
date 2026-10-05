@@ -3,6 +3,19 @@
 **Status**: Accepted
 **Date**: 2026-10-02
 
+> **Note (2026-10-04, 0.1.14 — agnosai 2.1.5, its ADR 022).** The engine's registry now stores
+> RUNNING when it hands a crew to its runner, so the last bullet of the context below is history:
+> `running` appears without help. The ledger still latches RUNNING on a collected `crew_started`,
+> and now also records the start (`started_at`) the first time the registry says RUNNING —
+> which can come before the event is collected (`agnostic_ledger_note_started`). Because a
+> recorded start reads an engine PENDING as RUNNING, the registry's new RUNNING → PENDING edge
+> (its error arm) never reaches agnostic's wire. That arm is unreachable through agnostic's front
+> door since agnosai 2.1.6; in 2.1.5 a DAG with a failed branch beside a successful one reached it
+> and read `running` here forever, which 0.1.14's review found and 2.1.6 fixed upstream. The
+> same release makes the events say what happened: a parallel or DAG task is announced when its
+> batch starts and completed as it is joined, every task the model answers sends a `token`
+> event, and a timed-out crew's `crew_completed` says `failed`.
+
 ## Context
 
 agnostic subscribes to each crew's engine events when it submits the crew, and keeps a bounded
