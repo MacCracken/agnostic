@@ -631,3 +631,21 @@ per-milestone versions (v0.2.0 to v0.9.0) are not used.
   v1.0. If one is wanted later it is *additive* — a translation layer mounted over the published
   API — and it is built then, against a real requirement, rather than pre-emptively shaping v1.0
   around a client that may never call us.
+
+## Recorded by cyrius 6.6.17 (2026-10-05) — for the next cyrius pin move
+
+⛔ **Nothing to do until cyrius 6.6.17 is tagged and out.** Docs-only note from the cyrius 6.6.17 lanes; each item
+is this repo's to adopt when it pins ≥ 6.6.17. Nothing here gates a cyrius release.
+
+- **`lib sync` now checks the lock** (cyrius 6.6.17 t1). This repo's CI runs `lib sync` → `deps` →
+  `deps --verify`: no change needed — with a correct committed lock `lib sync` leaves it byte-identical. If the
+  installed snapshot moves under the pin, CI now fails at `lib sync` with a named refusal instead of later at
+  `deps`.
+  ⚠ One agnostic workflow runs `lib sync` → `deps` with NO final `deps --verify`; that one CAN go red: a lock
+  committed after a build-first pin move carries the previous pin's rows, which `lib sync` now refuses — run
+  `cyrius lib sync --full` before committing the lock, or `--relock` if `deps` / `build` already ran.
+- **`[deps] stdlib` now reads as written** (cyrius 6.6.17 m6). A `]` inside a `#` comment within a string
+  array used to END the array; this manifest's `stdlib` comments name `` `[deps.*]` `` and
+  `` `[deps.sigil]` ``, so its "patra" and "sigil" leaves were silently dropped. From 6.6.17 they are vendored
+  and the include order moves (both orders build; +16 B). Nothing to change unless those leaves were meant
+  to be out.
