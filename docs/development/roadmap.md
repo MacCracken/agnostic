@@ -649,3 +649,22 @@ is this repo's to adopt when it pins ≥ 6.6.17. Nothing here gates a cyrius rel
   `` `[deps.sigil]` ``, so its "patra" and "sigil" leaves were silently dropped. From 6.6.17 they are vendored
   and the include order moves (both orders build; +16 B). Nothing to change unless those leaves were meant
   to be out.
+
+## Recorded by cyrius 6.6.19 (2026-10-06) — for the next cyrius pin move
+
+⛔ **Needs cyrius >= 6.6.19 — do not bump the pin until 6.6.19 is tagged and out.** Docs-only note from the cyrius
+6.6.19 lanes; each item is this repo's to adopt when it pins ≥ 6.6.19. Nothing here gates a cyrius release.
+
+- **`scripts/gen-presets.sh` retires, and `scripts/gen-webgui.sh` keeps only its CSP half, via `[embed]`**
+  (cyrius P2, shipped in 6.6.19).
+  `[embed] NAME = "path"` in cyrius.cyml gives every compile `NAME()` (the file's bytes, NUL-terminated) and
+  `NAME_len()`, read from the file at build time — no generated `.cyr`, nothing to drift. Explicit entries only
+  (the `{dir, glob}` set form is refused by name). All embeds share cycc's 2 MiB string pool with the program's
+  own literals, and every binary of the project (test binaries too) carries every declared embed. Reference: the
+  cyrius guide's *Embedding data files: [embed]*, CHANGELOG [6.6.19] *Embed — P2*.
+  - Replaces `gen-presets.sh` outright (one `[embed]` entry per preset) and the ESCAPING half of `gen-webgui.sh`:
+    the pages embed verbatim (`WEBGUI_INDEX = "webgui/index.html"`), bytes exact, no raw-LF literal shaping.
+  - Stays yours: the Content-Security-Policy hashing and validation (`check-webgui-js.sh` and the hash step of
+    `gen-webgui.sh`). `[embed]` does not hash; compute the CSP hashes from the same files in a script, or at run
+    time from `NAME()` / `NAME_len()`.
+  - Freshness: a page edited without a rebuild can no longer ship stale — the build reads the file.
