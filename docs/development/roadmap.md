@@ -87,6 +87,8 @@ handles a `tool_call`, so a resolved tool is never invoked by the model. That ma
 viability gate necessary but not sufficient: every name can resolve and still no tool runs.
 This is agnosai **F1**. Settle the tool-registry seam ([`handoff.md`](handoff.md) §8) together
 with it: `agnostic_engine_init` exposes no registry handle, so the gate is not wired into mount.
+What agnostic will hold the loop to is under
+[Waiting on agnosai](#waiting-on-agnosai-release-agnosai-then-re-pin).
 
 ### M7 — MCP surface + A2A
 
@@ -193,6 +195,39 @@ Each of these is filed on agnosai's roadmap under **F** ("Past parity").
 - **F4 — durable crew log:** turns an `interrupted` crew (ADR 0013) into a resumable one.
 - **F5 — budgets and caps:** brings back an `AGNOSTIC_CREW_MAX_CONCURRENT_TASKS` that is actually
   enforced.
+
+**What agnostic will hold them to — harness rules, recorded 2026-10-07.** From a comparison with
+[turnstone](https://github.com/turnstonelabs/turnstone), a self-hosted, tool-using agent harness,
+whose [`PRIMER.md`](https://github.com/turnstonelabs/turnstone/blob/dev/PRIMER.md) states these
+rules ("the model proposes; the gate disposes"). Mirrored the same day in agnosai's roadmap, in
+its F1–F3, F5 and F9 rows; each goes into the ADR of the item it names.
+
+- **F1 — every tool call is journaled before it runs, and its result says what it did:** committed,
+  none (it never started) or unknown (it may have run). A crew a restart interrupts then names its
+  unknown effects instead of implying there were none. ADR 0013's in-flight row is the same rule for
+  a whole crew. turnstone also records `partial` and `rolled_back`.
+- **F1 — a tool's output is data, never instructions.** Check each result for injected
+  instructions before it reaches the model, and never let one change the plan, the agent's grants
+  or its budget. A summary handed downstream (F9) is as untrusted as what it summarised. A QA
+  product needs this more than most: the system under test produces the tools' output, so that
+  output is untrusted by definition. turnstone's output guard is heuristic and only annotates;
+  decide in F1's ADR whether a flagged result is held back.
+- **F1 — the calls a model makes in one turn are approved as a set.** "Read the secret" and "post
+  to the web" each pass alone and leak together. turnstone's pipeline is a template: prepare each
+  call in turn, approve the batch, run it in parallel, then check the results and append them in
+  one step.
+- **F1 — the registry can hold tools from external MCP servers**, through bote's client (see
+  "Upstream"), and each agent sees only the tools granted to it (see "Agent skills" under "Later").
+  turnstone's harness owns its registry, gives each role its own subset (interactive, coordinator,
+  sub-agent) and merges a session's MCP tools in when it starts — a data point for the registry
+  seam (`handoff.md` §8).
+- **F2 — authority only narrows.** A worker holds at most its manager's tools and budget. A need
+  beyond them goes up to a human; neither the manager nor the model can grant it.
+- **F3 — a model judge may only tighten.** If approvals gain an LLM judge, it may refuse what the
+  rules allow and never allow what they refuse, and it gives its reasons from a fixed list, not
+  free text. An automatic approval covers a whole batch or none of it, and anything uncertain goes
+  to a human (turnstone's Smart Approvals).
+- **F5 — budgets subdivide** down the tree: crew, then task, then delegated worker.
 
 ## Moving the cyrius pin to 6.6.15 — found 2026-10-04, siblings first
 
@@ -445,6 +480,13 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
 - [ ] → **agnosai**: streamline its preset set (18 in `src/presets/`) to a small illustrative example
   library rather than a competing production one, so the two stop diverging by accident (Settled
   decisions, preset canon). Not yet on agnosai's roadmap.
+- [ ] → **bote**, through agnosai's tool registry (F1): the client half of MCP, so a crew's agents
+  can call tools on external MCP servers. bote is the ecosystem's MCP layer (Settled decisions,
+  2026-10-07). At 3.3.16 it is the server half — dispatch, six transports, sessions — plus a
+  `HostRegistry` of permitted external hosts behind an SSRF guard, whose entries can already
+  declare a `tools/call` capability. Nothing in it sends `initialize`, `tools/list` or `tools/call`
+  to another server yet (checked 2026-10-07). Recorded in agnosai's roadmap (*C*, bote); not
+  filed with bote yet.
 
 ## Decisions awaiting the user
 
@@ -505,7 +547,35 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
   - the reverse of the declared parts: a query parameter or header a handler starts reading without
     declaring it is caught only for the six known parameter names on GET routes
     (`tests/api_schema.tcyr`, `api/probes`). Closing it means handlers read parameters and headers
-    through a per-route table the schema also reads.
+    through a per-route table the schema also reads;
+  - an OpenAPI 3.1 rendering, which needs the field types above — ADR 0015 rejected it until then.
+    After that it is one more generator over the same data, and standard tooling can produce
+    clients from it, as turnstone produces its Python and TypeScript SDKs from its specs.
+- **Agent skills, narrowed to the work** (recorded 2026-10-07; a maybe). A skill is a named
+  procedure, instructions plus the tools it needs, in the SKILL.md shape `skills/agnostic/SKILL.md`
+  already uses for coding agents. An agent definition or a task names the skills its work needs,
+  and the agent sees only those: their instructions in its prompt, their tools within its grants. A
+  skill can narrow what an agent sees and does, never widen it (F2's rule, under "Waiting on
+  agnosai"). turnstone's skills carry instructions with allowed tools, an auto-approve policy and a
+  token budget, applied when a session starts, and each role gets its own tool surface.
+  - Open: where the catalogue lives (agnostic owns definitions and presets; the engine would
+    inject the instructions and restrict the tools); whether instructions load on demand
+    (SKILL.md's name and description first, the body when used); and whether the retained `focus`
+    maps onto skills — it is free text on all 76 preset agents, and the engine has no slot for it.
+  - A `skills` field on the agent model follows the three dispositions: refused by name until the
+    engine acts on it. It needs F1, and belongs with the tool-registry seam (`handoff.md` §8).
+- **An evaluation harness: incorporate or port [model_testing](https://github.com/MacCracken/model_testing)**
+  (recorded 2026-10-07). A Node bench, so far mostly a front end for testing a model with and
+  without a harness, with more work needed. It scores the same goal in four modes — no harness,
+  tools only, an output schema only, both — against a local system under test, over task families
+  from tool selection, chained calls and long context to extraction, multi-turn policy and public
+  anchors (GSM8K, IFEval, BFCL), and reports each harness delta with its significance. Its
+  `@stress:injected` documents already measure what F1's output rule is for. Whether to
+  incorporate it as it is or port it to Cyrius is decided when it is picked up.
+  - Why: Swarm Command's simulator models time, tokens and cost, and has no model of answer
+    quality ([ADR 0014](../adr/0014-the-estimators-one-agent-baseline-is-its-own-model.md)). This
+    would measure quality. turnstone ships the same pair as `turnstone-eval` and a prompt optimizer.
+  - Its tool modes need F1: today no agent calls a tool.
 
 ## Settled decisions
 
@@ -601,6 +671,9 @@ own section below.
   `domain` and `gpu_required`, each checked strictly at the door, though they widen the public
   request before the v1.0 freeze. Without them agnosai's selection is degenerate: complexity alone
   decides, and the first agent with medium or unset complexity wins every task.
+- **2026-10-07 — The MCP client is bote's.** A crew's agents reach external MCP servers through
+  bote, the ecosystem's MCP layer, by way of agnosai's tool registry (F1). Neither agnostic nor
+  agnosai carries its own MCP client. The client half is owed upstream (see "Upstream").
 
 ## Release shape
 
