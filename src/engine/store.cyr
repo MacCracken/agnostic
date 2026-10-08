@@ -131,7 +131,8 @@ fn agnostic_store_db(): i64 {
     return 0;
 }
 
-# Close the database, flushing anything batched.
+# Close the database, flushing anything batched, and give up this process's claim on
+# it (0.1.15).
 #
 # Takes the lock, so a close waits for the operation in flight and every later
 # one sees "no persistence" rather than a handle being torn down under it.
@@ -141,8 +142,78 @@ fn agnostic_store_close(): i64 {
         patra_close(_agnostic_store_db);
         atomic_store(&_agnostic_store_db, 0);
     }
+    _agnostic_store_release_locked();
     agnostic_store_unlock();
     return 0;
+}
+
+# ## One process per database file (0.1.15)
+#
+# patra arbitrates each statement with `flock` and holds nothing between statements, so two
+# processes can open one file and both appear to work. agnostic cannot share one: mount's
+# start-up sweep marks every crew the file records as in flight `interrupted` (ADR 0013), so
+# a second process would interrupt the first one's live crews — and write-once would then
+# refuse their real outcomes. The definition cache is per process too.
+#
+# So mount CLAIMS the file before opening it: an exclusive, non-blocking `flock` on a
+# `<db>.owner` sidecar, held for the life of the process. The kernel drops it when the
+# process ends, however it ends, so a crash leaves no stale claim to clear by hand.
+#
+# ⚠ **The sidecar is never unlinked.** Deleting it on close would let a starting process
+# lock a new inode while the old one is still held. It is empty and harmless.
+# ⚠ **`O_CLOEXEC` is load-bearing.** A sandboxed tool's child inherits every fd without it,
+# and would hold the claim after the server it belonged to died.
+enum AgnosticStoreClaim {
+    AGNOSTIC_CLAIM_OK     = 1;  # this process holds the file
+    AGNOSTIC_CLAIM_HELD   = 2;  # another process holds it
+    AGNOSTIC_CLAIM_FAILED = 3;  # the sidecar could not be opened or locked
+}
+
+# The claimed sidecar's fd, or -1.
+var _agnostic_store_owner_fd = 0 - 1;
+
+# Claim database file `path` for this process: an `AGNOSTIC_CLAIM_*`. Idempotent — a
+# process that holds its claim is answered OK again.
+fn agnostic_store_claim(path: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_store_claim_locked(path);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_store_claim`'s body. The caller holds the store lock.
+fn _agnostic_store_claim_locked(path: Str): i64 {
+    if (_agnostic_store_owner_fd >= 0) { return AGNOSTIC_CLAIM_OK; }
+    var sp = agnostic_store_owner_path(path);
+    if (sp == 0) { return AGNOSTIC_CLAIM_FAILED; }
+    var fd = file_open(sp, O_RDWR | O_CREAT | O_CLOEXEC, 0x180);   # 0600
+    if (fd < 0) { return AGNOSTIC_CLAIM_FAILED; }
+    var rc = xflock(fd, LOCK_EX | LOCK_NB);
+    if (rc < 0) {
+        sys_close(fd);
+        if (rc == 0 - EAGAIN) { return AGNOSTIC_CLAIM_HELD; }
+        return AGNOSTIC_CLAIM_FAILED;
+    }
+    _agnostic_store_owner_fd = fd;
+    return AGNOSTIC_CLAIM_OK;
+}
+
+# Give up the claim, if this process holds one. The caller holds the store lock.
+fn _agnostic_store_release_locked(): i64 {
+    if (_agnostic_store_owner_fd < 0) { return 0; }
+    xflock(_agnostic_store_owner_fd, LOCK_UN);
+    sys_close(_agnostic_store_owner_fd);
+    _agnostic_store_owner_fd = 0 - 1;
+    return 1;
+}
+
+# The sidecar's path for database file `path` — `<path>.owner` — as a C string, or 0.
+fn agnostic_store_owner_path(path: Str): i64 {
+    if (path == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add(sb, path);
+    str_builder_add_cstr(sb, ".owner");
+    return str_cstr(str_builder_build(sb));
 }
 
 # Run a schema statement, tolerating "already exists".

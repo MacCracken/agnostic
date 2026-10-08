@@ -16,7 +16,7 @@ Read these first. The rest of this file is how to keep them.
 
 1. **Stop when `GET /ready` is not 200.** Tell the user what it said. Do not start, restart or
    reconfigure the server yourself: a restart invalidates every login token, and every crew still
-   running stops for good (it then answers `interrupted`, and its work is lost).
+   running stops for good (it then answers `interrupted`, and any task still in progress is lost).
 2. **Cancel only crews you submitted** in this session, or one the user names and asks you to
    cancel. A listing shows every crew in your tenant, including other people's and the WebGUI's.
 3. **Do not guess fields.** Every error names what is wrong. Change exactly that and resubmit once.
@@ -103,7 +103,8 @@ crew that never existed. With authentication off, everyone shares one tenant, `_
   body. Without it the answer is **415**.
 - A body is at most 1 MiB by default (**413**).
 - Every error is `{"error":"…"}`, and the message names the field or rule. (A few WebGUI plugin
-  refusals add a `code`.) **405** means the path exists but not with that method.
+  refusals add a `code`.) **405** means the path exists but not with that method; its `Allow`
+  header names the methods the path takes.
 - Crew ids are UUIDs, matched case-insensitively. A malformed one is **422**.
 - The server ignores query parameters it does not know, silently. Spell them exactly as here.
 
@@ -156,6 +157,7 @@ names, at most 64), `gpu_required` and `gpu_preferred` (booleans), `gpu_memory_m
 of 0 or more), `focus`, `allow_delegation` (a boolean).
 
 - `focus` and `allow_delegation` are kept but shape nothing; the 202 names them in `unforwarded`.
+- `complexity` is `low`, `medium` or `high`, lowercase, as on a task; anything else is a **400**.
 - `tools` are names only. The engine does not call tools yet.
 - You do not assign agents to tasks. The engine picks an agent for each task by scoring every agent
   against the task's hints (below): tools, complexity, domain and GPU. Without hints the agents tie
@@ -273,10 +275,10 @@ curl -sS "$AGNOSTIC_URL/api/v1/crews/$CREW" -H "Authorization: Bearer $AGNOSTIC_
 ```json
 {"crew_id":"…","status":"completed","task_count":2,
  "results":[
-   {"task_id":"…","status":"completed","output":"…",
+   {"task_id":"…","status":"completed","output":"…","agent_key":"security-reviewer",
     "usage":{"model":"…","provider":"…","prompt_tokens":812,"completion_tokens":240,
              "total_tokens":1052,"cost_micro_usd":3150,"duration_ms":4210}},
-   {"task_id":"…","status":"completed","output":"…",
+   {"task_id":"…","status":"completed","output":"…","agent_key":"report-writer",
     "usage":{"model":"…","provider":"…","prompt_tokens":818,"completion_tokens":272,
              "total_tokens":1090,"cost_micro_usd":3250,"duration_ms":3890}}],
  "usage":{"prompt_tokens":1630,"completion_tokens":512,"total_tokens":2142,
@@ -296,15 +298,17 @@ curl -sS "$AGNOSTIC_URL/api/v1/crews/$CREW" -H "Authorization: Bearer $AGNOSTIC_
 - A `cancelled` crew keeps the results of the tasks that had finished.
 - `submitted_at`, `started_at` and `finished_at` are epoch milliseconds. An event's `at_ms` is
   milliseconds since the crew was accepted.
-- **`interrupted`**: the server restarted while the crew was in flight. Its work is lost and it
-  cannot be resumed. It has `results: []`, zero usage, an `error`, and `interrupted_at` (when the
-  restarted server declared it) instead of `started_at` and `finished_at`:
+- **`interrupted`**: the server restarted while the crew was in flight. It cannot be resumed. Its
+  `results` hold the tasks the model had finished answering (each `completed`, with its output and
+  no `usage`), often none; the rest were lost. Usage is zero, and it has an `error` and
+  `interrupted_at` (when the restarted server declared it) instead of `started_at` and
+  `finished_at`:
 
   <!-- schema: response GET /api/v1/crews/:id -->
   ```json
   {"crew_id":"…","status":"interrupted","task_count":0,"results":[],
    "usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"metered_tasks":0,"costed_tasks":0},
-   "error":"the server restarted before this crew's outcome was recorded; its work was lost",
+   "error":"the server restarted before this crew finished; tasks still in progress were lost",
    "name":"auth-module-review","scope":"_","engine_mode":"live","process":"dag",
    "tasks_submitted":2,"submitted_at":1791100000000,"interrupted_at":1791100042000}
   ```
@@ -332,6 +336,8 @@ curl -sS "$AGNOSTIC_URL/api/v1/crews/$CREW" -H "Authorization: Bearer $AGNOSTIC_
   call failed. An `interrupted` crew reports nothing, though its finished tasks may have spent money.
 - Each result's `usage` has `model`, `provider`, the token counts, `cost_micro_usd` when the gateway
   priced the call, and `duration_ms`.
+- A result the model answered names its agent as `agent_key`, the same name the plan's
+  `selection.winner` uses. A placeholder, failed or cancelled task has none.
 
 ## 9. List and cancel
 
@@ -358,8 +364,9 @@ curl -sS -X POST "$AGNOSTIC_URL/api/v1/crews/$CREW/cancel" \
 ```
 
 - **200**: cancelled.
-- **409**: it had already finished. Read its outcome instead; this is not a case to retry.
-- **404**: no such crew in your tenant, or one from before a restart, which cannot be cancelled.
+- **409**: it had already finished, in this process or before a restart. Read its outcome instead;
+  this is not a case to retry.
+- **404**: no such crew in your tenant.
   **503**: the engine no longer holds it, and it was **not** cancelled.
 - Guardrail 2 applies: only your own crews, or one the user named.
 
@@ -382,12 +389,14 @@ build the crew yourself:
 **Agent definitions** are stored agents, shared by the whole deployment rather than per tenant.
 `GET /api/v1/agents/definitions` returns `{"definitions":[…],"total":…,"storage":"patra"}` with
 `key`, `name`, `role` and, when set, `domain` for each. `GET /api/v1/agents/definitions/{key}`
-returns `{"definition":{…},"unforwarded":[…],"storage":"patra"}`. A crew cannot name a definition
-by key: copy the `definition` object into `agents`, where it is already in the right shape. Writing
-one (`POST /api/v1/agents/definitions` answers 201, or 409 when the key exists;
-`PUT /api/v1/agents/definitions/{key}` answers 200, or 404 when it is absent, and the body's `key`
-must match the path; `DELETE /api/v1/agents/definitions/{key}` answers 200) changes what every user
-sees. Do it only when asked (guardrail 8).
+returns `{"definition":{…},"unforwarded":[…],"etag":"…","storage":"patra"}`, and the same `etag` as
+an `ETag` header. A crew cannot name a definition by key: copy the `definition` object into
+`agents`, where it is already in the right shape. Writing one (`POST /api/v1/agents/definitions`
+answers 201, or 409 when the key exists; `PUT /api/v1/agents/definitions/{key}` answers 200, or 404
+when it is absent, and the body's `key` must match the path; `DELETE /api/v1/agents/definitions/{key}`
+answers 200) changes what every user sees. Do it only when asked (guardrail 8). To change one you
+read, send its `etag` back as `If-Match` on the `PUT` or `DELETE`: **412** with `code` `revision`
+means someone changed it since — read it again rather than overwrite their change.
 
 ## 11. Limits
 

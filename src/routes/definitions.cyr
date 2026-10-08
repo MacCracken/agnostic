@@ -7,8 +7,12 @@
 # | `GET /api/v1/agents/definitions` | 200 |
 # | `POST /api/v1/agents/definitions` | **201** · 400 · 409 · 422 · **507** |
 # | `GET /api/v1/agents/definitions/{key}` | 200 · 404 · 422 |
-# | `PUT /api/v1/agents/definitions/{key}` | 200 · 400 · 404 · 422 |
-# | `DELETE /api/v1/agents/definitions/{key}` | 200 · 404 · 422 |
+# | `PUT /api/v1/agents/definitions/{key}` | 200 · 400 · 404 · **412** (0.1.15) · 422 |
+# | `DELETE /api/v1/agents/definitions/{key}` | 200 · 404 · **412** (0.1.15) · 422 |
+#
+# A single definition answers with its revision — `etag` in the body and an `ETag` header —
+# and `If-Match` on `PUT` or `DELETE` makes the write conditional (0.1.15; see
+# `src/engine/definitions.cyr`, "Revisions").
 #
 # **201, not 202** — and the contrast with `POST /api/v1/crews` is the point. A
 # crew is *accepted work that is not finished*, so 202 and a poll. A definition
@@ -50,6 +54,11 @@ var AGNOSTIC_JK_AT_OPEN     = str_from("entries_at_open");
 var AGNOSTIC_JK_APPENDED    = str_from("appended");
 var AGNOSTIC_JK_VERIFIED    = str_from("verified");
 var AGNOSTIC_JV_AT_OPEN     = str_from("open");
+# The verdict and its breaks (0.1.15).
+var AGNOSTIC_JK_VERDICT     = str_from("verdict");
+var AGNOSTIC_JK_BREAKS      = str_from("breaks");
+var AGNOSTIC_JK_BREAK_COUNT = str_from("break_count");
+var AGNOSTIC_JK_KIND        = str_from("kind");
 # ⚠ Its own key, not the crew-events `dropped_events`. Reusing a key named for a
 # different concept reads as the same number twice.
 var AGNOSTIC_JK_AUDIT_DROP  = str_from("dropped");
@@ -78,7 +87,7 @@ fn _agnostic_def_stamp(a, obj): i64 {
 }
 
 # The body every single-definition response carries: the record, the fields that
-# were retained but shape nothing, and where it lives.
+# were retained but shape nothing, its revision (0.1.15), and where it lives.
 fn _agnostic_def_body_a(a, d): i64 {
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }
@@ -86,7 +95,34 @@ fn _agnostic_def_body_a(a, d): i64 {
       agnostic_agent_def_to_value_a(a, d));
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_UNFORWARDED,
       agnostic_agent_def_unforwarded_a(a, d));
+    var tag = agnostic_definition_etag_a(a, d);
+    if (tag == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ETAG, bayan_json_v_str_new_a(a, tag));
     return _agnostic_def_stamp(a, obj);
+}
+
+# A single-definition response: `status`, the body, and the revision as an `ETag` header
+# too (0.1.15) — the bridge hands a plugin the header, and a script can read either.
+fn _agnostic_def_answer_a(a, status, d): i64 {
+    var b = _agnostic_def_body_a(a, d);
+    if (b == 0) { return 0; }
+    var r = agnostic_response_json_a(a, status, b);
+    var tag = agnostic_definition_etag_a(a, d);
+    if (r == 0 || tag == 0) { return r; }
+    var hb = str_builder_new_a(a);
+    if (hb == 0) { return r; }
+    str_builder_add_cstr_a(a, hb, "ETag: ");
+    str_builder_add_a(a, hb, tag);
+    str_builder_add_cstr_a(a, hb, "\r\n");
+    var line = str_builder_build_a(a, hb);
+    if (line == 0) { return r; }
+    return agnostic_response_set_headers(r, str_data(line));
+}
+
+# The 412 a stale `If-Match` earns, with the `revision` code plugin documents use.
+fn _agnostic_def_stale_a(a): i64 {
+    return agnostic_response_error_code_a(a, AGNOSTIC_EC_REVISION,
+      str_from_a(a, "the definition is not the revision this write was made from; read it again"));
 }
 
 # The 422 a malformed key earns.
@@ -118,7 +154,10 @@ fn _agnostic_def_decode(a, body: Str, out_resp): i64 {
     store64(&reject, 0);
     # -1: not inside an `agents` array, so messages go out unprefixed.
     var d = agnostic_agent_def_decode_a(a, v, 0 - 1, &reject);
-    if (d == 0) {
+    if (d == 0 || agnostic_agent_def_complexity_ok(d) == 0) {
+        # An unknown `complexity` is refused here, at the door, not by the decoder: stored
+        # definitions are decoded by the same path and are read as they are (0.1.15).
+        if (d != 0) { agnostic_agent_def_complexity_reject_a(a, &reject, 0 - 1); }
         var rj = load64(&reject);
         store64(out_resp, agnostic_response_error_a(a, agnostic_reject_status(rj),
             agnostic_reject_message(rj)));
@@ -134,7 +173,8 @@ fn agnostic_route_definitions_list_a(a): i64 {
     var arr = bayan_json_v_arr_new_a(a);
     if (arr == 0) { return 0; }
 
-    var keys = agnostic_definitions_keys();
+    var keys = agnostic_definitions_keys_a(a);
+    if (keys == 0) { return 0; }
     var shown = 0;
     var i = 0;
     while (i < vec_len(keys)) {
@@ -179,12 +219,10 @@ fn agnostic_route_definition_create_a(a, body: Str): i64 {
           str_from_a(a, "could not store the agent definition"));
     }
 
-    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("definition.create"),
-      agnostic_audit_detail("key", key));
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from_a(a, "definition.create"),
+      agnostic_audit_detail_a(a, "key", key));
 
-    var b = _agnostic_def_body_a(a, d);
-    if (b == 0) { return 0; }
-    return agnostic_response_json_a(a, AGNOSTIC_HTTP_CREATED, b);
+    return _agnostic_def_answer_a(a, AGNOSTIC_HTTP_CREATED, d);
 }
 
 # `GET /api/v1/agents/definitions/{key}` — one definition.
@@ -192,9 +230,7 @@ fn agnostic_route_definition_get_a(a, key: Str): i64 {
     if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
     var d = agnostic_definitions_get(key);
     if (d == 0) { return _agnostic_def_not_found_a(a); }
-    var b = _agnostic_def_body_a(a, d);
-    if (b == 0) { return 0; }
-    return agnostic_response_json_a(a, HTTP_OK, b);
+    return _agnostic_def_answer_a(a, HTTP_OK, d);
 }
 
 # `PUT /api/v1/agents/definitions/{key}` — replace one. 404 if absent; never creates.
@@ -203,8 +239,19 @@ fn agnostic_route_definition_get_a(a, key: Str): i64 {
 # preferring one over the other would let `PUT /…/alpha` with `{"key":"beta"}`
 # write to a name the caller did not address — and whichever side lost, the
 # caller could not tell from the response.
-fn agnostic_route_definition_replace_a(a, key: Str, body: Str): i64 {
+#
+# `If-Match` (0.1.15): the write happens only if the definition is still that revision —
+# 412 with code `revision` otherwise. Checked before the body is read, as RFC 9110 §13.2.1
+# orders it (an absent definition is still 404), and again under the store lock with the
+# write, so nothing lands between them.
+fn agnostic_route_definition_replace_a(a, key: Str, body: Str, ctx): i64 {
     if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
+    var if_match = agnostic_reqctx_if_match(ctx);
+    if (if_match != 0) {
+        var cur = agnostic_definitions_get(key);
+        if (cur == 0) { return _agnostic_def_not_found_a(a); }
+        if (agnostic_definition_precondition_a(a, cur, if_match) == 0) { return _agnostic_def_stale_a(a); }
+    }
 
     var resp: i64[1];
     var d = _agnostic_def_decode(a, body, &resp);
@@ -215,31 +262,33 @@ fn agnostic_route_definition_replace_a(a, key: Str, body: Str): i64 {
           str_from_a(a, "the 'key' in the body must match the key in the path"));
     }
 
-    var rc = agnostic_definitions_replace(key, d);
+    var rc = agnostic_definitions_replace_if_a(a, key, d, if_match);
     if (rc == AGNOSTIC_DEF_MISSING) { return _agnostic_def_not_found_a(a); }
+    if (rc == AGNOSTIC_DEF_PRECONDITION) { return _agnostic_def_stale_a(a); }
     if (rc != AGNOSTIC_DEF_OK) {
         return agnostic_response_error_a(a, HTTP_INTERNAL,
           str_from_a(a, "could not store the agent definition"));
     }
 
-    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("definition.replace"),
-      agnostic_audit_detail("key", key));
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from_a(a, "definition.replace"),
+      agnostic_audit_detail_a(a, "key", key));
 
-    var b = _agnostic_def_body_a(a, d);
-    if (b == 0) { return 0; }
-    return agnostic_response_json_a(a, HTTP_OK, b);
+    return _agnostic_def_answer_a(a, HTTP_OK, d);
 }
 
-# `DELETE /api/v1/agents/definitions/{key}` — remove one.
-fn agnostic_route_definition_delete_a(a, key: Str): i64 {
+# `DELETE /api/v1/agents/definitions/{key}` — remove one. With `If-Match` (0.1.15), only if it
+# is still that revision: 412 with code `revision` otherwise, and an absent one is 404.
+fn agnostic_route_definition_delete_a(a, key: Str, ctx): i64 {
     if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
-    if (agnostic_definitions_remove(key) != AGNOSTIC_DEF_OK) {
+    var rc = agnostic_definitions_remove_if_a(a, key, agnostic_reqctx_if_match(ctx));
+    if (rc == AGNOSTIC_DEF_PRECONDITION) { return _agnostic_def_stale_a(a); }
+    if (rc != AGNOSTIC_DEF_OK) {
         return _agnostic_def_not_found_a(a);
     }
     # ⚠ Recorded at WARNING, not INFO. A deletion is the entry an operator goes
     # looking for, and severity is what `chain_by_severity` filters on.
-    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from("definition.delete"),
-      agnostic_audit_detail("key", key));
+    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, "definition.delete"),
+      agnostic_audit_detail_a(a, "key", key));
 
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }
@@ -267,6 +316,15 @@ fn agnostic_route_definition_delete_a(a, key: Str): i64 {
 # `bad_index` is present only when the chain is broken, and names the first entry
 # that failed — omitted rather than rendered as -1, the same rule
 # `agnostic_outcome_to_value_a` follows for `error`.
+#
+# ## What the verdict found (0.1.15)
+#
+# `verdict` is `intact`, `restarts` (breaks, every one where a restart did not link to the
+# trail before it), `altered`, or `unverified` (the trail could not be read at open).
+# `breaks` lists the first 32 breaks as `{index, kind}`, `kind` `restart` or `altered`, and
+# `break_count` counts them all — the whole trail is walked, so an alteration after the first
+# break is reported too. `intact` is true only for `intact`, as it always meant;
+# `src/engine/audit.cyr` says what each kind can and cannot prove.
 fn agnostic_route_audit_a(a): i64 {
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }
@@ -280,21 +338,38 @@ fn agnostic_route_audit_a(a): i64 {
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_AUDIT_DROP,
       bayan_json_v_int_new_a(a, agnostic_audit_dropped()));
 
-    # ⚠ **`verified` says WHEN, and it says `open` rather than `now`.** The
-    # verdict is taken once, at start-up, on the main thread — libro's cached
-    # prepared statements fault on a pool worker, so a per-request re-verify
-    # would kill the process. Reporting the moment is the honest half: a client
-    # reading `"intact": true` must know it means "when this process started",
-    # not "a millisecond ago".
+    # ⚠ **`verified` says WHEN, and it says `open` rather than `now`.** The verdict is
+    # taken once, at start-up. A per-request re-verify re-reads and re-hashes the whole
+    # trail, a cost that grows with it, so it is not done here. (Until libro 2.8.9 it would
+    # also have killed the process on a pool worker; that is fixed, and cost is the reason
+    # left.) Reporting the moment is the honest half: a client reading `"intact": true` must
+    # know it means "when this process started", not "a millisecond ago".
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_VERIFIED,
       bayan_json_v_str_new_a(a, AGNOSTIC_JV_AT_OPEN));
 
     var intact = agnostic_audit_is_intact();
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_INTACT, bayan_json_v_bool_new_a(a, intact));
-    if (intact == 0) {
-        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_BAD_INDEX,
-          bayan_json_v_int_new_a(a, agnostic_audit_bad_index()));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_VERDICT,
+      bayan_json_v_str_new_a(a, str_from_a(a, agnostic_audit_verdict_name(agnostic_audit_verdict()))));
+    var bad = agnostic_audit_bad_index();
+    if (bad >= 0) {
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_BAD_INDEX, bayan_json_v_int_new_a(a, bad));
     }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_BREAK_COUNT,
+      bayan_json_v_int_new_a(a, agnostic_audit_break_count()));
+    var breaks = bayan_json_v_arr_new_a(a);
+    if (breaks == 0) { return 0; }
+    var i = 0;
+    while (i < agnostic_audit_breaks_kept()) {
+        var bo = bayan_json_v_obj_new_a(a);
+        if (bo == 0) { return 0; }
+        bayan_json_v_obj_set_a(a, bo, AGNOSTIC_JK_INDEX, bayan_json_v_int_new_a(a, agnostic_audit_break_index(i)));
+        bayan_json_v_obj_set_a(a, bo, AGNOSTIC_JK_KIND, bayan_json_v_str_new_a(a,
+            str_from_a(a, agnostic_audit_break_kind_name(agnostic_audit_break_kind(i)))));
+        bayan_json_v_arr_push_a(a, breaks, bo);
+        i = i + 1;
+    }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_BREAKS, breaks);
 
     # ⚠ 200 even when the chain is broken. The request succeeded and the answer
     # is the finding; a 500 would make a tamper report indistinguishable from a

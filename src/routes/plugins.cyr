@@ -92,8 +92,8 @@ fn agnostic_route_plugin_set_a(a, id: Str, body: Str): i64 {
         # After the store lock is released — the audit lock is never taken under it.
         var action = "plugin.disable";
         if (on == 1) { action = "plugin.enable"; }
-        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from(action),
-          agnostic_audit_detail("id", id));
+        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from_a(a, action),
+          agnostic_audit_detail_a(a, "id", id));
     }
 
     var out = bayan_json_v_obj_new_a(a);

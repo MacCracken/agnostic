@@ -107,12 +107,18 @@ var AGNOSTIC_COMPLEXITY_HIGH   = 2;
 # the engine's names; agnostic sends them under no other.
 var AGNOSTIC_JK_REQ_TOOLS = str_from("required_tools");
 
+# The three spellings, interned at load: the plan renders them on a request path, and a
+# `str_from` there kept a 16-byte header per hint on the global heap (0.1.15).
+var _AGNOSTIC_CX_LOW    = str_from("low");
+var _AGNOSTIC_CX_MEDIUM = str_from("medium");
+var _AGNOSTIC_CX_HIGH   = str_from("high");
+
 # The wire spelling of a task complexity. An unknown value answers `low`, the first,
 # so the schema's vocabulary walk stops (`src/http/schema.cyr`).
 fn agnostic_complexity_to_wire(c): i64 {
-    if (c == AGNOSTIC_COMPLEXITY_MEDIUM) { return str_from("medium"); }
-    if (c == AGNOSTIC_COMPLEXITY_HIGH)   { return str_from("high"); }
-    return str_from("low");
+    if (c == AGNOSTIC_COMPLEXITY_MEDIUM) { return _AGNOSTIC_CX_MEDIUM; }
+    if (c == AGNOSTIC_COMPLEXITY_HIGH)   { return _AGNOSTIC_CX_HIGH; }
+    return _AGNOSTIC_CX_LOW;
 }
 
 # A task complexity from its wire spelling, or -1 for an unrecognised one.
@@ -127,16 +133,43 @@ fn agnostic_complexity_from_wire(s: Str): i64 {
     return 0 - 1;
 }
 
+# 1 when definition `d`'s own `complexity` is one the selector tells apart — `low`, `medium` or
+# `high` — or is unset; 0 for anything else (0.1.15, ADR 0017).
+#
+# ⚠ **Checked at the door, not in the decoder.** A task's hint has been refused outside the three
+# since 0.1.14, but an agent's `complexity` stayed free text, which the engine reads as medium
+# without a word. The doors — a crew's `agents` and a definition's `POST` and `PUT` — refuse
+# anything else now. The decoder still accepts it, because stored definitions are decoded by the
+# same path: one written before 0.1.15 with another value is read as it is, and must be given one
+# of the three before it can be saved again or sent in a crew.
+fn agnostic_agent_def_complexity_ok(d): i64 {
+    var c = agnosai_agent_complexity(agnostic_agent_def_engine(d));
+    if (c == 0) { return 1; }
+    if (agnostic_complexity_from_wire(c) < 0) { return 0; }
+    return 1;
+}
+
+# The refusal for an agent whose `complexity` is not one of the three, as `index`'s agent.
+fn agnostic_agent_def_complexity_reject_a(a, out, index): i64 {
+    return _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
+      str_from_a(a, "'complexity' must be one of low, medium, high"));
+}
+
 # The process modes Agnostic accepts on the wire.
 var AGNOSTIC_PROCESS_SEQUENTIAL = 0;
 var AGNOSTIC_PROCESS_PARALLEL   = 1;
 var AGNOSTIC_PROCESS_DAG        = 2;
 
+# The three spellings, interned at load (0.1.15), as the complexity names are.
+var _AGNOSTIC_PW_SEQUENTIAL = str_from("sequential");
+var _AGNOSTIC_PW_PARALLEL   = str_from("parallel");
+var _AGNOSTIC_PW_DAG        = str_from("dag");
+
 # The wire spelling of a process mode.
 fn agnostic_process_to_wire(p): i64 {
-    if (p == AGNOSTIC_PROCESS_PARALLEL) { return str_from("parallel"); }
-    if (p == AGNOSTIC_PROCESS_DAG)      { return str_from("dag"); }
-    return str_from("sequential");
+    if (p == AGNOSTIC_PROCESS_PARALLEL) { return _AGNOSTIC_PW_PARALLEL; }
+    if (p == AGNOSTIC_PROCESS_DAG)      { return _AGNOSTIC_PW_DAG; }
+    return _AGNOSTIC_PW_SEQUENTIAL;
 }
 
 # A process mode from its wire spelling, or -1 for an unrecognised one.
@@ -471,16 +504,17 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
     var allowed = agnostic_task_req_fields_a(a);
     var unknown = agnostic_unknown_field(v, allowed);
     if (unknown != 0) {
-        var sb = str_builder_new();
-        str_builder_add_cstr(sb, "tasks[");
-        str_builder_add_int(sb, index);
-        str_builder_add_cstr(sb, "] has unknown field '");
-        str_builder_add(sb, unknown);
-        str_builder_add_cstr(sb, "'");
-        return _agnostic_reject(a, out, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build(sb));
+        var sb = str_builder_new_a(a);
+        if (sb == 0) { return _agnostic_reject(a, out, AGNOSTIC_HTTP_UNPROCESSABLE, unknown); }
+        str_builder_add_cstr_a(a, sb, "tasks[");
+        str_builder_add_int_a(a, sb, index);
+        str_builder_add_cstr_a(a, sb, "] has unknown field '");
+        str_builder_add_a(a, sb, unknown);
+        str_builder_add_cstr_a(a, sb, "'");
+        return _agnostic_reject(a, out, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sb));
     }
 
-    var desc = agnostic_req_str(v, str_from("description"));
+    var desc = agnostic_req_str(v, str_from_a(a, "description"));
     if (desc == 0) {
         return _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
           "tasks[", index, "]: 'description' is required and must be a string");
@@ -509,7 +543,7 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
     store64(t + AGNOSTIC_TQ_DOMAIN, 0);
     store64(t + AGNOSTIC_TQ_GPU_REQUIRED, AGNOSTIC_REQ_UNSET);
 
-    var eo = agnostic_opt_str(v, str_from("expected_output"), 0 - 1);
+    var eo = agnostic_opt_str(v, str_from_a(a, "expected_output"), 0 - 1);
     if (eo == 0) {
         return _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
           "tasks[", index, "]: 'expected_output' must be a string");
@@ -525,7 +559,7 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
     # Priority and risk arrive as wire names, never as raw integers. Accepting
     # the integer too would give two spellings for one value and make the
     # enum's numbering part of the public contract.
-    var pri = agnostic_opt_str(v, str_from("priority"), 0 - 1);
+    var pri = agnostic_opt_str(v, str_from_a(a, "priority"), 0 - 1);
     if (pri == 0) {
         return _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
           "tasks[", index, "]: 'priority' must be a string");
@@ -539,7 +573,7 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
         store64(t + AGNOSTIC_TQ_PRIORITY, p);
     }
 
-    var rk = agnostic_opt_str(v, str_from("risk"), 0 - 1);
+    var rk = agnostic_opt_str(v, str_from_a(a, "risk"), 0 - 1);
     if (rk == 0) {
         return _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
           "tasks[", index, "]: 'risk' must be a string");
@@ -555,7 +589,7 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
 
     if (_agnostic_task_req_hints_a(a, v, index, t, out) == 0) { return 0; }
 
-    var deps_v = bayan_json_v_obj_get_by_str(v, str_from("dependencies"));
+    var deps_v = bayan_json_v_obj_get_by_str(v, str_from_a(a, "dependencies"));
     if (deps_v != 0) {
         if (bayan_json_v_is_null(deps_v) != 1) {
             if (bayan_json_v_is_arr(deps_v) != 1) {
@@ -668,7 +702,7 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
           "unknown field '", unknown, "'");
     }
 
-    var name = agnostic_req_str(v, str_from("name"));
+    var name = agnostic_req_str(v, str_from_a(a, "name"));
     if (name == 0) {
         return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
           str_from_a(a, "'name' is required and must be a string"));
@@ -679,7 +713,7 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
     }
 
     var process = AGNOSTIC_PROCESS_SEQUENTIAL;
-    var pw = agnostic_opt_str(v, str_from("process"), 0 - 1);
+    var pw = agnostic_opt_str(v, str_from_a(a, "process"), 0 - 1);
     if (pw == 0) {
         return _agnostic_reject(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "'process' must be a string"));
@@ -712,7 +746,7 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
         }
     }
 
-    var agents_v = bayan_json_v_obj_get_by_str(v, str_from("agents"));
+    var agents_v = bayan_json_v_obj_get_by_str(v, str_from_a(a, "agents"));
     if (agents_v == 0 || bayan_json_v_is_arr(agents_v) != 1) {
         return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
           str_from_a(a, "'agents' is required and must be an array"));
@@ -730,7 +764,7 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
     # ⚠ `tasks` is REQUIRED. `ORACLE-AUDIT.md` §3.3 is what a missing-but-ignored
     # `tasks` field cost: the array was dropped and a single-task fallback ran
     # instead, silently, on every request. There is no fallback to fall into here.
-    var tasks_v = bayan_json_v_obj_get_by_str(v, str_from("tasks"));
+    var tasks_v = bayan_json_v_obj_get_by_str(v, str_from_a(a, "tasks"));
     if (tasks_v == 0 || bayan_json_v_is_arr(tasks_v) != 1) {
         return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
           str_from_a(a, "'tasks' is required and must be an array"));
@@ -750,6 +784,9 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
     while (ai < an) {
         var def = agnostic_agent_def_decode_a(a, bayan_json_v_arr_get(agents_v, ai), ai, out);
         if (def == 0) { return 0; }
+        if (agnostic_agent_def_complexity_ok(def) == 0) {
+            return agnostic_agent_def_complexity_reject_a(a, out, ai);
+        }
         vec_push(agents, def);
         ai = ai + 1;
     }

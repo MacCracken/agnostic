@@ -327,6 +327,9 @@ fn _agnostic_sch_route_headers_a(a, id): i64 {
         h = _agnostic_sch_name_a(a, h, "if-none-match");
     }
     if (id == AGNOSTIC_ROUTE_PDATA_DELETE) { h = _agnostic_sch_name_a(a, h, "if-match"); }
+    # Agent definitions (0.1.15).
+    if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { h = _agnostic_sch_name_a(a, h, "if-match"); }
+    if (id == AGNOSTIC_ROUTE_DEF_DELETE) { h = _agnostic_sch_name_a(a, h, "if-match"); }
     return h;
 }
 
@@ -423,12 +426,14 @@ fn _agnostic_sch_keys_a(a, id): i64 {
         return _agnostic_sch_words_a(a, k, "name description domain size version workflow_mode? agents");
     }
     if (id == AGNOSTIC_ROUTE_DEF_LIST) { return _agnostic_sch_words_a(a, k, "definitions total storage"); }
-    if (id == AGNOSTIC_ROUTE_DEF_CREATE) { return _agnostic_sch_words_a(a, k, "definition unforwarded storage"); }
-    if (id == AGNOSTIC_ROUTE_DEF_GET) { return _agnostic_sch_words_a(a, k, "definition unforwarded storage"); }
-    if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { return _agnostic_sch_words_a(a, k, "definition unforwarded storage"); }
+    if (id == AGNOSTIC_ROUTE_DEF_CREATE) { return _agnostic_sch_words_a(a, k, "definition unforwarded etag storage"); }
+    if (id == AGNOSTIC_ROUTE_DEF_GET) { return _agnostic_sch_words_a(a, k, "definition unforwarded etag storage"); }
+    if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { return _agnostic_sch_words_a(a, k, "definition unforwarded etag storage"); }
     if (id == AGNOSTIC_ROUTE_DEF_DELETE) { return _agnostic_sch_words_a(a, k, "key status storage"); }
     if (id == AGNOSTIC_ROUTE_AUDIT) {
-        return _agnostic_sch_words_a(a, k, "total entries_at_open appended dropped verified intact bad_index? storage");
+        k = _agnostic_sch_words_a(a, k, "total entries_at_open appended dropped verified intact");
+        # The verdict and its breaks (0.1.15).
+        return _agnostic_sch_words_a(a, k, "verdict bad_index? break_count breaks storage");
     }
     if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) { return _agnostic_sch_words_a(a, k, "entries total oldest_held next?"); }
     if (id == AGNOSTIC_ROUTE_PLUGIN_LIST) { return _agnostic_sch_words_a(a, k, "plugins total catalogue"); }

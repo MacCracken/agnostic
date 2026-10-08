@@ -93,6 +93,9 @@ enum AgnosticLedgerEntryOff {
     AGNOSTIC_LE_SIZE      = 144;
 }
 
+# The event type that carries a finished task's output (0.1.15, ADR 0019).
+var AGNOSTIC_EV_TOKEN = str_from("token");
+
 # The crew description `agnostic_ledger_describe_a` adds to an outcome (0.1.9).
 var AGNOSTIC_JK_PROCESS       = str_from("process");
 var AGNOSTIC_JK_TASKS_SUB     = str_from("tasks_submitted");
@@ -781,19 +784,25 @@ fn agnostic_ledger_mark_inflight(e): i64 {
 # The stored document for a crew a restart interrupted, in `a` (0.1.13, ADR 0013): `row`
 # is the crew as its in-flight row recorded it, `at_ms` when it was declared interrupted.
 #
-# An outcome like any other — `crew_id`, status `interrupted`, `task_count` 0,
-# `results: []`, zero `usage`, and an `error` saying the server restarted before the
-# outcome was recorded — plus what was known at submit: `name`, `scope`, `engine_mode`,
-# `process`, `tasks_submitted` and `submitted_at` (each only when recorded), and
-# `interrupted_at`. ⚠ **No `started_at` and no `finished_at`**: when it stopped is not
-# known, and a finishing time of "when the server came back" would show the downtime as
-# run time. Nothing it finished is kept: agnostic holds no task result until a crew ends.
+# An outcome like any other — `crew_id`, status `interrupted`, the results of the tasks
+# that had finished (none here; see `_with_a`), zero `usage`, and an `error` saying the
+# server restarted before the outcome was recorded — plus what was known at submit: `name`,
+# `scope`, `engine_mode`, `process`, `tasks_submitted` and `submitted_at` (each only when
+# recorded), and `interrupted_at`. ⚠ **No `started_at` and no `finished_at`**: when it
+# stopped is not known, and a finishing time of "when the server came back" would show the
+# downtime as run time.
 #
 # Returns the encoded document, or 0 on exhaustion.
 fn agnostic_crew_interrupted_doc_a(a, row, at_ms): i64 {
+    return agnostic_crew_interrupted_doc_with_a(a, row, at_ms, 0);
+}
+
+# `agnostic_crew_interrupted_doc_a`, with `results` — the engine task results of the tasks
+# that had finished, or 0 for none (0.1.15, ADR 0019).
+fn agnostic_crew_interrupted_doc_with_a(a, row, at_ms, results): i64 {
     if (row == 0) { return 0; }
     var o = agnostic_outcome_new_a(a, agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID),
-      AGNOSTIC_CREW_INTERRUPTED, AGNOSTIC_OC_INTERRUPTED_MSG, 0);
+      AGNOSTIC_CREW_INTERRUPTED, AGNOSTIC_OC_INTERRUPTED_MSG, results);
     if (o == 0) { return 0; }
     var v = agnostic_outcome_to_value_a(a, o);
     if (v == 0) { return 0; }
@@ -920,6 +929,30 @@ fn _agnostic_ledger_push_event_locked(e, ev, now_ms): i64 {
 #
 # Returns how many events were taken.
 fn agnostic_ledger_drain(e): i64 {
+    return agnostic_ledger_drain_a(0, e, 0);
+}
+
+# A finished task's output, from the event that carries it: the `token` event agnosai sends
+# once per task the model answered, `{task_id, token, complete: true}` (agnosai 2.1.5, its
+# ADR 022). 1 when `ev` is one, with its id and text strings.
+fn agnostic_ledger_is_final_token(ev): i64 {
+    if (ev == 0) { return 0; }
+    var t = agnosai_crew_event_event_type(ev);
+    if (t == 0 || str_eq(t, AGNOSTIC_EV_TOKEN) == 0) { return 0; }
+    var d = agnosai_crew_event_data(ev);
+    if (bayan_json_v_is_obj(d) != 1) { return 0; }
+    var c = bayan_json_v_obj_get_by_cstr(d, "complete");
+    if (bayan_json_v_is_bool(c) != 1 || bayan_json_v_bool(c) != 1) { return 0; }
+    if (bayan_json_v_is_str(bayan_json_v_obj_get_by_cstr(d, "task_id")) != 1) { return 0; }
+    if (bayan_json_v_is_str(bayan_json_v_obj_get_by_cstr(d, "token")) != 1) { return 0; }
+    return 1;
+}
+
+# `agnostic_ledger_drain`, collecting into `finals` — a vec in `a`, or 0 for none — every
+# event that carries a finished task's output (`agnostic_ledger_is_final_token`), so the
+# caller can keep it once the ledger lock is released (0.1.15, ADR 0019). An event is never
+# freed, so a pointer collected here stays valid after its ring slot is reused.
+fn agnostic_ledger_drain_a(a, e, finals): i64 {
     if (e == 0) { return 0; }
     mutex_lock(_agnostic_ledger_mutex);
     var sub = load64(e + AGNOSTIC_LE_SUB);
@@ -940,6 +973,7 @@ fn agnostic_ledger_drain(e): i64 {
         var ev = agnosai_event_sub_try_recv(sub);
         if (ev == 0) { break; }
         _agnostic_ledger_push_event_locked(e, ev, now);
+        if (finals != 0 && agnostic_ledger_is_final_token(ev) == 1) { vec_push_a(a, finals, ev); }
         taken = taken + 1;
     }
 

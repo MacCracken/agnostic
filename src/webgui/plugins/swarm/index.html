@@ -2729,11 +2729,26 @@ function presetAgent(p, i) {
   return { def, view: guessRole(p.role + ' ' + (p.name || '') + ' ' + key) };
 }
 /**
+ * The tool kinds role `r` uses in spec `s`, most-used first: the ones switched on that it is given
+ * any weight for. They are what the role's agent can do, and what its tasks need (agnostic 0.1.15).
+ */
+function roleTools(s, r) {
+  const mix = (s.roles[r] && s.roles[r].tools) || {};
+  return TOOL_KEYS.filter((k) => s.tools[k] && s.tools[k].on && mix[k] > 0)
+    .sort((a, b) => mix[b] - mix[a] || TOOL_KEYS.indexOf(a) - TOOL_KEYS.indexOf(b));
+}
+/**
  * The crew a spec submits, and the plan the live view binds the crew's events to.
  *
  * Only the primary tasks travel: fan-out, rework, regions, caps, tools and the failure model are
  * simulator settings. The roster is one agent per role the tasks use (with the spec's goals and
  * live models), or a preset's agents. `process` 'auto' is a DAG when any task has dependencies.
+ *
+ * With the role roster each agent says what it is — `domain` its role, `tools` the kinds the role
+ * uses — and each task asks for the same, `domain` and `required_tools` (agnostic 0.1.15, ADR
+ * 0017), so the engine gives a reviewer's task to the reviewer. Without them every agent tied on
+ * everything but complexity, and the first agent took every task. A preset's agents carry their
+ * own domains, which no swarm role names, so a preset roster gets no hints.
  */
 function specToCrewRequest(s, preset) {
   const order = topoOrder(specTasks(s)) || [];
@@ -2747,10 +2762,14 @@ function specToCrewRequest(s, preset) {
       if (a && !seen.has(a.def.key)) { seen.add(a.def.key); roster.push(a); }
     }
   }
+  let hinted = false;
   if (!roster.length) {
+    hinted = true;
     const used = new Set(order.map((t) => t.role));
     roster = ROLE_KEYS.filter((r) => used.has(r)).map((r) => {
-      const def = { key: r, name: ROLES[r].label, role: ROLES[r].label, goal: s.roles[r].goal };
+      const def = { key: r, name: ROLES[r].label, role: ROLES[r].label, goal: s.roles[r].goal, domain: r };
+      const tools = roleTools(s, r);
+      if (tools.length) def.tools = tools;
       if (s.live.models[r]) def.llm_model = s.live.models[r];
       return { def, view: r };
     });
@@ -2763,6 +2782,11 @@ function specToCrewRequest(s, preset) {
     };
     const d = t.difficulty || 1;
     if (d >= 10) o.risk = 'high'; else if (d > 1.2) o.risk = 'medium';
+    if (hinted && ROLE_KEYS.includes(t.role)) {
+      o.domain = t.role;
+      const need = roleTools(s, t.role);
+      if (need.length) o.required_tools = need;
+    }
     if (process === 'dag') {
       const deps = (t.deps || []).map((k) => pos.get(k)).filter((x) => x !== undefined);
       if (deps.length) o.dependencies = deps;

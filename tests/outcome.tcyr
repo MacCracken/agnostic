@@ -332,6 +332,37 @@ fn test_task_usage() {
         str_from("metadata")), 0, "engine metadata is still not exposed");
 }
 
+# ⭐ 0.1.15: a result names its agent — the key agnosai writes as `agent` on a task the model
+# answered (its ADR 022) — as `agent_key`, the name the plan's `selection.winner` uses.
+fn test_task_agent() {
+    test_group("outcome/agent");
+
+    var a = arena_allocator(65536);
+    var r = _t_metered("t1", 12, 3, 0 - 1, 7);
+    agnosai_task_result_with_metadata(r, str_from("agent"), bayan_json_v_str_new(str_from("reviewer")));
+    var v = _agnostic_task_result_to_value_a(a, r);
+    var ak = agnostic_req_str(v, AGNOSTIC_JK_AGENT_KEY);
+    var named = 0;
+    if (ak != 0) { named = str_eq_cstr(ak, "reviewer"); }
+    assert_eq(named, 1, "⭐ an LLM-answered result names its agent as agent_key");
+    assert_eq(bayan_json_v_obj_get_by_str(v, str_from("agent")), 0, "under agnostic's name, not the engine's");
+    assert_eq(bayan_json_v_obj_get_by_str(bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_USAGE), AGNOSTIC_JK_AGENT_KEY), 0,
+      "beside usage, not inside it");
+
+    # The engine writes none on a placeholder, an error or a cancelled job: none is invented.
+    var ph = agnosai_task_result_new(str_from("t2"), str_from("echo"), AGNOSAI_STATUS_COMPLETED);
+    agnosai_task_result_with_metadata(ph, str_from("task_duration_ms"), bayan_json_v_int_new(3));
+    assert_eq(bayan_json_v_obj_get_by_str(_agnostic_task_result_to_value_a(a, ph), AGNOSTIC_JK_AGENT_KEY), 0,
+      "a result without one carries no agent_key");
+    var cx = agnosai_task_result_new(str_from("t3"), str_from("crew cancelled"), AGNOSAI_STATUS_FAILED);
+    assert_eq(bayan_json_v_obj_get_by_str(_agnostic_task_result_to_value_a(a, cx), AGNOSTIC_JK_AGENT_KEY), 0,
+      "nor does one with no metadata at all");
+    var odd = agnosai_task_result_new(str_from("t4"), str_from("x"), AGNOSAI_STATUS_COMPLETED);
+    agnosai_task_result_with_metadata(odd, str_from("agent"), bayan_json_v_int_new(7));
+    assert_eq(bayan_json_v_obj_get_by_str(_agnostic_task_result_to_value_a(a, odd), AGNOSTIC_JK_AGENT_KEY), 0,
+      "and an agent that is not a string is not passed through");
+}
+
 fn test_crew_usage() {
     test_group("outcome/usage-crew");
 
@@ -372,6 +403,7 @@ fn main() {
     test_wire_shape();
     test_task_result_shape();
     test_task_usage();
+    test_task_agent();
     test_crew_usage();
     return assert_summary();
 }

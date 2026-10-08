@@ -18,18 +18,18 @@ file (`AGNOSTIC_AUDIT_PATH`). Everything else is in memory and is gone.
 | Login rate buckets | Memory (`src/auth/ratelimit.cyr`) | Gone. Every bucket starts empty. |
 | Audit chain | Its own patra file, verified at open | Survives. The next entry links to the last stored one (since 0.1.13; see below). The 1,024-entry read ring is re-seeded from the file ([ADR 0011](../adr/0011-audit-entries-are-read-from-a-bounded-copy.md)). |
 | Crew that was completed, failed or cancelled | `agnostic_crews` (the outcome) and `agnostic_crew_index` (its listing row) | Survives. `GET /crews/{id}` serves the stored document verbatim, and the crew is listed. |
-| Crew that was pending, running or `unknown` at the stop | `agnostic_crew_inflight`, a row with no status | Becomes **`interrupted`** at the next mount, before the server listens. It keeps its name, scope, engine mode, process, `tasks_submitted` and `submitted_at`. It loses its results, usage, cost, `started_at`, events and plan. |
+| Crew that was pending, running or `unknown` at the stop | `agnostic_crew_inflight`, a row with no status; `agnostic_crew_partial`, the outputs of its tasks the model had finished (0.1.15) | Becomes **`interrupted`** at the next mount, before the server listens. It keeps its name, scope, engine mode, process, `tasks_submitted` and `submitted_at`, and since 0.1.15 the results of the tasks the model had finished answering ([ADR 0019](../adr/0019-an-interrupted-crew-keeps-what-its-finished-tasks-answered.md)). It loses the other tasks, its usage, cost, `started_at`, events and plan. |
 | Crew that ended in the engine but had not been latched yet (the collector's 200 ms window) | `agnostic_crew_inflight` | **`interrupted`**. Its results are lost. |
 | Cancelled crew whose running tasks had not reported yet | `agnostic_crews` (cancelled, written when the cancel latched) | Stays **cancelled**. The results those tasks would have brought are lost ([ADR 0012](../adr/0012-a-cancelled-crew-keeps-its-finished-results.md)). |
 | Crew whose outcome write failed (disk full, I/O error) | `agnostic_crew_inflight`, still there | **`interrupted`**. |
 | Crew whose in-flight write failed at submit | Nowhere | **404**, as every interrupted crew answered before 0.1.13. Logged at ERROR when it happened. |
-| Event ring, plan, ledger timings | Memory (the ledger) | Gone. `/events`, `/plan` and cancel answer 404 for any crew from before the restart, while `GET /crews/{id}` answers from disk. |
+| Event ring, plan, ledger timings | Memory (the ledger) | Gone. `/events` and `/plan` answer 404 for any crew from before the restart, while `GET /crews/{id}` answers from disk, and cancel answers 409 from disk: the crew has finished (0.1.15). |
 | `Idempotency-Key`s | Memory (the ledger) | Gone. A retry with the same key starts a new crew ([ADR 0008](../adr/0008-crews-belong-to-the-submitting-tenant.md)). |
 | Engine registry, and work the engine was doing | Memory (agnosai) | Gone, and not resumed. Resuming needs agnosai F4, a durable crew log. |
 
 An interrupted crew reports no usage and no cost, even when some of its tasks finished and spent
-money. agnostic never received that metering, because a `task_completed` event carries no output and
-no usage. An `interrupted` document has no `finished_at` and no `started_at`. It has
+money. agnostic never received that metering: the `token` event that carries a finished task's
+output (kept since 0.1.15) carries no usage, and a `task_completed` event carries neither. An `interrupted` document has no `finished_at` and no `started_at`. It has
 `interrupted_at`, the time the next mount declared it.
 
 ## A crew named over 255 bytes (fixed in 0.1.13)
@@ -57,10 +57,16 @@ now seeds the head from the last entry it loads (`_agnostic_audit_seed_head_lock
 ⚠ **A trail written before 0.1.13 keeps its breaks.** Nothing rewrites the file, because it is the
 evidence. It holds an entry with an empty `prev_hash` after each restart that recorded something,
 so it still answers `intact: false`. `bad_index` names the first such entry; before 0.1.13 it said 0
-for every break. Verification stops at that break, so the verdict covers nothing after it, including
-the entries the fixed binary adds. To start a trail that verifies, stop the server and move the
-audit file aside; keep it. The CHANGELOG (0.1.13, Fixed) says what the log and the Audit view show
-for such a trail.
+for every break.
+
+**Since 0.1.15 the verdict says what kind of break it found**, and covers the whole trail. The open
+walks every entry instead of stopping at the first failure, and names each break: a **restart**
+(the entry hashes correctly and names no predecessor) or an **alteration** (anything else). Such a
+trail answers `verdict: "restarts"`, with each break's index under `breaks`, and the log says so at
+WARN rather than reporting the store altered; an alteration anywhere in it, before or after the
+breaks, answers `verdict: "altered"`. ⚠ A restart break cannot show whether the entries just before
+it were deleted. To start a trail that verifies `intact`, stop the server and move the audit file
+aside; keep it.
 
 ## ⚠ One agnostic process per database file
 
@@ -69,8 +75,17 @@ second agnostic started on the same `AGNOSTIC_DB_PATH` (for example, a rolling u
 volume) would sweep the first process's **live** crews to `interrupted`. Write-once would then refuse
 their real outcomes, and the first process's ledger would disagree with the disk.
 
-The definition cache already assumes one writer (`src/engine/definitions.cyr`). Nothing enforces this
-yet; a guard is a separate roadmap item.
+The definition cache already assumes one writer (`src/engine/definitions.cyr`).
+
+**Enforced since 0.1.15.** Mount claims the file before anything else: an exclusive, non-blocking
+`flock` on `<AGNOSTIC_DB_PATH>.owner`, held for the life of the process. A second process finds it
+held, logs `another agnostic process holds this database; refusing to start` with the path, and
+exits having started no engine and opened nothing. The kernel drops the lock when the holder exits,
+however it exits, so a crash leaves nothing to clear. The sidecar is never deleted (deleting it would
+let a starting process lock a new inode while the old one is held), and it is opened `O_CLOEXEC`, so
+a sandboxed tool's child cannot inherit the claim. A rolling update on one volume must therefore stop
+the old process before the new one starts. `src/engine/store.cyr` holds the reasoning;
+`restart/one-process` the test.
 
 ## Downgrading
 

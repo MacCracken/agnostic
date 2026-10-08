@@ -20,9 +20,10 @@
 # server's. "Settled" is therefore either state: sigil installed main's block
 # (state 2), or main's own block is there for it to read.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_MDB = "/tmp/agnostic-mount-suite.patra";
-var _T_MAUDIT = "/tmp/agnostic-mount-suite-audit.patra";
+var _T_MDB = _tt_tmp_path("mount-suite");
+var _T_MAUDIT = _tt_tmp_path("mount-suite-audit");
 
 # A stand-in for sandhi's per-request arena slot: claimed at load, before any
 # thread exists, exactly as sandhi claims its own before spawning workers.
@@ -172,6 +173,41 @@ fn test_the_transport_rules() {
       "byte for byte as it was written — spacing included");
 }
 
+# 1 when raw response `h` carries header line `line` (a C string, CRLF included) among its
+# headers — before the blank line that ends them.
+fn _t_has_header(h, line) {
+    var end = str_index_of_cstr(h, "\r\n\r\n");
+    if (end < 0) { return 0; }
+    var at = str_index_of_cstr(h, line);
+    if (at < 0 || at > end) { return 0; }
+    return 1;
+}
+
+# ⭐ 0.1.15: a 405 names the methods its path takes. RFC 9110 §15.5.6 makes `Allow` a MUST,
+# and until 0.1.15 the send path dropped every header line from a JSON body — so this is
+# proven on the real socket path, not on the response record.
+fn test_a_405_says_what_is_allowed() {
+    test_group("serve/allow-on-405");
+
+    var h = _t_through_handler("POST /health HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq(str_starts_with(h, str_from("HTTP/1.1 405")), 1, "POST /health is 405");
+    assert_eq(_t_has_header(h, "\r\nAllow: GET\r\n"), 1, "naming GET, the one method it takes");
+
+    var d = _t_through_handler("PATCH /api/v1/agents/definitions/x1 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq(str_starts_with(d, str_from("HTTP/1.1 405")), 1, "a verb nothing takes is 405 on a known path");
+    assert_eq(_t_has_header(d, "\r\nAllow: GET, PUT, DELETE\r\n"), 1,
+      "and lists every arm of the path, in the table's order");
+
+    var c = _t_through_handler("GET /api/v1/crews/x1/cancel HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq(_t_has_header(c, "\r\nAllow: POST\r\n"), 1, "a POST-only path says POST");
+
+    var n = _t_through_handler("POST /nope HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq(str_starts_with(n, str_from("HTTP/1.1 404")), 1, "an unknown path is 404");
+    assert_eq(_t_has_header(n, "\r\nAllow:"), 0, "and names no methods");
+    var ok = _t_through_handler("GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq(_t_has_header(ok, "\r\nAllow:"), 0, "nor does a 200");
+}
+
 # OTLP export starts only when configured, and stopping it is safe either way (0.1.14, ADR
 # 0018). Driven through the config block, since `lib/` has no setenv.
 fn test_telemetry_export() {
@@ -218,9 +254,12 @@ fn main() {
     test_a_workers_first_hash_keeps_its_tls();
     test_the_handler_survives_a_missing_arena();
     test_the_transport_rules();
+    test_a_405_says_what_is_allowed();
     test_telemetry_export();
     agnostic_audit_close();
     agnostic_store_close();
+    _tt_unlink_store(_T_MDB);
+    _tt_unlink_store(_T_MAUDIT);
     return assert_summary();
 }
 

@@ -207,6 +207,41 @@ test('specToCrewRequest numbers tasks in topological order, and the plan keeps t
   assert.equal(request.process, 'dag', 'auto is a DAG when tasks depend on each other');
 });
 
+test('a live swarm asks for each task\'s role, so the engine picks that role\'s agent (agnostic 0.1.15)', () => {
+  const s = S.defaultSpec('custom', 1);
+  const { request } = S.specToCrewRequest(s, null);
+  assert.ok(request.agents.length > 1, 'precondition: more than one role');
+  for (const a of request.agents) {
+    assert.equal(a.domain, a.key, 'each role agent says what it is: its domain is its role');
+    assert.ok(Array.isArray(a.tools) && a.tools.length, 'and what it can do: the tool kinds its role uses');
+    for (const t of a.tools) assert.ok(s.roles[a.key].tools[t] > 0 && s.tools[t].on, 'only kinds it is given weight for, switched on');
+  }
+  const byKey = new Map(request.agents.map((a) => [a.key, a]));
+  const { plan } = S.specToCrewRequest(s, null);
+  request.tasks.forEach((t, i) => {
+    const role = plan.tasks[i].role;
+    assert.equal(t.domain, role, 'each task asks for its role');
+    assert.deepEqual([...t.required_tools], [...byKey.get(role).tools], 'and for what that role uses');
+  });
+  const planner = byKey.get('planner');
+  if (planner) assert.deepEqual([...planner.tools], ['llm', 'db', 'fs'], 'most-used first, ties in the catalogue order');
+
+  // A tool kind switched off is not named; a role with no kind left asks for none.
+  const off = S.defaultSpec('custom', 1);
+  for (const k of ['llm', 'search', 'exec', 'db', 'fs']) off.tools[k].on = false;
+  const o = S.specToCrewRequest(off, null).request;
+  assert.ok(o.agents.every((a) => !('tools' in a)), 'no tools on, no tools named');
+  assert.ok(o.tasks.every((t) => !('required_tools' in t) && typeof t.domain === 'string'), 'the domain still travels');
+
+  // A preset roster carries its own domains, which no swarm role names: no hints.
+  const p = S.defaultSpec('custom', 1);
+  p.live.roster = 'preset';
+  const preset = { agents: [{ agent_key: 'perf', role: 'Performance tester', goal: 'Load it', domain: 'performance' }] };
+  const pr = S.specToCrewRequest(p, preset).request;
+  assert.equal(pr.agents[0].domain, 'performance', 'a preset agent keeps its own domain');
+  assert.ok(pr.tasks.every((t) => !('domain' in t) && !('required_tools' in t)), 'and its tasks ask for nothing');
+});
+
 test('taskTitle strips the mission prefix the plugin adds; planFromServer keeps a swarm\'s own titles', () => {
   assert.equal(S.taskTitle('Mission: do it\nTask: Plan the work', 0), 'Plan the work');
   assert.equal(S.taskTitle('A task from somewhere else', 3), 'A task from somewhere else');
@@ -838,7 +873,7 @@ test('⭐ a crew interrupted by a restart ends interrupted — it does not poll 
     await tick(20);
     // The server restarts mid-run.
     Object.assign(c, { gone: true, status: 'interrupted', results: [], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, metered_tasks: 0, costed_tasks: 0 },
-      error: "the server restarted before this crew's outcome was recorded; its work was lost" });
+      error: "the server restarted before this crew finished; tasks still in progress were lost" });
     c.times.started = 0;
     c.times.interrupted = c.times.submitted + 60000;
   } });

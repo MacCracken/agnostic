@@ -299,7 +299,8 @@ fn test_ready_one_fails() {
 fn test_version_threading() {
     test_group("routes/version");
 
-    # CYRIUS_PKG_VERSION resolves only in the entry file, so mount threads it in.
+    # CYRIUS_PKG_VERSION does not resolve two includes deep (cyrius issue 2026-10-07), so
+    # mount threads it in.
     # Unset, /ready must say "unknown" rather than emit an empty or absent value.
     agnostic_version_set(0);
     assert_eq(str_eq_cstr(agnostic_version(), "unknown"), 1, "unset version reads as unknown");

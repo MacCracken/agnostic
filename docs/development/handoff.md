@@ -1,19 +1,10 @@
 # agnostic — Port Handoff
 
 > **Start here.** This is the orientation document for picking up the Python → Cyrius port.
-> It is deliberately short and links outward rather than restating.
-> Last refreshed: **2026-08-23**, after M5 and the M6 viability gate. The toolchain
-> and dependency facts in §2 and §6 were refreshed **2026-10-01**, at 0.1.7; §5
-> gained the store-lock rules at 0.1.4, the borrow/TLS rules at 0.1.5, the
-> dependency and embedding rules at 0.1.7, the transport and plugin rules at 0.1.8, the
-> crew-surface and plugin-rung rules at 0.1.9, and the view, kit and toolchain rules at 0.1.10.
-> §6 was refreshed again at 0.1.11, for the re-pin to agnosai 2.1.3 and libro 2.10.6, and at
-> 0.1.12, for agnosai 2.1.4 (kavach 3.13.2, ai-hwaccel 2.4.1), and at 0.1.14 for agnosai 2.1.6.
-> §1 notes the WebGUI (0.1.7), its plugin platform (0.1.8), the server-checked plugins and
-> tenant-scoped crews of 0.1.9, and the views of 0.1.10; §2 and §6 moved to cyrius 6.6.14 then.
-> At 0.1.13 the ADR list gained 0013–0015, §5's patra `COL_STR` rule was corrected, and §1's
-> version line and M5 figures were made to point at `VERSION` and `state.md`. At 0.1.14 §1 gained
-> 0.1.11–0.1.14, the ADR list 0016–0018, and §5's modules-less `[deps.X]` rule its 6.6.13 fix.
+> It is deliberately short and links outward rather than restating. §1 says where the port is
+> and does not grow per release: what each release did is in [`CHANGELOG.md`](../../CHANGELOG.md),
+> today's figures are in [`state.md`](state.md), and what comes next is in [`roadmap.md`](roadmap.md).
+> §2–§8 are standing rules and the decisions behind them; each rule says when it was learned.
 
 Read in this order:
 
@@ -24,73 +15,43 @@ Read in this order:
 | [`roadmap.md`](roadmap.md) | Open work through v1.0 (M6–M9), what waits on agnosai and other siblings, and the settled decisions |
 | [`../../CYRIUS-PORT-BRIEF.md`](../../CYRIUS-PORT-BRIEF.md) | Research snapshot (2026-08-19): language notes, dep stack, **§7 decisions — binding** |
 | [`../../ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) | 86 verified defects in the Python oracle. §3 gated M2, §2.2 gated M3; **§3.15 is what M6's gate now measures** |
-| [`../adr/`](../adr/) | Eighteen ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server, views that link through the shell with one bridge client, audit entries read from a bounded copy, a cancelled crew keeping its finished results, a crew a restart interrupted answering `interrupted`, the estimator's one-agent baseline as its own model, the HTTP API described by a generated schema, agent selection explained by recomputing it, selection hints on a task, and crews joining their request's trace with OTLP export |
+| [`../adr/`](../adr/) | Nineteen ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server, views that link through the shell with one bridge client, audit entries read from a bounded copy, a cancelled crew keeping its finished results, a crew a restart interrupted answering `interrupted`, the estimator's one-agent baseline as its own model, the HTTP API described by a generated schema, agent selection explained by recomputing it, selection hints on a task, and crews joining their request's trace with OTLP export, and an interrupted crew keeping what its finished tasks answered |
 
 ---
 
 ## 1. Where the port is
 
-**M0 through M5 are complete. M6 — the QA tool surface — has started, and is
-blocked on one decision that has been deliberately deferred (§8).**
+The version is the one in `VERSION`. Per decision #4 the milestones ship together as **1.0.0**
+(§4); patch releases are tagged from `main` along the way, and `main` stays green.
 
-Agnostic runs crews, serves its own catalogue, persists definitions and outcomes
-behind a tamper-evident audit chain, and **authenticates**. At M5 that was 37 source
-files, ~10.2k lines and 631 top-level definitions, with 24 test suites and 1,175
-assertions; [`state.md`](state.md) has today's figures.
+| Milestone | Where it stands |
+|---|---|
+| **M0–M5** | Complete: scaffold, the HTTP skeleton, the crew surface on agnosai (in-process, `dist/agnosai.cyr`), agent definitions and presets, persistence on patra behind libro's tamper-evident audit chain, identity and tenancy. |
+| **M6** — QA tools | Started and blocked. The viability gate is built (2 of 38 preset tool names resolve); what blocks it is the tool-registry decision (§8) and agnosai's tool-calling loop (F1). |
+| **M7** — MCP and A2A | Not started; the target spec revisions are recorded in the roadmap. |
+| **M8** — reports | Not started; HTML, CSV and JSON. Whether PDF joins 1.0 is the user's call. |
+| **M9** — WebGUI | Built: the shell at `/ui`, a plugin platform the server enforces (ADRs 0004–0007, 0010), and the Crews, Library, Audit trail and Swarm Command views. Owed: streaming events, reports, the approval roll-up (agnosai F3). |
 
-M5 landed identity end to end: users and API keys on patra, HS256 tokens, a
-static role→permission table, tenancy with key-prefixing, the dispatch ladder's
-auth rung, login-abuse controls, webhook signatures, `POST /api/v1/auth/login`
-and a first-administrator bootstrap.
+What a newcomer must not miss, wherever they start:
 
-⚠ **Every security property in `src/auth/` is mutation-verified**, and the suites
-are written so that removing a guard breaks a *named* assertion. Before trusting
-a refactor of any of it, re-run those mutations — the list is in `state.md`. A
-passing suite is not evidence on its own; several of these guards were confirmed
-only by watching the test fail without them.
-
-⚠ **`AGNOSTIC_AUTH` defaults to `off`**, because nothing can authenticate before
-an operator has provisioned a user. What keeps that from being fail-open:
-`agnostic_serve_mount` **refuses to start** with auth off on any bind but
-loopback, and refuses to start with auth *required* when no users and no
-bootstrap credential exist.
-
-**M9 is seeded (0.1.7) and has a plugin platform (0.1.8):** the WebGUI shell at `/ui`,
-with a Settings tab, and compiled-in plugins an administrator switches on there. A plugin
-reaches the API only through the shell's host bridge, within its manifest's permissions,
-and keeps its own documents per tenant (ADR 0005). Swarm Command, the first plugin, saves
-swarms with every capability editable, prices them with headless simulations, and runs one
-live as a real crew — labelling every mission SIM or LIVE. With auth off the server answers
-only loopback Hosts, and every POST/PUT must be JSON (ADR 0006). ADRs 0004–0006 are the
-why; `state.md` § WebGUI is the what.
-
-**0.1.9 made the crew surface something a UI can stand on, and the plugin platform something the
-server enforces:** every request a plugin makes is checked by the server against one permission file
-(ADR 0007); crews belong to their tenant, are listed by cursor, and take an `Idempotency-Key`
-(ADR 0008); a collector thread keeps every crew current, its events numbered for a cursor, its
-outcome durable without a poller (ADR 0009); results carry the tokens and cost the engine metered.
-Swarm Command 0.3.0 runs on all of it, and its JavaScript is tested under Node in CI.
-
-**0.1.10 built the views M9 exists for**, as plugins beside Swarm Command: **Crews** (list by status,
-a crew's plan, live progress, results and cost, cancel), **Library** (presets, and agent definitions
-it can write) and **Audit trail** (the chain's verdict and its newest entries). Views link to each
-other through the shell — `#plugin/<id>?<params>` — and every plugin carries one bridge client,
-verified byte for byte by the generator (ADR 0010). A cancelled crew keeps its finished work
-(ADR 0012). The aarch64 artifact is released again.
-
-**0.1.11 and 0.1.12 were re-pins** (agnosai 2.1.3 and 2.1.4, libro 2.10.6). **0.1.13** closed the
-cheap half of the 2026-10-03 landscape review: a crew a restart cut short answers `interrupted` (ADR
-0013), `agnostic api schema` and a committed snapshot freeze the HTTP API (ADR 0015),
-`skills/agnostic/SKILL.md` teaches a coding agent to drive it, and Swarm Command prices one agent at
-the swarm's own spend (ADR 0014). **0.1.14** took agnosai 2.1.5's consumer halves, on 2.1.6, which
-bounds the inference and export calls: crew events and status say what happened (agnosai's B17),
-`/plan?explain=selection` shows why each task got its agent (ADR 0016), a task carries the hints
-that selection weighs (ADR 0017), and every crew joins its request's trace, with OTLP export from
-the OpenTelemetry environment (ADR 0018). What waits on agnosai next — F1's tool loop first — is in
-the roadmap's "Waiting on agnosai".
-
-The version is the one in `VERSION` — see `CHANGELOG.md`. Per decision #4 the port's
-milestones ship together as **1.0.0** (§4).
+- ⚠ **Every security property in `src/auth/` is mutation-verified**, and the suites are written so
+  that removing a guard breaks a *named* assertion. Re-run those mutations before trusting a
+  refactor of any of it — the list is in `state.md`. Since 0.1.9 the same discipline holds for the
+  plugin gate, crew tenancy and the transport rules, and every fix since names its mutation in the
+  CHANGELOG.
+- ⚠ **`AGNOSTIC_AUTH` defaults to `off`**, because nothing can authenticate before an operator has
+  provisioned a user. `agnostic_serve_mount` refuses to start with auth off on any bind but
+  loopback, and with auth *required* when no users and no bootstrap credential exist.
+- ⚠ **One process per database file** — a second process would interrupt the first one's live
+  crews at start-up (ADR 0013), so mount claims `<db>.owner` first and refuses if it is held
+  (0.1.15, architecture 001).
+- ⚠ **The HTTP API is described by a generated snapshot** (ADR 0015): CI fails when
+  `docs/api/generated/schema.json` differs from what the binary prints, so an API change
+  regenerates it (`scripts/gen-api-schema.sh`), and `scripts/check-skill.py` holds
+  `skills/agnostic/SKILL.md` to it.
+- **AgnosAI owns the engine tier.** A gap there is closed by releasing agnosai and re-pinning
+  (§6), never by an override pin or a fork here; what agnostic waits on is the roadmap's
+  "Waiting on agnosai".
 
 ## 2. ⚠ Build it correctly, or you will write a lock CI cannot reproduce
 
@@ -436,12 +397,16 @@ then, against a real requirement. Out of scope for v1.0.
   replaced that worker's block and sandhi's arena slot with it (fixed 0.1.5 by
   `agnostic_crypto_main_init()` first thing in mount). Anything with a lazy
   per-process init belongs on the main thread, before `run_pooled`.
-- **Never pair a lock with `defer`.** cycc 6.6.6 skips a pending `defer` when the
-  function returns through `return f(...)` — for any callee. A skipped unlock is a
-  deadlock on the next caller. Filed upstream 2026-09-26 with a repro.
-- **`CYRIUS_PKG_VERSION` resolves only in the entry file**, not in `include`d files — filed upstream
-  (`2026-08-20-pkgver-not-visible-in-included-files.md`, open at 6.5.33). Workaround in place: read
-  it in `main.cyr` and hand it to the module via a setter.
+- ✅ ~~**Never pair a lock with `defer`.**~~ cycc 6.6.6 skipped a pending `defer` when the
+  function returned through `return f(...)`, so a deferred unlock was a deadlock on the next
+  caller. Fixed in cyrius 6.6.7; `rlock/ownership` pins the fix at the pin (0.1.15). The store
+  wrappers keep their explicit shape because `check-store-lock.py` reads it.
+- **`CYRIUS_PKG_VERSION` resolves in the entry file and one include deep, not two** — 6.5.34
+  fixed the first level only. `src/routes/health.cyr` is two deep (via `src/app.cyr`), so the
+  work-around stays: `main.cyr` reads it and hands it to the module through a setter. Filed
+  2026-10-07 (`2026-10-07-pkgver-not-visible-in-nested-includes.md`, measured at 6.6.14–6.7.3).
+  ⚠ A comment naming the constant in a file one include deep keeps the declaration, so a probe
+  can pass by accident: `tests/health.tcyr` compiles either way.
 
 ⚠ **Never modify the cyrius tree from a consumer repo.** File an issue or proposal instead. Two are
 already filed from this port.

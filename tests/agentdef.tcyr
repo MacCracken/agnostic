@@ -5,6 +5,9 @@
 # forwarded to an engine setter, retained and named in `unforwarded`, or refused
 # with a 422 that says which capability is missing.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
+
+var _T_DEFDB = _tt_tmp_path("agentdef-test");
 
 fn _t_has(s: Str, needle): i64 {
     var n = str_len(s);
@@ -306,7 +309,7 @@ fn test_wire_form_is_ours() {
 # `agnostic_definitions_reset` clears the TABLE as well as the cache, so a
 # previous run's rows cannot leak into this one.
 fn _t_open_db() {
-    agnostic_definitions_open(str_from("/tmp/agnostic-agentdef-test.patra"));
+    agnostic_definitions_open(str_from(_T_DEFDB));
     agnostic_definitions_reset();
     return 0;
 }
@@ -361,7 +364,7 @@ fn test_store_survives_a_reopen() {
     # cache, and nothing in memory from before. What comes back has to come off
     # disk.
     agnostic_definitions_close();
-    assert_eq(agnostic_definitions_open(str_from("/tmp/agnostic-agentdef-test.patra")), 1, "reopened");
+    assert_eq(agnostic_definitions_open(str_from(_T_DEFDB)), 1, "reopened");
 
     var back = agnostic_definitions_get(str_from("persisted"));
     assert_neq(back, 0, "the definition survived the reopen");
@@ -488,6 +491,7 @@ fn main() {
     test_store_survives_a_reopen();
     test_store_is_bounded_and_never_evicts();
     test_listing_a_large_store();
+    _tt_unlink_store(_T_DEFDB);
     return assert_summary();
 }
 

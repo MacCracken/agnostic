@@ -9,6 +9,7 @@
 # The whole program (0.1.7), for the route table below. It includes the store and
 # audit locks (0.1.4) the rlock benches use, so they need no include of their own.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
 fn bench_noop(): i64 { return 0; }
 
@@ -160,7 +161,7 @@ fn _agnostic_bench_ledger_snapshot(): i64 {
 # kept ring under the audit lock (ADR 0011), with the ring full: no store read, no global
 # allocation, whatever the trail's size.
 fn _agnostic_bench_audit_entries(): i64 {
-    var path = "/tmp/agnostic-bench-audit.patra";
+    var path = _tt_tmp_path("bench-audit");
     sys_unlink(path);
     patra_init();
     if (agnostic_audit_open(str_from(path)) == 0) { return 0; }
@@ -189,10 +190,11 @@ fn _agnostic_bench_audit_entries(): i64 {
 
 # 0.1.13 — what ADR 0013 adds to every crew: the in-flight row written at submit (an indexed
 # "already stored?" read, then an INSERT) and deleted with the outcome (a scan of the few live
-# rows, then the DELETE). Two fdatasyncs, both under the store lock. ⚠ /tmp is tmpfs here, so
-# the fsync half is under-reported: on a real disk it dominates.
+# rows, then the DELETE). Two fdatasyncs, both under the store lock. ⚠ The store is under
+# `$TMPDIR`, else `/tmp` (0.1.15; always `/tmp` before). On tmpfs the fsync half is
+# under-reported; on a real disk it dominates — so compare figures from the same filesystem.
 fn _agnostic_bench_inflight(): i64 {
-    var path = "/tmp/agnostic-bench-inflight.patra";
+    var path = _tt_tmp_path("bench-inflight");
     sys_unlink(path);
     patra_init();
     if (agnostic_store_open(str_from(path)) == 0) { return 0; }

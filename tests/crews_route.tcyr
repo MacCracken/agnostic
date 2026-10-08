@@ -6,6 +6,7 @@
 # The whole program, in its canonical order — see src/app.cyr for why this is
 # one include rather than a list every suite has to keep in step.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
 var _T_BODY = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}";
 
@@ -607,7 +608,7 @@ fn test_events_gap() {
     assert_eq(agnostic_req_int(ahead, AGNOSTIC_JK_NEXT, 0 - 1), 999, "and next is 999, unchanged");
 }
 
-var _T_CREWDB = "/tmp/agnostic-crews-route-collector.patra";
+var _T_CREWDB = _tt_tmp_path("crews-route-collector");
 
 # ⭐ The collector (0.1.9): with no client polling at all, a finished crew's outcome is
 # latched and PERSISTED, and its events are collected and timed. Before 0.1.9 an outcome
@@ -656,7 +657,7 @@ fn test_collector_without_a_poller() {
     sys_unlink(_T_CREWDB);
 }
 
-var _T_RESTARTDB = "/tmp/agnostic-crews-route-restart.patra";
+var _T_RESTARTDB = _tt_tmp_path("crews-route-restart");
 
 # A fresh store at `_T_RESTARTDB` and a fresh engine, as a mount leaves them.
 fn _t_fresh_store() {
@@ -738,13 +739,18 @@ fn test_an_interrupted_crew_is_not_404() {
     assert_eq(str_eq_cstr(agnostic_req_str(gb, AGNOSTIC_JK_CREW_SCOPE), "_"), 1, "in the scope it was submitted in");
     assert_eq(str_eq_cstr(agnostic_req_str(gb, AGNOSTIC_JK_NAME), "sweep"), 1, "and its name");
 
-    # What only the ledger held does not survive: events, plan and cancel answer 404.
+    # What only the ledger held does not survive: events and plan answer 404.
     assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/events")), HTTP_NOT_FOUND,
       "its events are not held");
     assert_eq(_t_status_s(a, AGNOSTIC_METHOD_GET, _t_crew_url(id, "/plan")), HTTP_NOT_FOUND,
       "nor its plan");
-    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_POST, _t_crew_url(id, "/cancel")), HTTP_NOT_FOUND,
-      "and cancel answers 404, as for any crew from before a restart");
+    # ⭐ Cancel agrees with GET (0.1.15): the crew exists and has finished, so 409 — it was
+    # 404 until then, while GET answered 200.
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_POST, _t_crew_url(id, "/cancel")), AGNOSTIC_HTTP_CONFLICT,
+      "⭐ and cancel answers 409, as GET answers 200 — it was 404 before 0.1.15");
+    assert_eq(_t_status_s(a, AGNOSTIC_METHOD_POST,
+        _t_crew_url(str_from("6ba7b810-9dad-11d1-80b4-00c04fd430c8"), "/cancel")), HTTP_NOT_FOUND,
+      "a crew neither held nor stored is still 404");
 
     var list = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
         str_from("/api/v1/crews"), str_from(""), 1048576, 0));
@@ -1216,6 +1222,8 @@ fn main() {
     test_submit_joins_the_request_trace();
     test_llm_timeout_reaches_the_engine();
     test_readiness_registers_the_engine();
+    _tt_unlink_store(_T_CREWDB);
+    _tt_unlink_store(_T_RESTARTDB);
     return assert_summary();
 }
 

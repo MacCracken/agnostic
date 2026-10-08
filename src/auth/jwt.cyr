@@ -223,16 +223,18 @@ fn agnostic_jwt_issue_a(a, uid, role, tenant: Str, ttl_secs): i64 {
     if (hb == 0) { return 0; }
 
     var tn = tenant;
-    if (tn == 0) { tn = str_from(""); }
+    if (tn == 0) { tn = str_from_a(a, ""); }
 
+    # Every key in `a` (0.1.15): a token is issued on a request path, and `str_from` would
+    # keep five 16-byte headers per login on the global heap for the life of the process.
     var claims = bayan_json_v_obj_new_a(a);
     if (claims == 0) { return 0; }
-    bayan_json_v_obj_set_a(a, claims, str_from("sub"),
+    bayan_json_v_obj_set_a(a, claims, str_from_a(a, "sub"),
       bayan_json_v_str_new_a(a, str_from_int_a(a, uid)));
-    bayan_json_v_obj_set_a(a, claims, str_from("role"), bayan_json_v_int_new_a(a, role));
-    bayan_json_v_obj_set_a(a, claims, str_from("tenant"), bayan_json_v_str_new_a(a, tn));
-    bayan_json_v_obj_set_a(a, claims, str_from("iat"), bayan_json_v_int_new_a(a, now));
-    bayan_json_v_obj_set_a(a, claims, str_from("exp"), bayan_json_v_int_new_a(a, now + ttl_secs));
+    bayan_json_v_obj_set_a(a, claims, str_from_a(a, "role"), bayan_json_v_int_new_a(a, role));
+    bayan_json_v_obj_set_a(a, claims, str_from_a(a, "tenant"), bayan_json_v_str_new_a(a, tn));
+    bayan_json_v_obj_set_a(a, claims, str_from_a(a, "iat"), bayan_json_v_int_new_a(a, now));
+    bayan_json_v_obj_set_a(a, claims, str_from_a(a, "exp"), bayan_json_v_int_new_a(a, now + ttl_secs));
 
     var pjs = bayan_json_v_build_a(a, claims);
     if (pjs == 0) { return 0; }

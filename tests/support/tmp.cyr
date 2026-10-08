@@ -1,0 +1,48 @@
+# tests/support/tmp — scratch file paths for the suites and the benchmarks (0.1.15).
+#
+# Until 0.1.15 every suite named its stores at a fixed `/tmp/agnostic-*.patra` path, and three
+# things followed from that:
+#
+#   * two runs at once on one machine — two worktrees, two sessions — shared each file, so one
+#     suite could open the other's half-written store;
+#   * `TMPDIR` was ignored, though `/tmp` on the development host is a quota every session
+#     shares, which is why the gates set `TMPDIR`;
+#   * most suites unlinked their files only before use, so a full `cyrius test` left 17 of
+#     them, about 3.7 MB, behind.
+#
+# A path from here is `$TMPDIR/agnostic-<tag>.<pid><ext>` — `/tmp` when `TMPDIR` is unset or
+# empty — so no other process names it, and each suite unlinks its paths at the end of `main`
+# with `_tt_unlink_store`. A suite includes this file right after `src/app.cyr`.
+#
+# Top-level `var _T_X = _tt_tmp_path("…");` is safe: the allocator starts itself on first use
+# and `alloc_init` does nothing once it has, and `getenv` reads `/proc/self/environ`.
+
+# A file path no other process uses — `$TMPDIR/agnostic-<tag>.<pid><ext>` — as a C string.
+# `tag` and `ext` are C strings; `ext` carries its own dot.
+fn _tt_tmp_file(tag, ext) {
+    var dir = getenv("TMPDIR");
+    if (dir == 0) { dir = "/tmp"; }
+    if (strlen(dir) == 0) { dir = "/tmp"; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, dir);
+    str_builder_add_cstr(sb, "/agnostic-");
+    str_builder_add_cstr(sb, tag);
+    str_builder_putc(sb, 46);
+    str_builder_add_int(sb, getpid());
+    str_builder_add_cstr(sb, ext);
+    return str_data(str_builder_build(sb));
+}
+
+# A patra store path no other process uses: `_tt_tmp_file(tag, ".patra")`.
+fn _tt_tmp_path(tag) { return _tt_tmp_file(tag, ".patra"); }
+
+# Remove store `path` (a C string) and the `.owner` claim a mount leaves beside it (0.1.15).
+# Either may be absent.
+fn _tt_unlink_store(path) {
+    sys_unlink(path);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, path);
+    str_builder_add_cstr(sb, ".owner");
+    sys_unlink(str_data(str_builder_build(sb)));
+    return 0;
+}

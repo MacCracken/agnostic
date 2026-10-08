@@ -796,7 +796,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
 </html>
 ";
 
-# --- src/webgui/plugins/swarm/index.html — 451561 bytes ----------------------
+# --- src/webgui/plugins/swarm/index.html — 452787 bytes ----------------------
 var _AGNOSTIC_WEBGUI_ASSET_01 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -3528,11 +3528,26 @@ function presetAgent(p, i) {
   return { def, view: guessRole(p.role + ' ' + (p.name || '') + ' ' + key) };
 }
 /**
+ * The tool kinds role `r` uses in spec `s`, most-used first: the ones switched on that it is given
+ * any weight for. They are what the role's agent can do, and what its tasks need (agnostic 0.1.15).
+ */
+function roleTools(s, r) {
+  const mix = (s.roles[r] && s.roles[r].tools) || {};
+  return TOOL_KEYS.filter((k) => s.tools[k] && s.tools[k].on && mix[k] > 0)
+    .sort((a, b) => mix[b] - mix[a] || TOOL_KEYS.indexOf(a) - TOOL_KEYS.indexOf(b));
+}
+/**
  * The crew a spec submits, and the plan the live view binds the crew's events to.
  *
  * Only the primary tasks travel: fan-out, rework, regions, caps, tools and the failure model are
  * simulator settings. The roster is one agent per role the tasks use (with the spec's goals and
  * live models), or a preset's agents. `process` 'auto' is a DAG when any task has dependencies.
+ *
+ * With the role roster each agent says what it is — `domain` its role, `tools` the kinds the role
+ * uses — and each task asks for the same, `domain` and `required_tools` (agnostic 0.1.15, ADR
+ * 0017), so the engine gives a reviewer's task to the reviewer. Without them every agent tied on
+ * everything but complexity, and the first agent took every task. A preset's agents carry their
+ * own domains, which no swarm role names, so a preset roster gets no hints.
  */
 function specToCrewRequest(s, preset) {
   const order = topoOrder(specTasks(s)) || [];
@@ -3546,10 +3561,14 @@ function specToCrewRequest(s, preset) {
       if (a && !seen.has(a.def.key)) { seen.add(a.def.key); roster.push(a); }
     }
   }
+  let hinted = false;
   if (!roster.length) {
+    hinted = true;
     const used = new Set(order.map((t) => t.role));
     roster = ROLE_KEYS.filter((r) => used.has(r)).map((r) => {
-      const def = { key: r, name: ROLES[r].label, role: ROLES[r].label, goal: s.roles[r].goal };
+      const def = { key: r, name: ROLES[r].label, role: ROLES[r].label, goal: s.roles[r].goal, domain: r };
+      const tools = roleTools(s, r);
+      if (tools.length) def.tools = tools;
       if (s.live.models[r]) def.llm_model = s.live.models[r];
       return { def, view: r };
     });
@@ -3562,6 +3581,11 @@ function specToCrewRequest(s, preset) {
     };
     const d = t.difficulty || 1;
     if (d >= 10) o.risk = 'high'; else if (d > 1.2) o.risk = 'medium';
+    if (hinted && ROLE_KEYS.includes(t.role)) {
+      o.domain = t.role;
+      const need = roleTools(s, t.role);
+      if (need.length) o.required_tools = need;
+    }
     if (process === 'dag') {
       const deps = (t.deps || []).map((k) => pos.get(k)).filter((x) => x !== undefined);
       if (deps.length) o.dependencies = deps;
@@ -8568,7 +8592,7 @@ if (typeof document !== 'undefined' && document.getElementById('map')) {
 </html>
 ";
 
-# --- src/webgui/plugins/crews/index.html — 49191 bytes -----------------------
+# --- src/webgui/plugins/crews/index.html — 49422 bytes -----------------------
 var _AGNOSTIC_WEBGUI_ASSET_02 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -9095,6 +9119,9 @@ class CrewDetail {
       if (typeof r.output === 'string') t.output = r.output;
       if (r.usage && typeof r.usage === 'object') t.usage = r.usage;
       if (typeof r.error === 'string') t.error = r.error;
+      // The agent the engine gave it (agnostic 0.1.15): the outcome's word over the event's,
+      // and the only word for a crew whose events are no longer held.
+      if (typeof r.agent_key === 'string') t.agent = r.agent_key;
     }
   }
   /** One engine event, applied to the tasks, as a feed line — or null for one not shown. */
@@ -9530,7 +9557,7 @@ if (typeof document !== 'undefined' && document.getElementById('detail')) {
 </html>
 ";
 
-# --- src/webgui/plugins/library/index.html — 38876 bytes ---------------------
+# --- src/webgui/plugins/library/index.html — 40065 bytes ---------------------
 var _AGNOSTIC_WEBGUI_ASSET_03 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -9882,8 +9909,18 @@ class PresetShelf {
 }
 
 /** The stored definitions, the one open, and the writes. */
+/** A response's revision: its ETag header as the bridge hands it, else the body's `etag`. */
+function revisionOf(r) {
+  if (r && typeof r.etag === 'string' && r.etag) return r.etag;
+  if (r && r.data && typeof r.data.etag === 'string' && r.data.etag) return r.data.etag;
+  return null;
+}
+
 class DefinitionShelf {
-  constructor(host) { this.host = host; this.items = []; this.loaded = false; this.error = ''; this.open = null; this.unforwarded = []; this.openError = ''; }
+  // `etag`: the revision of the open definition, from its last read or save (agnostic 0.1.15). A
+  // save or delete sends it as If-Match, so an edit made from a stale copy is refused (412)
+  // instead of silently undoing someone else's.
+  constructor(host) { this.host = host; this.items = []; this.loaded = false; this.error = ''; this.open = null; this.unforwarded = []; this.openError = ''; this.etag = null; }
   async load() {
     const r = await this.host.request('GET', '/api/v1/agents/definitions');
     if (r.status !== 200 || !r.data || !Array.isArray(r.data.definitions)) { this.error = r.status === 403 ? 'Your role cannot read definitions.' : 'Could not list definitions: ' + errOf(r); return false; }
@@ -9896,24 +9933,28 @@ class DefinitionShelf {
     this.open = null;
     this.unforwarded = [];
     this.openError = '';
+    this.etag = null;
     if (!RE_DEF_KEY.test(key)) { this.openError = 'There is no such definition.'; return null; }
     const r = await this.host.request('GET', '/api/v1/agents/definitions/' + key);
     if (r.status !== 200 || !r.data || !r.data.definition) { this.openError = r.status === 404 ? 'There is no such definition — it may have been deleted.' : 'Could not read it: ' + errOf(r); return null; }
     this.open = r.data.definition;
     this.unforwarded = Array.isArray(r.data.unforwarded) ? r.data.unforwarded.filter((x) => typeof x === 'string') : [];
+    this.etag = revisionOf(r);
     return this.open;
   }
   /** Create (`isNew`) or replace a definition. Resolves {ok, message, definition?}. */
   async save(def, isNew) {
     const r = isNew
       ? await this.host.request('POST', '/api/v1/agents/definitions', def)
-      : await this.host.request('PUT', '/api/v1/agents/definitions/' + def.key, def);
+      : await this.host.request('PUT', '/api/v1/agents/definitions/' + def.key, def, this.etag ? { ifMatch: this.etag } : undefined);
     if ((r.status === 201 || r.status === 200) && r.data && r.data.definition) {
       this.open = r.data.definition;
       this.unforwarded = Array.isArray(r.data.unforwarded) ? r.data.unforwarded : [];
+      this.etag = revisionOf(r);
       await this.load();
       return { ok: true, message: isNew ? 'Created ' + def.key + '.' : 'Saved ' + def.key + '.', definition: r.data.definition };
     }
+    if (r.status === 412) return { ok: false, stale: true, message: 'Someone else changed ' + def.key + ' since you opened it. Your edits are still in the editor; reload the definition to see theirs.' };
     if (r.status === 409) return { ok: false, message: 'A definition with the key ' + def.key + ' already exists.' };
     if (r.status === 404) return { ok: false, message: def.key + ' no longer exists — someone deleted it.' };
     if (r.status === 403) return { ok: false, message: 'Your role cannot change definitions.' };
@@ -9921,8 +9962,10 @@ class DefinitionShelf {
     return { ok: false, message: errOf(r) };
   }
   async remove(key) {
-    const r = await this.host.request('DELETE', '/api/v1/agents/definitions/' + key);
-    if (r.status === 200 || r.status === 404) { this.open = null; await this.load(); return { ok: true, message: 'Deleted ' + key + '.' }; }
+    const tag = this.open && this.open.key === key ? this.etag : null;
+    const r = await this.host.request('DELETE', '/api/v1/agents/definitions/' + key, undefined, tag ? { ifMatch: tag } : undefined);
+    if (r.status === 200 || r.status === 404) { this.open = null; this.etag = null; await this.load(); return { ok: true, message: 'Deleted ' + key + '.' }; }
+    if (r.status === 412) return { ok: false, stale: true, message: 'Someone else changed ' + key + ' since you opened it, so it was not deleted. Reload it first.' };
     if (r.status === 403) return { ok: false, message: 'Your role cannot delete definitions.' };
     return { ok: false, message: 'Could not delete: ' + errOf(r) };
   }
@@ -10271,7 +10314,7 @@ if (typeof document !== 'undefined' && document.getElementById('detail')) {
 </html>
 ";
 
-# --- src/webgui/plugins/audit/index.html — 26068 bytes -----------------------
+# --- src/webgui/plugins/audit/index.html — 28182 bytes -----------------------
 var _AGNOSTIC_WEBGUI_ASSET_04 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -10319,6 +10362,8 @@ h1 { font-size: 18px; margin: 0 0 4px; }
 .fact.ok .v { color: var(--ok); }
 .fact.bad { border-color: rgba(239, 68, 68, .55); }
 .fact.bad .v { color: var(--err); }
+.fact.warn { border-color: rgba(245, 158, 11, .55); }
+.fact.warn .v { color: var(--warn); }
 .box { border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 11px; margin-top: 12px; color: var(--dim); }
 .box.bad { border-color: rgba(239, 68, 68, .5); color: var(--err); }
 .box.warn { border-color: rgba(245, 158, 11, .5); color: var(--warn); }
@@ -10551,6 +10596,39 @@ function linkStates(entries) {
   return out;
 }
 /** Merge a fresh first page into the entries held (newest first): new ones go on top. */
+/**
+ * What the chain's verdict says (agnostic 0.1.15): `{ label, cls, note, noteCls }` for summary `s`.
+ * A server before 0.1.15 sends no `verdict`, only `intact` and `bad_index`, and cannot tell a
+ * restart from an alteration, so that is read as it always was.
+ */
+function chainVerdict(s) {
+  const n = int(s.break_count);
+  const breaks = Array.isArray(s.breaks) ? s.breaks.filter((b) => b && Number.isInteger(b.index)) : [];
+  const first = (kind) => { const b = breaks.find((x) => x.kind === kind); return b ? b.index : null; };
+  const v = typeof s.verdict === 'string' ? s.verdict : (s.intact === true ? 'intact' : 'legacy');
+  if (v === 'intact') return { label: 'verified', cls: 'ok', note: '', noteCls: '' };
+  if (v === 'unverified') {
+    return { label: 'UNVERIFIED', cls: 'bad', noteCls: 'box bad',
+      note: 'The server could not read the trail when it started, so nothing in it was verified. It keeps recording; the next start will try again.' };
+  }
+  if (v === 'restarts') {
+    return { label: 'RESTART BREAKS', cls: 'warn', noteCls: 'box warn',
+      note: (n ?? breaks.length) + ' place' + ((n ?? breaks.length) === 1 ? '' : 's') + ' where the chain starts again without naming the entry before it' +
+        (first('restart') !== null ? ', first at entry #' + first('restart') : '') +
+        ' — written by a server before 0.1.13, which did not link a restart to the trail, or after a start that could not read it. No alteration was found. Such a break cannot show whether entries just before it were deleted.' };
+  }
+  if (v === 'altered') {
+    const at = first('altered');
+    return { label: 'BROKEN', cls: 'bad', noteCls: 'box bad',
+      note: 'The chain failed verification when the server started' + (at !== null ? ', first altered at entry #' + at : '') +
+        (n !== null && n > 1 ? ' (' + n + ' breaks in all, restarts included)' : '') +
+        ': the stored trail was changed while the server was not running. It keeps recording, so the change is bracketed.' };
+  }
+  return { label: 'BROKEN', cls: 'bad', noteCls: 'box bad',
+    note: 'The chain failed verification when the server started' + (int(s.bad_index) !== null ? ', first at entry #' + s.bad_index : '') +
+      '. This server does not say whether that was an alteration or a restart.' };
+}
+
 function mergeNewest(held, fresh) {
   const top = held.length ? held[0].index : -1;
   const add = fresh.filter((e) => e.index > top);
@@ -10694,12 +10772,13 @@ class AuditView {
     note.replaceChildren();
     if (!s) { if (t.summaryError) note.append(el('div', 'box bad', t.summaryError)); return; }
     const fact = (k, v, cls, title) => { const f = el('div', 'fact' + (cls ? ' ' + cls : '')); f.append(el('div', 'k', k), el('div', 'v', v)); if (title) f.title = title; facts.append(f); };
-    fact('Chain', s.intact === true ? 'verified' : 'BROKEN', s.intact === true ? 'ok' : 'bad', 'checked when the server started (' + String(s.verified || 'open') + ')');
+    const cv = chainVerdict(s);
+    fact('Chain', cv.label, cv.cls, 'checked when the server started (' + String(s.verified || 'open') + ')');
     fact('Entries', String(int(s.total) ?? '—'));
     fact('At start-up', String(int(s.entries_at_open) ?? '—'), '', 'entries the store held when this server started');
     fact('Since', String(int(s.appended) ?? '—'), '', 'entries this server has appended');
     fact('Dropped', String(int(s.dropped) ?? '—'), int(s.dropped) > 0 ? 'bad' : '', 'appends that failed — gaps verification cannot see');
-    if (s.intact !== true) note.append(el('div', 'box bad', 'The chain failed verification when the server started' + (int(s.bad_index) !== null ? ', first at entry #' + s.bad_index : '') + ': the stored trail was altered while the server was not running. It keeps recording, so the tampering is bracketed.'));
+    if (cv.note) note.append(el('div', cv.noteCls, cv.note));
     if (int(s.dropped) > 0) note.append(el('div', 'box warn', s.dropped + ' audit records could not be written. The chain still verifies, because a record never written leaves no hole to find — this count is the only sign of them.'));
   }
   renderRows() {
@@ -10769,20 +10848,20 @@ fn agnostic_webgui_asset_bytes(i): i64 {
 # The `i`th page's length in bytes, as the generator counted it, or 0.
 fn agnostic_webgui_asset_len(i): i64 {
     if (i == 0) { return 39929; }
-    if (i == 1) { return 451561; }
-    if (i == 2) { return 49191; }
-    if (i == 3) { return 38876; }
-    if (i == 4) { return 26068; }
+    if (i == 1) { return 452787; }
+    if (i == 2) { return 49422; }
+    if (i == 3) { return 40065; }
+    if (i == 4) { return 28182; }
     return 0;
 }
 
 # The SHA-256 of the `i`th page's source file, lowercase hex, or 0.
 fn agnostic_webgui_asset_sha256(i): i64 {
     if (i == 0) { return "648fe9a771661148353e0aa1dc0052a079de169dcd50e6379b16472f006795a4"; }
-    if (i == 1) { return "1ab2dfc36ba2af5c485aef0e1edd11850a333a2593966a86836288304a8d14d9"; }
-    if (i == 2) { return "087a2560aa70056975b77ef0b593566709de00c0e7c0999042598b67208abd00"; }
-    if (i == 3) { return "fdcdea3e97cfa7bc34fc240b489c8ef85bd105d36f3a7302b7fa774d1cd6d11c"; }
-    if (i == 4) { return "7414db44ebe8ce144a1125e404848cdc274406c6440e55384c20f55af83776fe"; }
+    if (i == 1) { return "411669d9469395104380f00c572f29a2777104126e4efd3aa441ab4e0df83409"; }
+    if (i == 2) { return "c2200c085910f796d5535a15a0dd405808cb327feab8ac14ab3786a541ea1797"; }
+    if (i == 3) { return "a950f9468c64f6ba5b3fab044283395e20c4fc79b607735f105332b847a8a339"; }
+    if (i == 4) { return "8f222b196fd4a6f9dfe9e389347c58bc6c7b99cb9a8bbe88499508b0be8ae88a"; }
     return 0;
 }
 
@@ -10799,10 +10878,10 @@ fn agnostic_webgui_asset_path(i): i64 {
 # The Content-Security-Policy the `i`th page is served with, or 0.
 fn agnostic_webgui_asset_csp(i): i64 {
     if (i == 0) { return "default-src 'none'; script-src 'sha256-bYYKB5LjVZ9/bMt48VUA0ybhegZ34CAu8JB5qDsSeh0=' 'sha256-7aaIEcGQDDIHI9mAjtdfnZC3ZgV1rxmVx/xdAXvmUMA='; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"; }
-    if (i == 1) { return "default-src 'none'; script-src 'sha256-mQa9I5A63J5e2qKYEppLrjWFD3tzmlmvJizBf6l9mZw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
-    if (i == 2) { return "default-src 'none'; script-src 'sha256-Kco0lad01dc9cHA11GAv3UseDEy63mc46vnB8lN5UNw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
-    if (i == 3) { return "default-src 'none'; script-src 'sha256-pKC6q/x2N0KntteEH7sEOIYmWkBr6Pb5U+70veBNd30='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
-    if (i == 4) { return "default-src 'none'; script-src 'sha256-pN9GIg8MhioPnBnmoZg63PAPmynulcTsAKabcXWRjVE='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 1) { return "default-src 'none'; script-src 'sha256-T3C81vESEyEVff9yhaaRS1UkhRRM7amk1ZHTXmA27Xc='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 2) { return "default-src 'none'; script-src 'sha256-hk+5dtT8fds4ZJG3YGyOPNwKB4TREhZ1uzyb3QtBSxw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 3) { return "default-src 'none'; script-src 'sha256-wbYQVCh7XgC++N8NdS6axkB+bC4t9m5Vlq/EHlHuFQo='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 4) { return "default-src 'none'; script-src 'sha256-Ia6SOA2Yw0/U5w3AcS3qo7YRNRqFf57r7xl9+mYvZYU='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     return 0;
 }
 
@@ -10816,9 +10895,9 @@ fn agnostic_webgui_permissions_json(): i64 {
 # The `i`th plugin's manifest as compact JSON, or 0. `asset` is the page the
 # generator resolved its `entry` to.
 fn agnostic_webgui_plugin_manifest(i): i64 {
-    if (i == 0) { return "{\"id\":\"swarm\",\"name\":\"Swarm Command\",\"description\":\"An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. Save swarms, simulate them or estimate their cost beside what one agent would do with the same tokens, run one as a live crew and see what it really cost, and watch any crew on this server. Each mission is labelled simulated or live.\",\"version\":\"0.5.0\",\"data\":\"mixed\",\"entry\":\"index.html\",\"permissions\":[\"storage\",\"presets:read\",\"crews:read\",\"crews:write\"],\"asset\":1}"; }
-    if (i == 1) { return "{\"id\":\"crews\",\"name\":\"Crews\",\"description\":\"Every crew in your tenant, live: filter by status, open one to see its plan, its progress as it happens, each task's result and what it cost — and cancel one that is still running.\",\"version\":\"0.1.1\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"crews:read\",\"crews:write\"],\"asset\":2}"; }
-    if (i == 2) { return "{\"id\":\"library\",\"name\":\"Library\",\"description\":\"The preset crews built into this server and the agent definitions stored in it: browse both, save a preset's agent as a definition, and create, edit or delete definitions.\",\"version\":\"0.1.0\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"presets:read\",\"definitions:read\",\"definitions:write\"],\"asset\":3}"; }
-    if (i == 3) { return "{\"id\":\"audit\",\"name\":\"Audit trail\",\"description\":\"The tamper-evident audit trail: whether its chain verified, whether any record was dropped, and its newest entries — who did what, and when. Administrators only.\",\"version\":\"0.1.0\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"audit:read\"],\"asset\":4}"; }
+    if (i == 0) { return "{\"id\":\"swarm\",\"name\":\"Swarm Command\",\"description\":\"An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. Save swarms, simulate them or estimate their cost beside what one agent would do with the same tokens, run one as a live crew and see what it really cost, and watch any crew on this server. Each mission is labelled simulated or live.\",\"version\":\"0.5.1\",\"data\":\"mixed\",\"entry\":\"index.html\",\"permissions\":[\"storage\",\"presets:read\",\"crews:read\",\"crews:write\"],\"asset\":1}"; }
+    if (i == 1) { return "{\"id\":\"crews\",\"name\":\"Crews\",\"description\":\"Every crew in your tenant, live: filter by status, open one to see its plan, its progress as it happens, each task's result and what it cost — and cancel one that is still running.\",\"version\":\"0.1.2\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"crews:read\",\"crews:write\"],\"asset\":2}"; }
+    if (i == 2) { return "{\"id\":\"library\",\"name\":\"Library\",\"description\":\"The preset crews built into this server and the agent definitions stored in it: browse both, save a preset's agent as a definition, and create, edit or delete definitions.\",\"version\":\"0.1.1\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"presets:read\",\"definitions:read\",\"definitions:write\"],\"asset\":3}"; }
+    if (i == 3) { return "{\"id\":\"audit\",\"name\":\"Audit trail\",\"description\":\"The tamper-evident audit trail: whether its chain verified, whether any record was dropped, and its newest entries — who did what, and when. Administrators only.\",\"version\":\"0.1.1\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"audit:read\"],\"asset\":4}"; }
     return 0;
 }

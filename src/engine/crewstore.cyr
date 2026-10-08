@@ -85,6 +85,18 @@ var AGNOSTIC_CREW_INFLIGHT_TABLE_SQL =
 "CREATE TABLE agnostic_crew_inflight (crew_id STR, scope STR, cname TEXT, submitted INT, \
 ntasks INT, mode STR, process STR)";
 
+# ## What a crew in flight has already answered (0.1.15, ADR 0019)
+#
+# One row per task the model answered, while its crew has no stored outcome: the output the
+# task's `token` event carried (agnosai 2.1.5+ sends the whole text, `complete: true`). The
+# start-up sweep turns them into an interrupted crew's `results`; the outcome write deletes
+# them, as it deletes the crew's in-flight row. Like that table, **no index**: its live rows
+# belong to the crews in flight, and an index would keep a tombstone for every task ever run.
+# A row is written only for a crew that has an in-flight row and no outcome, so nothing the
+# sweep cannot find is ever left behind.
+var AGNOSTIC_CREW_PARTIAL_TABLE_SQL =
+"CREATE TABLE agnostic_crew_partial (crew_id STR, task_id STR, output TEXT)";
+
 # One crew as the listing shows it — a durable index row, or a ledger entry rendered the
 # same way. Built by `agnostic_crew_row_new_a`.
 enum AgnosticCrewRowOff {
@@ -127,6 +139,7 @@ fn agnostic_crews_ensure(): i64 {
     if (agnostic_store_ensure(AGNOSTIC_CREW_IDX_TABLE_SQL) == 0) { return 0; }
     if (agnostic_store_ensure(AGNOSTIC_CREW_IDX_INDEX_SQL) == 0) { return 0; }
     if (agnostic_store_ensure(AGNOSTIC_CREW_INFLIGHT_TABLE_SQL) == 0) { return 0; }
+    if (agnostic_store_ensure(AGNOSTIC_CREW_PARTIAL_TABLE_SQL) == 0) { return 0; }
     return 1;
 }
 
@@ -264,6 +277,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     # like the index row's: a row left behind is swept at the next start, which finds
     # this outcome and only deletes it.
     _agnostic_crews_inflight_drop_locked(crew_id);
+    # And what its finished tasks answered while it ran (0.1.15, ADR 0019): the outcome
+    # holds the results now, or the sweep has just written them into the interrupted one.
+    _agnostic_crews_partial_drop_locked(crew_id);
     return 1;
 }
 
@@ -445,6 +461,7 @@ fn _agnostic_crews_interrupt_row_locked(row, doc: Str): i64 {
     if (agnostic_store_db() == 0) { return 0; }
     if (_agnostic_crews_exists_locked(crew_id) == 1) {
         _agnostic_crews_inflight_drop_locked(crew_id);
+        _agnostic_crews_partial_drop_locked(crew_id);
         return 2;
     }
     agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_INTERRUPTED);
@@ -453,6 +470,131 @@ fn _agnostic_crews_interrupt_row_locked(row, doc: Str): i64 {
     agnostic_crew_row_set(row, AGNOSTIC_CR_TOKENS, 0 - 1);
     agnostic_crew_row_set(row, AGNOSTIC_CR_COST, 0 - 1);
     return _agnostic_crews_save_row_locked(row, doc);
+}
+
+# --- finished tasks' outputs while a crew runs (0.1.15, ADR 0019) -------------------------
+
+# Keep task `task_id`'s output for crew `crew_id` while the crew runs. Returns 1 when it was
+# written; 0 when the crew has a stored outcome already, has no in-flight row, or the write
+# failed — each of which leaves nothing for the sweep to miss.
+fn agnostic_crews_save_partial(crew_id: Str, task_id: Str, output: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_save_partial_locked(crew_id, task_id, output);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_save_partial`'s body. The caller holds the store lock, so the checks and the
+# write are one step: an outcome written meanwhile has already deleted what this would add.
+fn _agnostic_crews_save_partial_locked(crew_id: Str, task_id: Str, output: Str): i64 {
+    if (crew_id == 0 || task_id == 0 || output == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    if (_agnostic_crews_exists_locked(crew_id) == 1) { return 0; }
+    if (_agnostic_crews_inflight_has_locked(crew_id) == 0) { return 0; }
+    var st = patra_prepare(db, "INSERT INTO agnostic_crew_partial (crew_id, task_id, output) VALUES (?, ?, ?)");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(crew_id), str_len(crew_id));
+    patra_bind_text(st, 1, str_data(task_id), str_len(task_id));
+    patra_bind_text(st, 2, str_data(output), str_len(output));
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    if (rc != PATRA_OK) { return 0; }
+    return 1;
+}
+
+# Whether crew `crew_id` has an in-flight row. The caller holds the store lock.
+fn _agnostic_crews_inflight_has_locked(crew_id: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db, "SELECT crew_id FROM agnostic_crew_inflight WHERE crew_id = ?");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(crew_id), str_len(crew_id));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var n = patra_result_count(rs);
+    patra_result_free(rs);
+    if (n > 0) { return 1; }
+    return 0;
+}
+
+# Delete crew `crew_id`'s kept outputs. The caller holds the store lock. Returns patra's result;
+# a crew with none deletes nothing, which is not an error.
+fn _agnostic_crews_partial_drop_locked(crew_id: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0 || crew_id == 0) { return 0 - 1; }
+    var st = patra_prepare(db, "DELETE FROM agnostic_crew_partial WHERE crew_id = ?");
+    if (st == 0) { return 0 - 1; }
+    patra_bind_text(st, 0, str_data(crew_id), str_len(crew_id));
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    return rc;
+}
+
+# Crew `crew_id`'s kept outputs, in the order they were written, as a vec in `a` of pairs —
+# each a 16-byte record of the task id Str at 0 and the output Str at 8, both copied into `a`.
+# An empty vec for none; 0 when `a` is exhausted.
+fn agnostic_crews_partials_a(a, crew_id: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_partials_locked_a(a, crew_id);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_partials_a`'s body. The caller holds the store lock.
+fn _agnostic_crews_partials_locked_a(a, crew_id: Str): i64 {
+    var out = vec_new_a(a);
+    if (out == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0 || crew_id == 0) { return out; }
+    var st = patra_prepare(db, "SELECT task_id, output FROM agnostic_crew_partial WHERE crew_id = ?");
+    if (st == 0) { return out; }
+    patra_bind_text(st, 0, str_data(crew_id), str_len(crew_id));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return out; }
+    var n = patra_result_count(rs);
+    var i = 0;
+    while (i < n) {
+        # ⛔ Copies, never borrows: both strings point into `rs`, freed below.
+        var tp = patra_result_get_str(rs, i, 0);
+        var tl = patra_result_get_str_len(rs, i, 0);
+        var ol = patra_result_get_text_len(rs, i, 1);
+        if (tp != 0 && tl > 0 && ol >= 0) {
+            var tid = alloc_via(a, tl);
+            var obuf = alloc_via(a, ol + 1);
+            var pair = alloc_via(a, 16);
+            if (tid == 0 || obuf == 0 || pair == 0) { patra_result_free(rs); return 0; }
+            memcpy(tid, tp, tl);
+            if (ol > 0 && patra_result_read_text(db, rs, i, 1, obuf) != PATRA_OK) { ol = 0; }
+            store64(pair, str_new_a(a, tid, tl));
+            store64(pair + 8, str_new_a(a, obuf, ol));
+            vec_push_a(a, out, pair);
+        }
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return out;
+}
+
+# How many outputs are kept for crews in flight. Read by the suites.
+fn agnostic_crews_partial_count(): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_crews_partial_count_locked();
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_crews_partial_count`'s body. The caller holds the store lock.
+fn _agnostic_crews_partial_count_locked(): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var rs = patra_query(db, "SELECT crew_id FROM agnostic_crew_partial");
+    if (rs == 0) { return 0; }
+    var n = patra_result_count(rs);
+    patra_result_free(rs);
+    return n;
 }
 
 # How many crews are in flight — accepted, with no stored outcome yet.

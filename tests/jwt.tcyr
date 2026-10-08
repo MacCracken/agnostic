@@ -83,7 +83,7 @@ fn _t_forge(a, hdr_json, payload_b64, sign_it) {
     store8(si + str_len(hb), 46);
     memcpy(si + str_len(hb) + 1, str_data(payload_b64), str_len(payload_b64));
 
-    var sig = str_from("");
+    var sig: i64 = str_from("");   # `: i64`: an untyped result is assigned below (0.1.15)
     if (sign_it == 1) {
         var mac = alloc_via(a, 32);
         var k = alloc_via(a, 32);

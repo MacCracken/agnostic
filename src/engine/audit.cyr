@@ -47,13 +47,16 @@
 # part of what an operator reads. A chain that verifies clean with a non-zero
 # drop count has not told you everything.
 #
-# ⚠ **A write that fails is the exception (roadmap, "Audit chain").**
-# `chain_append` moves the head to the new entry before `patrastore_append` runs,
-# and a failed write does not move it back, so the next entry saved names a hash
-# the store never got and the next open reports the store altered. A record
-# refused before `chain_append` (a closed store) is a true, invisible gap. Older
-# than 0.1.13; the fix has to decide what a write that errors after its row
-# landed means.
+# ⚠ **A failed write puts the head back (0.1.15).** `chain_append` moves the head to
+# the new entry before `patrastore_append` runs. Until 0.1.15 a failed write left it
+# there, so the next entry saved named a hash the store never got and the next open
+# reported the store altered. Now the head returns to the failed entry's own
+# predecessor — the last entry the store holds — and the next entry links to that.
+# That is exact because no failure `patrastore_append` reports can follow a written row:
+# libro refuses an over-long field before it touches patra, and every error patra's
+# INSERT returns (`_exec_insert`, `tbl_insert`) comes before its page write
+# (`lib/patra.cyr`, read at 1.15.1). A record refused before `chain_append` (a closed
+# store) leaves the head alone. Either way the record is a gap, and counted.
 #
 # An audit failure does **not** fail the operation being audited. That is a
 # deliberate choice and the opposite one is defensible: it means an action can
@@ -111,6 +114,47 @@ var _agnostic_audit_appended = 0;
 var _agnostic_audit_intact = 1;
 var _agnostic_audit_bad_index = 0 - 1;
 var _agnostic_audit_at_open = 0;
+
+# ## The verdict says what it found (0.1.15)
+#
+# Until 0.1.15 the open ran libro's `verify_chain`, which stops at the first failure, so a
+# broken trail reported one index and nothing after it: a real alteration later in the file
+# went unreported, and a trail with a harmless break could never say so. Two kinds of break
+# are now told apart, and the whole trail is walked (`_agnostic_audit_judge_locked`):
+#
+#   * **restart** — an entry that hashes correctly, past the first, whose `prev_hash` is
+#     empty: a chain that began again without linking to the trail before it. Every trail a
+#     release before 0.1.13 wrote has one after each restart that recorded something
+#     (0.1.13 seeds the head at open), and so does any start whose read of the trail failed
+#     (below). ⚠ It is not proof of innocence: the entries just before such a break could
+#     have been deleted and nothing would show it.
+#   * **altered** — anything else: an entry whose hash does not match its content, a first
+#     entry that names a predecessor (the front was cut off), or a link to anything but the
+#     entry before it (deleted, inserted or reordered).
+#
+# A read that fails is a third outcome, **unverified**: until 0.1.15 libro's legacy load
+# answered an empty vec for a failed query, which `verify_chain` passed, so an unreadable
+# trail reported `intact: true` with nothing checked.
+enum AgnosticAuditVerdict {
+    AGNOSTIC_AV_INTACT     = 0;     # every entry hashes and links
+    AGNOSTIC_AV_RESTARTS   = 1;     # breaks, and every one a restart
+    AGNOSTIC_AV_ALTERED    = 2;     # at least one alteration
+    AGNOSTIC_AV_UNVERIFIED = 3;     # the trail could not be read
+}
+
+enum AgnosticAuditBreak {
+    AGNOSTIC_AB_RESTART = 1;
+    AGNOSTIC_AB_ALTERED = 2;
+}
+
+# The breaks kept for reading, first first, as (index, kind) pairs; how many are kept; how
+# many there are in all; and how many of those are alterations.
+var AGNOSTIC_AUDIT_BREAKS_KEPT = 32;
+var _agnostic_audit_breaks: i64[64];
+var _agnostic_audit_break_kept = 0;
+var _agnostic_audit_break_total = 0;
+var _agnostic_audit_altered = 0;
+var _agnostic_audit_verdict = 0;
 
 # ## The newest entries, kept for reading (0.1.10)
 #
@@ -202,27 +246,156 @@ fn _agnostic_audit_open_locked(path: Str): i64 {
     # running" question. No longer the ONLY possible pass; see
     # `agnostic_audit_reverify`.
     _agnostic_audit_at_open = patrastore_len(s);
-    var entries = patrastore_load_all(s);
-    var err = 0;
-    if (entries != 0) { err = verify_chain(entries, 0); }
+    # ⚠ `_or_err`, not `patrastore_load_all`: the legacy load answers an empty vec for a
+    # query that failed, which reads as an empty, intact trail (0.1.15).
+    var entries = patrastore_load_all_or_err(s);
+    var verdict = _agnostic_audit_judge_locked(entries);
+    if (verdict == AGNOSTIC_AV_UNVERIFIED) { entries = 0; }
     _agnostic_audit_ring_seed_locked(entries);
     _agnostic_audit_seed_head_locked(entries);
-    if (err == 0) {
-        _agnostic_audit_intact = 1;
-        _agnostic_audit_bad_index = 0 - 1;
-    } else {
-        _agnostic_audit_intact = 0;
-        _agnostic_audit_bad_index = error_index(err);
-        # ⚠ Loud, and deliberately not fatal. A broken chain means the file was
-        # altered — refusing to start would hand an attacker a denial of service
-        # by corrupting one byte, and would destroy the evidence's availability.
-        # It is reported at ERROR, surfaced on `/api/v1/audit`, and the process
-        # keeps recording so the tampering is bracketed rather than hidden.
-        agnostic_log_kv_int(SK_ERROR,
-          "audit chain failed verification at open; the store was altered", 62,
-          "entry", 5, _agnostic_audit_bad_index);
-    }
+    # ⚠ Loud, and deliberately not fatal. Refusing to start would hand an attacker a denial
+    # of service by corrupting one byte, and would take the evidence offline with it. The
+    # verdict is logged, surfaced on `/api/v1/audit`, and the process keeps recording so
+    # whatever happened is bracketed rather than hidden.
+    _agnostic_audit_log_verdict(0);
     return 1;
+}
+
+# Judge loaded trail `entries` — a vec in chain order, or libro's error object from
+# `patrastore_load_all_or_err` — and record the verdict, the breaks and the first bad index.
+# Answers the verdict. The caller holds the audit lock.
+#
+# Walks every entry, never stopping at a break (see "The verdict says what it found").
+fn _agnostic_audit_judge_locked(entries): i64 {
+    _agnostic_audit_break_kept = 0;
+    _agnostic_audit_break_total = 0;
+    _agnostic_audit_altered = 0;
+    _agnostic_audit_bad_index = 0 - 1;
+    if (entries == 0 || libro_is_error(entries) == 1) {
+        _agnostic_audit_intact = 0;
+        _agnostic_audit_verdict = AGNOSTIC_AV_UNVERIFIED;
+        return AGNOSTIC_AV_UNVERIFIED;
+    }
+    var n = vec_len(entries);
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(entries, i);
+        var kind = 0;
+        var ph = entry_prev_hash(e);
+        if (entry_verify(e) == 0) {
+            kind = AGNOSTIC_AB_ALTERED;
+        } elif (i == 0) {
+            if (str_len(ph) != 0) { kind = AGNOSTIC_AB_ALTERED; }
+        } elif (constant_time_eq_str(ph, entry_hash(vec_get(entries, i - 1))) == 0) {
+            kind = AGNOSTIC_AB_ALTERED;
+            if (str_len(ph) == 0) { kind = AGNOSTIC_AB_RESTART; }
+        }
+        if (kind != 0) { _agnostic_audit_note_break(i, kind); }
+        i = i + 1;
+    }
+    var v = AGNOSTIC_AV_INTACT;
+    if (_agnostic_audit_break_total > 0) { v = AGNOSTIC_AV_RESTARTS; }
+    if (_agnostic_audit_altered > 0) { v = AGNOSTIC_AV_ALTERED; }
+    _agnostic_audit_verdict = v;
+    _agnostic_audit_intact = 0;
+    if (v == AGNOSTIC_AV_INTACT) { _agnostic_audit_intact = 1; }
+    return v;
+}
+
+# Count break `kind` at entry `index`, keeping it while there is room. The first break of
+# any kind is `bad_index`.
+fn _agnostic_audit_note_break(index, kind): i64 {
+    if (_agnostic_audit_break_total == 0) { _agnostic_audit_bad_index = index; }
+    _agnostic_audit_break_total = _agnostic_audit_break_total + 1;
+    if (kind == AGNOSTIC_AB_ALTERED) { _agnostic_audit_altered = _agnostic_audit_altered + 1; }
+    if (_agnostic_audit_break_kept < AGNOSTIC_AUDIT_BREAKS_KEPT) {
+        var slot = &_agnostic_audit_breaks + _agnostic_audit_break_kept * 16;
+        store64(slot, index);
+        store64(slot + 8, kind);
+        _agnostic_audit_break_kept = _agnostic_audit_break_kept + 1;
+    }
+    return 0;
+}
+
+# Log the verdict just taken: nothing when the trail is intact. `again` is 1 for a re-verify.
+fn _agnostic_audit_log_verdict(again): i64 {
+    var v = _agnostic_audit_verdict;
+    if (v == AGNOSTIC_AV_ALTERED) {
+        if (again == 1) {
+            agnostic_log_kv_int(SK_ERROR,
+              "audit chain failed re-verification; the store was altered", 57,
+              "entry", 5, _agnostic_audit_first_altered());
+        } else {
+            agnostic_log_kv_int(SK_ERROR,
+              "audit chain failed verification at open; the store was altered", 62,
+              "entry", 5, _agnostic_audit_first_altered());
+        }
+        return 1;
+    }
+    if (v == AGNOSTIC_AV_RESTARTS) {
+        agnostic_log_kv_int(SK_WARN,
+          "audit trail has restart breaks (a release before 0.1.13, or a failed read); no alteration found", 95,
+          "breaks", 6, _agnostic_audit_break_total);
+        return 1;
+    }
+    if (v == AGNOSTIC_AV_UNVERIFIED) {
+        sakshi_error("audit trail could not be read; it is unverified and its head is unknown", 71);
+        return 1;
+    }
+    return 0;
+}
+
+# The index of the first altered entry, or -1 when none is kept. Past the kept breaks an
+# alteration is counted but not placed.
+fn _agnostic_audit_first_altered(): i64 {
+    var i = 0;
+    while (i < _agnostic_audit_break_kept) {
+        var slot = &_agnostic_audit_breaks + i * 16;
+        if (load64(slot + 8) == AGNOSTIC_AB_ALTERED) { return load64(slot); }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# The verdict taken at open, or by the last re-verify: an `AGNOSTIC_AV_*` (0.1.15).
+fn agnostic_audit_verdict(): i64 {
+    return _agnostic_audit_verdict;
+}
+
+# The verdict's wire name: `intact`, `restarts`, `altered` or `unverified` (0.1.15).
+fn agnostic_audit_verdict_name(v): i64 {
+    if (v == AGNOSTIC_AV_RESTARTS) { return "restarts"; }
+    if (v == AGNOSTIC_AV_ALTERED) { return "altered"; }
+    if (v == AGNOSTIC_AV_UNVERIFIED) { return "unverified"; }
+    return "intact";
+}
+
+# How many breaks the last verdict found, kept or not (0.1.15).
+fn agnostic_audit_break_count(): i64 {
+    return _agnostic_audit_break_total;
+}
+
+# How many breaks are kept for reading: at most `AGNOSTIC_AUDIT_BREAKS_KEPT` (0.1.15).
+fn agnostic_audit_breaks_kept(): i64 {
+    return _agnostic_audit_break_kept;
+}
+
+# Kept break `i`'s entry index, or -1 past the last one kept (0.1.15).
+fn agnostic_audit_break_index(i): i64 {
+    if (i < 0 || i >= _agnostic_audit_break_kept) { return 0 - 1; }
+    return load64(&_agnostic_audit_breaks + i * 16);
+}
+
+# Kept break `i`'s kind — an `AGNOSTIC_AB_*` — or 0 past the last one kept (0.1.15).
+fn agnostic_audit_break_kind(i): i64 {
+    if (i < 0 || i >= _agnostic_audit_break_kept) { return 0; }
+    return load64(&_agnostic_audit_breaks + i * 16 + 8);
+}
+
+# A break kind's wire name: `restart` or `altered` (0.1.15).
+fn agnostic_audit_break_kind_name(k): i64 {
+    if (k == AGNOSTIC_AB_RESTART) { return "restart"; }
+    return "altered";
 }
 
 # Link the chain's head to the last entry of `entries` (the store, in chain order), so the
@@ -238,11 +411,11 @@ fn _agnostic_audit_open_locked(path: Str): i64 {
 # outlives the load; the first append replaces it with that entry's hash.
 #
 # Seeded on a broken chain too: new entries continue the file as it is, and the verdict
-# already names where it broke. A load that came back empty from a non-empty store (a failed
-# read reads as empty) leaves the head empty, and the next open will report the break at the
-# first entry this process wrote.
+# already names where it broke. A read that failed (`unverified`, 0.1.15) leaves the head
+# empty, so the first entry this process writes starts a new chain, and the next open reports
+# a restart break there.
 fn _agnostic_audit_seed_head_locked(entries): i64 {
-    if (entries == 0) { return 0; }
+    if (entries == 0 || libro_is_error(entries) == 1) { return 0; }
     var n = vec_len(entries);
     if (n == 0) { return 0; }
     chain_set_prev_hash(_agnostic_audit_chain, entry_hash(vec_get(entries, n - 1)));
@@ -327,19 +500,9 @@ fn agnostic_audit_reverify(): i64 {
 # `agnostic_audit_reverify`'s body. The caller holds the audit lock.
 fn _agnostic_audit_reverify_locked(): i64 {
     if (_agnostic_audit_store == 0) { return 0 - 1; }
-    var entries = patrastore_load_all(_agnostic_audit_store);
-    var err = 0;
-    if (entries != 0) { err = verify_chain(entries, 0); }
-    if (err == 0) {
-        _agnostic_audit_intact = 1;
-        _agnostic_audit_bad_index = 0 - 1;
-        return 1;
-    }
-    _agnostic_audit_intact = 0;
-    _agnostic_audit_bad_index = error_index(err);
-    agnostic_log_kv_int(SK_ERROR,
-      "audit chain failed re-verification; the store was altered", 57,
-      "entry", 5, _agnostic_audit_bad_index);
+    var v = _agnostic_audit_judge_locked(patrastore_load_all_or_err(_agnostic_audit_store));
+    _agnostic_audit_log_verdict(1);
+    if (v == AGNOSTIC_AV_INTACT) { return 1; }
     return 0;
 }
 
@@ -397,7 +560,11 @@ fn _agnostic_audit_record_locked(severity, source: Str, action: Str, det: Str): 
         _agnostic_audit_ring_put_locked(e);
     }
     if (rc != PATRA_OK) {
-        # ⚠ The head stays on `e`, which is not in the store; see the module header.
+        # ⚠ Put the head back on the last stored entry (0.1.15). `chain_append` moved it to
+        # `e`, which the store never got; left there, the next entry would name a hash the
+        # store does not hold, and the next open would report the trail altered. See the
+        # module header for why no failed write can have landed.
+        chain_set_prev_hash(_agnostic_audit_chain, entry_prev_hash(e));
         _agnostic_audit_dropped = _agnostic_audit_dropped + 1;
         agnostic_log_kv_str(SK_ERROR, "audit append failed; the trail has a gap", 40,
           "action", 6, action);
@@ -406,27 +573,25 @@ fn _agnostic_audit_record_locked(severity, source: Str, action: Str, det: Str): 
     return 1;
 }
 
-# Verify the persisted chain. Returns 0 when it is intact, or libro's error
-# object when it is not.
+# 1 when the last verdict found every entry hashing and linking; 0 for any break, and for a
+# trail that could not be read.
 #
 # ⚠ **Deliberately NOT `patrastore_load_and_verify`.** That function returns the
 # entries vec on success and an error object on failure — **both non-zero
 # pointers**, structurally indistinguishable, so the obvious `if (r != 0)` reads
 # an integrity violation as a successful load. An integrity check whose failure
-# can be mistaken for success is worse than none.
-#
-# `patrastore_load_all` then `verify_chain` is the unambiguous pair: `verify_chain`
-# answers 0 for intact and an error object otherwise, and there is nothing to
-# confuse it with. Reported upstream 2026-08-21 — see the module header.
+# can be mistaken for success is worse than none. Since 0.1.15 the trail is read with
+# `patrastore_load_all_or_err`, checked with `libro_is_error`, and walked here.
 fn agnostic_audit_is_intact(): i64 {
     return _agnostic_audit_intact;
 }
 
-# The index of the first bad entry, or -1 when the chain verified clean.
+# The index of the first break of either kind, or -1 when there is none (an intact or an
+# unverified trail).
 #
-# Read with libro's `error_index` accessor, not an offset. ⚠ Until 0.1.13 this read offset 24,
-# which libro 2.8.11 made `field_name` when it put a magic word at offset 0 and moved the
-# index to 32 — so every broken chain was reported as broken at entry 0.
+# ⚠ Until 0.1.13 this read offset 24 of libro's error, which libro 2.8.11 made `field_name`,
+# so every broken chain was reported as broken at entry 0. Since 0.1.15 the index is this
+# module's own, from its walk.
 fn agnostic_audit_bad_index(): i64 {
     return _agnostic_audit_bad_index;
 }
@@ -436,12 +601,23 @@ fn agnostic_audit_bad_index(): i64 {
 # Details are short and structured on purpose: the column holds 255 bytes, and a
 # record that has to be cut is a record that lost something. Callers compose
 # these rather than formatting prose.
+#
+# From the global heap, which never frees: for a caller with no request arena — the
+# start-up sweep, a crew thread. A request path uses `agnostic_audit_detail_a`.
 fn agnostic_audit_detail(key, value: Str): i64 {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, key);
-    str_builder_add_cstr(sb, "=");
-    if (value != 0) { str_builder_add(sb, value); }
-    return str_builder_build(sb);
+    return agnostic_audit_detail_a(default_alloc(), key, value);
+}
+
+# `agnostic_audit_detail` in `a` — a request's arena (0.1.15). Safe because nothing keeps
+# the detail past the record: libro binds it into the store write and the streaming chain
+# keeps only the entry's hash, and the kept ring copies it into its own slots.
+fn agnostic_audit_detail_a(a, key, value: Str): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_cstr_a(a, sb, key);
+    str_builder_add_cstr_a(a, sb, "=");
+    if (value != 0) { str_builder_add_a(a, sb, value); }
+    return str_builder_build_a(a, sb);
 }
 
 # --- the newest entries (0.1.10) -------------------------------------------

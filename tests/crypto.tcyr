@@ -68,11 +68,11 @@ fn test_password_roundtrip() {
     assert_neq(stored, 0, "a password hashes");
 
     # The record carries its parameters — see the module header for why.
-    assert_eq(str_eq_cstr(_agnostic_pw_field(stored, 0), "v1"), 1, "versioned");
-    assert_eq(str_eq_cstr(_agnostic_pw_field(stored, 1), "2"), 1, "t_cost stored");
-    assert_eq(str_eq_cstr(_agnostic_pw_field(stored, 2), "19456"), 1, "m_cost stored");
-    assert_eq(str_len(_agnostic_pw_field(stored, 4)), 32, "16-byte salt, hex");
-    assert_eq(str_len(_agnostic_pw_field(stored, 5)), 64, "32-byte hash, hex");
+    assert_eq(str_eq_cstr(_agnostic_pw_field_a(a, stored, 0), "v1"), 1, "versioned");
+    assert_eq(str_eq_cstr(_agnostic_pw_field_a(a, stored, 1), "2"), 1, "t_cost stored");
+    assert_eq(str_eq_cstr(_agnostic_pw_field_a(a, stored, 2), "19456"), 1, "m_cost stored");
+    assert_eq(str_len(_agnostic_pw_field_a(a, stored, 4)), 32, "16-byte salt, hex");
+    assert_eq(str_len(_agnostic_pw_field_a(a, stored, 5)), 64, "32-byte hash, hex");
 
     var shed: i64[1];
     assert_eq(agnostic_password_verify_a(a, str_from("correct horse battery staple"),

@@ -11,9 +11,10 @@
 #   4. The limits hold: size (413), count (507), key shape (422).
 #   5. The two transport predicates the ladder uses answer correctly at their edges.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_PDB = "/tmp/agnostic-plugindata-suite.patra";
-var _T_PAUDIT = "/tmp/agnostic-plugindata-audit.patra";
+var _T_PDB = _tt_tmp_path("plugindata-suite");
+var _T_PAUDIT = _tt_tmp_path("plugindata-audit");
 var _T_MAXB = 1048576;
 
 fn _t_open() {
@@ -468,6 +469,8 @@ fn main() {
     test_transport_ladder();
     test_revisions();
     agnostic_store_close();
+    _tt_unlink_store(_T_PDB);
+    _tt_unlink_store(_T_PAUDIT);
     return assert_summary();
 }
 

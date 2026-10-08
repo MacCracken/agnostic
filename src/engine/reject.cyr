@@ -91,21 +91,26 @@ fn _agnostic_reject(a, out, status, message: Str): i64 {
 # Naming the field is the difference between an error a caller can act on and
 # one that sends them to read source. `ORACLE-AUDIT.md` §2.2's complaint is not
 # only that fields were dropped — it is that nothing said so.
+#
+# Both builders below work in `a`, the request's arena (0.1.15): a refusal is a request path,
+# and the global heap never frees.
 fn _agnostic_reject_field(a, out, status, prefix, field: Str, suffix): i64 {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, prefix);
-    str_builder_add(sb, field);
-    str_builder_add_cstr(sb, suffix);
-    return _agnostic_reject(a, out, status, str_builder_build(sb));
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return _agnostic_reject(a, out, status, field); }
+    str_builder_add_cstr_a(a, sb, prefix);
+    str_builder_add_a(a, sb, field);
+    str_builder_add_cstr_a(a, sb, suffix);
+    return _agnostic_reject(a, out, status, str_builder_build_a(a, sb));
 }
 
 # A rejection naming an indexed element, as `<prefix><index><suffix>`.
 fn _agnostic_reject_at(a, out, status, prefix, index, suffix): i64 {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, prefix);
-    str_builder_add_int(sb, index);
-    str_builder_add_cstr(sb, suffix);
-    return _agnostic_reject(a, out, status, str_builder_build(sb));
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return _agnostic_reject(a, out, status, str_from_a(a, suffix)); }
+    str_builder_add_cstr_a(a, sb, prefix);
+    str_builder_add_int_a(a, sb, index);
+    str_builder_add_cstr_a(a, sb, suffix);
+    return _agnostic_reject(a, out, status, str_builder_build_a(a, sb));
 }
 
 # Whether a string field is within the length bound: 1 ok, -1 too long.
@@ -126,7 +131,8 @@ fn _agnostic_str_field_ok(s: Str): i64 {
 # it would make `{"gpu_required": "false"}` read as true, since the string is
 # non-empty — the exact silent misreading this port refuses.
 fn _agnostic_opt_bool(v, key): i64 {
-    var f = bayan_json_v_obj_get_by_str(v, str_from(key));
+    # By the C string itself (0.1.15): `str_from(key)` kept a 16-byte header per read.
+    var f = bayan_json_v_obj_get_by_cstr(v, key);
     if (f == 0) { return AGNOSTIC_REQ_UNSET; }
     if (bayan_json_v_is_null(f) == 1) { return AGNOSTIC_REQ_UNSET; }
     if (bayan_json_v_is_bool(f) != 1) { return AGNOSTIC_REQ_UNSET - 1; }
@@ -135,7 +141,7 @@ fn _agnostic_opt_bool(v, key): i64 {
 
 # An optional integer, with the same three-way signalling as `_agnostic_opt_bool`.
 fn _agnostic_opt_int(v, key): i64 {
-    var f = bayan_json_v_obj_get_by_str(v, str_from(key));
+    var f = bayan_json_v_obj_get_by_cstr(v, key);
     if (f == 0) { return AGNOSTIC_REQ_UNSET; }
     if (bayan_json_v_is_null(f) == 1) { return AGNOSTIC_REQ_UNSET; }
     if (bayan_json_v_is_int(f) != 1) { return AGNOSTIC_REQ_UNSET - 1; }

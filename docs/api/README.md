@@ -95,7 +95,7 @@ that applies answers:
 | `body_size` | 413 | the body is over `AGNOSTIC_MAX_BODY_BYTES` |
 | `host` | 403 | auth is off and a socket request names a non-loopback `Host` (ADR 0006) |
 | `route` | 404 | no route has this path |
-| `method` | 405 | the path exists but not with this method |
+| `method` | 405 | the path exists but not with this method; `Allow` names the methods it takes (0.1.15) |
 | `plugin` | 403 + `code` | a request made for a plugin (`X-Agnostic-Plugin`) that is unknown, off, or not granted the route (ADR 0007) |
 | `authn` | 401 | auth is on and there is no valid credential |
 | `authz` | 403 | the caller's role lacks the route's permission |
@@ -152,8 +152,8 @@ and the lists it marks. A snapshot change that fails there means the skill needs
 - Response keys are declared, not read from the handlers. `api/responses` checks them both ways, but
   only on the answers it drives: a key a handler writes only in a state the sweep does not reach
   would not be seen.
-- It compares a body's keys as a set, so it does not see a key written twice. A live crew's `GET`
-  carries `engine_mode` twice today (roadmap).
+- Since 0.1.15 it also refuses a key written twice in one answer: bayan's object set appends, and
+  a held crew's `GET` sent `engine_mode` twice from 0.1.9 to 0.1.14.
 
 ## Stability
 

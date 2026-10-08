@@ -5,8 +5,9 @@
 # claim signature-backed evidence — libro's `audit_entries` table has no
 # signature column, so signing would compute and discard.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_AUDIT = "/tmp/agnostic-audit-suite.patra";
+var _T_AUDIT = _tt_tmp_path("audit-suite");
 
 # Start from an empty store every time. Removing the file is the only reliable
 # reset: libro owns the schema and offers no truncate.
@@ -208,6 +209,135 @@ fn test_tampering_is_detected() {
     assert_eq(str_eq(entry_prev_hash(vec_get(rows, 3)), entry_hash(vec_get(rows, 2))), 1,
       "the new entry names the last stored one, not the genesis");
     patrastore_close(s);
+}
+
+# Change one byte of the stored trail: the byte after the first occurrence of `needle` (a C
+# string) becomes 'X'. Answers 1 when it found the needle.
+fn _t_flip_after(needle) {
+    var fd = sys_open(_T_AUDIT, O_RDWR, 0);
+    if (fd <= 0) { return 0; }
+    var size = xlseek(fd, 0, 2);
+    var buf = alloc(size);
+    xlseek(fd, 0, 0);
+    sys_read(fd, buf, size);
+    var nl = strlen(needle);
+    var at = 0 - 1;
+    var i = 0;
+    while (i + nl < size && at < 0) {
+        if (memeq(buf + i, needle, nl) == 1) { at = i + nl; }
+        i = i + 1;
+    }
+    if (at < 0) { sys_close(fd); return 0; }
+    xlseek(fd, at, 0);
+    var x[1];
+    store8(&x, 88);
+    sys_write(fd, &x, 1);
+    sys_close(fd);
+    return 1;
+}
+
+# ⭐ 0.1.15: a write the store refuses puts the chain's head back, so the trail still links.
+# Until then the head stayed on the refused entry and the next open reported the trail
+# altered. libro refuses a field over 255 bytes before it touches patra — a failing write on
+# an open store, which `audit/gaps` (a closed one) never reached.
+fn test_a_failed_write_keeps_the_chain_linked() {
+    test_group("audit/failed-write");
+
+    assert_eq(_t_fresh(), 1, "fresh store");
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("one"), str_from("k=1"));
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < 300) { str_builder_putc(sb, 97); i = i + 1; }
+    var d0 = agnostic_audit_dropped();
+    assert_eq(agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_builder_build(sb), str_from("k=2")), 0,
+      "an entry the store refuses is not recorded");
+    assert_eq(agnostic_audit_dropped(), d0 + 1, "and is counted as dropped");
+    assert_eq(agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("three"), str_from("k=3")), 1,
+      "the next one is");
+    agnostic_audit_close();
+    patra_init();
+    assert_eq(agnostic_audit_open(str_from(_T_AUDIT)), 1, "reopened");
+    assert_eq(agnostic_audit_verdict(), AGNOSTIC_AV_INTACT, "⭐ the trail verifies intact across the refused write");
+    assert_eq(agnostic_audit_break_count(), 0, "with no break");
+    agnostic_audit_close();
+    patra_init();
+    var st = patrastore_open(str_from(_T_AUDIT));
+    var rows = patrastore_load_all(st);
+    assert_eq(vec_len(rows), 2, "two entries stored");
+    if (vec_len(rows) == 2) {
+        assert_eq(str_eq(entry_prev_hash(vec_get(rows, 1)), entry_hash(vec_get(rows, 0))), 1,
+          "the entry after the refused one names the last stored one");
+    }
+    patrastore_close(st);
+}
+
+# ⭐ 0.1.15: a restart break is told from an alteration, and the walk goes past the first break.
+# A trail a release before 0.1.13 wrote begins a new chain after each restart: the entry after
+# it hashes correctly and names no predecessor. Written here as that release did, through libro
+# with a fresh streaming chain.
+fn test_restart_breaks_are_not_alterations() {
+    test_group("audit/restart-breaks");
+
+    assert_eq(_t_fresh(), 1, "fresh store");
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("a"), str_from("k=alpha"));
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("b"), str_from("k=bravo"));
+    agnostic_audit_close();
+    patra_init();
+    var st = patrastore_open(str_from(_T_AUDIT));
+    var c = chain_new_streaming();
+    patrastore_append(st, chain_append(c, SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("c"), str_from("k=charlie")));
+    patrastore_append(st, chain_append(c, SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("d"), str_from("k=delta")));
+    patrastore_close(st);
+
+    patra_init();
+    assert_eq(agnostic_audit_open(str_from(_T_AUDIT)), 1, "the trail opens");
+    assert_eq(agnostic_audit_verdict(), AGNOSTIC_AV_RESTARTS, "⭐ its verdict is restarts, not altered");
+    assert_eq(agnostic_audit_is_intact(), 0, "it is not intact: the chain does break");
+    assert_eq(agnostic_audit_bad_index(), 2, "first at entry 2");
+    assert_eq(agnostic_audit_break_count(), 1, "one break");
+    assert_eq(agnostic_audit_break_index(0), 2, "kept with its index");
+    assert_eq(agnostic_audit_break_kind(0), AGNOSTIC_AB_RESTART, "as a restart");
+    assert_eq(agnostic_audit_reverify(), 0, "a re-verify is not intact either");
+    assert_eq(agnostic_audit_verdict(), AGNOSTIC_AV_RESTARTS, "and reaches the same verdict");
+    agnostic_audit_close();
+
+    # Now alter the entry AFTER the restart break: a walk that stopped at the first break would
+    # report the harmless one and miss this.
+    assert_eq(_t_flip_after("k=delt"), 1, "an entry after the break is edited on disk");
+    patra_init();
+    assert_eq(agnostic_audit_open(str_from(_T_AUDIT)), 1, "the trail opens");
+    assert_eq(agnostic_audit_verdict(), AGNOSTIC_AV_ALTERED, "⭐ the alteration past the restart break is found");
+    assert_eq(agnostic_audit_break_count(), 2, "two breaks in all");
+    assert_eq(agnostic_audit_break_kind(0), AGNOSTIC_AB_RESTART, "the restart first");
+    assert_eq(agnostic_audit_break_index(1), 3, "then entry 3");
+    assert_eq(agnostic_audit_break_kind(1), AGNOSTIC_AB_ALTERED, "as altered");
+    assert_eq(agnostic_audit_bad_index(), 2, "bad_index stays the first break of either kind");
+    agnostic_audit_close();
+}
+
+# ⭐ 0.1.15: a read that failed is `unverified`, not intact. libro's legacy load answered an
+# empty vec for a failed query, which verified clean; the trail is read with `_or_err` now.
+# No suite can make patra's SELECT fail on an open store, so the verdict is driven with the
+# error object that load returns.
+fn test_a_failed_read_is_unverified() {
+    test_group("audit/unverified");
+
+    assert_eq(_t_fresh(), 1, "fresh store");
+    agnostic_rlock_enter(_agnostic_audit_rl);
+    var v = _agnostic_audit_judge_locked(error_new(LIBRO_ERR_STORE, "patrastore: query failed"));
+    var intact = agnostic_audit_is_intact();
+    var bad = agnostic_audit_bad_index();
+    var v0 = _agnostic_audit_judge_locked(0);
+    _agnostic_audit_unlock();
+    assert_eq(v, AGNOSTIC_AV_UNVERIFIED, "⭐ an error from the load is unverified");
+    assert_eq(intact, 0, "and not intact");
+    assert_eq(bad, 0 - 1, "with no bad index: nothing was checked");
+    assert_eq(v0, AGNOSTIC_AV_UNVERIFIED, "so is no answer at all");
+    assert_eq(_agnostic_audit_seed_head_locked(error_new(LIBRO_ERR_STORE, "x")), 0, "an error seeds no head");
+    assert_eq(str_eq_cstr(str_from(agnostic_audit_verdict_name(AGNOSTIC_AV_UNVERIFIED)), "unverified"), 1,
+      "its wire name");
+    assert_eq(agnostic_audit_reverify(), 1, "a re-verify of the readable store is intact again");
+    agnostic_audit_close();
 }
 
 fn test_gaps_are_counted_because_verification_cannot_see_them() {
@@ -415,6 +545,9 @@ fn main() {
     test_survives_a_reopen();
     test_appends_link_across_a_reopen();
     test_tampering_is_detected();
+    test_a_failed_write_keeps_the_chain_linked();
+    test_restart_breaks_are_not_alterations();
+    test_a_failed_read_is_unverified();
     test_gaps_are_counted_because_verification_cannot_see_them();
     test_the_newest_entries_are_kept_for_reading();
     test_the_ring_is_bounded();
@@ -422,6 +555,7 @@ fn main() {
     test_a_kept_copy_is_cut_on_a_character();
     agnostic_audit_close();
     test_reads_from_a_worker_thread();
+    _tt_unlink_store(_T_AUDIT);
     return assert_summary();
 }
 

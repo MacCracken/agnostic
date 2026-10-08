@@ -75,9 +75,18 @@ implementation against its preset-declared intent, not as a port of working code
 - [ ] **A reviewer preset — the QA shape of the most robust multi-agent pattern.** One task does
   the work, and a dependent review task with a clean context and an `output_schema` verdict
   checks it. This is Cognition's single writer plus reviewer, and Claude's adversarial
-  verification. It is expressible as a DAG today, so it needs no engine change: ship it as a
-  preset and document it. Why it is here: the
+  verification. Why it is here: the
   [landscape review](research/2026-10-03-herdr-and-multi-agent-landscape.md) §5 B2.
+  - ⚠ **Not expressible today, corrected 2026-10-07.** The review called it "expressible as a DAG
+    today, so it needs no engine change". It is not: agnosai's DAG only orders tasks. A task's
+    prompt is its own context and description (`_agnosai_crew_build_request`); no runner hands a
+    dependent task its dependencies' outputs (`_agnosai_crew_run_dag` keeps them in `completed`
+    only to decide what is ready). So the review task would have nothing to review.
+  - Needs, in order: (1) agnosai hands a dependent task its dependencies' outputs, as data, in its
+    context — the first half of agnosai **F9**, whose harness rule (a hand-off is as untrusted as
+    what it summarised) applies; (2) agnostic forwards a task's `output_schema` (agnosai validates
+    and retries against it already; agnostic's task allow-list has no slot), a widening of the
+    public request ahead of the v1.0 freeze; (3) the preset and its documentation.
 
 **Prerequisite:** `yantra` needs `Page.captureScreenshot` on its CDP surface.
 
@@ -178,9 +187,6 @@ owed for 1.0.0:
   status and in its events. Roll it up as a badge from task to crew to tenant in Crews and
   Swarm Command, with an approve/reject action behind a permission. This is the HITL surface
   agnostic has none of today. The model is herdr's `blocked` roll-up (landscape review H2).
-- [ ] **Swarm Command sends no selection hints** (ADR 0017). Its roles carry tools that could
-  become each task's `required_tools`, so a live swarm's agents would be picked by what they can
-  do.
 
 ## Waiting on agnosai (release agnosai, then re-pin)
 
@@ -258,138 +264,34 @@ override blocks — with no override pin here. The chain, from agnosai's plan:
 Found while building, grouped by area. H and B numbers in this file are those of the
 [2026-10-03 landscape review](research/2026-10-03-herdr-and-multi-agent-landscape.md).
 
-### Crews and the HTTP API
-
-- [ ] **`GET /api/v1/crews/{id}` for a crew this process holds carries `engine_mode` twice**
-  (found at 0.1.13). The route sets it (`src/routes/crews.cyr:366`), then
-  `agnostic_ledger_describe_a` (called at `:370`) sets it again (`src/engine/ledger.cyr:570`), and
-  bayan's object set appends a second key. `api/responses` in `tests/api_schema.tcyr` compares a
-  body's keys as a set, so it passes this; the fix should also make that group assert no key
-  appears twice in any answer. `docs/api/README.md` notes it.
-- [ ] **A 405 names the methods the path takes (`Allow`)** (found reviewing H5's first change;
-  older than H5). `src/http/router.cyr:530` answers `405 {"error":"method not allowed"}` with no
-  `Allow` header, and nothing in `src/server/serve.cyr` adds one, though RFC 9110 §15.5.6 says a 405
-  MUST carry it.
-  - Reproduce: `curl -i -X POST http://127.0.0.1:<port>/health`, or `agnostic_response_headers` of
-    `agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/health"), ...)`, which is 0.
-  - Fix: the routes are rows, so OR the arms of every row whose path matched into a method mask in
-    the match record in `agnostic_route_resolve_a`, and write `Allow: GET, POST` from it on the 405
-    through the response's extra header lines (`AGNOSTIC_RESP_HEADERS`), naming each method with
-    `agnostic_method_name`. Pin it in `router/table`: every row's own path, sent with a method it
-    lacks, lists exactly its arms.
-- [ ] **Cancel answers 404, not 409, for a stored terminal crew** (H4 follow-up). Cancel needs a
-  ledger entry (`src/routes/crews.cyr:384`), so a crew from before a restart — an interrupted one
-  included — answers 404 while `GET /crews/{id}` answers 200. Answering 409 from the store would
-  make the two agree.
-- [ ] **One agnostic process per database file, enforced** (H4 follow-up). The start-up sweep
-  assumes it (so does the definition cache), and since 0.1.13 sharing a database file is
-  destructive rather than merely racy: a second process would sweep the first one's live crews to
-  `interrupted`. Fix: a non-blocking `flock` on a `<db>.owner` sidecar at mount, refusing to start
-  when it is held. Documented in
-  [ADR 0013](../adr/0013-a-crew-interrupted-by-a-restart-is-interrupted.md) and
-  [architecture 001](../architecture/001-what-survives-a-restart.md); not built.
-- [ ] **An interrupted crew keeps its finished results** (H4 follow-up), under ADR 0012's rule and
-  without changing ADR 0013. Today an interrupted crew has `results: []`: while a crew runs, agnostic
-  holds no results, and `task_completed` carries only the task's id and status. ⚠ Re-check the
-  premise before building: since agnosai 2.1.5 (its ADR 022; CHANGELOG 0.1.14) every task the model
-  answers sends a `token` event carrying its output while the crew runs, which agnostic does not
-  keep as a result. No event carries usage; that still needs agnosai F3's per-task payload or F4's
-  durable crew log.
-- [ ] **Task results do not name their agent** (found at 0.1.14). Since agnosai 2.1.5 every
-  LLM-answered result's metadata carries `agent` (its ADR 022); agnostic's result rendering picks
-  fields one by one and does not take it. Surfacing it would let a watcher confirm `explain`'s
-  winner (ADR 0016) from the outcome.
-- [ ] **An agent definition's `complexity` is still free text** (ADR 0017). The engine reads a
-  value it does not recognise as medium, the silent default the task's hint now refuses. Closing it
-  would refuse stored definitions that hold another value, so it needs a migration note: decide
-  whether `PUT`/`POST` refuse and stored ones are read as they are.
-- [ ] **Library edits a definition with a last-writer-wins `PUT`** (found at 0.1.10): two editors of
-  one definition do not find out about each other. Plugin documents have had revisions since 0.1.9
-  (ETag, `If-Match`, `If-None-Match: *`, 412); definitions want an ETag and `If-Match` the same way.
-
 ### Audit chain
 
-- [ ] **A trail written before 0.1.13 can never verify clean again, and its verdict hides everything
-  after its first break** (found fixing the restart link at 0.1.13). Such a trail holds an entry
-  with an empty `prev_hash` after each restart that recorded something. `verify_chain` stops at the
-  first failure, so `intact: false, bad_index: N` is all an operator learns. A real alteration
-  after entry N would not be reported. The Audit view's banner
-  (`src/webgui/plugins/audit/index.html:428`) also says the trail "was altered while the server was
-  not running", which is wrong for this kind of break.
-  - Reproduce: build `src/main.cyr` with `src/engine/audit.cyr` as at commit f28cb9a. Submit a crew
-    with `AGNOSTIC_LLM_URL` at a listener that never answers, `kill -9`, start, create a
-    definition, `kill -9`. Then start the current binary on the same files: `intact: false,
-    bad_index: 1`.
-  - Fix direction: walk the whole chain and report every break, not only the first. Name a break
-    whose entry hashes correctly and whose `prev_hash` is empty as a restart break, and anything
-    else as an alteration. libro's `verify_chain_from` takes the expected first link, so each
-    segment can be verified from its break. That is a wire change to `GET /api/v1/audit`, and the
-    banner should follow it.
-  - In the same route, the comment at `src/routes/definitions.cyr:283-288` still gives libro's
-    cached statements faulting on a pool worker as the reason the verdict is taken at open. libro
-    2.8.9 fixed that (see `src/engine/audit.cyr`), and the reason left is cost.
-- [ ] **A failed read at open verifies as intact and leaves the chain's head empty** (found fixing
-  the restart link at 0.1.13). `_agnostic_audit_open_locked` (`src/engine/audit.cyr:205-209`) reads
-  with `patrastore_load_all`. That is libro's legacy shape, which returns an empty vec when the
-  query fails, and `verify_chain` of an empty vec is 0. So a store with entries that cannot be read
-  reports `intact: true` with nothing verified. With nothing loaded there is no head to seed, so
-  the next entry links to "" and the following start reports a break there.
-  - Reproduce: read from the code; it needs a patra query failure at open, which no test injects.
-  - Fix direction: read with `patrastore_load_all_or_err` and check `libro_is_error`. Report the
-    trail as unverified, a state `GET /api/v1/audit` cannot express today, and log at ERROR that
-    the head is unknown.
-- [ ] **A failed write moves the chain's head anyway, so the next start reports tampering.**
-  `_agnostic_audit_record_locked` (`src/engine/audit.cyr:388`) calls `chain_append`, whose
-  `_chain_retain` (`lib/libro.cyr:2326-2333`) stores the new entry's hash as the head before
-  `patrastore_append` runs (line 394). When that write fails (lines 399-405) the entry is counted
-  as dropped, but the head is left on it. The next entry that is saved names a hash that is not in
-  the store, and the next open's `verify_chain` says "linkage broken": `intact: false`, "the store
-  was altered". Older than 0.1.13; found by the review of the restart fix. The module header's
-  "a failed append leaves no hole to find" (`audit.cyr:44-46`) carries a ⚠ saying it is not true
-  of a failed write (`audit.cyr:50-56`), and the failure branch points to it.
-  - Reproduce: no test reaches it. `audit/gaps` records to a closed store, which returns before
-    `chain_append`. It needs a write that fails on an open store (patra fault injection), then a
-    write that succeeds, then a reopen.
-  - Fix direction: on a failed write, put the head back with
-    `chain_set_prev_hash(_agnostic_audit_chain, entry_prev_hash(e))`, so the next entry links to
-    the last saved one. A write that reports an error after its row landed would then fork the
-    chain, so decide that case first. `patrastore_append` (`lib/libro.cyr:6538`) refuses an
-    over-long field before touching patra, a clean refusal. Whether patra's `_exec_insert` can
-    return an error after `tbl_insert` (`lib/patra.cyr:5814`) wrote the row is not checked yet; that
-    is the case to settle, in patra if need be. Re-reading the store's last row to learn the real
-    head is exact but costs a full load (`patrastore_load_all`, which never frees). Add a test that
-    injects a failing write.
 - [ ] **The audit route serves only the newest 1024 entries** (ADR 0011). A ranged, allocator-aware
   read in libro would let it page the whole trail. Recorded in libro's roadmap ("Ideas",
   2026-10-03), not slotted until a deployment needs more than the newest 1024 entries.
 
 ### Memory
 
-- [ ] **Request paths still allocate from the global bump, which has no `free()`** (found during
-  H5's fourth change; older than 0.1.13). `src/http/response.cyr`'s header requires the per-request
-  arena on every request path, error arms included, and names the 404 as the leak the server can
-  least afford. Measured at 0.1.13 with `alloc_used()` around single dispatches, each served from
-  its own arena, on a mounted server with auth required: `/health` 0 bytes; a 404 16; a 401 16; any
-  authenticated request 16; a failed login 128; a successful login 696; each audited write
-  (plugin-data `PUT` or `DELETE`) 416. The bytes are kept until the process exits.
-  - Where: the router's refusal arms build their messages with `str_from`
-    (`src/http/router.cyr:510`, `:521`, `:530`, `:532`, `:558`, `:562`, `:578`, `:660`); a
-    principal with no tenant gets `str_from("")` (`src/auth/authn.cyr:316`); login names its two
-    fields, its four response keys and two of their values with `str_from`
-    (`src/routes/auth.cyr:56-57`, `:105-111`), and `agnostic_jwt_issue_a` its five claim keys
-    (`src/auth/jwt.cyr:226-235`); each audited call site passes `str_from(action)`, and
-    `agnostic_audit_detail` (`src/engine/audit.cyr:439`) and `_agnostic_pdata_detail`
-    (`src/routes/plugindata.cyr:205`) build with `str_builder_new()`.
-  - Reproduce: mount with auth required, then for each request take `alloc_used()` before and
-    after `agnostic_route_dispatch_a` with a fresh `arena_allocator(1048576)`, less the 16 bytes per
-    `str_from` the caller spends building its own path and body.
-  - Fix direction: `str_from_a(a, …)` on the request arena, or keys interned once at load like
-    `AGNOSTIC_JK_*`, for the router, authn, login and the JWT claims. The audit strings outlive the
-    request only if libro keeps them: check whether `chain_append` and the ring copy them before
-    moving them to the arena. libro's own entry (`chain_append` allocates one per append, 2.9.0
-    added an opt-in path that does not) is libro's to settle. Then add a guard that fails on the
-    regression: a suite asserting `alloc_used()` does not move across a dispatch of each refusal
-    arm and an authenticated GET.
+- [ ] **A crew or definition body refused part-way keeps what the decoder had built** (measured at
+  0.1.15 with `tests/request_alloc.tcyr`'s method: 152 B for a crew refused for an agent's unknown
+  field, 672 B for one refused for a task's, 392 B for a definition refused for its `complexity`).
+  `agnostic_crew_req_from_value_a` and `agnostic_agent_def_decode_a` build the engine's objects as
+  they go — `agnosai_agent_new` and the `str_clone`d fields, the agents and tasks vecs, the
+  definition record — on the global heap, because an accepted request hands them to the engine or
+  the definition cache; a refusal after the first of them strands them. 0.1.15 moved the refusal
+  messages, the field-name keys and the wire names into the arena or interned them; what is left is
+  the objects. Authenticated callers only (`crews:write`, `definitions:write`).
+  - Fix direction: validate the whole body first, in the request's arena, and build the engine
+    objects only once nothing can be refused. Then add the three cases to `request_alloc`.
+- [ ] **An audited request keeps libro's entry on the global heap** (~250 B per audit record,
+  measured at 0.1.15 by `tests/request_alloc.tcyr`'s `_t_libro_record_cost`). Every other byte a
+  request path kept is in the request's arena since 0.1.15, and that suite holds them to 0.
+  `chain_append` builds an entry (struct, timestamp, hash, algorithm Strs) per append; a streaming
+  chain keeps only its hash. libro 2.9.0's `chain_append_nokeep` reuses one scratch entry but
+  returns only the head hash, and agnostic needs the entry to store it (`patrastore_append`) and
+  to copy it into the kept ring. The ask, for libro: an append that builds its entry in a caller's
+  allocator, or a `nokeep` that hands back the scratch entry for the duration of the call. Then
+  re-pin and drop `_t_libro_record_cost`'s allowance. Not filed yet.
 - The outbound calls' remaining bytes (an exporter batch, an inference call) are in sandhi's
   dispatch path; see "Upstream".
 
@@ -399,7 +301,15 @@ Found while building, grouped by area. H and B numbers in this file are those of
   crew's `invoke_workflow` span names a parent that is never exported, so a backend shows the
   trace's root as missing; the trace id still joins it to the request's logs. Fix: record an HTTP
   SERVER span per request through agnosai's exporter (`agnosai_telemetry_record_span_in`), whose
-  span id is the minted one. Additive.
+  span id is the minted one. Additive. agnosai 2.1.7 carries what it needs (its ADR 024; checked
+  against this plan before the cut): build the span with `agnosai_http_server_span_a` in the
+  request's arena and record it with `self_sc = agnosai_otlp_span_context_parse_a(a, tp)`; the
+  ring encodes into its own arena, so neither step touches the global heap. With an inbound
+  `traceparent`, mint a child of it in `src/trace.cyr` (same trace id and flags, a fresh span id,
+  in the arena), record the SERVER span under it with the inbound one as `parent_sc`, and hand
+  the crew the child, so `invoke_workflow` nests under agnostic's span. Not
+  `agnosai_otlp_span_context_child`: it allocates 32 B on the global heap per call, which
+  `tests/request_alloc.tcyr` would catch. Waits on the 2.1.7 tag and the re-pin.
 - [ ] **OTel variables not read** (ADR 0018): `OTEL_SDK_DISABLED` and the sampler variables
   (`OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`). Add them only with a deployment that needs
   them.
@@ -409,46 +319,20 @@ Found while building, grouped by area. H and B numbers in this file are those of
 
 ### Tests, tooling and docs
 
-- [ ] **One warning on our own code is left, in a suite** (found during H5's gate run; older than
-  0.1.13). The build prints no warning on `src/`, but `cyrius test` still prints
-  `warning:<source>:93:49: assigning non-pointer to typed pointer` for `tests/jwt.tcyr:93`
-  (`sig = agnostic_b64u_encode_a(a, mac, 32)`). `sig` is typed `Str` by its initializer at
-  `tests/jwt.tcyr:86` (`var sig = str_from("")`), the same shape 0.1.12 fixed in `serve.cyr`.
-  Reproduce: `cyrius test tests/jwt.tcyr 2>&1 | grep 'typed pointer'`. Fix: declare it
-  `var sig: i64 = str_from("");`, as `serve.cyr` did.
-- [ ] **The suites write their stores to fixed `/tmp` paths and ignore `TMPDIR`** (found during the
-  audit-seed gate run; older than 0.1.13). 16 suites name 23 `"/tmp/agnostic-*.patra"` literals
-  (e.g. `tests/audit.tcyr:9` `_T_AUDIT`, `tests/restart.tcyr:15` `_T_RAUDIT`), and the benchmark
-  file `tests/agnostic.bcyr` two more (`:163`, `:195`). Most unlink them only before use
-  (`tests/audit.tcyr:15`), not after, so a full `cyrius test` leaves 17 files, about 3.7 MB, in
-  `/tmp`. Two runs at once on one machine (two worktrees, two sessions) share each file, so one
-  suite can open the other's half-written store. `/tmp` is also a shared quota here, which is why
-  the gates set `TMPDIR`.
-  - Reproduce: `TMPDIR=$HOME/.cache/agnostic-work cyrius test; ls /tmp/agnostic-*.patra`.
-  - Fix direction: build each path from `TMPDIR` (falling back to `/tmp`) plus the pid, through one
-    helper the suites and the bench share (there is no shared test include today;
-    `tests/api_schema.tcyr:247-263`, `_t_tmp_file` and `_t_tmp_path`, is the shape to share), and
-    unlink at the end of each suite's `main` as `tests/restart.tcyr:114-115` already does.
-- [ ] **`BENCHMARKS.md` was last generated at 0.1.0.** It is `scripts/bench-history.sh`'s output
-  ("do not edit by hand"), and its "Latest" line still reads `59325f3` (dirty), version 0.1.0,
-  2026-08-20, with one benchmark, `noop`; `bench-history.csv` holds the same two rows.
-  `tests/agnostic.bcyr` had 16 benchmarks at 0.1.13, and `docs/development/state.md`'s Hardening
-  table lists `BENCHMARKS.md` as generated.
-  - Fix direction: run `./scripts/bench-history.sh` on a clean tree right after a tag, so the row
-    names a commit rather than "(dirty)". First check that its parser still reads `cyrius bench`'s
-    current lines (`<name>: <value><unit> avg`, units `ns`/`us`/`ms`/`s`). Then decide whether the
-    release process regenerates it each time, and say so in the Process or in `state.md`.
-- [ ] **`docs/development/handoff.md` grows a paragraph per release.** §1 now reaches 0.1.14, but
-  the header still says it was last refreshed 2026-08-23 (after M5) and carries a per-section
-  refresh log that grows each release.
-  - Fix direction: rewrite §1 as a short current orientation that links `state.md` for figures and
-    the CHANGELOG for history, and drop the refresh log from the header.
-- [ ] **Two cyrius work-arounds outlived their filings.** The defer-skipped-on-tail-call defect
-  was fixed in cyrius 6.6.7 and `CYRIUS_PKG_VERSION` became visible in included files in 6.5.34
-  (both in `~/Repos/cyrius/docs/development/issues/archived/`), but `src/engine/rlock.cyr:27-31`,
-  `src/main.cyr:42-46`, `src/routes/health.cyr:43-48`, `handoff.md` §5 and `state.md` still
-  describe them as open. Both work-arounds still work; retiring them is a code change with its own
-  test, not a comment edit.
+- [ ] **`BENCHMARKS.md` was last generated at 0.1.0** (`59325f3`, dirty, one benchmark); the bench
+  has 16 now. The parser is not the problem: checked at 0.1.15, `scripts/bench-history.sh`'s pattern
+  matches every line of `cyrius bench`'s output at 6.6.14. What is owed is the run, on a clean tree
+  right after a tag so the row names a commit: `git checkout 0.1.15 && ./scripts/bench-history.sh`,
+  then commit `BENCHMARKS.md` and `bench-history.csv`. Do it at each tag from then on, and add that
+  step to the Process if the user agrees (CLAUDE.md is the user's file).
+- [ ] **Retire the `CYRIUS_PKG_VERSION` setter when cyrius resolves it two includes deep.**
+  `src/main.cyr` hands the version to `src/routes/health.cyr` (`agnostic_version_set`) because the
+  constant resolves only in the entry file and the files it includes directly; health is two deep.
+  Filed 2026-10-07 as cyrius `2026-10-07-pkgver-not-visible-in-nested-includes.md` (⚠ untracked in
+  the cyrius checkout until its maintainer commits it). When a cyrius that fixes it is pinned:
+  read the constant in `health.cyr`, delete the setter and its call, and pin the version to the
+  `VERSION` file in `tests/health.tcyr` (`routes/version`). ⚠ A probe must not mention the name in
+  a comment of the entry or a directly included file — that alone keeps the declaration.
 
 ## Upstream — owed by sibling repos
 
@@ -477,6 +361,16 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
     tenant keys at 64, settings at 64 and 255, and crew ids are UUIDs.
   - Fix direction: an upstream patra release that refuses an over-length literal the way it
     refuses an over-length value. Fix it at source; do not wrap it here. Then re-pin. Not filed yet.
+- [ ] → **patra**: an INSERT whose page write fails reports success (found 2026-10-07, reading
+  patra for 0.1.15's audit fix). `tbl_insert` (`lib/patra.cyr:4200`, 1.15.1) calls `page_write`
+  three times and ignores each result, though `page_write` answers `PATRA_ERR_IO` or a WAL refusal;
+  it returns `PATRA_OK`, and `_exec_insert` then commits the header. So a full disk or an I/O error
+  loses the row while the caller is told it was stored. For agnostic: a crew outcome, a definition
+  or a plugin document is reported saved and is not; an audit entry is counted appended, the chain's
+  head moves to it, and the next start reports the trail `altered` at the entry after it.
+  - Not reachable in a suite here (it needs an I/O error on write). Fix at source: propagate each
+    `page_write` result out of `tbl_insert` (and check the other callers that ignore it), then
+    re-pin through a cyrius fold. Not filed yet.
 - [ ] → **agnosai**: streamline its preset set (18 in `src/presets/`) to a small illustrative example
   library rather than a competing production one, so the two stop diverging by accident (Settled
   decisions, preset canon). Not yet on agnosai's roadmap.

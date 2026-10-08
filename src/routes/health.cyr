@@ -42,10 +42,12 @@ var _agnostic_ready_checks = 0;
 #
 # ⚠ **Why this is not read directly from CYRIUS_PKG_VERSION here.** cbt injects
 # `#@pkgver` at byte 0 and cycc replaces it with the declaration, but the symbol
-# resolves ONLY in the entry file's own text — an `include`d file referencing it
-# fails to compile with "undefined variable". Verified at cyrius 6.5.32 by
-# referencing it from two different included files. So `src/main.cyr` reads it
-# and hands it here at mount.
+# resolved ONLY in the entry file's own text until cyrius 6.5.34, and since then
+# only one include deep: a file the entry includes may name it, a file THAT file
+# includes may not. This module is two deep (`src/main.cyr` → `src/app.cyr` →
+# here), so `src/main.cyr` reads it and hands it here at mount. Measured at 6.6.14
+# and 6.7.3; filed 2026-10-07 as cyrius
+# `2026-10-07-pkgver-not-visible-in-nested-includes.md`.
 #
 # It is still DERIVED from `version = "${file:VERSION}"`, not hand-maintained —
 # which is the point. AgnosAI hardcodes its equivalent and has been reporting

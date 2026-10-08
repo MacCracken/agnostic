@@ -28,6 +28,7 @@ note() { printf '  %s\n' "$1"; }
 # step), but leaving benches/ out of the sweep entirely is what let it go unseen.
 n=0
 for f in $(find src -name "*.cyr" | sort) $(find tests -name "*.tcyr" | sort) \
+         $(find tests -name "*.cyr" | sort) \
          $(find benches -name "*.bcyr" | sort) \
          $(find examples -name "*.cyr" 2>/dev/null | sort); do
     [ -e "$f" ] || continue
@@ -62,7 +63,9 @@ echo "fmt: $n files"
 # and by `tests/presets.tcyr` — this exemption is one rule, not the gate.
 n=0
 skipped=0
-for f in $(find src -name "*.cyr" | sort) $(find benches -name "*.bcyr" | sort) \
+# `tests/**/*.cyr` — code the suites share (`tests/support/`, 0.1.15) — is linted like `src/`.
+for f in $(find src -name "*.cyr" | sort) $(find tests -name "*.cyr" | sort) \
+         $(find benches -name "*.bcyr" | sort) \
          $(find examples -name "*.cyr" 2>/dev/null | sort); do
     [ -e "$f" ] || continue
     if head -5 "$f" | grep -q 'GENERATED FILE'; then

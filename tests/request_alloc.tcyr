@@ -1,0 +1,187 @@
+# agnostic — what a request leaves on the global heap (0.1.15).
+#
+# `lib/alloc.cyr` is a bump allocator with no `free()`. A request is served from its own arena,
+# which sandhi rewinds when the request ends, so anything a request path allocates from the
+# GLOBAL heap instead is kept until the process exits — in proportion to requests served.
+# `src/http/response.cyr`'s header says it for the error arms: the 404 is what an
+# unauthenticated scanner hits hardest.
+#
+# Measured at 0.1.13, one dispatch each from a fresh arena, on a mounted server with auth
+# required: a 404 kept 16 bytes, a 401 16, any authenticated request 16, a failed login 128, a
+# successful login 696, an audited write 416; at 0.1.14 listing the definitions kept 152. This
+# suite holds every one of those paths to 0 of agnostic's own: it takes `alloc_used()` around a
+# dispatch whose path, body, context and arena were all built before it, the second time each
+# request is made (the first may run a one-time lazy init). An audited request still keeps
+# libro's entry, which is libro's to settle (`_t_libro_record_cost`).
+#
+# Not held to it, by design: a submitted crew (the engine and the ledger keep it), a created
+# definition (the definition cache keeps what it stores), and creating a user. Not held to it YET:
+# a crew or definition body the decoder refuses part-way, which keeps the engine objects it had
+# built (roadmap, Memory).
+include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
+
+var _T_RADB = _tt_tmp_path("request-alloc-db");
+var _T_RAAUDIT = _tt_tmp_path("request-alloc-audit");
+var _T_PW = "a long enough password";
+var _t_token = 0;
+var _t_viewer_token = 0;
+
+fn _t_open() {
+    patra_init();
+    agnostic_definitions_open(str_from(_T_RADB));
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_settings_ensure();
+    agnostic_plugindata_ensure();
+    agnostic_crews_ensure();
+    agnostic_webgui_init();
+    agnostic_presets_init();
+    agnostic_audit_open(str_from(_T_RAAUDIT));
+    agnostic_argon_pool_init();
+    agnostic_rl_init();
+    agnostic_rl_reset();
+    var k = alloc(32);
+    var i = 0;
+    while (i < 32) { store8(k + i, 40 + i); i = i + 1; }
+    agnostic_jwt_set_secret(k, 32);
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    var a = arena_allocator(1048576);
+    var uid = agnostic_users_create_a(a, str_from("alloc@example.com"), str_from(_T_PW),
+      AGNOSTIC_ROLE_ADMIN, str_from("acme"));
+    _t_token = agnostic_jwt_issue_a(default_alloc(), uid, AGNOSTIC_ROLE_ADMIN, str_from("acme"), 600);
+    var vid = agnostic_users_create_a(a, str_from("viewer@example.com"), str_from(_T_PW),
+      AGNOSTIC_ROLE_VIEWER, str_from("acme"));
+    _t_viewer_token = agnostic_jwt_issue_a(default_alloc(), vid, AGNOSTIC_ROLE_VIEWER, str_from("acme"), 600);
+    return uid;
+}
+
+# How many bytes the global heap grew across ONE dispatch of `method` `path` with `body`, from a
+# fresh arena. `auth` is 0 for no credential, 1 for the admin's token, 2 for the viewer's;
+# `transport` 1 marks the context as a socket request with no Content-Type.
+fn _t_cost_once(method, path, body, auth, transport) {
+    var a = arena_allocator(1048576);
+    var p = str_from_a(a, path);
+    var b = str_from_a(a, body);
+    var authz = 0;
+    if (auth == 1) {
+        var h = alloc_via(a, 7 + str_len(_t_token));
+        memcpy(h, "Bearer ", 7);
+        memcpy(h + 7, str_data(_t_token), str_len(_t_token));
+        authz = str_new_a(a, h, 7 + str_len(_t_token));
+    }
+    if (auth == 2) { authz = _t_viewer_authz_a(a); }
+    var ctx = agnostic_reqctx_new_a(a, authz, 7);
+    if (transport == 1) { agnostic_reqctx_set_transport(ctx, 0, str_from_a(a, "localhost")); }
+    var before = alloc_used();
+    agnostic_route_dispatch_a(a, method, p, b, 4096, ctx);
+    return alloc_used() - before;
+}
+
+# `Bearer <the viewer's token>` in `a`.
+fn _t_viewer_authz_a(a) {
+    var n = str_len(_t_viewer_token);
+    var h = alloc_via(a, 7 + n);
+    memcpy(h, "Bearer ", 7);
+    memcpy(h + 7, str_data(_t_viewer_token), n);
+    return str_new_a(a, h, 7 + n);
+}
+
+# The second dispatch's cost: the first may run a one-time lazy initialisation.
+fn _t_cost(method, path, body, auth, transport) {
+    _t_cost_once(method, path, body, auth, transport);
+    return _t_cost_once(method, path, body, auth, transport);
+}
+
+fn test_refusals_keep_nothing() {
+    test_group("alloc/refusals");
+
+    var big = alloc(5000);
+    memset(big, 32, 4999);
+    store8(big + 4999, 0);
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/health", "", 0, 0), 0, "GET /health keeps nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", big, 0, 0), 0, "a 413 keeps nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/nope", "", 0, 0), 0, "⭐ a 404 keeps nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/health", "", 0, 0), 0, "a 405, with its Allow, keeps nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/crews", "", 0, 0), 0, "⭐ a 401 keeps nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":true}", 2, 0), 0,
+      "a 403 keeps nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/x", "{}", 1, 1), 0,
+      "a 415 keeps nothing");
+}
+
+fn test_authenticated_requests_keep_nothing() {
+    test_group("alloc/authenticated");
+
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions", "", 1, 0), 0,
+      "⭐ an authenticated GET keeps nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/presets", "", 1, 0), 0, "nor does reading the presets");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/audit", "", 1, 0), 0, "nor the audit verdict");
+}
+
+# What one audit record keeps on the global heap that is not agnostic's: libro's `chain_append`
+# builds an entry per append — its struct, timestamp and hash Strs — and a streaming chain
+# drops it. libro 2.9.0's `chain_append_nokeep` saves the struct but returns no entry to
+# persist, so it is libro's to settle (roadmap, Upstream). Measured here, the second time, so
+# the suites below can hold agnostic's own share of an audited request to 0.
+fn _t_libro_record_cost() {
+    var i = 0;
+    var cost = 0;
+    while (i < 2) {
+        var a = arena_allocator(65536);
+        var act = str_from_a(a, "probe.record");
+        var det = agnostic_audit_detail_a(a, "k", str_from_a(a, "v"));
+        var before = alloc_used();
+        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, act, det);
+        cost = alloc_used() - before;
+        i = i + 1;
+    }
+    return cost;
+}
+
+fn test_login_keeps_nothing() {
+    test_group("alloc/login");
+
+    var libro = _t_libro_record_cost();
+    agnostic_rl_reset();
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/auth/login",
+        "{\"email\":\"alloc@example.com\",\"password\":\"wrong\"}", 0, 0), 0, "⭐ a failed login keeps nothing");
+    agnostic_rl_reset();
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/auth/login",
+        "{\"email\":\"alloc@example.com\",\"password\":\"a long enough password\"}", 0, 0) - libro, 0,
+      "⭐ a successful login keeps nothing of agnostic's — only libro's audit entry");
+    agnostic_rl_reset();
+}
+
+fn test_audited_writes_keep_nothing() {
+    test_group("alloc/audited-writes");
+
+    var libro = _t_libro_record_cost();
+    assert_eq(libro > 0, 1, "precondition: libro's entry is measured");
+    var n0 = agnostic_audit_appended();
+    assert_eq(_t_cost(AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/doc", "{\"v\":1}", 1, 0) - libro, 0,
+      "⭐ an audited document write keeps nothing of agnostic's");
+    assert_eq(_t_cost_once(AGNOSTIC_METHOD_DELETE, "/api/v1/plugins/swarm/data/doc", "", 1, 0) - libro, 0,
+      "nor does deleting it");
+    assert_eq(agnostic_audit_appended(), n0 + 3, "and all three were audited");
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    agnostic_crypto_main_init();
+    _t_open();
+    test_refusals_keep_nothing();
+    test_authenticated_requests_keep_nothing();
+    test_login_keeps_nothing();
+    test_audited_writes_keep_nothing();
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_RADB);
+    _tt_unlink_store(_T_RAAUDIT);
+    return assert_summary();
+}
+
+var _agnostic_request_alloc_test_exit = main();
+if (_agnostic_request_alloc_test_exit > 0) { _agnostic_request_alloc_test_exit = 1; }
+sys_exit_group(_agnostic_request_alloc_test_exit);

@@ -97,6 +97,7 @@ var AGNOSTIC_JK_RESULTS    = str_from("results");
 var AGNOSTIC_JK_TASK_COUNT = str_from("task_count");
 var AGNOSTIC_JK_TASK_ID    = str_from("task_id");
 var AGNOSTIC_JK_OUTPUT     = str_from("output");
+var AGNOSTIC_JK_AGENT_KEY  = str_from("agent_key");   # the task's agent (0.1.15)
 
 # Usage, per task and per crew (0.1.9) — agnostic's names for what the engine meters.
 var AGNOSTIC_JK_USAGE       = str_from("usage");
@@ -124,6 +125,7 @@ var _AGNOSTIC_MK_TOTAL      = str_from("total");
 var _AGNOSTIC_MK_COST       = str_from("cost_micro_usd");
 var _AGNOSTIC_MK_DURATION   = str_from("task_duration_ms");
 var _AGNOSTIC_MK_ERROR      = str_from("error");
+var _AGNOSTIC_MK_AGENT      = str_from("agent");
 
 var AGNOSTIC_JV_PENDING   = str_from("pending");
 var AGNOSTIC_JV_RUNNING   = str_from("running");
@@ -156,9 +158,10 @@ var AGNOSTIC_OC_PARTIAL_MSG = str_from("engine reported completion with a task t
 var AGNOSTIC_OC_OPAQUE_MSG = str_from("engine reported failure without a reason: a task failed or the crew timed out");
 
 # The reason an interrupted crew carries (0.1.13, ADR 0013). It says what a client needs
-# to act on: the work did not happen, so submit it again.
+# to act on: the work did not finish, so submit it again. Since 0.1.15 (ADR 0019) the tasks
+# that had finished are in its results, so it no longer says all of its work was lost.
 var AGNOSTIC_OC_INTERRUPTED_MSG =
-str_from("the server restarted before this crew's outcome was recorded; its work was lost");
+str_from("the server restarted before this crew finished; tasks still in progress were lost");
 
 # The snake_case wire spelling of a status. Never allocates.
 fn agnostic_crew_status_to_wire(status): i64 {
@@ -413,7 +416,7 @@ fn agnostic_outcome_to_value_a(a, o): i64 {
     return obj;
 }
 
-# Render one engine task result as `{task_id, status, output, usage?, error?}`.
+# Render one engine task result as `{task_id, status, output, agent_key?, usage?, error?}`.
 #
 # ⚠ **Rendered here rather than through `agnosai_task_result_to_value_a`.** The
 # engine's renderer emits its own key set and would make an upstream rename a
@@ -438,10 +441,21 @@ fn _agnostic_task_result_to_value_a(a, r): i64 {
     if (ov == 0) { return 0; }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_OUTPUT, ov);
 
+    var meta = agnosai_task_result_metadata(r);
+    # The agent the engine gave the task (0.1.15): its key, under the name the plan's
+    # `selection.winner` uses (ADR 0016), so a watcher can check the choice against the
+    # outcome. agnosai writes it on a task the model answered (its ADR 022); a placeholder,
+    # failed or cancelled task carries none, and neither does an unassigned one.
+    if (meta != 0) {
+        var agv = map_get(meta, _AGNOSTIC_MK_AGENT);
+        if (bayan_json_v_is_str(agv) == 1) {
+            bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_AGENT_KEY,
+              bayan_json_v_str_new_a(a, bayan_json_v_str(agv)));
+        }
+    }
     # What the engine metered for this task (0.1.9) — see `_agnostic_result_usage_a`.
     var usage = _agnostic_result_usage_a(a, r);
     if (usage != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_USAGE, usage); }
-    var meta = agnosai_task_result_metadata(r);
     if (meta != 0) {
         var ev = map_get(meta, _AGNOSTIC_MK_ERROR);
         if (bayan_json_v_is_str(ev) == 1) {

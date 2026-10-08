@@ -83,9 +83,18 @@ selector's own key, and the plan route shows it back.**
   - An agent definition's own `complexity` is still free text, which the engine reads as medium
     when it does not recognise it. Making it a closed vocabulary would refuse stored definitions, so
     it is recorded on the roadmap, not done here.
+    *Note, 0.1.15:* closed at the door, not in the decoder. A crew's `agents` and a definition's
+    `POST` and `PUT` refuse anything but `low`, `medium` or `high` with a 400, as a task's hint is;
+    a definition stored earlier with another value is still read as it is, and has to be given one
+    of the three before it can be saved again or sent in a crew. All 76 preset agents already use
+    `high` or `medium`.
 - **Neutral**
   - Swarm Command does not send hints yet; its roles carry tools that could become a task's
     `required_tools`. Recorded on the roadmap.
+    *Note, 0.1.15:* it does since Swarm Command 0.5.1. With its role roster each agent's `domain` is
+    its role and its `tools` the kinds the role uses, and each task asks for the same `domain` and
+    `required_tools`. A coder and a reviewer use the same kinds, so the tools tie and the domain
+    decides (`request/swarm-roles`). A preset roster gets no hints: its domains name no swarm role.
 
 ## Alternatives considered
 

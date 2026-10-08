@@ -4,6 +4,224 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.15] — 2026-10-08
+
+**Every agnostic-only item on the roadmap that needs no dependency move, and what the work found.**
+No toolchain or dependency change: Cyrius 6.6.14, agnosai 2.1.6 and libro 2.10.6, with `lib/` and
+`cyrius.lock` byte-identical to 0.1.14's.
+- **One agnostic process per database file**, enforced at mount (ADR 0013's assumption).
+- **The audit verdict says what it found over the whole trail** — `intact`, `restarts`, `altered`
+  or `unverified` — and neither a failed write nor a failed read can break or fake it any more.
+- **An interrupted crew keeps what its finished tasks answered** (ADR 0019).
+- **Agent definitions have revisions** (`ETag`, `If-Match`, 412), and an agent's `complexity` is one
+  of `low`, `medium`, `high`.
+- **Request paths keep nothing on the global heap** of agnostic's own (libro's audit entry aside),
+  held by a new suite.
+- Smaller: a 405 names its methods; cancel answers 409 for a stored crew; results name their agent;
+  `engine_mode` is sent once; Swarm Command 0.5.1 sends selection hints; the suites keep their
+  stores under `TMPDIR`; `defer` may pair a lock again.
+
+⚠ Wire-visible: new keys on `GET /api/v1/audit` (`verdict`, `breaks`, `break_count`) and on a
+single definition (`etag`); `Allow` on a 405; 409 instead of 404 for cancelling a stored crew; 412
+on a stale `If-Match`; 400 for an agent `complexity` outside the three; an interrupted crew's
+`results` may be non-empty and its `error` text changed. ⚠ Operators: a second process on one
+database refuses to start.
+
+**32 suites, 2,701 assertions, 0 failed**, plus **80 JavaScript tests**; 0.1.14 had 31, 2,543 and 77.
+Every suite also passed natively on aarch64 (Raspberry Pi 4) with the same per-suite counts.
+Found on the way and filed or recorded, not worked around: cyrius resolves `CYRIUS_PKG_VERSION` one
+include deep, not two (filed); patra reports an INSERT whose page write failed as stored, and libro
+builds an audit entry per append on the global heap (both on the roadmap, upstream); and the
+landscape review's "reviewer preset, no engine change" is wrong — agnosai's DAG hands a dependent
+task nothing (roadmap, M6).
+
+### Fixed
+
+- **`GET /api/v1/crews/{id}` sent `engine_mode` twice for a crew this process holds** (0.1.9 to
+  0.1.14). The route set this process's mode, then the ledger's description set the mode the crew
+  ran under, and bayan's object set appends. The route now sets its own only when the ledger
+  recorded none. `api/responses` (`tests/api_schema.tcyr`) now refuses a key written twice in any
+  answer it drives; it compared keys as a set before. Mutation-checked: restoring the old line
+  fails it by name.
+- **A 405 names the methods its path takes** (`Allow`, RFC 9110 §15.5.6, which makes it a MUST).
+  The router ORs the arms of every row whose path matched into the match record
+  (`agnostic_route_match_allow`), and the 405 arm writes `Allow: GET, PUT, DELETE` from it, in the
+  table's column order (`agnostic_route_allow_header_a`). The send path forwarded extra header
+  lines only for a `Str` body, so it now forwards them for JSON too
+  (`agnostic_response_set_headers`); a response that fails to encode drops them with its body.
+  `router/table` holds every row's own path, sent each method it lacks and an unknown verb, to
+  exactly its arms (78 probes); `serve/allow-on-405` (`tests/serve_mount.tcyr`) checks the header on
+  the socket path, and that a 404 and a 200 carry none. Two mutations — the router not collecting
+  the arms, the send path forwarding headers for text only — each fail by name.
+- **Cancel answers 409, not 404, for a crew stored before a restart** (H4 follow-up). Cancel looked
+  only at the ledger, so a crew from an earlier run — an `interrupted` one included — answered 404
+  while `GET /crews/{id}` answered 200. A stored outcome is terminal, so cancel now answers 409 from
+  the store, through the same scope check `GET` uses (`_agnostic_crew_stored_a`): another tenant's
+  stored crew stays 404. `crews/interrupted-not-404` and `tenancy/interrupted` pin both; dropping
+  the store check, or the scope check, fails a named assertion. ⚠ Wire-visible: a client that read
+  404 as "from before a restart" now gets 409.
+
+- **A failed audit write no longer breaks the chain.** `chain_append` moves the chain's head to the
+  new entry before the store write; a write that failed left it there, so the next entry named a
+  hash the store never got and the next start reported the trail altered. The head now goes back to
+  the failed entry's predecessor. That is exact: every error `patrastore_append` can return comes
+  before its row is written (libro refuses an over-long field before patra; patra's INSERT errors
+  precede its page write — read in `lib/patra.cyr` 1.15.1). `audit/failed-write` (+9) refuses one
+  write on an open store, then reopens: intact, every link in place. Mutation-checked.
+- **An audit trail that could not be read was reported intact.** The open read it with libro's
+  legacy `patrastore_load_all`, which answers an empty vec for a failed query, and an empty vec
+  verifies clean: `intact: true` with nothing checked, and no head to link to. It reads with
+  `patrastore_load_all_or_err` now; a failed read is `verdict: "unverified"`, `intact: false`, an
+  ERROR line, and no head seeded (`audit/unverified`, +8, driven with the load's error object,
+  since no suite can make patra's SELECT fail on an open store).
+
+- **Request paths kept bytes on the global heap, which never frees.** Measured with `alloc_used()`
+  around single dispatches, each from its own arena, on a mounted server with auth required: every
+  refusal the router makes (413, 403, 404, 405, 401, 415) kept 16 bytes, its message's `str_from`
+  header; a failed login 96 more — the password record split with `str_sub`, six headers; a
+  successful login 344 — the JWT's five claim keys, the response's keys and values, the audit action
+  and detail; an audited plugin-document write ~150 beyond libro's entry; and listing the
+  definitions 152 — a global vec and a copy of every key. All of it now lives in the request's
+  arena: the router's arms, `_agnostic_pw_field_a`, the login route and `agnostic_jwt_issue_a`'s
+  keys, `agnostic_audit_detail_a` and `_agnostic_pdata_detail_a` (libro binds the detail into its
+  write and the kept ring copies it, so nothing holds it past the request), and
+  `agnostic_definitions_keys_a`. What an audited request still keeps is libro's: `chain_append`
+  builds an entry per append (~250 B), which agnostic must have in hand to store, and libro 2.9.0's
+  `chain_append_nokeep` returns none (roadmap, Upstream). A new suite, `tests/request_alloc.tcyr`
+  (16), holds each of those paths to 0 bytes of agnostic's own, the second time each request is
+  made; three mutations (the 404 arm, the record split, the key listing) each fail by name. The
+  same sweep through the request decoders: the shared optional-field readers looked each key up
+  through `str_from(key)` (16 B per read), the refusal messages and `agents[i]:` / `tasks[i]:`
+  prefixes were built on the global heap, and the process and complexity wire names were
+  `str_from`'d on every call; they use the C string, the arena, or a name interned at load now. A
+  crew or definition body refused part-way still keeps the engine objects the decoder had built
+  (roadmap, Memory).
+
+### Added
+
+- **The audit verdict says what it found, over the whole trail** (`GET /api/v1/audit`). libro's
+  `verify_chain` stops at the first failure, so a broken trail reported one index and nothing after
+  it: an alteration later in the file went unreported, and a trail written before 0.1.13 — one
+  break after each restart that recorded something — could never say it was only that. The open
+  (and `agnostic_audit_reverify`) now walk every entry and name each break: a **restart** (the
+  entry hashes correctly and names no predecessor) or an **alteration** (a hash that does not match
+  its content, a first entry naming a predecessor, a link to anything but the entry before it).
+  New keys, always present: `verdict` — `intact`, `restarts`, `altered` or `unverified` —
+  `break_count`, and `breaks`, the first 32 as `{index, kind}`. `intact` and `bad_index` keep their
+  meaning (`bad_index` is the first break of either kind). A restart-only trail logs one WARN line
+  instead of "the store was altered". ⚠ A restart break cannot show whether the entries just before
+  it were deleted; `src/engine/audit.cyr` and architecture 001 say so. `audit/restart-breaks` (+18)
+  writes a trail the way a release before 0.1.13 did, then alters an entry after its break: the
+  walk finds both. Three mutations — no head restore, a walk that stops at the first break, no
+  restart kind — each fail by name. The schema snapshot gained the three keys.
+- **The Audit view 0.1.1** reads the verdict: **RESTART BREAKS** as a warning that names the first
+  and says no alteration was found; **BROKEN** naming the first *altered* entry and how many breaks
+  there are in all; **UNVERIFIED** when the server could not read the trail. Against a server
+  before 0.1.15 it reads `intact` and `bad_index` as before, and no longer says "altered" about a
+  break it cannot classify. (`chainVerdict`, `audit.test.mjs` +1.)
+- **One agnostic process per database file, enforced** (H4 follow-up; ADR 0013, architecture 001).
+  Since 0.1.13 a second process on one `AGNOSTIC_DB_PATH` was destructive, not merely racy: its
+  start-up sweep would mark the first process's live crews `interrupted`. Mount now claims the file
+  first, before the engine starts or anything opens: an exclusive, non-blocking `flock` on a
+  `<db>.owner` sidecar (`agnostic_store_claim`), opened `O_CLOEXEC` and held until the store closes
+  or the process ends. A second process logs `another agnostic process holds this database; refusing
+  to start` and exits; a sidecar that cannot be created refuses to start too. `restart/one-process`
+  (`tests/restart.tcyr`, +13) holds a claim from a separate open, as another process would, and
+  checks that mount refuses, opens nothing and sweeps nothing; that the claim is idempotent,
+  exclusive, close-on-exec and given up by closing the store. Three mutations — no claim in mount, no
+  `O_CLOEXEC`, no release on close — each fail by name. ⚠ Operators: a rolling update on one volume
+  must stop the old process before starting the new one. The `.owner` file is left in place on
+  purpose.
+- **A task result names its agent: `agent_key`** (found at 0.1.14). Since agnosai 2.1.5 every
+  result the model answered carries its agent's key in the engine's metadata (agnosai ADR 022);
+  agnostic picks result fields by name and did not take it. It is `agent_key`, the name the plan's
+  `selection.winner` uses (ADR 0016), so a watcher can check the choice against the outcome. Absent
+  on a placeholder, failed or cancelled task, and on one the engine assigned no agent; never the
+  engine's own key name, and never a non-string. `outcome/agent` (`tests/outcome.tcyr`, +6);
+  mutation-checked. Stored outcomes carry it from now on. Additive on the wire.
+- **Agent definitions have revisions** (found at 0.1.10). The Library edited a definition with a
+  last-writer-wins `PUT`, so of two editors the second silently undid the first. A single
+  definition now answers its revision — `etag` in the body and an `ETag` header, on `GET`, `POST`
+  and `PUT` — in the plugin documents' format (`"` + the first 16 hex digits of the SHA-256 of the
+  canonical document + `"`), so the shell's bridge carries it unchanged. `PUT` and `DELETE` honour
+  `If-Match` (`*` means "it exists"): a stale one is **412** with code `revision`, checked before the
+  body is read (RFC 9110 §13.2.1; an absent definition is still 404) and again under the store lock
+  with the write (`agnostic_definitions_replace_if_a`, `_remove_if_a`). The revision is defined over
+  the canonical rendering, so a row an older release wrote with other spacing reads the same.
+  `router/definition-revisions` (+18); the schema's header probes now cover six headers, and the
+  probe phase opens the definitions table. Two mutations — a precondition that always holds, no
+  check before the body — each fail by name. Additive on the wire.
+- **The Library view 0.1.1** sends the revision it read as `If-Match` when it saves or deletes a
+  definition, and on a 412 keeps the edits in the editor and says someone else changed it
+  (`library.test.mjs`, +1 test).
+- **An agent's `complexity` is one of `low`, `medium` or `high`** (ADR 0017's follow-up). It was
+  free text, which agnosai's selector reads as medium when it does not recognise it — the silent
+  default a task's hint has refused since 0.1.14. A crew's `agents` and a definition's `POST` and
+  `PUT` now refuse any other value with a 400 naming the three (`agnostic_agent_def_complexity_ok`).
+  The decoder still accepts one, because stored definitions are decoded by the same path: a
+  definition written earlier with another value is read as it is, and must be given one of the
+  three before it is saved again or sent in a crew. All 76 preset agents use `high` or `medium`, and
+  the Library's editor already offers the three. `request/agent-complexity` (+7),
+  `router/definition-complexity` (+7, including a stored legacy value read after a restart). Each
+  door mutation-checked. ⚠ Wire-visible: a value outside the three is now refused.
+- **Swarm Command 0.5.1 sends selection hints** (ADR 0017's follow-up, M9). A live swarm's crew
+  gave the engine nothing to choose agents by, so the first agent took every task whatever its
+  role. With the role roster each agent now carries `domain` (its role) and `tools` (the kinds the
+  role uses, most-used first, only those switched on), and each task the matching `domain` and
+  `required_tools` (`roleTools`, `specToCrewRequest`). Coder and reviewer use the same kinds, so the
+  tools tie and the domain decides. A preset roster sends none: its domains name no swarm role, and
+  an agent with no domain would win every hinted task. `swarm.test.mjs` +1 (mutation-checked);
+  `request/swarm-roles` (`tests/crew_request.tcyr`, +4) runs the same shape through the engine's
+  own ranking: the review goes to the reviewer, the code to the coder, the plan to the planner. The
+  simulator is untouched, so every estimate is what it was.
+- **The Crews view 0.1.2** takes a result's `agent_key`, so a finished crew, or one whose events are
+  no longer held, says which agent did each task (`crews.test.mjs`, +2 assertions).
+
+- **An interrupted crew keeps what its finished tasks answered**
+  ([ADR 0019](docs/adr/0019-an-interrupted-crew-keeps-what-its-finished-tasks-answered.md); H4
+  follow-up). Since agnosai 2.1.5 every task the model answers sends one `token` event with its
+  whole output, and agnostic kept none of it, so a crash after three of five tasks lost all three.
+  The ledger's drain now collects those events (`agnostic_ledger_drain_a`,
+  `agnostic_ledger_is_final_token`), the refresh keeps each output once the ledger lock is released
+  (`_agnostic_crew_keep_finals`), into a new table, `agnostic_crew_partial` (no index, as the
+  in-flight one has none), only for a crew with an in-flight row and no stored outcome. The outcome
+  write deletes them beside the in-flight row; the start-up sweep writes them into the interrupted
+  crew's `results` (each `completed`, its output, no usage) and `task_count`. Its `error` now says
+  "the server restarted before this crew finished; tasks still in progress were lost". One more
+  fsync per answered task. `crewstore/partials` (+23) and `crewstore/refresh-keeps` (+4); three
+  mutations — no fold into the outcome, no clearing on the outcome write, a token not checked for
+  `complete` — each fail by name. The Crews view and Swarm Command already settle tasks from an
+  outcome's results, so neither changed. ⚠ Wire-visible: an interrupted crew's `results` may be
+  non-empty, and its `error` text changed.
+
+### Changed — tests and tooling
+
+- **The suites' stores live under `$TMPDIR`, one set per run.** 16 suites named 23 fixed
+  `/tmp/agnostic-*.patra` paths, and the benchmarks two more: two runs at once (two worktrees, two
+  sessions) shared each file, `TMPDIR` was ignored, and most suites unlinked only before use, so a
+  full run left 17 files behind. `tests/support/tmp.cyr` (new, shared by every suite and the bench)
+  builds `$TMPDIR/agnostic-<tag>.<pid>.patra`, `/tmp` when `TMPDIR` is unset, and each suite removes
+  its stores, and a mount's `.owner` claim, at the end of `main` (`_tt_unlink_store`).
+  `tests/api_schema.tcyr`'s own helper, the shape this follows, now calls it. `check-clean.sh`'s fmt
+  and lint sweeps cover `tests/**/*.cyr`. ⚠ The bench's in-flight store follows `TMPDIR` too, so its
+  fsync half measures whatever filesystem that is; compare figures from the same one.
+- **`defer` may pair a lock's enter and exit again.** cycc 6.6.6 dropped a pending `defer` on
+  `return f(...)` (filed 2026-09-26), so the rule was never to pair them; cyrius 6.6.7 fixed it.
+  `rlock/ownership` (`tests/store_concurrency.tcyr`, +5) now defers an exit and leaves through two
+  tail-call shapes, pinning the fix at the pin; `src/engine/rlock.cyr` and handoff §5 lift the rule.
+  The store wrappers keep their explicit shape, which `check-store-lock.py` reads.
+- **The `CYRIUS_PKG_VERSION` setter stays, for a new reason.** cyrius 6.5.34 made the constant
+  resolve in a file the entry includes, but not one include deeper, which is where
+  `src/routes/health.cyr` is (via `src/app.cyr`); measured at 6.6.14, 6.6.19, 6.7.2 and 6.7.3. Filed
+  with cyrius as `2026-10-07-pkgver-not-visible-in-nested-includes.md`, with a reproduction. The
+  comments that said "only in the entry file" now say this.
+- **`docs/development/handoff.md` §1 is a short orientation that no longer grows per release** — a
+  milestone table and the standing warnings, linking the CHANGELOG for history and `state.md` for
+  figures — and its header's per-release refresh log is gone.
+- **No warning on our own code, suites included.** `tests/jwt.tcyr`'s `sig` was typed `Str` by its
+  initialiser and then assigned an untyped result ("assigning non-pointer to typed pointer"); it is
+  declared `: i64`, as `serve.cyr` did at 0.1.12.
+
 ## [0.1.14] — 2026-10-05
 
 **Re-pin to agnosai 2.1.6 — 2.1.5's three consumer halves, plus selection hints on a task, and the

@@ -13,7 +13,7 @@
 # | `GET /api/v1/crews/{id}` | 200 · 404 never submitted · 422 malformed id |
 # |  | 200 `interrupted` for a crew a restart cut short (0.1.13, ADR 0013) |
 # | `POST /api/v1/crews/{id}/cancel` | 200 cancelled · 404 never submitted |
-# |  | 409 already terminal · 422 malformed id · 503 engine does not know it |
+# |  | 409 already terminal, held or stored (stored: 0.1.15) · 422 malformed id · 503 engine does not know it |
 # | `GET /api/v1/crews/{id}/events[?after=N]` | 200 · 404 · 422 (also a malformed `after`) |
 # | `GET /api/v1/crews/{id}/plan[?explain=selection[&task=N]]` | 200 · 404 not held (or never submitted) · 422 |
 # | `GET /api/v1/crews[?limit=&before=&status=]` | 200 — the caller's tenant's crews, newest first · 422 |
@@ -23,7 +23,8 @@
 #
 # A crew accepted before the last restart that had no outcome when the process stopped
 # answers 200 with status `interrupted` (0.1.13, ADR 0013) — terminal, written at
-# start-up. Its events, plan and cancel still answer 404: they are held in memory only.
+# start-up. Its events and plan still answer 404: they are held in memory only. Its cancel
+# answers 409 from the store since 0.1.15, as for any stored crew: it has finished.
 #
 # **202, not 200 and not 201.** The crew has been accepted and is not finished,
 # which is exactly what 202 means. 201 would claim a resource is complete; 200 is
@@ -147,8 +148,29 @@ fn _agnostic_crew_doc_in_scope(v, scope: Str): i64 {
     return str_eq(scope, AGNOSTIC_SCOPE_DEFAULT);
 }
 
+# The outcome stored for crew `key` from an earlier run, parsed in `a`, when it belongs to
+# `scope` — or 0: none stored, unreadable, or another tenant's. What `GET /crews/{id}` answers
+# for a crew this process does not hold, and what makes cancel's 409 agree with it (0.1.15).
+#
+# The document carries the scope it was written in (0.1.9); one from an earlier release
+# carries none, and belongs to `_`.
+fn _agnostic_crew_stored_a(a, key: Str, scope: Str): i64 {
+    var stored = agnostic_crews_doc_a(a, key);
+    if (stored == 0) { return 0; }
+    var v = bayan_json_v_parse_buf_a(a, str_data(stored), str_len(stored));
+    if (v == 0) { return 0; }
+    if (_agnostic_crew_doc_in_scope(v, scope) == 0) { return 0; }
+    return v;
+}
+
 fn _agnostic_crew_not_found_a(a): i64 {
     return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "crew not found"));
+}
+
+# Cancel's 409: the crew has an outcome already, held or stored.
+fn _agnostic_crew_finished_a(a): i64 {
+    return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
+      str_from_a(a, "crew has already finished and cannot be cancelled"));
 }
 
 # The engine's task ids for `spec`, in request order, as a JSON array in `a`. An empty
@@ -345,15 +367,8 @@ fn agnostic_route_crew_get_a(a, id: Str, ctx): i64 {
         # non-terminal one, so there is no stale "running" to mistake for live
         # work. The stored bytes go out verbatim, which is the response the run
         # that produced them would have given.
-        var stored = agnostic_crews_doc_a(a, key);
-        if (stored != 0) {
-            var v = bayan_json_v_parse_buf_a(a, str_data(stored), str_len(stored));
-            # The document carries the scope it was written in (0.1.9); one from an
-            # earlier release carries none, and belongs to `_`.
-            if (v != 0 && _agnostic_crew_doc_in_scope(v, scope) == 1) {
-                return agnostic_response_json_a(a, HTTP_OK, v);
-            }
-        }
+        var v = _agnostic_crew_stored_a(a, key, scope);
+        if (v != 0) { return agnostic_response_json_a(a, HTTP_OK, v); }
         return _agnostic_crew_not_found_a(a);
     }
 
@@ -363,11 +378,18 @@ fn agnostic_route_crew_get_a(a, id: Str, ctx): i64 {
     # reader would otherwise take at face value. A placeholder run reports
     # `completed` with every task complete and the task description echoed as
     # output; nothing else in this body distinguishes it from real work.
-    bayan_json_v_obj_set_a(a, body, AGNOSTIC_JK_MODE,
-      bayan_json_v_str_new_a(a, agnostic_engine_mode()));
-    # Name, process, task count and timings — and the mode the crew RAN under, which
-    # replaces the line above whenever the ledger recorded one (0.1.9).
-    agnostic_ledger_describe_a(a, agnostic_ledger_entry(key), body);
+    #
+    # The mode the crew RAN under, when the ledger recorded one (0.1.9), comes with the
+    # description below; this process's mode is the fallback for an entry that has none.
+    # ⚠ Only one of them: bayan's object set APPENDS, so setting both sent the key twice
+    # (0.1.9 to 0.1.14).
+    var e = agnostic_ledger_entry(key);
+    if (e == 0 || agnostic_ledger_mode(e) == 0) {
+        bayan_json_v_obj_set_a(a, body, AGNOSTIC_JK_MODE,
+          bayan_json_v_str_new_a(a, agnostic_engine_mode()));
+    }
+    # Name, process, task count and timings.
+    agnostic_ledger_describe_a(a, e, body);
     return agnostic_response_json_a(a, HTTP_OK, body);
 }
 
@@ -380,18 +402,24 @@ fn agnostic_route_crew_get_a(a, id: Str, ctx): i64 {
 fn agnostic_route_crew_cancel_a(a, id: Str, ctx): i64 {
     var key = _agnostic_crew_key_a(a, id);
     if (key == 0) { return _agnostic_crew_bad_id_a(a); }
+    var scope = agnostic_reqctx_scope(ctx);
     # Only the crew's own tenant may cancel it; to anyone else it does not exist (0.1.9).
-    if (agnostic_ledger_entry_in(key, agnostic_reqctx_scope(ctx)) == 0) {
+    if (agnostic_ledger_entry_in(key, scope) == 0) {
+        # ⚠ **Not held — but it may be stored from an earlier run** (0.1.15). Only terminal
+        # outcomes are stored, `interrupted` included (ADR 0013), so such a crew has finished:
+        # 409, as `GET /crews/{id}` answers it 200. Before 0.1.15 it was 404 here, and the two
+        # routes disagreed about whether the crew existed. Another tenant's stored crew, or
+        # one held by this process for another tenant, stays 404.
+        if (agnostic_ledger_entry(key) == 0 && _agnostic_crew_stored_a(a, key, scope) != 0) {
+            return _agnostic_crew_finished_a(a);
+        }
         return _agnostic_crew_not_found_a(a);
     }
 
     var rc = agnostic_crew_cancel_a(a, key);
 
     if (rc == AGNOSTIC_CANCEL_NOT_SUBMITTED) { return _agnostic_crew_not_found_a(a); }
-    if (rc == AGNOSTIC_CANCEL_ALREADY_TERMINAL) {
-        return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
-          str_from_a(a, "crew has already finished and cannot be cancelled"));
-    }
+    if (rc == AGNOSTIC_CANCEL_ALREADY_TERMINAL) { return _agnostic_crew_finished_a(a); }
     if (rc == AGNOSTIC_CANCEL_ENGINE_UNKNOWN) {
         return agnostic_response_error_a(a, HTTP_SERVICE_UNAVAILABLE,
           str_from_a(a, "the engine no longer holds this crew; it was not cancelled"));

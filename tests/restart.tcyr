@@ -10,9 +10,10 @@
 # seed's `patra_init` installs a TLS block that serve_mount's crypto precondition must never
 # see, so the two cannot share one.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_RDB = "/tmp/agnostic-restart-suite.patra";
-var _T_RAUDIT = "/tmp/agnostic-restart-suite-audit.patra";
+var _T_RDB = _tt_tmp_path("restart-suite");
+var _T_RAUDIT = _tt_tmp_path("restart-suite-audit");
 
 # Crew A was accepted and never finished. Crew B finished and its outcome was written, but
 # the process died before its in-flight row was deleted.
@@ -51,6 +52,50 @@ fn _t_doc(a, id) {
     var d = agnostic_crews_doc_a(a, str_from(id));
     if (d == 0) { return 0; }
     return bayan_json_v_parse_buf_a(a, str_data(d), str_len(d));
+}
+
+# Another process's claim on `<db>.owner`: a lock taken through a separate open, which
+# `flock` treats exactly as another process's. Answers the fd, or -1.
+fn _t_hold_owner(db) {
+    var sp = agnostic_store_owner_path(str_from(db));
+    var fd = file_open(sp, O_RDWR | O_CREAT, 0x180);
+    if (fd < 0) { return 0 - 1; }
+    if (xflock(fd, LOCK_EX | LOCK_NB) != 0) { sys_close(fd); return 0 - 1; }
+    return fd;
+}
+
+# ⭐ 0.1.15: one process per database file. A second process would sweep the first one's
+# live crews to `interrupted`; mount refuses before it touches the file.
+fn test_a_second_process_is_refused() {
+    test_group("restart/one-process");
+
+    assert_eq(_t_seed(), 2, "precondition: the dead process left two crews in flight");
+    var other = _t_hold_owner(_T_RDB);
+    assert_eq(other >= 0, 1, "precondition: another process holds the database");
+    assert_eq(agnostic_store_claim(str_from(_T_RDB)), AGNOSTIC_CLAIM_HELD, "a claim on it is HELD");
+    assert_eq(agnostic_serve_mount(_t_mount_cfg()), 0, "⭐ mount refuses to start");
+    assert_eq(agnostic_store_is_open(), 0, "having opened nothing");
+    agnostic_store_open(str_from(_T_RDB));
+    assert_eq(agnostic_crews_inflight_count(), 2, "⭐ and swept nothing: both crews are still in flight");
+    agnostic_store_close();
+
+    # The other process ends; the file is free.
+    xflock(other, LOCK_UN);
+    sys_close(other);
+    assert_eq(agnostic_store_claim(str_from(_T_RDB)), AGNOSTIC_CLAIM_OK, "once it lets go, the claim is ours");
+    assert_eq(agnostic_store_claim(str_from(_T_RDB)), AGNOSTIC_CLAIM_OK, "and claiming again is idempotent");
+    assert_eq(_t_hold_owner(_T_RDB), 0 - 1, "⭐ while we hold it, no other process can");
+    assert_eq((sys_fcntl(_agnostic_store_owner_fd, F_GETFD, 0) & FD_CLOEXEC) != 0, 1,
+      "⭐ and a child we spawn does not inherit it (O_CLOEXEC)");
+    agnostic_store_close();
+    var again = _t_hold_owner(_T_RDB);
+    assert_eq(again >= 0, 1, "⭐ closing the store gives the claim up");
+    if (again >= 0) { xflock(again, LOCK_UN); sys_close(again); }
+
+    assert_eq(agnostic_store_claim(str_from("/nonexistent-agnostic-dir/db.patra")), AGNOSTIC_CLAIM_FAILED,
+      "a sidecar that cannot be created is FAILED, not OK");
+    assert_eq(agnostic_store_claim(str_from(_T_RDB)), AGNOSTIC_CLAIM_OK, "and a failed claim leaves none behind");
+    agnostic_store_close();
 }
 
 fn test_mount_interrupts_what_the_last_process_left_in_flight() {
@@ -108,11 +153,12 @@ fn test_mount_interrupts_what_the_last_process_left_in_flight() {
 fn main() {
     alloc_init();
     thread_local_init();
+    test_a_second_process_is_refused();
     test_mount_interrupts_what_the_last_process_left_in_flight();
     agnostic_audit_close();
     agnostic_store_close();
-    sys_unlink(_T_RDB);
-    sys_unlink(_T_RAUDIT);
+    _tt_unlink_store(_T_RDB);
+    _tt_unlink_store(_T_RAUDIT);
     return assert_summary();
 }
 

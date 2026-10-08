@@ -6,8 +6,9 @@
 # different address — and assert the lookup refuses it. Without the full
 # re-check those two tests fail and the lookup is an authentication bypass.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_AUTHDB = "/tmp/agnostic-authstore-suite.patra";
+var _T_AUTHDB = _tt_tmp_path("authstore-suite");
 
 fn _t_auth_open() {
     agnostic_store_close();
@@ -306,6 +307,7 @@ fn main() {
     test_apikeys();
     test_apikey_bucket_is_rechecked();
     test_row_strings_are_copies();
+    _tt_unlink_store(_T_AUTHDB);
     return assert_summary();
 }
 

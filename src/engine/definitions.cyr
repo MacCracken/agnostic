@@ -44,10 +44,11 @@
 
 # What a store operation reports. Unchanged from M3, so no caller moved.
 enum AgnosticDefResult {
-    AGNOSTIC_DEF_OK      = 0;
-    AGNOSTIC_DEF_EXISTS  = 1;
-    AGNOSTIC_DEF_MISSING = 2;
-    AGNOSTIC_DEF_FULL    = 3;
+    AGNOSTIC_DEF_OK           = 0;
+    AGNOSTIC_DEF_EXISTS       = 1;
+    AGNOSTIC_DEF_MISSING      = 2;
+    AGNOSTIC_DEF_FULL         = 3;
+    AGNOSTIC_DEF_PRECONDITION = 4;  # If-Match named another revision (0.1.15)
 }
 
 # How many decoded definitions the cache holds before it stops caching.
@@ -323,6 +324,77 @@ fn _agnostic_definitions_get_locked(key: Str): i64 {
     return d;
 }
 
+# ## Revisions (0.1.15)
+#
+# A definition's revision is its ETag: `"` and the first 16 hex digits of the SHA-256 of its
+# canonical document — the rendering this store writes (`agnostic_agent_def_to_value_a`) — and
+# `"`, the format plugin documents use, so the shell's bridge carries it unchanged. A `PUT` or
+# `DELETE` that sends `If-Match` happens only if the definition is still that revision; `*`
+# means "it exists". Until 0.1.15 the Library edited a definition with a last-writer-wins `PUT`,
+# so of two editors the second silently undid the first.
+#
+# Defined over the canonical rendering, not the stored bytes, so a row an older release wrote
+# with other spacing has the same revision as the same definition written today.
+
+# The revision of definition `d`, as an ETag Str in `a`, or 0 when `a` is exhausted.
+fn agnostic_definition_etag_a(a, d): i64 {
+    if (d == 0) { return 0; }
+    var v = agnostic_agent_def_to_value_a(a, d);
+    if (v == 0) { return 0; }
+    var doc = bayan_json_v_build_a(a, v);
+    if (doc == 0) { return 0; }
+    return agnostic_plugindata_etag_a(a, doc);
+}
+
+# Whether `if_match` — an ETag, `*`, or 0 for none — holds for current definition `cur`
+# (0 when absent): 1 or 0. A value this server cannot meet does not hold.
+fn agnostic_definition_precondition_a(a, cur, if_match: Str): i64 {
+    if (if_match == 0) { return 1; }
+    if (cur == 0) { return 0; }
+    if (str_eq_cstr(if_match, "*") == 1) { return 1; }
+    var tag = agnostic_definition_etag_a(a, cur);
+    if (tag == 0) { return 0; }
+    return str_eq(tag, if_match);
+}
+
+# `agnostic_definitions_replace`, only if `if_match` holds (0.1.15): MISSING, PRECONDITION or
+# what the replace answers. The check and the write are one critical section, so a write that
+# lands between a reader's GET and its PUT is never overwritten unseen.
+fn agnostic_definitions_replace_if_a(a, key: Str, def, if_match: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_definitions_replace_if_locked_a(a, key, def, if_match);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_definitions_replace_if_a`'s body. The caller holds the store lock.
+fn _agnostic_definitions_replace_if_locked_a(a, key: Str, def, if_match: Str): i64 {
+    if (if_match != 0) {
+        var cur = _agnostic_definitions_get_locked(key);
+        if (cur == 0) { return AGNOSTIC_DEF_MISSING; }
+        if (agnostic_definition_precondition_a(a, cur, if_match) == 0) { return AGNOSTIC_DEF_PRECONDITION; }
+    }
+    return _agnostic_definitions_replace_locked(key, def);
+}
+
+# `agnostic_definitions_remove`, only if `if_match` holds (0.1.15): MISSING, PRECONDITION or OK.
+fn agnostic_definitions_remove_if_a(a, key: Str, if_match: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_definitions_remove_if_locked_a(a, key, if_match);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_definitions_remove_if_a`'s body. The caller holds the store lock.
+fn _agnostic_definitions_remove_if_locked_a(a, key: Str, if_match: Str): i64 {
+    if (if_match != 0) {
+        var cur = _agnostic_definitions_get_locked(key);
+        if (cur == 0) { return AGNOSTIC_DEF_MISSING; }
+        if (agnostic_definition_precondition_a(a, cur, if_match) == 0) { return AGNOSTIC_DEF_PRECONDITION; }
+    }
+    return _agnostic_definitions_remove_locked(key);
+}
+
 # Remove a definition. Returns OK or MISSING.
 fn agnostic_definitions_remove(key: Str): i64 {
     agnostic_store_lock();
@@ -351,17 +423,26 @@ fn _agnostic_definitions_remove_locked(key: Str): i64 {
     return AGNOSTIC_DEF_OK;
 }
 
-# A snapshot of every key, as a vec of Str. Answered by patra.
+# A snapshot of every key, as a vec of Str, from the global heap. Answered by patra. For
+# callers with no request arena; the listing route uses `agnostic_definitions_keys_a`.
 fn agnostic_definitions_keys(): i64 {
+    return agnostic_definitions_keys_a(default_alloc());
+}
+
+# `agnostic_definitions_keys` in `a` — the vec and every key (0.1.15). The listing ran on
+# the global heap, which never frees, so each `GET /api/v1/agents/definitions` kept the vec
+# and a copy of every key for the life of the process. 0 when `a` is exhausted.
+fn agnostic_definitions_keys_a(a): i64 {
     agnostic_store_lock();
-    var r = _agnostic_definitions_keys_locked();
+    var r = _agnostic_definitions_keys_locked_a(a);
     agnostic_store_unlock();
     return r;
 }
 
-# `agnostic_definitions_keys`'s body. The caller holds the store lock.
-fn _agnostic_definitions_keys_locked(): i64 {
-    var out = vec_new();
+# `agnostic_definitions_keys_a`'s body. The caller holds the store lock.
+fn _agnostic_definitions_keys_locked_a(a): i64 {
+    var out = vec_new_a(a);
+    if (out == 0) { return 0; }
     var db = agnostic_store_db();
     if (db == 0) { return out; }
     var rs = patra_query(db, "SELECT dkey FROM agnostic_definitions");
@@ -376,7 +457,12 @@ fn _agnostic_definitions_keys_locked(): i64 {
         # unmapped on free, so listing ~300 definitions segfaulted hashing the
         # first key, and a small one is recycled, so a short listing could read
         # another query's bytes and skip entries as "removed".
-        if (p != 0 && l > 0) { vec_push(out, str_from_buf(p, l)); }
+        if (p != 0 && l > 0) {
+            var c = alloc_via(a, l);
+            if (c == 0) { patra_result_free(rs); return 0; }
+            memcpy(c, p, l);
+            vec_push_a(a, out, str_new_a(a, c, l));
+        }
         i = i + 1;
     }
     patra_result_free(rs);

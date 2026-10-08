@@ -125,15 +125,16 @@ fn _agnostic_serve_send(a, cfd, resp): i64 {
     # `: i64`, not the `Str` `str_from` would infer: `body` later takes
     # `agnostic_response_body(resp)` and `rendered`, which are untyped.
     var body: i64 = str_from("");
-    # Extra header lines, CRLF-terminated, or 0. Only a `Str` body carries any —
-    # the WebGUI's pages, whose Content-Security-Policy travels with them.
+    # Extra header lines, CRLF-terminated, or 0: the WebGUI's pages carry their
+    # Content-Security-Policy, a plugin document its ETag, and a 405 its `Allow` — a JSON
+    # body, which is why this is read for both kinds (0.1.15).
     var extra = 0;
 
     if (resp != 0) {
+        extra = agnostic_response_headers(resp);
         if (agnostic_response_is_text(resp) == 1) {
             ctype = "text/plain; charset=utf-8";
             if (agnostic_response_ctype(resp) != 0) { ctype = agnostic_response_ctype(resp); }
-            extra = agnostic_response_headers(resp);
             body = agnostic_response_body(resp);
         } else {
             var rendered = 0;
@@ -145,6 +146,7 @@ fn _agnostic_serve_send(a, cfd, resp): i64 {
                 status = HTTP_INTERNAL;
                 reason = agnostic_http_reason(status);
                 body = str_from("{\"error\":\"response encoding failed\"}");
+                extra = 0;   # the headers belonged to the answer this replaces
             } else {
                 body = rendered;
             }
@@ -319,6 +321,23 @@ fn agnostic_serve_mount(cfg): i64 {
     _agnostic_serve_cfg = cfg;
     _agnostic_serve_stop = 0;
 
+    # ⚠ **One process per database file** (0.1.15). The start-up sweep below would interrupt
+    # another process's live crews, so the file is claimed before anything else: a second
+    # process refused here has started no engine and opened nothing. `src/engine/store.cyr`
+    # says why the claim is a sidecar's `flock` and not the database's.
+    var db_path = agnostic_config_db_path(cfg);
+    var claim = agnostic_store_claim(db_path);
+    if (claim == AGNOSTIC_CLAIM_HELD) {
+        agnostic_log_kv_str(SK_ERROR, "another agnostic process holds this database; refusing to start", 63,
+          "path", 4, db_path);
+        return 0;
+    }
+    if (claim != AGNOSTIC_CLAIM_OK) {
+        agnostic_log_kv_str(SK_ERROR, "could not claim the database (its .owner file); refusing to start", 65,
+          "path", 4, db_path);
+        return 0;
+    }
+
     # ⚠ **A shortfall here refuses to start.** The library is compiled in, so a
     # document that fails to parse is a build-time fault, not a runtime one —
     # and silently serving 17 presets when 18 were embedded is exactly the
@@ -397,7 +416,6 @@ fn agnostic_serve_mount(cfg): i64 {
     # there would accept a definition and lose it, which is worse than refusing
     # to start. The M3 WARN that said definitions do not survive restart is gone
     # because they now do.
-    var db_path = agnostic_config_db_path(cfg);
     if (agnostic_definitions_open(db_path) == 0) {
         agnostic_log_kv_str(SK_ERROR, "could not open the database; refusing to start", 46,
           "path", 4, db_path);

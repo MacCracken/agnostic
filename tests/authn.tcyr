@@ -8,8 +8,9 @@
 #   2. 401 and 403 are different answers. Collapsing them would tell a valid
 #      user with the wrong role to re-authenticate, which cannot help them.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_AUTHNDB = "/tmp/agnostic-authn-suite.patra";
+var _T_AUTHNDB = _tt_tmp_path("authn-suite");
 
 fn _t_authn_open() {
     agnostic_store_close();
@@ -206,6 +207,7 @@ fn main() {
     test_role_comes_from_the_row_not_the_token();
     test_ladder_enforcement();
     test_unclassified_route_fails_closed();
+    _tt_unlink_store(_T_AUTHNDB);
     return assert_summary();
 }
 

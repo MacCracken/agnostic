@@ -313,7 +313,7 @@ fn _agnostic_authn_principal_for_a(a, uid): i64 {
     var role = agnostic_users_role(uid);
     if (role < 0) { return 0; }
     var tenant = agnostic_users_tenant_a(a, uid);
-    if (tenant == 0) { tenant = str_from(""); }
+    if (tenant == 0) { tenant = str_from_a(a, ""); }
     return agnostic_principal_new_a(a, uid, role, tenant);
 }
 

@@ -39,6 +39,7 @@ Two facts limit what that answer can hold:
 - **No `finished_at`, no `started_at`.** The crew did not finish, and when it stopped is not known. A finishing time of "when the server came back" would make every view show the downtime as run time. `interrupted_at` says when it was declared.
 - **The views know it.** Swarm Command counts it as terminal; the Crews view has an Interrupted filter.
 - **It is not resumable.** Resuming needs agnosai F4, a durable crew log. When agnosai's events carry a finished task's output and usage, an interrupted crew can keep them under ADR 0012's rule without changing this decision.
+  *Note, 0.1.15:* [ADR 0019](0019-an-interrupted-crew-keeps-what-its-finished-tasks-answered.md) does, for the output: since agnosai 2.1.5 a `token` event carries it, and the sweep writes what was kept into the outcome's `results`. No event carries usage yet.
 
 **This supersedes the 404 in the M4 roadmap note** ("a crew interrupted mid-flight 404s after a restart"). The note's objection is met by construction rather than guarded against:
 
@@ -61,9 +62,11 @@ Two facts limit what that answer can hold:
   - An interrupted crew reports no usage or cost, though its finished tasks may have spent money; agnostic never saw the metering.
   - A crew that ended in the engine within one collector interval (200 ms) of the crash is `interrupted`, and its results are lost.
   - The sweep assumes one process per database file, as the definition cache already does. A second process started on the same file would mark the first one's running crews interrupted, and write-once would then refuse their real outcomes.
+    *Note, 0.1.15:* enforced. Mount claims `<db>.owner` with an exclusive, non-blocking `flock` before it touches the file, and a second process refuses to start ([architecture 001](../architecture/001-what-survives-a-restart.md)).
 - **Neutral**
   - The in-flight table has no index. Its live rows are only the crews in flight, so a delete scans a few pages, where an index would keep a tombstone for every crew ever run.
   - Events and the plan stay in memory, so `/events`, `/plan` and cancel answer 404 for an interrupted crew, as for any crew from before a restart.
+    *Note, 0.1.15:* cancel answers **409** for any stored crew of the caller's tenant, interrupted ones included, so it agrees with `GET /crews/{id}`'s 200. `/events` and `/plan` still answer 404.
   - A retry with the crew's `Idempotency-Key` after a restart starts a new crew (ADR 0008: keys do not survive one). That is what a client resubmitting lost work wants.
 
 ## Alternatives considered

@@ -39,11 +39,11 @@ fn main() {
 
     agnostic_log_init(cfg);
 
-    # CYRIUS_PKG_VERSION resolves ONLY in this file — the entry text. cbt injects
-    # `#@pkgver` at byte 0 and cycc replaces it here, but an included file
-    # referencing the symbol fails to compile. Filed upstream as
-    # cyrius 2026-08-20-pkgver-not-visible-in-included-files. So the version is
-    # read here and handed to the modules that report it.
+    # CYRIUS_PKG_VERSION resolves in this file and, since cyrius 6.5.34, in a file it
+    # includes — but not two includes deep, where `src/routes/health.cyr` is (via
+    # `src/app.cyr`). Filed upstream 2026-10-07
+    # (`2026-10-07-pkgver-not-visible-in-nested-includes.md`). So the version is read
+    # here and handed to the module that reports it.
     agnostic_version_set(str_from(CYRIUS_PKG_VERSION));
 
     return agnostic_serve(cfg);

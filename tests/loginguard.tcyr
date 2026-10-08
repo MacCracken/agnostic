@@ -10,8 +10,9 @@
 #   3. The external IdP hook is additive: it runs only after local verification
 #      fails, and it yields a uid, never a role.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_LGDB = "/tmp/agnostic-loginguard-suite.patra";
+var _T_LGDB = _tt_tmp_path("loginguard-suite");
 
 fn _t_lg_open() {
     agnostic_store_close();
@@ -230,6 +231,7 @@ fn main() {
     test_throttled_login_does_no_argon2();
     test_webhook_signatures();
     test_external_idp_is_additive();
+    _tt_unlink_store(_T_LGDB);
     return assert_summary();
 }
 

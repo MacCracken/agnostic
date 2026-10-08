@@ -260,12 +260,14 @@ fn agnostic_agent_def_fields_a(a): i64 {
 # message goes out unprefixed.
 fn _agnostic_ad_reject(a, out, index, status, msg: Str): i64 {
     if (index < 0) { return _agnostic_reject(a, out, status, msg); }
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "agents[");
-    str_builder_add_int(sb, index);
-    str_builder_add_cstr(sb, "]: ");
-    str_builder_add(sb, msg);
-    return _agnostic_reject(a, out, status, str_builder_build(sb));
+    # In `a`, the request's arena (0.1.15): a refusal is a request path too.
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return _agnostic_reject(a, out, status, msg); }
+    str_builder_add_cstr_a(a, sb, "agents[");
+    str_builder_add_int_a(a, sb, index);
+    str_builder_add_cstr_a(a, sb, "]: ");
+    str_builder_add_a(a, sb, msg);
+    return _agnostic_reject(a, out, status, str_builder_build_a(a, sb));
 }
 
 # The engine definition inside an Agnostic one.
@@ -335,12 +337,13 @@ fn agnostic_agent_def_decode_a(a, v, index, out): i64 {
 
     var unknown = agnostic_unknown_field(v, agnostic_agent_def_fields_a(a));
     if (unknown != 0) {
-        var sb = str_builder_new();
-        str_builder_add_cstr(sb, "unknown field '");
-        str_builder_add(sb, unknown);
-        str_builder_add_cstr(sb, "'");
+        var sb = str_builder_new_a(a);
+        if (sb == 0) { return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, unknown); }
+        str_builder_add_cstr_a(a, sb, "unknown field '");
+        str_builder_add_a(a, sb, unknown);
+        str_builder_add_cstr_a(a, sb, "'");
         return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_builder_build(sb));
+          str_builder_build_a(a, sb));
     }
 
     var key = agnostic_req_str(v, AGNOSTIC_JK_KEY);
@@ -425,20 +428,22 @@ fn agnostic_agent_def_decode_a(a, v, index, out): i64 {
 fn _agnostic_ad_opt_str(a, out, index, v, key: Str, e, which): i64 {
     var s = agnostic_opt_str(v, key, 0 - 1);
     if (s == 0) {
-        var sb = str_builder_new();
-        str_builder_add_cstr(sb, "'");
-        str_builder_add(sb, key);
-        str_builder_add_cstr(sb, "' must be a string");
-        _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build(sb));
+        var sb = str_builder_new_a(a);
+        if (sb == 0) { _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, key); return 0; }
+        str_builder_add_cstr_a(a, sb, "'");
+        str_builder_add_a(a, sb, key);
+        str_builder_add_cstr_a(a, sb, "' must be a string");
+        _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sb));
         return 0;
     }
     if (s == 0 - 1) { return 1; }
     if (_agnostic_str_field_ok(s) < 0) {
-        var sb2 = str_builder_new();
-        str_builder_add_cstr(sb2, "'");
-        str_builder_add(sb2, key);
-        str_builder_add_cstr(sb2, "' exceeds the maximum length");
-        _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST, str_builder_build(sb2));
+        var sb2 = str_builder_new_a(a);
+        if (sb2 == 0) { _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST, key); return 0; }
+        str_builder_add_cstr_a(a, sb2, "'");
+        str_builder_add_a(a, sb2, key);
+        str_builder_add_cstr_a(a, sb2, "' exceeds the maximum length");
+        _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST, str_builder_build_a(a, sb2));
         return 0;
     }
     var c = str_clone(s);

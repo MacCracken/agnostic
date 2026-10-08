@@ -305,8 +305,8 @@ fn agnostic_password_hash_a(a, password: Str): i64 {
     return str_builder_build(sb);
 }
 
-# The `i`th `$`-separated field of a stored record, or 0.
-fn _agnostic_pw_field(stored: Str, want): i64 {
+# The `i`th `$`-separated field of a stored record, as a view in `a`, or 0.
+fn _agnostic_pw_field_a(a, stored: Str, want): i64 {
     var n = str_len(stored);
     var d = str_data(stored);
     var field = 0;
@@ -317,7 +317,9 @@ fn _agnostic_pw_field(stored: Str, want): i64 {
         if (i == n) { at_end = 1; }
         else { if ((load8(d + i) & 255) == 36) { at_end = 1; } }
         if (at_end == 1) {
-            if (field == want) { return str_sub(stored, start, i - start); }
+            # A view in `a`, the request's arena (0.1.15): `str_sub` kept six 16-byte
+            # headers per verify on the global heap, which never frees.
+            if (field == want) { return str_new_a(a, d + start, i - start); }
             field = field + 1;
             start = i + 1;
         }
@@ -341,19 +343,19 @@ fn agnostic_password_verify_a(a, password: Str, stored: Str, out_shed): i64 {
     if (out_shed != 0) { store64(out_shed, 0); }
     if (stored == 0 || str_len(stored) == 0) { return 0; }
 
-    var ver = _agnostic_pw_field(stored, 0);
+    var ver = _agnostic_pw_field_a(a, stored, 0);
     if (ver == 0) { return 0; }
     if (str_eq_cstr(ver, "v1") == 0) { return 0; }
 
-    # ⚠ **Every field is checked for 0 BEFORE it is used.** `_agnostic_pw_field`
+    # ⚠ **Every field is checked for 0 BEFORE it is used.** `_agnostic_pw_field_a`
     # answers 0 for a field a truncated record does not have, and
     # `agnostic_config_parse_bounded` would `str_len(0)` — a read through a null
     # `Str` header, i.e. a segfault on the authentication path, reachable from a
     # tampered or half-written database row. Found by
     # `tests/crypto.tcyr` → `crypto/password-malformed` feeding the record `v1`.
-    var tf = _agnostic_pw_field(stored, 1);
-    var mf = _agnostic_pw_field(stored, 2);
-    var pf = _agnostic_pw_field(stored, 3);
+    var tf = _agnostic_pw_field_a(a, stored, 1);
+    var mf = _agnostic_pw_field_a(a, stored, 2);
+    var pf = _agnostic_pw_field_a(a, stored, 3);
     if (tf == 0 || mf == 0 || pf == 0) { return 0; }
 
     var t = agnostic_config_parse_bounded(tf, 64);
@@ -361,8 +363,8 @@ fn agnostic_password_verify_a(a, password: Str, stored: Str, out_shed): i64 {
     var p = agnostic_config_parse_bounded(pf, 64);
     if (t <= 0 || m <= 0 || p <= 0) { return 0; }
 
-    var salt_hex = _agnostic_pw_field(stored, 4);
-    var hash_hex = _agnostic_pw_field(stored, 5);
+    var salt_hex = _agnostic_pw_field_a(a, stored, 4);
+    var hash_hex = _agnostic_pw_field_a(a, stored, 5);
     if (salt_hex == 0 || hash_hex == 0) { return 0; }
 
     var slen = str_len(salt_hex) / 2;

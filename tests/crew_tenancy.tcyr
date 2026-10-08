@@ -13,8 +13,9 @@
 #      another body is refused; keys do not cross scopes.
 #   5. A crew a restart interrupted (0.1.13) is still scoped, listed and filtered.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_DB = "/tmp/agnostic-crew-tenancy-suite.patra";
+var _T_DB = _tt_tmp_path("crew-tenancy-suite");
 var _T_MAXB = 1048576;
 var _T_BODY = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}";
 var _T_BODY2 = "{\"name\":\"other\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"something else\"}]}";
@@ -329,6 +330,17 @@ fn test_an_interrupted_crew_stays_its_tenants() {
       "nor can the default scope");
     agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
 
+    # Cancel answers from the store too (0.1.15): 409 to its tenant, who can read it, and 404
+    # to everyone else, as GET does.
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_POST, _t_url(acme, "/cancel"), "", _t_ctx(a, ta, 0))),
+      AGNOSTIC_HTTP_CONFLICT, "acme's cancel is 409: the crew has finished");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_POST, _t_url(acme, "/cancel"), "", _t_ctx(a, tg, 0))),
+      HTTP_NOT_FOUND, "⭐ globex's is 404 — a 409 would tell it the crew exists");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_POST, _t_url(acme, "/cancel"), "", 0)),
+      HTTP_NOT_FOUND, "and so is the default scope's");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+
     # ⭐ Listed unfiltered: a mask that stopped at UNKNOWN would hide it here.
     var la = _t_listed(_t_list(a, 0, _t_ctx(a, ta, 0)));
     assert_eq(bayan_json_v_arr_len(la), 1, "⭐ acme's unfiltered listing includes it");
@@ -421,7 +433,7 @@ fn main() {
     test_legacy_document_is_the_default_scope();
     test_idempotency_key();
     agnostic_store_close();
-    sys_unlink(_T_DB);
+    _tt_unlink_store(_T_DB);
     return assert_summary();
 }
 

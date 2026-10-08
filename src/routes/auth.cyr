@@ -53,8 +53,8 @@ fn agnostic_route_login_a(a, body: Str, ctx): i64 {
           str_from_a(a, "unknown field in request body"));
     }
 
-    var email = agnostic_req_str(v, str_from("email"));
-    var password = agnostic_req_str(v, str_from("password"));
+    var email = agnostic_req_str(v, str_from_a(a, "email"));
+    var password = agnostic_req_str(v, str_from_a(a, "password"));
     if (email == 0 || password == 0) {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "email and password are required"));
@@ -95,20 +95,20 @@ fn agnostic_route_login_a(a, body: Str, ctx): i64 {
           str_from_a(a, "could not issue a token"));
     }
 
-    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("auth.login"),
-      agnostic_audit_detail("uid", str_from_int_a(a, uid)));
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from_a(a, "auth.login"),
+      agnostic_audit_detail_a(a, "uid", str_from_int_a(a, uid)));
 
     # ⚠ The token is in the body and NOT logged. `agnostic_log_kv_str` is never
     # called with it, and the audit entry records the uid rather than the
     # credential — a trail that stores bearer tokens is a credential store.
     var out = bayan_json_v_obj_new_a(a);
-    bayan_json_v_obj_set_a(a, out, str_from("token"), bayan_json_v_str_new_a(a, token));
-    bayan_json_v_obj_set_a(a, out, str_from("token_type"),
-      bayan_json_v_str_new_a(a, str_from("Bearer")));
-    bayan_json_v_obj_set_a(a, out, str_from("expires_in"),
+    bayan_json_v_obj_set_a(a, out, str_from_a(a, "token"), bayan_json_v_str_new_a(a, token));
+    bayan_json_v_obj_set_a(a, out, str_from_a(a, "token_type"),
+      bayan_json_v_str_new_a(a, str_from_a(a, "Bearer")));
+    bayan_json_v_obj_set_a(a, out, str_from_a(a, "expires_in"),
       bayan_json_v_int_new_a(a, AGNOSTIC_TOKEN_TTL_SECS));
-    bayan_json_v_obj_set_a(a, out, str_from("role"),
-      bayan_json_v_str_new_a(a, str_from(agnostic_role_name(role))));
+    bayan_json_v_obj_set_a(a, out, str_from_a(a, "role"),
+      bayan_json_v_str_new_a(a, str_from_a(a, agnostic_role_name(role))));
     # ⚠ The bayan OBJECT, not `agnostic_encode_a(a, out)`. `_agnostic_serve_send`
     # serialises a JSON response itself; handing it a Str makes it encode the
     # encoding, and the client receives a JSON string containing escaped JSON.

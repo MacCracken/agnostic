@@ -373,6 +373,7 @@
         "keys": [
           "definition",
           "unforwarded",
+          "etag",
           "storage"
         ]
       }
@@ -400,6 +401,7 @@
         "keys": [
           "definition",
           "unforwarded",
+          "etag",
           "storage"
         ]
       }
@@ -418,7 +420,9 @@
       ],
       "body": "agent_definition",
       "query": [],
-      "headers": [],
+      "headers": [
+        "if-match"
+      ],
       "ok": [
         200
       ],
@@ -427,6 +431,7 @@
         "keys": [
           "definition",
           "unforwarded",
+          "etag",
           "storage"
         ]
       }
@@ -445,7 +450,9 @@
       ],
       "body": null,
       "query": [],
-      "headers": [],
+      "headers": [
+        "if-match"
+      ],
       "ok": [
         200
       ],
@@ -485,7 +492,10 @@
           "dropped",
           "verified",
           "intact",
+          "verdict",
           "bad_index?",
+          "break_count",
+          "breaks",
           "storage"
         ]
       }

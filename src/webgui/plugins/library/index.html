@@ -349,8 +349,18 @@ class PresetShelf {
 }
 
 /** The stored definitions, the one open, and the writes. */
+/** A response's revision: its ETag header as the bridge hands it, else the body's `etag`. */
+function revisionOf(r) {
+  if (r && typeof r.etag === 'string' && r.etag) return r.etag;
+  if (r && r.data && typeof r.data.etag === 'string' && r.data.etag) return r.data.etag;
+  return null;
+}
+
 class DefinitionShelf {
-  constructor(host) { this.host = host; this.items = []; this.loaded = false; this.error = ''; this.open = null; this.unforwarded = []; this.openError = ''; }
+  // `etag`: the revision of the open definition, from its last read or save (agnostic 0.1.15). A
+  // save or delete sends it as If-Match, so an edit made from a stale copy is refused (412)
+  // instead of silently undoing someone else's.
+  constructor(host) { this.host = host; this.items = []; this.loaded = false; this.error = ''; this.open = null; this.unforwarded = []; this.openError = ''; this.etag = null; }
   async load() {
     const r = await this.host.request('GET', '/api/v1/agents/definitions');
     if (r.status !== 200 || !r.data || !Array.isArray(r.data.definitions)) { this.error = r.status === 403 ? 'Your role cannot read definitions.' : 'Could not list definitions: ' + errOf(r); return false; }
@@ -363,24 +373,28 @@ class DefinitionShelf {
     this.open = null;
     this.unforwarded = [];
     this.openError = '';
+    this.etag = null;
     if (!RE_DEF_KEY.test(key)) { this.openError = 'There is no such definition.'; return null; }
     const r = await this.host.request('GET', '/api/v1/agents/definitions/' + key);
     if (r.status !== 200 || !r.data || !r.data.definition) { this.openError = r.status === 404 ? 'There is no such definition — it may have been deleted.' : 'Could not read it: ' + errOf(r); return null; }
     this.open = r.data.definition;
     this.unforwarded = Array.isArray(r.data.unforwarded) ? r.data.unforwarded.filter((x) => typeof x === 'string') : [];
+    this.etag = revisionOf(r);
     return this.open;
   }
   /** Create (`isNew`) or replace a definition. Resolves {ok, message, definition?}. */
   async save(def, isNew) {
     const r = isNew
       ? await this.host.request('POST', '/api/v1/agents/definitions', def)
-      : await this.host.request('PUT', '/api/v1/agents/definitions/' + def.key, def);
+      : await this.host.request('PUT', '/api/v1/agents/definitions/' + def.key, def, this.etag ? { ifMatch: this.etag } : undefined);
     if ((r.status === 201 || r.status === 200) && r.data && r.data.definition) {
       this.open = r.data.definition;
       this.unforwarded = Array.isArray(r.data.unforwarded) ? r.data.unforwarded : [];
+      this.etag = revisionOf(r);
       await this.load();
       return { ok: true, message: isNew ? 'Created ' + def.key + '.' : 'Saved ' + def.key + '.', definition: r.data.definition };
     }
+    if (r.status === 412) return { ok: false, stale: true, message: 'Someone else changed ' + def.key + ' since you opened it. Your edits are still in the editor; reload the definition to see theirs.' };
     if (r.status === 409) return { ok: false, message: 'A definition with the key ' + def.key + ' already exists.' };
     if (r.status === 404) return { ok: false, message: def.key + ' no longer exists — someone deleted it.' };
     if (r.status === 403) return { ok: false, message: 'Your role cannot change definitions.' };
@@ -388,8 +402,10 @@ class DefinitionShelf {
     return { ok: false, message: errOf(r) };
   }
   async remove(key) {
-    const r = await this.host.request('DELETE', '/api/v1/agents/definitions/' + key);
-    if (r.status === 200 || r.status === 404) { this.open = null; await this.load(); return { ok: true, message: 'Deleted ' + key + '.' }; }
+    const tag = this.open && this.open.key === key ? this.etag : null;
+    const r = await this.host.request('DELETE', '/api/v1/agents/definitions/' + key, undefined, tag ? { ifMatch: tag } : undefined);
+    if (r.status === 200 || r.status === 404) { this.open = null; this.etag = null; await this.load(); return { ok: true, message: 'Deleted ' + key + '.' }; }
+    if (r.status === 412) return { ok: false, stale: true, message: 'Someone else changed ' + key + ' since you opened it, so it was not deleted. Reload it first.' };
     if (r.status === 403) return { ok: false, message: 'Your role cannot delete definitions.' };
     return { ok: false, message: 'Could not delete: ' + errOf(r) };
   }

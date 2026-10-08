@@ -2,7 +2,17 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-10-04, at **0.1.14** — the re-pin to **agnosai 2.1.6** and its consumer
+> Last refreshed: 2026-10-07, at **0.1.15** — every agnostic-only roadmap item that needs no
+> dependency move, and what the work found: one process per database file, enforced; the audit
+> verdict says what it found over the whole trail, and a failed write or read no longer breaks or
+> fakes it; an interrupted crew keeps what its finished tasks answered (ADR 0019); agent
+> definitions have revisions, and an agent's `complexity` is one of three; a 405 names its
+> methods; cancel answers 409 for a stored crew; results name their agent; request paths keep
+> nothing on the global heap but libro's audit entry; Swarm Command 0.5.1 sends selection hints;
+> the suites keep their stores under `TMPDIR`. No dependency moved: Cyrius 6.6.14, agnosai 2.1.6
+> and libro 2.10.6, with `lib/` and the lock byte-identical to 0.1.14's. Version, Source, the route
+> table, the WebGUI section, Tests, Persistence, Hardening and Next were refreshed then.
+> Before that, 2026-10-04, at **0.1.14** — the re-pin to **agnosai 2.1.6** and its consumer
 > halves: crew events and status say what happened (agnosai's B17), `/plan?explain=selection` shows
 > why each task got its agent (ADR 0016), a task carries selection hints (ADR 0017), and every crew
 > joins its request's trace, with opt-in OTLP export (ADR 0018). agnosai 2.1.6 was released from what
@@ -36,7 +46,7 @@
 
 ## Version
 
-**0.1.14** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.15** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -50,6 +60,7 @@ line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
   resolution (9 commit pins). At 0.1.14 only agnosai moved (2.1.4 → 2.1.6): the lock by its commit
   pin and `lib/agnosai.cyr`'s hash, `lib/agnosai.cyr` byte-identical to the tag's
   `dist/agnosai.cyr`, and the empty-cache replica reproduced `lib/` and the lock byte for byte.
+  At 0.1.15 nothing moved: `lib/` and the lock are byte-identical to 0.1.14's.
 
 ✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.14 folds **sigil 3.13.7** and
 **patra 1.15.1**. Since 0.1.11 the deps declare exactly those: agnosai (2.1.6 now) declares sigil 3.13.7,
@@ -120,15 +131,16 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 50 files, 28,093 lines, 1,104 top-level definitions (0.1.14; 27,314
-lines and 1,063 at 0.1.13), all `agnostic_*`-prefixed. 11,661 of those lines are generated:
-`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,824 — five embedded pages and the plugin
+the real surface (0.1.10)** — 50 files, 28,989 lines, 1,174 top-level definitions (0.1.15; 28,093
+lines and 1,104 at 0.1.14), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
+`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,903 — five embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 31 suites, 2,543 assertions, 0 failed** (`cyrius test`, 0.1.14; 2,347 at 0.1.13), plus
-**77 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; unchanged since 0.1.13) — **and the
-same 31 suites natively on aarch64** (Raspberry Pi 4). Gates green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant
-check, is evaluated per shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
+**Tests: 32 suites, 2,701 assertions, 0 failed** (`cyrius test`, 0.1.15; 2,543 at 0.1.14), plus
+**80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 77 at 0.1.14) — **and the
+same 32 suites natively on aarch64, with the same per-suite counts** (Raspberry Pi 4). Gates
+green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
+shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
 which since 0.1.10 verifies every plugin's copy of the bridge client; the WebGUI's JavaScript; and,
 since 0.1.13, `check-skill.py`, the agent skill against the API schema, and `gen-api-schema.sh
 --check` on `build/agnostic` when nothing in `src/` or `cyrius.cyml` is newer than it), `deps
@@ -251,17 +263,18 @@ The crew surface, and what each code means:
 | `POST /api/v1/crews` | **202** accepted (`task_ids`; `replayed` for a repeated `Idempotency-Key`); a task may carry selection hints — `required_tools`, `complexity`, `domain`, `gpu_required` (0.1.14, ADR 0017); the crew joins the request's trace (0.1.14, ADR 0018) · 400 semantic · 422 shape or key reused over another body · 503 engine down |
 | `GET /api/v1/crews` | 200 — the caller's tenant's crews, newest first; `?limit=` `?before=` (0.1.9), `?status=` (0.1.10; `interrupted` since 0.1.13) · 422 |
 | `GET /api/v1/crews/{id}` | 200 (with `usage`, times, `scope`); **`interrupted`** for a crew a restart cut short, where it answered 404 before 0.1.13 (ADR 0013) · 404 never submitted **or another tenant's** · 422 malformed id |
-| `POST /api/v1/crews/{id}/cancel` | 200 · 404 · **409 already terminal** · 422 · 503 |
+| `POST /api/v1/crews/{id}/cancel` | 200 · 404 · **409 already terminal** — also for a crew stored before a restart, `interrupted` included (0.1.15) · 422 · 503 |
+| *(any)* | a method the path does not take: **405** with `Allow` naming the ones it does (0.1.15) |
 | `GET /api/v1/crews/{id}/events` | 200 — refreshed first (0.1.8); `?after=N` cursor, `seq`/`at_ms`, `next`, `missed`, `lost_events` (0.1.9); a cursor older than the window gets every event still held and `missed` > 0 (the H3 gap signal) · 404 · 422 |
 | `GET /api/v1/crews/{id}/plan` | 200 — agents and tasks with engine ids (0.1.9) and each task's hints (0.1.14); `?explain=selection[&task=N]`: each task's ranked candidates with their five scores, the `scorer`, a `candidate_limit` (0.1.14, ADR 0016) · 404 not held · 422 (also a bad `explain` or `task`) |
 | `GET /api/v1/presets` | 200 — summaries, not documents |
 | `GET /api/v1/presets/{name}` | 200 · 404 unknown name |
 | `GET /api/v1/agents/definitions` | 200 |
-| `POST /api/v1/agents/definitions` | **201** · 400 · **409** · 422 · **507** |
-| `GET /api/v1/agents/definitions/{key}` | 200 · 404 · 422 |
-| `PUT /api/v1/agents/definitions/{key}` | 200 · 400 · 404 · 422 |
-| `DELETE /api/v1/agents/definitions/{key}` | 200 · 404 · 422 |
-| `GET /api/v1/audit` | 200 — count, the chain's verdict at open, appended, dropped — **ADMIN** |
+| `POST /api/v1/agents/definitions` | **201** · 400 (also an unknown `complexity`, 0.1.15) · **409** · 422 · **507** |
+| `GET /api/v1/agents/definitions/{key}` | 200 — with its revision, `etag` and an `ETag` header (0.1.15) · 404 · 422 |
+| `PUT /api/v1/agents/definitions/{key}` | 200 · 400 · 404 · **412** stale `If-Match` (0.1.15) · 422 |
+| `DELETE /api/v1/agents/definitions/{key}` | 200 · 404 · **412** stale `If-Match` (0.1.15) · 422 |
+| `GET /api/v1/audit` | 200 — count, the chain's verdict at open, appended, dropped; since 0.1.15 `verdict` (`intact` / `restarts` / `altered` / `unverified`), `breaks` and `break_count` — **ADMIN** |
 | `GET /api/v1/audit/entries` | 200 — the newest entries by index; `?limit=` `?before=` (0.1.10, ADR 0011) · 422 — **ADMIN** |
 | `GET /api/v1/plugins` | 200 — with the permission `catalogue` (0.1.9) — READ |
 | `PUT /api/v1/plugins/{id}` | 200 (`changed` true/false) · 400 · 404 · 422 · 500 — **ADMIN** |
@@ -309,7 +322,7 @@ paginated (a cursor) and scoped (crews belong to their tenant, ADR 0008). ⚠ A 
 **404 to every other tenant** on every crew route; a crew stored before 0.1.9 belongs to `_`
 and is not listed.
 
-## WebGUI and plugins (0.1.7 – 0.1.13)
+## WebGUI and plugins (0.1.7 – 0.1.15)
 
 **M9's first slice (0.1.7), its plugin platform (0.1.8), checked by the server (0.1.9), its views over
 the real surface (0.1.10).** Why
@@ -341,18 +354,24 @@ and carries query strings, revisions and idempotency keys. Plugin documents have
   `POST /api/v1/auth/login` and keeps the token per tab (`sessionStorage`). It is also the
   **host bridge**: it answers a plugin's `postMessage` requests that its manifest permits,
   with the user's token, which the plugin never sees.
-- **Crews 0.1.1** (`crews`, 49,191 B, `data: live`, `crews:read`, `crews:write`) — the tenant's
+- **Crews 0.1.2** (`crews`, 49,422 B, `data: live`, `crews:read`, `crews:write`) — the tenant's
   crews by status, a page at a time; a crew's plan, progress by cursor, each task's result with its
   tokens, cost and time, the totals (tokens only when metered, cost only when priced); cancel, asked
   inline; a cancelled crew followed until its finished tasks' results arrive; links to Swarm Command.
   Since 0.1.13: an **Interrupted** filter and pill, and an interrupted crew's `interrupted_at`.
-- **Library 0.1.0** (`library`, 38,876 B, `data: live`, `presets:read`, `definitions:read`,
+  0.1.2 (with agnostic 0.1.15): each task names the agent that did it from the result's
+  `agent_key`, so a finished crew, or one whose events are gone, still says.
+- **Library 0.1.1** (`library`, 40,065 B, `data: live`, `presets:read`, `definitions:read`,
   `definitions:write`) — the presets and their agents; definitions listed, created, edited (key
-  fixed), deleted; a preset's agent saved as a definition.
-- **Audit trail 0.1.0** (`audit`, 26,068 B, `data: live`, `audit:read`) — the chain's verdict at
+  fixed), deleted; a preset's agent saved as a definition. 0.1.1 (with agnostic 0.1.15): a save or
+  delete sends the revision it read as `If-Match`, and a 412 keeps the edits and says someone else
+  changed the definition.
+- **Audit trail 0.1.1** (`audit`, 28,182 B, `data: live`, `audit:read`) — the chain's verdict at
   start-up, its count and dropped appends, and its newest entries by index (severity and text
   filters; each entry's hash and whether it names the one before it, as sent). ADMIN routes.
-- **Swarm Command 0.5.0** (`swarm`, 451,093 B, `data: mixed`, permissions `storage`,
+  0.1.1 (with agnostic 0.1.15): the verdict as found — RESTART BREAKS (a warning, no alteration),
+  BROKEN naming the first altered entry, UNVERIFIED — read as before from an older server.
+- **Swarm Command 0.5.1** (`swarm`, 452,787 B, `data: mixed`, permissions `storage`,
   `presets:read`, `crews:read`, `crews:write`) — a launcher of saved swarms (plugin
   documents `swarm-<id>`, per tenant, written with their revision), an editor for every
   capability with defaults, a headless cost estimate over eight seeds — beside one agent at the
@@ -368,7 +387,10 @@ and carries query strings, revisions and idempotency keys. Plugin documents have
   [ADR 0014](../adr/0014-the-estimators-one-agent-baseline-is-its-own-model.md)) — `soloRun` works
   the swarm's own plan one task at a time on each seed, capped at the tokens the swarm spent there,
   shown SIM on the card and in the editor with what it does not model (answer quality, per-agent
-  context). The Sim is untouched, so every swarm estimate is what it was.
+  context). The Sim is untouched, so every swarm estimate is what it was. 0.5.1 (with agnostic
+  0.1.15, ADR 0017): with its role roster each agent carries `domain` (its role) and `tools` (the
+  kinds the role uses), and each task the same `domain` and `required_tools`, so the engine gives
+  each task to its role's agent; a preset roster sends none.
 - **Every plugin starts OFF.** The switch is `plugin.<id>.enabled` in the settings table;
   it survives a restart, flipping it is ADMIN, and only a real change is audited. A plugin's
   documents survive it being switched off.
@@ -430,9 +452,18 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**31 suites, 2,347 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin, 0.1.13,
-2026-10-04 — and every suite natively on aarch64 on the Pi, Ubuntu 26.04.1, with the same counts), and
-**77 JavaScript tests** (`./scripts/check-webgui-js.sh`). At 0.1.12: 29 suites, 1,885 assertions
+**32 suites, 2,701 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin, 0.1.15, 2026-10-07;
+2,543 at 0.1.14), and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 77). 0.1.15's
+additions, each guard mutation-checked (CHANGELOG [0.1.15]): a new suite, `tests/request_alloc.tcyr`
+(16 — what a request keeps on the global heap); `audit/failed-write`, `audit/restart-breaks` and
+`audit/unverified`; `crewstore/partials` and `crewstore/refresh-keeps`; `restart/one-process`;
+`router/definition-revisions`, `router/definition-complexity` and the `Allow` probes in
+`router/table`; `request/agent-complexity` and `request/swarm-roles`; `serve/allow-on-405`;
+`outcome/agent`; the `defer` pin in `rlock/ownership`; and the API schema's checks now refuse a key
+written twice and probe six headers. Every suite keeps its stores under `$TMPDIR` since 0.1.15
+(`tests/support/tmp.cyr`).
+At 0.1.13: 31 suites, 2,347 assertions (every suite natively on aarch64 on the Pi, Ubuntu 26.04.1,
+with the same counts), and 77 JavaScript tests. At 0.1.12: 29 suites, 1,885 assertions
 (unchanged since 0.1.10; every suite also passed natively on the Pi then — 0.1.11's re-pin was not
 re-run there) and 61 JavaScript tests. 0.1.13's additions (CHANGELOG [0.1.13]):
 `tests/crews_route.tcyr` +20
@@ -583,7 +614,9 @@ Agnostic is built to stand on its own, not as a required layer.
 | agent skill (0.1.13) | `skills/agnostic/SKILL.md`; `scripts/check-skill.py` in `check-clean.sh` checks its frontmatter, and every route, method, query parameter, curl header, response example and `<!-- schema: … -->` list against `docs/api/generated/schema.json`; 22 mutations, each failing by name |
 | views (0.1.10) | [ADR 0010](../adr/0010-views-link-through-the-shell-and-share-one-bridge-client.md): a navigate only to a view that is switched on, params in a fixed alphabet (`shell.test.mjs`); every plugin's bridge client verified byte for byte by the generator |
 | aarch64 (0.1.10) | every suite and the server run natively on a Raspberry Pi 4 before an aarch64 artifact ships |
-| symbols | `check-symbols.sh` OK — 1,104 top-level definitions across 50 files, no duplicates, all prefixed (0.1.14; 1,063 at 0.1.13) |
+| symbols | `check-symbols.sh` OK — 1,174 top-level definitions across 50 files, no duplicates, all prefixed (0.1.15; 1,104 at 0.1.14) |
+| request allocations (0.1.15) | `tests/request_alloc.tcyr`: every refusal arm, an authenticated read, a failed and a successful login, and an audited write keep 0 bytes of agnostic's own on the global heap; an audited request keeps only libro's entry (roadmap, Memory) |
+| one process per database (0.1.15) | mount claims `<db>.owner` with an exclusive `flock` before anything opens; `restart/one-process` holds a claim from a separate open and checks mount refuses and sweeps nothing |
 | security | CI `security` job clean |
 | baseline benches | `bench-history.csv` seeded — `noop` 2 ns @ `830216c` |
 | documented | `BENCHMARKS.md` generated |
@@ -697,18 +730,19 @@ if that changes the cache goes rather than gets patched.
 
 ## Persistence
 
-**One patra database, nine tables**, behind `src/engine/store.cyr`:
+**One patra database, ten tables**, behind `src/engine/store.cyr`:
 `agnostic_definitions (dkey, doc)`, `agnostic_crews (crew_id, cname, cstatus, doc)` (`cname`, never
 read, holds at most the name's first 255 bytes, cut on a character, since 0.1.13),
 the identity tables `agnostic_users`, `agnostic_apikeys` and `agnostic_tenants` (M5),
 `agnostic_settings (skey, sval)` (0.1.7), `agnostic_plugin_data` (0.1.8),
 `agnostic_crew_index` (0.1.9 — one row per terminal crew, indexed on `scope`, what the listing reads), and
 `agnostic_crew_inflight` (0.1.13 — one status-less row per accepted crew with no outcome
-yet, ADR 0013). patra allows exactly **one index per
+yet, ADR 0013), and `agnostic_crew_partial` (0.1.15 — the output of each task the model answered,
+while its crew has no outcome, ADR 0019). patra allows exactly **one index per
 table** — `SCH_IDX_COL` is a single slot in the schema page — so each gets it on the
-column everything looks up by, except `agnostic_crew_inflight`, which has **none on purpose**: its
-live rows are only the crews in flight, so a delete scans a few pages, where an index would keep a
-tombstone per crew ever run until VACUUM. The audit chain has its own file: `patrastore_open`
+column everything looks up by, except `agnostic_crew_inflight` and `agnostic_crew_partial`, which
+have **none on purpose**: their live rows belong only to the crews in flight, so a delete scans a
+few pages, where an index would keep a tombstone per crew or task ever run until VACUUM. The audit chain has its own file: `patrastore_open`
 opens its own handle. What survives a restart, table by table, is
 [`architecture/001`](../architecture/001-what-survives-a-restart.md).
 
@@ -730,8 +764,8 @@ run) and concurrent audit appends could fork the chain. Now:
 Cost: ~0.7 µs per uncontended enter/exit (two `gettid` syscalls) against ~48 µs
 per user lookup; the ceiling is serial store access, ~20k lookups/s here. Why not
 a handle per worker — patra's advice for read parallelism — is ADR 0003.
-⚠ Do not release it with `defer`: cycc 6.6.6 skips a `defer` on `return f(...)`
-(filed upstream 2026-09-26).
+`defer` may release it since 0.1.15: cycc 6.6.6 skipped a `defer` on `return f(...)`,
+cyrius 6.6.7 fixed it, and `rlock/ownership` pins the fix at the pin.
 
 ✅ **The two server crashes found at 0.1.4 are fixed in 0.1.5** (both dated from
 at least 0.1.3):
@@ -763,9 +797,11 @@ that claims to run and never will. Instead, submit writes a status-less row to
 `agnostic_crew_inflight`, the outcome write deletes it in the same critical section, and mount —
 after the audit chain opens, before the server listens — turns every row still there into a
 terminal **`interrupted`** outcome (listed, audited as `crew.interrupted`), keeping what was known
-at submit and losing results, usage and cost. Until 0.1.13 such a crew answered 404 after a
-restart. ⚠ This assumes **one agnostic process per `AGNOSTIC_DB_PATH`**: a second one would sweep
-the first one's live crews (not enforced; a roadmap follow-up).
+at submit and, since 0.1.15, the outputs its finished tasks sent (ADR 0019), but no usage or cost.
+Until 0.1.13 such a crew answered 404 after a restart. ⚠ This needs **one agnostic process per
+`AGNOSTIC_DB_PATH`** — a second one would sweep the first one's live crews — and since 0.1.15 mount
+enforces it: an exclusive, non-blocking `flock` on `<db>.owner`, taken before anything opens, and a
+second process refuses to start.
 
 ✅ **The two sibling-library work-arounds of 2026-08-21 are gone** (removed 2026-08-22, see
 Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log level, and libro
@@ -773,10 +809,12 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). After 0.1.14: cyrius 6.6.15 through its sibling chain (kavach and
-libro, bote, agnosai, then agnostic), agnosai's F1 tool loop (M6's prerequisite, with the
-tool-registry decision of `handoff.md` §8), and the agnostic-only follow-ups recorded at 0.1.13 and
-0.1.14. The notes below were written for M5 and remain true.
+See [`roadmap.md`](roadmap.md). After 0.1.15: the re-pin to agnosai 2.1.7 and its HTTP server span
+(agnostic exports its own span per request, ADR 0018's follow-up); the cyrius pin move through its
+sibling chain (kavach and libro, bote, agnosai, then agnostic), held for now by the user; agnosai's
+F1 tool loop and F9's hand-off of dependency outputs (M6's prerequisites, with the tool-registry
+decision of `handoff.md` §8); and what 0.1.15 recorded upstream (libro's per-append entry, patra's
+unchecked page write, cyrius's pkgver two includes deep). The notes below were written for M5 and remain true.
 
 ✅ **patra's single index per table does NOT bind here — corrected 2026-08-21.**
 The earlier note said M5 needs users by id *and* by email and would therefore

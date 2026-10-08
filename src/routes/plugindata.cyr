@@ -40,7 +40,6 @@ var AGNOSTIC_JK_UPDATED   = str_from("updated");
 var AGNOSTIC_JK_BYTES     = str_from("bytes");
 var AGNOSTIC_JK_CREATED   = str_from("created");
 var AGNOSTIC_JK_SCOPE     = str_from("scope");
-var AGNOSTIC_JK_ETAG      = str_from("etag");
 
 # The 422 a malformed plugin id earns.
 fn _agnostic_pdata_bad_plugin_a(a): i64 {
@@ -159,8 +158,8 @@ fn agnostic_route_plugindata_put_a(a, id: Str, key: Str, body: Str, ctx): i64 {
           str_from_a(a, "could not store the document; nothing changed"));
     }
 
-    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("plugin.data.put"),
-      _agnostic_pdata_detail(id, scope, key));
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from_a(a, "plugin.data.put"),
+      _agnostic_pdata_detail_a(a, id, scope, key));
 
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }
@@ -191,8 +190,8 @@ fn agnostic_route_plugindata_delete_a(a, id: Str, key: Str, ctx): i64 {
         return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "no such document"));
     }
     # WARNING, like a definition's delete: it is the entry an operator looks for.
-    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from("plugin.data.delete"),
-      _agnostic_pdata_detail(id, scope, key));
+    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, "plugin.data.delete"),
+      _agnostic_pdata_detail_a(a, id, scope, key));
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_KEY, bayan_json_v_str_new_a(a, key));
@@ -201,14 +200,16 @@ fn agnostic_route_plugindata_delete_a(a, id: Str, key: Str, ctx): i64 {
 }
 
 # The audit detail for a document: `plugin=<id> scope=<tenant> key=<key>` — at most
-# 182 bytes, inside the 255-byte column.
-fn _agnostic_pdata_detail(id: Str, scope: Str, key: Str): i64 {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "plugin=");
-    str_builder_add(sb, id);
-    str_builder_add_cstr(sb, " scope=");
-    str_builder_add(sb, scope);
-    str_builder_add_cstr(sb, " key=");
-    str_builder_add(sb, key);
-    return str_builder_build(sb);
+# 182 bytes, inside the 255-byte column — built in `a`, the request's arena (0.1.15; the
+# audit trail copies what it keeps).
+fn _agnostic_pdata_detail_a(a, id: Str, scope: Str, key: Str): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_cstr_a(a, sb, "plugin=");
+    str_builder_add_a(a, sb, id);
+    str_builder_add_cstr_a(a, sb, " scope=");
+    str_builder_add_a(a, sb, scope);
+    str_builder_add_cstr_a(a, sb, " key=");
+    str_builder_add_a(a, sb, key);
+    return str_builder_build_a(a, sb);
 }

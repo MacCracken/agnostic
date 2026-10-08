@@ -223,8 +223,8 @@ test('an open crew: plan, progress by cursor, then the results and what they cos
   fake.emit(id, 'crew_completed', { status: 'completed', wall_ms: 1500 });
   Object.assign(fake.docs.get(id), {
     status: 'completed', started_at: 2000, finished_at: 3500, engine_mode: 'live',
-    results: [{ task_id: 't-a', status: 'completed', output: 'logs read', usage: { total_tokens: 100, cost_micro_usd: 300, duration_ms: 800 } },
-              { task_id: 't-b', status: 'completed', output: 'report', usage: { total_tokens: 50, duration_ms: 700 } }],
+    results: [{ task_id: 't-a', status: 'completed', output: 'logs read', agent_key: 'reader', usage: { total_tokens: 100, cost_micro_usd: 300, duration_ms: 800 } },
+              { task_id: 't-b', status: 'completed', output: 'report', agent_key: 'writer', usage: { total_tokens: 50, duration_ms: 700 } }],
     usage: { total_tokens: 150, metered_tasks: 2, costed_tasks: 1, cost_micro_usd: 300 },
   });
   fake.status.set(id, 'completed');
@@ -233,6 +233,8 @@ test('an open crew: plan, progress by cursor, then the results and what they cos
   assert.equal(d.finalRead, true, 'and read once more for its results');
   assert.equal(d.tasks[0].output, 'logs read');
   assert.equal(d.tasks[1].usage.total_tokens, 50);
+  assert.equal(d.tasks[0].agent, 'reader', 'the result names the agent the event did');
+  assert.equal(d.tasks[1].agent, 'writer', 'and one whose task_started named none (agnostic 0.1.15)');
   assert.equal(d.tokens, 1, 'token events are counted, not listed');
   assert.ok(d.events.some((e) => e.text.startsWith('crew completed')));
   const s = d.summary();
@@ -351,7 +353,7 @@ test('a crew a server restart interrupted ends interrupted: filtered, settled, n
   fake.held.delete(id);
   Object.assign(fake.docs.get(id), { status: 'interrupted', results: [], task_count: 0, tasks_submitted: 2,
     usage: { total_tokens: 0, metered_tasks: 0, costed_tasks: 0 }, interrupted_at: 5000,
-    error: "the server restarted before this crew's outcome was recorded; its work was lost" });
+    error: "the server restarted before this crew finished; tasks still in progress were lost" });
   fake.crews.find((c) => c.crew_id === id).status = 'interrupted';
   await tick(30);
   assert.equal(d.status, 'interrupted', 'the final read says interrupted');

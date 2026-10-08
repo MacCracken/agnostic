@@ -9,7 +9,8 @@
 # `ctype` and `headers` exist for the WebGUI (0.1.7): a page is a `Str` body whose
 # media type is not `text/plain` and which carries its own Content-Security-Policy.
 # Both are NUL-terminated C strings or 0, and 0 means exactly what it meant before
-# they existed — every JSON and plain-text response leaves them 0.
+# they existed. Every constructor leaves `headers` 0 unless it takes them; since 0.1.15
+# `agnostic_response_set_headers` adds them to any response — a 405's `Allow` is JSON.
 #
 # ## Every constructor has an `_a` twin
 #
@@ -117,7 +118,7 @@ enum AgnosticErrorCode {
     AGNOSTIC_EC_PLUGIN_UNKNOWN   = 1;   # 403: no such plugin is built in (ADR 0007)
     AGNOSTIC_EC_PLUGIN_OFF       = 2;   # 403: the plugin is switched off; the shell leaves it
     AGNOSTIC_EC_PLUGIN_FORBIDDEN = 3;   # 403: the plugin is not granted this route
-    AGNOSTIC_EC_REVISION         = 4;   # 412: a plugin document changed since it was read
+    AGNOSTIC_EC_REVISION         = 4;   # 412: a plugin document or agent definition changed since it was read
 }
 
 enum AgnosticErrorCodeRowOff {
@@ -257,4 +258,14 @@ fn agnostic_response_ctype(r): i64 {
 fn agnostic_response_headers(r): i64 {
     if (r == 0) { return 0; }
     return load64(r + AGNOSTIC_RESP_HEADERS);
+}
+
+# Give response `r` extra header lines — each ending CRLF, one NUL-terminated C string, or 0
+# for none — whatever its body (0.1.15: a 405's `Allow`, on a JSON error). The string must
+# outlive the response; one built in the request's arena does. Answers `r`; a null `r` is
+# left null, so a constructor's exhausted-arena 0 passes through.
+fn agnostic_response_set_headers(r, headers): i64 {
+    if (r == 0) { return 0; }
+    store64(r + AGNOSTIC_RESP_HEADERS, headers);
+    return r;
 }

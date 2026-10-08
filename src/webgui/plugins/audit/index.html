@@ -45,6 +45,8 @@ h1 { font-size: 18px; margin: 0 0 4px; }
 .fact.ok .v { color: var(--ok); }
 .fact.bad { border-color: rgba(239, 68, 68, .55); }
 .fact.bad .v { color: var(--err); }
+.fact.warn { border-color: rgba(245, 158, 11, .55); }
+.fact.warn .v { color: var(--warn); }
 .box { border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 11px; margin-top: 12px; color: var(--dim); }
 .box.bad { border-color: rgba(239, 68, 68, .5); color: var(--err); }
 .box.warn { border-color: rgba(245, 158, 11, .5); color: var(--warn); }
@@ -277,6 +279,39 @@ function linkStates(entries) {
   return out;
 }
 /** Merge a fresh first page into the entries held (newest first): new ones go on top. */
+/**
+ * What the chain's verdict says (agnostic 0.1.15): `{ label, cls, note, noteCls }` for summary `s`.
+ * A server before 0.1.15 sends no `verdict`, only `intact` and `bad_index`, and cannot tell a
+ * restart from an alteration, so that is read as it always was.
+ */
+function chainVerdict(s) {
+  const n = int(s.break_count);
+  const breaks = Array.isArray(s.breaks) ? s.breaks.filter((b) => b && Number.isInteger(b.index)) : [];
+  const first = (kind) => { const b = breaks.find((x) => x.kind === kind); return b ? b.index : null; };
+  const v = typeof s.verdict === 'string' ? s.verdict : (s.intact === true ? 'intact' : 'legacy');
+  if (v === 'intact') return { label: 'verified', cls: 'ok', note: '', noteCls: '' };
+  if (v === 'unverified') {
+    return { label: 'UNVERIFIED', cls: 'bad', noteCls: 'box bad',
+      note: 'The server could not read the trail when it started, so nothing in it was verified. It keeps recording; the next start will try again.' };
+  }
+  if (v === 'restarts') {
+    return { label: 'RESTART BREAKS', cls: 'warn', noteCls: 'box warn',
+      note: (n ?? breaks.length) + ' place' + ((n ?? breaks.length) === 1 ? '' : 's') + ' where the chain starts again without naming the entry before it' +
+        (first('restart') !== null ? ', first at entry #' + first('restart') : '') +
+        ' — written by a server before 0.1.13, which did not link a restart to the trail, or after a start that could not read it. No alteration was found. Such a break cannot show whether entries just before it were deleted.' };
+  }
+  if (v === 'altered') {
+    const at = first('altered');
+    return { label: 'BROKEN', cls: 'bad', noteCls: 'box bad',
+      note: 'The chain failed verification when the server started' + (at !== null ? ', first altered at entry #' + at : '') +
+        (n !== null && n > 1 ? ' (' + n + ' breaks in all, restarts included)' : '') +
+        ': the stored trail was changed while the server was not running. It keeps recording, so the change is bracketed.' };
+  }
+  return { label: 'BROKEN', cls: 'bad', noteCls: 'box bad',
+    note: 'The chain failed verification when the server started' + (int(s.bad_index) !== null ? ', first at entry #' + s.bad_index : '') +
+      '. This server does not say whether that was an alteration or a restart.' };
+}
+
 function mergeNewest(held, fresh) {
   const top = held.length ? held[0].index : -1;
   const add = fresh.filter((e) => e.index > top);
@@ -420,12 +455,13 @@ class AuditView {
     note.replaceChildren();
     if (!s) { if (t.summaryError) note.append(el('div', 'box bad', t.summaryError)); return; }
     const fact = (k, v, cls, title) => { const f = el('div', 'fact' + (cls ? ' ' + cls : '')); f.append(el('div', 'k', k), el('div', 'v', v)); if (title) f.title = title; facts.append(f); };
-    fact('Chain', s.intact === true ? 'verified' : 'BROKEN', s.intact === true ? 'ok' : 'bad', 'checked when the server started (' + String(s.verified || 'open') + ')');
+    const cv = chainVerdict(s);
+    fact('Chain', cv.label, cv.cls, 'checked when the server started (' + String(s.verified || 'open') + ')');
     fact('Entries', String(int(s.total) ?? '—'));
     fact('At start-up', String(int(s.entries_at_open) ?? '—'), '', 'entries the store held when this server started');
     fact('Since', String(int(s.appended) ?? '—'), '', 'entries this server has appended');
     fact('Dropped', String(int(s.dropped) ?? '—'), int(s.dropped) > 0 ? 'bad' : '', 'appends that failed — gaps verification cannot see');
-    if (s.intact !== true) note.append(el('div', 'box bad', 'The chain failed verification when the server started' + (int(s.bad_index) !== null ? ', first at entry #' + s.bad_index : '') + ': the stored trail was altered while the server was not running. It keeps recording, so the tampering is bracketed.'));
+    if (cv.note) note.append(el('div', cv.noteCls, cv.note));
     if (int(s.dropped) > 0) note.append(el('div', 'box warn', s.dropped + ' audit records could not be written. The chain still verifies, because a record never written leaves no hole to find — this count is the only sign of them.'));
   }
   renderRows() {

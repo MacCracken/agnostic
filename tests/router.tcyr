@@ -2,6 +2,9 @@
 # The whole program, in its canonical order — see src/app.cyr for why this is
 # one include rather than a list every suite has to keep in step.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
+
+var _T_ROUTERDB = _tt_tmp_path("router-test");
 
 fn _t_has(s: Str, needle): i64 {
     var n = str_len(s);
@@ -225,6 +228,12 @@ fn _t_arms_of(id): i64 {
     return n;
 }
 
+# 1 when C string `c` is `want`; 0 for a null `c`, so a missing header fails by name.
+fn _t_cstr_is(c, want): i64 {
+    if (c == 0) { return 0; }
+    return streq(c, want);
+}
+
 fn test_route_table() {
     test_group("router/table");
 
@@ -291,6 +300,52 @@ fn test_route_table() {
     assert_eq(agnostic_route_match_method_mismatch(m2), 0, "on an unknown path it is a miss");
     var r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_NONE, str_from("/health"), str_from(""), 1048576, 0);
     assert_eq(agnostic_response_status(r), HTTP_METHOD_NOT_ALLOWED, "so it answers 405, not 404");
+
+    # ⭐ A 405 names the methods its path takes (0.1.15, RFC 9110 §15.5.6). Every row's own
+    # path, sent with each method it lacks and with an unknown verb, lists exactly its arms.
+    # A failure prints the row's index as `got`.
+    var wrong = 0 - 1;
+    var probes = 0;
+    i = 0;
+    while (i < rows) {
+        var path2 = _t_concrete(agnostic_route_row_pattern(i));
+        var want = 0;
+        var k2 = 0;
+        while (k2 < 4) {
+            if (agnostic_route_row_id(i, _t_method(k2)) != AGNOSTIC_ROUTE_NONE) {
+                want = want | (1 << _t_method(k2));
+            }
+            k2 = k2 + 1;
+        }
+        k2 = 0;
+        while (k2 < 5) {
+            var meth = AGNOSTIC_METHOD_NONE;
+            if (k2 < 4) { meth = _t_method(k2); }
+            if (agnostic_route_row_id(i, meth) == AGNOSTIC_ROUTE_NONE) {
+                probes = probes + 1;
+                var m3 = agnostic_route_resolve_a(a, meth, path2);
+                if (agnostic_route_match_allow(m3) != want && wrong < 0) { wrong = i; }
+            }
+            k2 = k2 + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(wrong, 0 - 1, "every row's path, sent a method it lacks, allows exactly its arms");
+    assert_eq(probes, 21 * 5 - 27, "one probe for each method a row lacks, and the unknown verb");
+    var hit = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, str_from("/health"));
+    assert_eq(agnostic_route_match_allow(hit), 0, "a hit allows nothing: only a 405 reads it");
+    var miss = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, str_from("/nope"));
+    assert_eq(agnostic_route_match_allow(miss), 0, "nor does a path no row has");
+
+    # The header line, in the table's column order.
+    var line = agnostic_route_allow_header_a(a, (1 << AGNOSTIC_METHOD_DELETE) | (1 << AGNOSTIC_METHOD_GET)
+      | (1 << AGNOSTIC_METHOD_PUT));
+    assert_eq(_t_cstr_is(line, "Allow: GET, PUT, DELETE\r\n"), 1, "methods in column order, comma-separated");
+    assert_eq(agnostic_route_allow_header_a(a, 0), 0, "an empty mask is no header");
+    r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/health"), str_from(""), 1048576, 0);
+    assert_eq(_t_cstr_is(agnostic_response_headers(r), "Allow: GET\r\n"), 1, "and the 405 carries it");
+    r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from("/nope"), str_from(""), 1048576, 0);
+    assert_eq(agnostic_response_headers(r), 0, "a 404 carries none");
 }
 
 fn test_needs_auth() {
@@ -433,13 +488,130 @@ fn test_definition_routes() {
     assert_eq(agnostic_route_needs_auth(AGNOSTIC_ROUTE_DEF_DELETE), 1, "delete needs auth");
 }
 
+# A request context carrying `If-Match: <tag>` (a Str, or 0 for none).
+fn _t_if_match(a, tag) {
+    var c = agnostic_reqctx_new_a(a, 0, 0);
+    agnostic_reqctx_set_headers(c, 0, 0, tag, 0);
+    return c;
+}
+
+# A definition route's answer: method, path, body (C strings) and `If-Match`.
+fn _t_def_req(a, method, path, body, tag) {
+    return agnostic_route_dispatch_a(a, method, str_from(path), str_from(body), 1048576, _t_if_match(a, tag));
+}
+
+# The `ETag` header line a response carries, as the tag between `ETag: ` and CRLF, or 0.
+fn _t_etag_header(r) {
+    var h = agnostic_response_headers(r);
+    if (h == 0) { return 0; }
+    var n = strlen(h);
+    if (n < 8 || memeq(h, "ETag: ", 6) == 0) { return 0; }
+    return str_from_buf(h + 6, n - 8);
+}
+
+# ⭐ 0.1.15: a definition has a revision, and a write made from an old one is refused. Until then
+# the Library edited with a last-writer-wins PUT: of two editors, the second undid the first.
+fn test_definition_revisions() {
+    test_group("router/definition-revisions");
+
+    agnostic_definitions_open(str_from(_T_ROUTERDB));
+    agnostic_definitions_reset();
+    var a = arena_allocator(1048576);
+    var c = _t_def_req(a, AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions",
+      "{\"key\":\"rev-1\",\"role\":\"tester\",\"goal\":\"find bugs\"}", 0);
+    assert_eq(agnostic_response_status(c), AGNOSTIC_HTTP_CREATED, "created");
+    var t1 = agnostic_req_str(agnostic_response_body(c), AGNOSTIC_JK_ETAG);
+    assert_neq(t1, 0, "a create answers its revision as etag");
+    if (t1 == 0) { return 0; }
+    assert_eq(str_len(t1), 18, "a quoted 16-hex tag, the format plugin documents use");
+    var h1 = _t_etag_header(c);
+    assert_eq(h1 != 0 && str_eq(h1, t1) == 1, 1, "and as an ETag header");
+
+    var g = _t_def_req(a, AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/rev-1", "", 0);
+    var gh = _t_etag_header(g);
+    assert_eq(gh != 0 && str_eq(gh, t1) == 1, 1, "a GET names the same revision");
+
+    # Their write, from the current revision, lands and moves it.
+    var put_theirs = _t_def_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/rev-1",
+      "{\"key\":\"rev-1\",\"role\":\"tester\",\"goal\":\"their goal\"}", t1);
+    assert_eq(agnostic_response_status(put_theirs), HTTP_OK, "a PUT from the current revision is 200");
+    var t2 = agnostic_req_str(agnostic_response_body(put_theirs), AGNOSTIC_JK_ETAG);
+    assert_eq(t2 != 0 && str_eq(t2, t1) == 0, 1, "and answers a new revision");
+
+    # Mine, from the old one, is refused and changes nothing.
+    var put_mine = _t_def_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/rev-1",
+      "{\"key\":\"rev-1\",\"role\":\"tester\",\"goal\":\"my goal\"}", t1);
+    assert_eq(agnostic_response_status(put_mine), AGNOSTIC_HTTP_PRECONDITION_FAILED,
+      "⭐ a PUT from an old revision is 412");
+    var code = agnostic_req_str(agnostic_response_body(put_mine), AGNOSTIC_JK_CODE);
+    assert_eq(code != 0 && str_eq_cstr(code, "revision") == 1, 1, "with code revision");
+    var now = agnostic_definitions_get(str_from("rev-1"));
+    assert_eq(str_eq_cstr(agnosai_agent_goal(agnostic_agent_def_engine(now)), "their goal"), 1, "⭐ and theirs stands");
+
+    # A precondition is checked before the body is read (RFC 9110 §13.2.1), and an absent
+    # definition is still 404 with one.
+    assert_eq(agnostic_response_status(_t_def_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/rev-1",
+          "{}", t1)), AGNOSTIC_HTTP_PRECONDITION_FAILED, "a stale tag is 412 whatever the body");
+    assert_eq(agnostic_response_status(_t_def_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/absent",
+          "{\"key\":\"absent\",\"role\":\"r\",\"goal\":\"g\"}", t1)), HTTP_NOT_FOUND,
+      "an absent definition is 404, with If-Match or without");
+    assert_eq(agnostic_response_status(_t_def_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/rev-1",
+          "{\"key\":\"rev-1\",\"role\":\"tester\",\"goal\":\"any goal\"}", str_from("*"))), HTTP_OK,
+      "If-Match: * means only that it exists");
+    assert_eq(agnostic_response_status(_t_def_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/rev-1",
+          "{\"key\":\"rev-1\",\"role\":\"tester\",\"goal\":\"no tag\"}", 0)), HTTP_OK,
+      "and a PUT without one is unconditional, as before");
+
+    # Delete: from an old revision refused, from the current one done.
+    assert_eq(agnostic_response_status(_t_def_req(a, AGNOSTIC_METHOD_DELETE, "/api/v1/agents/definitions/rev-1",
+          "", t2)), AGNOSTIC_HTTP_PRECONDITION_FAILED, "⭐ a DELETE from an old revision is 412");
+    assert_neq(agnostic_definitions_get(str_from("rev-1")), 0, "and deletes nothing");
+    var cur = _t_etag_header(_t_def_req(a, AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/rev-1", "", 0));
+    assert_eq(agnostic_response_status(_t_def_req(a, AGNOSTIC_METHOD_DELETE, "/api/v1/agents/definitions/rev-1",
+          "", cur)), HTTP_OK, "a DELETE from the current revision is 200");
+    assert_eq(agnostic_definitions_get(str_from("rev-1")), 0, "and it is gone");
+    return 0;
+}
+
+# ⭐ 0.1.15: a definition's `complexity` is one of the three at the door, and one stored before
+# then with another value is read as it is.
+fn test_definition_complexity() {
+    test_group("router/definition-complexity");
+
+    agnostic_definitions_open(str_from(_T_ROUTERDB));
+    agnostic_definitions_reset();
+    var a = arena_allocator(1048576);
+    var bad = _t_def_req(a, AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions",
+      "{\"key\":\"cx-1\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"extreme\"}", 0);
+    assert_eq(agnostic_response_status(bad), HTTP_BAD_REQUEST, "⭐ a POST with another complexity is 400");
+    assert_eq(agnostic_definitions_get(str_from("cx-1")), 0, "and stores nothing");
+
+    # A definition stored before 0.1.15 with another value: written past the door, as it was.
+    var v = agnostic_decode_a(a, str_from("{\"key\":\"cx-old\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"extreme\"}"));
+    var rj: i64[1];
+    var d = agnostic_agent_def_decode_a(default_alloc(), v, 0 - 1, &rj);
+    assert_neq(d, 0, "precondition: the decoder still accepts it");
+    assert_eq(agnostic_definitions_create(str_from("cx-old"), d), AGNOSTIC_DEF_OK, "precondition: stored");
+    agnostic_definitions_close();
+    agnostic_definitions_open(str_from(_T_ROUTERDB));
+    var g = _t_def_req(a, AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/cx-old", "", 0);
+    assert_eq(agnostic_response_status(g), HTTP_OK, "⭐ a stored one is read as it is, after a restart");
+    var put_same = _t_def_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/cx-old",
+      "{\"key\":\"cx-old\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"extreme\"}", 0);
+    assert_eq(agnostic_response_status(put_same), HTTP_BAD_REQUEST, "but cannot be saved again as it is");
+    var put_fixed = _t_def_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/cx-old",
+      "{\"key\":\"cx-old\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"high\"}", 0);
+    assert_eq(agnostic_response_status(put_fixed), HTTP_OK, "only with one of the three");
+    return 0;
+}
+
 fn test_definition_dispatch() {
     test_group("router/definition-dispatch");
 
     # The store is patra-backed as of M4, so the routes need a database open —
     # without one, `create` answers MISSING and the handler 500s. That is the
     # right failure: a route that cannot persist must not report success.
-    agnostic_definitions_open(str_from("/tmp/agnostic-router-test.patra"));
+    agnostic_definitions_open(str_from(_T_ROUTERDB));
     agnostic_definitions_reset();
     var a = arena_allocator(262144);
     var body = "{\"key\":\"qa-1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"focus\":\"orchestration\"}";
@@ -499,6 +671,8 @@ fn main() {
     test_method_parse();
     test_definition_routes();
     test_definition_dispatch();
+    test_definition_revisions();
+    test_definition_complexity();
     test_preset_routes();
     test_preset_dispatch();
     test_path_matching();
@@ -509,6 +683,7 @@ fn main() {
     test_needs_auth();
     test_dispatch();
     test_body_limit();
+    _tt_unlink_store(_T_ROUTERDB);
     return assert_summary();
 }
 

@@ -425,7 +425,8 @@ fn agnostic_crews_interrupt_inflight(): i64 {
         var id = agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID);
         reset_via(da);
         var rc = 0;
-        var doc = agnostic_crew_interrupted_doc_a(da, row, now);
+        # What its finished tasks answered while it ran (0.1.15, ADR 0019), as results.
+        var doc = agnostic_crew_interrupted_doc_with_a(da, row, now, _agnostic_crew_finished_results_a(da, id));
         if (doc != 0) { rc = agnostic_crews_interrupt_row(row, doc); }
         if (rc == 1) {
             agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from("crew.interrupted"),
@@ -440,6 +441,25 @@ fn agnostic_crews_interrupt_inflight(): i64 {
         i = i + 1;
     }
     return written;
+}
+
+# The kept outputs of crew `crew_id` (`agnostic_crews_partials_a`) as engine task results —
+# each `completed`, with its output and no metadata — or 0 for none (0.1.15, ADR 0019).
+#
+# The results are built on the global heap: this runs once per interrupted crew, at mount.
+# No usage: no event carries one, so an interrupted crew still reports nothing metered.
+fn _agnostic_crew_finished_results_a(a, crew_id: Str): i64 {
+    var pairs = agnostic_crews_partials_a(a, crew_id);
+    if (pairs == 0 || vec_len(pairs) == 0) { return 0; }
+    var out = vec_new();
+    var i = 0;
+    while (i < vec_len(pairs)) {
+        var p = vec_get(pairs, i);
+        vec_push(out, agnosai_task_result_new(str_clone(load64(p)), str_clone(load64(p + 8)),
+            AGNOSAI_STATUS_COMPLETED));
+        i = i + 1;
+    }
+    return out;
 }
 
 # The current outcome of a submitted crew, in `a`.
@@ -506,7 +526,10 @@ fn agnostic_crew_observed_status(e, observed): i64 {
 # `crew_completed` before the orchestrator records the terminal state, so once
 # that state is observed, the closing events are already in the channel.
 fn agnostic_crew_refresh_a(a, entry, crew_id: Str): i64 {
-    agnostic_ledger_drain(entry);
+    # The outputs finished tasks sent while the crew runs (0.1.15, ADR 0019): collected under
+    # the ledger lock, kept below once it is released — never the two locks at once.
+    var finals = vec_new_a(a);
+    agnostic_ledger_drain_a(a, entry, finals);
 
     if (_agnostic_orchestrator != 0) {
         var state = agnosai_orchestrator_crew(_agnostic_orchestrator, crew_id);
@@ -524,9 +547,30 @@ fn agnostic_crew_refresh_a(a, entry, crew_id: Str): i64 {
         }
     }
     if (agnostic_status_is_terminal(agnostic_ledger_status(entry)) == 1) {
-        agnostic_ledger_drain(entry);
+        agnostic_ledger_drain_a(a, entry, finals);
     }
+    _agnostic_crew_keep_finals(crew_id, finals);
     return entry;
+}
+
+# Keep each finished task's output in `finals` (events, `agnostic_ledger_is_final_token`) for
+# crew `crew_id`, so a restart before the crew ends does not lose it (0.1.15, ADR 0019).
+#
+# One store write per task the model answered. Refused, writing nothing, once the crew has a
+# stored outcome — which also covers an outcome latched in this very refresh — so what is
+# kept is only ever what the outcome lacks. Not on a crew with no in-flight row.
+fn _agnostic_crew_keep_finals(crew_id: Str, finals): i64 {
+    if (finals == 0 || agnostic_store_is_open() == 0) { return 0; }
+    var kept = 0;
+    var i = 0;
+    while (i < vec_len(finals)) {
+        var d = agnosai_crew_event_data(vec_get(finals, i));
+        var tid = bayan_json_v_str(bayan_json_v_obj_get_by_cstr(d, "task_id"));
+        var out = bayan_json_v_str(bayan_json_v_obj_get_by_cstr(d, "token"));
+        kept = kept + agnostic_crews_save_partial(crew_id, tid, out);
+        i = i + 1;
+    }
+    return kept;
 }
 
 # Cancel a submitted crew.
@@ -582,8 +626,8 @@ fn agnostic_crew_cancel_a(a, crew_id: Str): i64 {
 
     agnostic_ledger_latch(entry, AGNOSTIC_CREW_CANCELLED, 0, 0);
     agnostic_log_kv_str(SK_INFO, "crew cancelled", 14, "crew_id", 7, crew_id);
-    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from("crew.cancel"),
-      agnostic_audit_detail("crew_id", crew_id));
+    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, "crew.cancel"),
+      agnostic_audit_detail_a(a, "crew_id", crew_id));
     return AGNOSTIC_CANCEL_OK;
 }
 

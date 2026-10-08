@@ -21,6 +21,7 @@
 #      path is driven, each answer must match its declaration, and each status and key declared
 #      must be seen at least once. That group's ERROR lines (an altered trail) are expected.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
 var _T_SNAPSHOT = "docs/api/generated/schema.json";
 var _T_MAXB = 1048576;
@@ -244,19 +245,13 @@ fn _t_body(pre, field, post) {
     return str_data(str_builder_build(sb));
 }
 
-# A file path under $TMPDIR (else /tmp) that only this process uses, ending in `ext`.
+# A file path under $TMPDIR (else /tmp) that only this process uses, ending in `ext`:
+# `tests/support/tmp.cyr`'s, under this suite's own prefix.
 fn _t_tmp_file(tag, ext) {
-    var dir = getenv("TMPDIR");
-    if (dir == 0) { dir = "/tmp"; }
-    if (strlen(dir) == 0) { dir = "/tmp"; }
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, dir);
-    str_builder_add_cstr(sb, "/agnostic-api-schema-");
+    str_builder_add_cstr(sb, "api-schema-");
     str_builder_add_cstr(sb, tag);
-    str_builder_putc(sb, 46);
-    str_builder_add_int(sb, getpid());
-    str_builder_add_cstr(sb, ext);
-    return str_data(str_builder_build(sb));
+    return _tt_tmp_file(str_data(str_builder_build(sb)), ext);
 }
 
 # A store path under $TMPDIR (else /tmp) that only this process uses.
@@ -982,7 +977,8 @@ fn _t_open() {
     sys_unlink(_t_db);
     sys_unlink(_t_audit);
     patra_init();
-    agnostic_store_open(str_from(_t_db));
+    # The definition table too (0.1.15): the header probes hold a definition's If-Match to it.
+    agnostic_definitions_open(str_from(_t_db));
     agnostic_auth_ensure();
     agnostic_tenants_ensure();
     agnostic_settings_ensure();
@@ -995,8 +991,8 @@ fn _t_close() {
     agnostic_audit_close();
     agnostic_store_close();
     agnostic_webgui_reset();
-    sys_unlink(_t_db);
-    sys_unlink(_t_audit);
+    _tt_unlink_store(_t_db);
+    _tt_unlink_store(_t_audit);
     return 0;
 }
 
@@ -1177,7 +1173,9 @@ fn test_probes() {
     assert_eq(ignored_bad, 0, "every GET route answers the same with each known parameter it does not declare set");
 
     # ⭐ The headers each route declares: an invalid value is the handler's refusal. The
-    # document `probe-1` exists (stored above), so both preconditions are decidable.
+    # document `probe-1` exists (stored above), and so does a definition of that key (0.1.15),
+    # so every precondition is decidable.
+    _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/agents/definitions"), agent_ok, 0);
     var headed = 0;
     var header_bad = 0;
     i = 0;
@@ -1224,8 +1222,8 @@ fn test_probes() {
         }
         i = i + 1;
     }
-    assert_eq(headed, 4,
-      "four declared: idempotency-key on submit; if-match, if-none-match on put; if-match on delete");
+    assert_eq(headed, 6,
+      "six declared: idempotency-key on submit; if-match, if-none-match on a document put; if-match on its delete, and on a definition's put and delete");
     assert_eq(header_bad, 0, "and each is read: an invalid value is refused, a precondition with code revision");
 
     # ⭐ A grant's `self`, against the plugin gate: a plugin holding the grant may name itself in
@@ -1379,6 +1377,15 @@ fn _t_check_json(idx, rt, pattern, r) {
         var k = bayan_json_v_obj_key(body, j);
         if (_t_declares(keys, k) == 0) { _t_broken(pattern, " wrote a key it does not declare: ", _t_cstr(k)); }
         if (_t_vec_has_str(seen, k) == 0) { vec_push(seen, k); }
+        # bayan's object set appends, so a key set twice is sent twice; compared as a set the
+        # keys would still match (0.1.15: `engine_mode` on a held crew, 0.1.9 to 0.1.14).
+        var p = 0;
+        while (p < j) {
+            if (str_eq(bayan_json_v_obj_key(body, p), k) == 1) {
+                _t_broken(pattern, " wrote a key twice: ", _t_cstr(k));
+            }
+            p = p + 1;
+        }
         j = j + 1;
     }
     j = 0;
@@ -1743,8 +1750,8 @@ fn test_responses() {
     agnostic_audit_close();
     agnostic_store_close();
     agnostic_webgui_reset();
-    sys_unlink(db);
-    sys_unlink(audit);
+    _tt_unlink_store(db);
+    _tt_unlink_store(audit);
     return 0;
 }
 

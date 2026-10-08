@@ -253,7 +253,9 @@ Every crew in your tenant, newest first, a page at a time: **All**, **Active** (
 
 An **interrupted** crew was running when the server stopped (since 0.1.13,
 [ADR 0013](../adr/0013-a-crew-interrupted-by-a-restart-is-interrupted.md)): it shows when it was
-accepted and when the restart declared it interrupted, says its work was lost, and has no results,
+accepted and when the restart declared it interrupted, and says tasks still in progress were lost.
+Since 0.1.15 the tasks the model had finished answering keep their results
+([ADR 0019](../adr/0019-an-interrupted-crew-keeps-what-its-finished-tasks-answered.md)); it has no
 tokens or cost — submit it again. What else a restart keeps or loses is
 [architecture 001](../architecture/001-what-survives-a-restart.md).
 

@@ -19,9 +19,10 @@
 # thread that does not hold the store lock — which is what turns a forgotten lock
 # into a failing suite instead of a production race.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_CDB = "/tmp/agnostic-concurrency-suite.patra";
-var _T_CAUDIT = "/tmp/agnostic-concurrency-audit.patra";
+var _T_CDB = _tt_tmp_path("concurrency-suite");
+var _T_CAUDIT = _tt_tmp_path("concurrency-audit");
 
 var _T_THREADS = 8;
 var _T_ITERS = 100;
@@ -176,6 +177,34 @@ fn test_the_lock_is_reentrant_and_owned() {
     thread_join(w);
     assert_eq(atomic_load(&_t_entered), 1, "and gets in once it is released");
     assert_eq(agnostic_rlock_held(_t_rl), 0, "leaving the main thread holding nothing");
+
+    # ⭐ 0.1.15: `defer` may pair an enter with its exit again. cycc 6.6.6 dropped a pending
+    # `defer` when the fn returned through `return f(...)`, so a deferred exit was a lock held
+    # forever (filed 2026-09-26, fixed in cyrius 6.6.7). This pins the fix at the toolchain
+    # this repo is built with: every return shape that skipped it, then.
+    assert_eq(_t_deferred_tail(_t_rl), 1, "held inside a fn that defers its exit");
+    assert_eq(agnostic_rlock_held(_t_rl), 0, "⭐ and released when it returns through a tail call");
+    assert_eq(_t_deferred_tail_arg(_t_rl), 2, "a tail call with arguments");
+    assert_eq(agnostic_rlock_held(_t_rl), 0, "⭐ releases it too");
+    assert_eq(agnostic_rlock_depth(_t_rl), 0, "at depth 0");
+}
+
+# The lock's depth as seen from inside `_t_deferred_*`.
+fn _t_held_depth(l): i64 { return agnostic_rlock_depth(l); }
+fn _t_plus(l, n): i64 { return agnostic_rlock_depth(l) + n; }
+
+# Enter `l`, defer the exit, and leave through `return f(...)` — the shape cycc 6.6.6 broke.
+fn _t_deferred_tail(l): i64 {
+    agnostic_rlock_enter(l);
+    defer { agnostic_rlock_exit(l); }
+    return _t_held_depth(l);
+}
+
+# The same with an argument to the tail call.
+fn _t_deferred_tail_arg(l): i64 {
+    agnostic_rlock_enter(l);
+    defer { agnostic_rlock_exit(l); }
+    return _t_plus(l, 1);
 }
 
 # --- the store accessor refuses the handle without the lock ------------------
@@ -405,6 +434,8 @@ fn main() {
     test_one_address_has_exactly_one_user();
     test_the_audit_chain_survives_concurrent_appends();
     agnostic_store_close();
+    _tt_unlink_store(_T_CDB);
+    _tt_unlink_store(_T_CAUDIT);
     return assert_summary();
 }
 

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { loadPage } from './harness.mjs';
 
 const page = loadPage('src/webgui/plugins/audit/index.html');
-const A = page.get('({ validEntry, passesSeverity, matchesText, linkStates, mergeNewest, AuditTrail, PAGE })');
+const A = page.get('({ validEntry, passesSeverity, matchesText, linkStates, mergeNewest, chainVerdict, AuditTrail, PAGE })');
 
 const hash = (i) => String(i).padStart(64, 'a');
 const entry = (i, over = {}) => Object.assign({ index: i, timestamp: '2026-10-02T12:00:0' + (i % 10) + 'Z', severity: 'info', source: 'agnostic',
@@ -34,6 +34,32 @@ class FakeAgnostic {
   }
 }
 const hostFor = (fake) => ({ mode: 'connected', request: (m, p) => fake.request(m, p), can: () => true });
+
+test('the chain verdict says what was found (agnostic 0.1.15), and an older server is read as before', () => {
+  assert.equal(A.chainVerdict({ intact: true, verdict: 'intact', break_count: 0, breaks: [] }).label, 'verified');
+  assert.equal(A.chainVerdict({ intact: true }).label, 'verified', 'a server before 0.1.15 that verified');
+  const r = A.chainVerdict({ intact: false, verdict: 'restarts', bad_index: 4, break_count: 2,
+    breaks: [{ index: 4, kind: 'restart' }, { index: 9, kind: 'restart' }] });
+  assert.equal(r.label, 'RESTART BREAKS');
+  assert.equal(r.cls, 'warn', 'a restart break is a warning, not tampering');
+  assert.match(r.note, /^2 places/);
+  assert.match(r.note, /first at entry #4/);
+  assert.match(r.note, /No alteration was found/);
+  assert.doesNotMatch(r.note, /altered/, 'and never says the trail was altered');
+  const x = A.chainVerdict({ intact: false, verdict: 'altered', bad_index: 4, break_count: 3,
+    breaks: [{ index: 4, kind: 'restart' }, { index: 7, kind: 'altered' }, { index: 9, kind: 'restart' }] });
+  assert.equal(x.label, 'BROKEN');
+  assert.equal(x.cls, 'bad');
+  assert.match(x.note, /first altered at entry #7/, 'names the first ALTERATION, not the first break');
+  assert.match(x.note, /3 breaks in all/);
+  const u = A.chainVerdict({ intact: false, verdict: 'unverified', break_count: 0, breaks: [] });
+  assert.equal(u.label, 'UNVERIFIED');
+  assert.match(u.note, /could not read the trail/);
+  const old = A.chainVerdict({ intact: false, bad_index: 1 });
+  assert.equal(old.label, 'BROKEN', 'a server before 0.1.15 that found a break');
+  assert.match(old.note, /first at entry #1/);
+  assert.match(old.note, /does not say whether/);
+});
 
 test('filters: severity at least, and text over action and details', () => {
   assert.equal(A.passesSeverity(entry(1), 'all'), true);

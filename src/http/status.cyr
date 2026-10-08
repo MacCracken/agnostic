@@ -31,6 +31,8 @@ var AGNOSTIC_HTTP_PRECONDITION_FAILED  = 412;
 var AGNOSTIC_JK_STATUS    = str_from("status");
 var AGNOSTIC_JK_ERROR     = str_from("error");
 var AGNOSTIC_JK_CODE      = str_from("code");
+# A document's revision — plugin documents (0.1.9) and agent definitions (0.1.15).
+var AGNOSTIC_JK_ETAG      = str_from("etag");
 var AGNOSTIC_JK_VERSION   = str_from("version");
 # Shared from M3: `name` is used by the crew surface and the preset surface, and
 # `tools` by the preset library and the agent-definition decoder. A key with two

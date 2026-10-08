@@ -11,9 +11,10 @@
 #      an operator's WRITE is not enough.
 #   4. Only a real change is audited.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_WEBDB = "/tmp/agnostic-webgui-suite.patra";
-var _T_WEBAUDIT = "/tmp/agnostic-webgui-audit.patra";
+var _T_WEBDB = _tt_tmp_path("webgui-suite");
+var _T_WEBAUDIT = _tt_tmp_path("webgui-audit");
 var _T_EMPTY = str_from("");
 var _T_MAXBODY = 1048576;
 
@@ -540,6 +541,8 @@ fn main() {
     test_audit();
     test_plugin_rung();
     agnostic_store_close();
+    _tt_unlink_store(_T_WEBDB);
+    _tt_unlink_store(_T_WEBAUDIT);
     return assert_summary();
 }
 

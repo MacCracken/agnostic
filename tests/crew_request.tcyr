@@ -604,6 +604,57 @@ fn test_empty_agent_domain_is_absent() {
       "so it ties with the agent that has none, and the first still wins");
 }
 
+# A crew whose one agent carries `complexity` `c` (a C string), answered with its rejection.
+fn _t_agent_cx(a, c, out) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"c\",\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"");
+    str_builder_add_cstr(sb, c);
+    str_builder_add_cstr(sb, "\"}],\"tasks\":[{\"description\":\"x\"}]}");
+    return _t_decode(a, str_data(str_builder_build(sb)), out);
+}
+
+# ⭐ 0.1.15: an agent's `complexity` is one of the three, as a task's hint has been since 0.1.14
+# (ADR 0017). The engine reads any other value as medium without a word.
+fn test_agent_complexity_is_checked() {
+    test_group("request/agent-complexity");
+    var a = arena_allocator(262144);
+    var rj: i64[1];
+    assert_neq(_t_agent_cx(a, "high", &rj), 0, "high is accepted");
+    assert_neq(_t_agent_cx(a, "low", &rj), 0, "and low");
+    assert_eq(_t_agent_cx(a, "extreme", &rj), 0, "⭐ another value is refused");
+    var rj0 = load64(&rj);
+    assert_eq(agnostic_reject_status(rj0), HTTP_BAD_REQUEST, "with 400, as a task's hint is");
+    assert_eq(_t_has(agnostic_reject_message(rj0), "agents[0]: 'complexity' must be one of low, medium, high"), 1,
+      "naming the agent and the three");
+    assert_eq(_t_agent_cx(a, "HIGH", &rj), 0, "the engine's case-insensitive spelling is refused too");
+    assert_neq(_t_decode(a, _t_valid(), &rj), 0, "and an agent with none is unaffected");
+}
+
+# ⭐ 0.1.15: the hints Swarm Command 0.5.1 sends pick each task's role agent. Its role roster
+# gives each agent `domain` its role and `tools` the kinds the role uses, and each task the same
+# `domain` and `required_tools` — the shape `specToCrewRequest` builds (tests/webgui). A coder
+# and a reviewer use the same kinds, so the tools alone tie and the domain decides.
+fn test_swarm_role_hints_pick_the_role() {
+    test_group("request/swarm-roles");
+    var a = arena_allocator(262144);
+    var rj: i64[1];
+    var r = _t_decode(a,
+      "{\"name\":\"s\",\"process\":\"parallel\",\"agents\":[{\"key\":\"planner\",\"role\":\"Planner\",\"goal\":\"g\",\"domain\":\"planner\",\"tools\":[\"llm\",\"db\",\"fs\"]},{\"key\":\"coder\",\"role\":\"Coder\",\"goal\":\"g\",\"domain\":\"coder\",\"tools\":[\"exec\",\"fs\",\"llm\"]},{\"key\":\"reviewer\",\"role\":\"Reviewer\",\"goal\":\"g\",\"domain\":\"reviewer\",\"tools\":[\"llm\",\"exec\",\"fs\"]}],\"tasks\":[{\"description\":\"review\",\"domain\":\"reviewer\",\"required_tools\":[\"llm\",\"exec\",\"fs\"]},{\"description\":\"code\",\"domain\":\"coder\",\"required_tools\":[\"exec\",\"fs\",\"llm\"]},{\"description\":\"plan\",\"domain\":\"planner\",\"required_tools\":[\"llm\",\"db\",\"fs\"]}]}",
+      &rj);
+    assert_neq(r, 0, "the swarm's request decodes");
+    if (r == 0) { return 0; }
+    var spec = agnostic_crew_spec_build(r);
+    var agents = agnosai_crew_agents(spec);
+    var tasks = agnosai_crew_tasks(spec);
+    assert_eq(agnosai_scored_index(vec_get(agnosai_rank_agents(agents, vec_get(tasks, 0)), 0)), 2,
+      "⭐ the review goes to the reviewer, though the coder has the same tools");
+    assert_eq(agnosai_scored_index(vec_get(agnosai_rank_agents(agents, vec_get(tasks, 1)), 0)), 1,
+      "the code to the coder");
+    assert_eq(agnosai_scored_index(vec_get(agnosai_rank_agents(agents, vec_get(tasks, 2)), 0)), 0,
+      "and the plan to the planner");
+    return 0;
+}
+
 fn test_bounds_match_the_engine() {
     test_group("request/bounds");
 
@@ -638,6 +689,8 @@ fn main() {
     test_spec_build();
     test_selection_hints();
     test_empty_agent_domain_is_absent();
+    test_agent_complexity_is_checked();
+    test_swarm_role_hints_pick_the_role();
     test_bounds_match_the_engine();
     return assert_summary();
 }

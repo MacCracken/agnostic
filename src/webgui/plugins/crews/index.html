@@ -524,6 +524,9 @@ class CrewDetail {
       if (typeof r.output === 'string') t.output = r.output;
       if (r.usage && typeof r.usage === 'object') t.usage = r.usage;
       if (typeof r.error === 'string') t.error = r.error;
+      // The agent the engine gave it (agnostic 0.1.15): the outcome's word over the event's,
+      // and the only word for a crew whose events are no longer held.
+      if (typeof r.agent_key === 'string') t.agent = r.agent_key;
     }
   }
   /** One engine event, applied to the tasks, as a feed line — or null for one not shown. */

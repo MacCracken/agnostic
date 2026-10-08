@@ -24,11 +24,12 @@
 # can therefore read 0 or ANOTHER thread's id, but never its own. "Is it me?" is
 # the only question asked of that word unlocked, and it cannot be answered wrong.
 #
-# ⚠ **Not `defer`-safe to pair.** A `defer { agnostic_rlock_exit(l); }` is skipped
-# when the fn returns through `return f(...)` — cycc 6.6.6, filed as
-# `cyrius/docs/development/issues/2026-09-26-defer-skipped-on-any-tail-call-return.md`.
-# A skipped exit is a lock held forever. Pair enter and exit in a wrapper that
-# returns a local.
+# `defer` may pair an enter with its exit (since 0.1.15). cycc 6.6.6 skipped a pending
+# `defer` when the fn returned through `return f(...)`, which made an exit put in a `defer` a lock held
+# forever (filed as `2026-09-26-defer-skipped-on-any-tail-call-return.md`); cyrius 6.6.7
+# fixed it, and `rlock/ownership` (`tests/store_concurrency.tcyr`) pins the fix at the pinned
+# toolchain. The store and audit wrappers keep their `lock; var r = _x_locked(...); unlock;
+# return r;` shape anyway: `scripts/check-store-lock.py` reads that shape, and it needs none.
 
 # Layout of a lock: the mutex cell, the owning tid (0 when free), the depth.
 enum AgnosticRlockField {

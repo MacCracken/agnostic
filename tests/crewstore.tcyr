@@ -9,8 +9,9 @@
 # its status-less in-flight row is turned into a terminal INTERRUPTED outcome by
 # the start-up sweep, and every outcome write clears the row it discharges.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_CREWDB = "/tmp/agnostic-crewstore-suite.patra";
+var _T_CREWDB = _tt_tmp_path("crewstore-suite");
 
 fn _t_open() {
     agnostic_store_close();
@@ -201,6 +202,114 @@ fn _t_doc(a, id) {
     var d = agnostic_crews_doc_a(a, str_from(id));
     if (d == 0) { return 0; }
     return bayan_json_v_parse_buf_a(a, str_data(d), str_len(d));
+}
+
+# ⭐ 0.1.15 (ADR 0019): what a crew's finished tasks answered while it ran is kept, and an
+# interrupted crew's outcome carries it as results.
+fn test_finished_outputs_survive_a_restart() {
+    test_group("crewstore/partials");
+
+    _t_open();
+    agnostic_ledger_reset();
+    var a = arena_allocator(1048576);
+    var ida = "99999999-9999-4999-8999-999999999991";
+    var idb = "99999999-9999-4999-8999-999999999992";
+    agnostic_crews_mark_inflight(str_from(ida), str_from("_"), str_from("half done"), 1759000000500, 3,
+      str_from("live"), str_from("sequential"));
+    assert_eq(agnostic_crews_save_partial(str_from(ida), str_from("t-1"), str_from("the first answer")), 1,
+      "a finished task's output is kept while its crew is in flight");
+    var big = alloc(20001);
+    memset(big, 120, 20000);
+    store8(big + 20000, 0);
+    assert_eq(agnostic_crews_save_partial(str_from(ida), str_from("t-2"), str_new(big, 20000)), 1,
+      "a long one too: the column is TEXT");
+    assert_eq(agnostic_crews_save_partial(str_from(idb), str_from("t-1"), str_from("x")), 0,
+      "⭐ not for a crew with no in-flight row: the sweep would never find it");
+    assert_eq(agnostic_crews_partial_count(), 2, "two kept");
+    var pairs = agnostic_crews_partials_a(a, str_from(ida));
+    assert_eq(vec_len(pairs), 2, "read back, both");
+    if (vec_len(pairs) == 2) {
+        assert_eq(str_eq_cstr(load64(vec_get(pairs, 0)), "t-1"), 1, "in the order written");
+        assert_eq(str_eq_cstr(load64(vec_get(pairs, 0) + 8), "the first answer"), 1, "byte for byte");
+        assert_eq(str_len(load64(vec_get(pairs, 1) + 8)), 20000, "the long one whole");
+    }
+
+    # The process dies; the next start sweeps it.
+    _t_reopen();
+    agnostic_ledger_reset();
+    assert_eq(agnostic_crews_interrupt_inflight(), 1, "the sweep interrupts it");
+    var d = _t_doc(a, ida);
+    assert_neq(d, 0, "it has an outcome");
+    if (d == 0) { return 0; }
+    assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_STATUS), "interrupted"), 1, "interrupted");
+    var res = bayan_json_v_obj_get_by_str(d, AGNOSTIC_JK_RESULTS);
+    assert_eq(bayan_json_v_arr_len(res), 2, "⭐ with the two results its tasks had finished");
+    assert_eq(agnostic_req_int(d, AGNOSTIC_JK_TASK_COUNT, 0 - 1), 2, "task_count 2");
+    assert_eq(agnostic_req_int(d, AGNOSTIC_JK_TASKS_SUB, 0 - 1), 3, "of the 3 submitted");
+    if (bayan_json_v_arr_len(res) == 2) {
+        var r0 = bayan_json_v_arr_get(res, 0);
+        assert_eq(str_eq_cstr(agnostic_req_str(r0, AGNOSTIC_JK_TASK_ID), "t-1"), 1, "each under its task id");
+        assert_eq(str_eq_cstr(agnostic_req_str(r0, AGNOSTIC_JK_STATUS), "completed"), 1, "completed");
+        assert_eq(str_eq_cstr(agnostic_req_str(r0, AGNOSTIC_JK_OUTPUT), "the first answer"), 1, "with its output");
+        assert_eq(bayan_json_v_obj_get_by_str(r0, AGNOSTIC_JK_USAGE), 0, "and no usage: no event carries one");
+    }
+    assert_eq(agnostic_req_int(bayan_json_v_obj_get_by_str(d, AGNOSTIC_JK_USAGE), AGNOSTIC_JK_METERED, 0 - 1), 0,
+      "nothing metered, as before");
+    assert_eq(agnostic_crews_partial_count(), 0, "⭐ and nothing is left kept");
+
+    # An outcome written the ordinary way clears what was kept, and refuses more.
+    var idc = "99999999-9999-4999-8999-999999999993";
+    agnostic_crews_mark_inflight(str_from(idc), str_from("_"), str_from("finishing"), 1759000000600, 1,
+      str_from("live"), str_from("sequential"));
+    agnostic_crews_save_partial(str_from(idc), str_from("t-1"), str_from("done"));
+    var row = _t_row(a, idc, "_");
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_COMPLETED);
+    assert_eq(agnostic_crews_save_row(row, str_from("{\"crew_id\":\"99999999-9999-4999-8999-999999999993\",\"status\":\"completed\"}")), 1,
+      "the crew's outcome is written");
+    assert_eq(agnostic_crews_partial_count(), 0, "⭐ which clears what was kept for it");
+    assert_eq(agnostic_crews_save_partial(str_from(idc), str_from("t-2"), str_from("late")), 0,
+      "⭐ and a late output is not kept: the outcome holds the results");
+    return 0;
+}
+
+# ⭐ 0.1.15 (ADR 0019): the refresh — what a poll and the collector run — keeps each finished
+# task's output from its `token` event, and only that event.
+fn test_the_refresh_keeps_finished_outputs() {
+    test_group("crewstore/refresh-keeps");
+
+    _t_open();
+    agnostic_ledger_reset();
+    var a = arena_allocator(1048576);
+    var id = str_from("99999999-9999-4999-8999-999999999994");
+    agnostic_crews_mark_inflight(id, str_from("_"), str_from("watched"), 1759000000700, 2,
+      str_from("live"), str_from("sequential"));
+    var bus = agnosai_event_bus_new();
+    var e = agnostic_ledger_record(id, str_from("watched"), agnosai_event_bus_subscribe(bus, id));
+    var tx = agnosai_event_bus_sender(bus, id);
+    var d1 = bayan_json_v_obj_new();
+    bayan_json_v_obj_set(d1, str_from("task_id"), bayan_json_v_str_new(str_from("t-1")));
+    bayan_json_v_obj_set(d1, str_from("token"), bayan_json_v_str_new(str_from("answer one")));
+    bayan_json_v_obj_set(d1, str_from("complete"), bayan_json_v_bool_new(1));
+    agnosai_event_sender_send(tx, agnosai_crew_event_new(id, str_from("token"), d1));
+    var d2 = bayan_json_v_obj_new();
+    bayan_json_v_obj_set(d2, str_from("task_id"), bayan_json_v_str_new(str_from("t-2")));
+    bayan_json_v_obj_set(d2, str_from("token"), bayan_json_v_str_new(str_from("partial")));
+    bayan_json_v_obj_set(d2, str_from("complete"), bayan_json_v_bool_new(0));
+    agnosai_event_sender_send(tx, agnosai_crew_event_new(id, str_from("token"), d2));
+    var d3 = bayan_json_v_obj_new();
+    bayan_json_v_obj_set(d3, str_from("task_id"), bayan_json_v_str_new(str_from("t-1")));
+    bayan_json_v_obj_set(d3, str_from("status"), bayan_json_v_str_new(str_from("completed")));
+    agnosai_event_sender_send(tx, agnosai_crew_event_new(id, str_from("task_completed"), d3));
+
+    agnostic_crew_refresh_a(a, e, id);
+    assert_eq(agnostic_ledger_event_count(e), 3, "every event still reaches the ring");
+    assert_eq(agnostic_crews_partial_count(), 1, "⭐ the one complete token is kept, not the partial one");
+    var pairs = agnostic_crews_partials_a(a, id);
+    assert_eq(vec_len(pairs) == 1 && str_eq_cstr(load64(vec_get(pairs, 0) + 8), "answer one") == 1, 1,
+      "with its text");
+    agnostic_crew_refresh_a(a, e, id);
+    assert_eq(agnostic_crews_partial_count(), 1, "a refresh with nothing new keeps nothing more");
+    return 0;
 }
 
 fn test_inflight_is_cleared_by_the_outcome() {
@@ -549,12 +658,15 @@ fn main() {
     test_a_finished_crew_is_never_marked();
     test_the_sweep_interrupts_what_was_in_flight();
     test_the_sweep_keeps_an_outcome_already_written();
+    test_finished_outputs_survive_a_restart();
+    test_the_refresh_keeps_finished_outputs();
     test_a_cancelled_crew_stays_cancelled_across_a_restart();
     test_a_long_name_is_stored();
     test_the_sweep_interrupts_a_long_named_crew();
     test_no_database_is_not_a_silent_success();
     agnostic_store_close();
     test_patra_init_leaves_the_log_level_alone();
+    _tt_unlink_store(_T_CREWDB);
     return assert_summary();
 }
 

@@ -8,8 +8,9 @@
 #   2. The bootstrap creates the FIRST administrator and nothing else. Leaving
 #      the credential in the environment must not be a standing backdoor.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_LRDB = "/tmp/agnostic-loginroute-suite.patra";
+var _T_LRDB = _tt_tmp_path("loginroute-suite");
 
 fn _t_lr_open() {
     agnostic_store_close();
@@ -222,6 +223,7 @@ fn main() {
     test_login_request_validation();
     test_login_throttles();
     test_bootstrap();
+    _tt_unlink_store(_T_LRDB);
     return assert_summary();
 }
 

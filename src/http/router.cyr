@@ -84,7 +84,8 @@ enum AgnosticRouteMatchOff {
     AGNOSTIC_RM_PARAM           = 8;
     AGNOSTIC_RM_METHOD_MISMATCH = 16;
     AGNOSTIC_RM_PARAM2          = 24;
-    AGNOSTIC_RM_SIZE            = 32;
+    AGNOSTIC_RM_ALLOW           = 32;   # a miss: the methods the matched path takes (0.1.15)
+    AGNOSTIC_RM_SIZE            = 40;
 }
 
 # Map an HTTP method name to its constant. Unknown methods are NONE, which no row
@@ -122,6 +123,7 @@ fn _agnostic_rm_new2_a(a, id, param, param2, mismatch): i64 {
     store64(m + AGNOSTIC_RM_PARAM, param);
     store64(m + AGNOSTIC_RM_METHOD_MISMATCH, mismatch);
     store64(m + AGNOSTIC_RM_PARAM2, param2);
+    store64(m + AGNOSTIC_RM_ALLOW, 0);
     return m;
 }
 
@@ -149,6 +151,14 @@ fn agnostic_route_match_param2(m): i64 {
 fn agnostic_route_match_method_mismatch(m): i64 {
     if (m == 0) { return 0; }
     return load64(m + AGNOSTIC_RM_METHOD_MISMATCH);
+}
+
+# On a method mismatch, the methods the matched path DOES take, as a mask with bit
+# `1 << m` set for each method constant `m` — what the 405's `Allow` names (0.1.15).
+# 0 on a hit and on a miss no row's path matched.
+fn agnostic_route_match_allow(m): i64 {
+    if (m == 0) { return 0; }
+    return load64(m + AGNOSTIC_RM_ALLOW);
 }
 
 # Whether `path`, starting at byte `start`, matches `pattern`.
@@ -423,6 +433,7 @@ fn agnostic_route_resolve_a(a, method, path: Str): i64 {
     var param = 0;
     var param2 = 0;
     var path_hit = 0;
+    var allow = 0;
     var row = &_agnostic_route_rows;
     var end = row + _agnostic_route_nrows * AGNOSTIC_RR_SIZE;
     while (row < end) {
@@ -432,10 +443,50 @@ fn agnostic_route_resolve_a(a, method, path: Str): i64 {
             if (id != AGNOSTIC_ROUTE_NONE) {
                 return _agnostic_rm_new2_a(a, id, param, param2, 0);
             }
+            allow = allow | _agnostic_route_row_mask(row);
         }
         row = row + AGNOSTIC_RR_SIZE;
     }
-    return _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_NONE, 0, path_hit);
+    var miss = _agnostic_rm_new_a(a, AGNOSTIC_ROUTE_NONE, 0, path_hit);
+    if (miss != 0) { store64(miss + AGNOSTIC_RM_ALLOW, allow); }
+    return miss;
+}
+
+# The methods `row` has an arm for, as a mask with bit `1 << m` set for each method `m`.
+fn _agnostic_route_row_mask(row): i64 {
+    var mask = 0;
+    var m = AGNOSTIC_METHOD_GET;
+    while (m <= AGNOSTIC_METHOD_DELETE) {
+        if (_agnostic_route_arm(row, m) != AGNOSTIC_ROUTE_NONE) { mask = mask | (1 << m); }
+        m = m + 1;
+    }
+    return mask;
+}
+
+# The `Allow` header line for method mask `allow` — `Allow: GET, POST` and CRLF, the methods
+# in the table's column order — as a NUL-terminated C string in `a`, or 0 for an empty mask
+# or an exhausted arena (0.1.15).
+#
+# RFC 9110 §15.5.6: a 405 MUST carry `Allow`. Until 0.1.15 it carried none.
+fn agnostic_route_allow_header_a(a, allow): i64 {
+    if (allow == 0) { return 0; }
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_cstr_a(a, sb, "Allow: ");
+    var first = 1;
+    var m = AGNOSTIC_METHOD_GET;
+    while (m <= AGNOSTIC_METHOD_DELETE) {
+        if ((allow & (1 << m)) != 0) {
+            if (first == 0) { str_builder_add_cstr_a(a, sb, ", "); }
+            str_builder_add_cstr_a(a, sb, agnostic_method_name(m));
+            first = 0;
+        }
+        m = m + 1;
+    }
+    str_builder_add_cstr_a(a, sb, "\r\n");
+    var built = str_builder_build_a(a, sb);
+    if (built == 0) { return 0; }
+    return str_data(built);
 }
 
 # Whether a route requires authentication.
@@ -507,7 +558,7 @@ fn agnostic_route_needs_auth(id): i64 {
 # with the wrong role to go and re-authenticate, which they cannot fix.
 fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i64 {
     if (str_len(body) > max_body) {
-        return agnostic_response_error_a(a, HTTP_PAYLOAD_TOO_LARGE, str_from("request body too large"));
+        return agnostic_response_error_a(a, HTTP_PAYLOAD_TOO_LARGE, str_from_a(a, "request body too large"));
     }
 
     # --- the Host rung (0.1.8) ----------------------------------------------
@@ -518,7 +569,7 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     if (agnostic_reqctx_is_transport(ctx) == 1 && agnostic_authn_required() == 0) {
         if (agnostic_host_is_loopback(agnostic_reqctx_host(ctx)) == 0) {
             return agnostic_response_error_a(a, HTTP_FORBIDDEN,
-              str_from("AGNOSTIC_AUTH=off: only a loopback Host is answered (localhost, 127.0.0.1, [::1])"));
+              str_from_a(a, "AGNOSTIC_AUTH=off: only a loopback Host is answered (localhost, 127.0.0.1, [::1])"));
         }
     }
 
@@ -527,9 +578,13 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
 
     if (id == AGNOSTIC_ROUTE_NONE) {
         if (agnostic_route_match_method_mismatch(m) == 1) {
-            return agnostic_response_error_a(a, HTTP_METHOD_NOT_ALLOWED, str_from("method not allowed"));
+            var refused = agnostic_response_error_a(a, HTTP_METHOD_NOT_ALLOWED, str_from_a(a, "method not allowed"));
+            # The methods the path takes (0.1.15) — RFC 9110 §15.5.6 makes it a MUST.
+            agnostic_response_set_headers(refused,
+              agnostic_route_allow_header_a(a, agnostic_route_match_allow(m)));
+            return refused;
         }
-        return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from("not found"));
+        return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "not found"));
     }
 
     # --- the plugin rung (0.1.9, ADR 0007) ---------------------------------
@@ -555,11 +610,11 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
             var principal = agnostic_authn_resolve_a(a, agnostic_reqctx_authz(ctx));
             if (principal == 0) {
                 return agnostic_response_error_a(a, HTTP_UNAUTHORIZED,
-                  str_from("authentication required"));
+                  str_from_a(a, "authentication required"));
             }
             if (agnostic_role_can(agnostic_principal_role(principal), need) == 0) {
                 return agnostic_response_error_a(a, HTTP_FORBIDDEN,
-                  str_from("insufficient permissions"));
+                  str_from_a(a, "insufficient permissions"));
             }
             # Handlers that scope by tenant read it from here (0.1.8).
             agnostic_reqctx_set_principal(ctx, principal);
@@ -575,7 +630,7 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
         if (method == AGNOSTIC_METHOD_POST || method == AGNOSTIC_METHOD_PUT) {
             if (agnostic_content_type_is_json(agnostic_reqctx_ctype(ctx)) == 0) {
                 return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNSUPPORTED_MEDIA,
-                  str_from("POST and PUT need Content-Type: application/json"));
+                  str_from_a(a, "POST and PUT need Content-Type: application/json"));
             }
         }
     }
@@ -610,10 +665,10 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
         return agnostic_route_definition_get_a(a, agnostic_route_match_param(m));
     }
     if (id == AGNOSTIC_ROUTE_DEF_REPLACE) {
-        return agnostic_route_definition_replace_a(a, agnostic_route_match_param(m), body);
+        return agnostic_route_definition_replace_a(a, agnostic_route_match_param(m), body, ctx);
     }
     if (id == AGNOSTIC_ROUTE_DEF_DELETE) {
-        return agnostic_route_definition_delete_a(a, agnostic_route_match_param(m));
+        return agnostic_route_definition_delete_a(a, agnostic_route_match_param(m), ctx);
     }
 
     if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return agnostic_route_login_a(a, body, ctx); }
@@ -657,5 +712,5 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
 
     # A resolved id with no dispatch arm is a table/ladder mismatch, not a client
     # error — report it as one rather than as a 404.
-    return agnostic_response_error_a(a, HTTP_INTERNAL, str_from("route resolved with no handler"));
+    return agnostic_response_error_a(a, HTTP_INTERNAL, str_from_a(a, "route resolved with no handler"));
 }

@@ -9,8 +9,9 @@
 #      the separator. The last group proves the collision is unreachable rather
 #      than merely unlikely.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_TENDB = "/tmp/agnostic-authz-suite.patra";
+var _T_TENDB = _tt_tmp_path("authz-suite");
 
 fn _t_tenant_open() {
     agnostic_store_close();
@@ -239,6 +240,7 @@ fn main() {
     test_tenant_crud();
     test_tenant_bucket_is_rechecked();
     test_scope_prefixing();
+    _tt_unlink_store(_T_TENDB);
     return assert_summary();
 }
 
