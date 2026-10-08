@@ -1,0 +1,342 @@
+# agnostic/server/serve — the HTTP SERVER span each request records (0.1.16, ADR 0020).
+#
+# Until 0.1.16 agnostic exported no span of its own. When it minted a request's traceparent,
+# the crews that request submitted named a parent span nothing exported, and a backend showed
+# the trace's root as missing. Now the serve adapter records a SERVER span per request through
+# agnosai's exporter, under the request's own span id — the one its crews name as parent and
+# its log lines carry — and under the caller's span when the request brought a traceparent.
+#
+# Driven through `agnostic_serve_handler` over a socketpair, with a request arena installed on
+# this thread exactly as sandhi installs one on each pooled worker, and with an exporter that
+# is never started: its thread would drain the ring on its own schedule, so the suite drains
+# it instead and reads every span that was recorded.
+include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
+
+var _T_SDB = _tt_tmp_path("span-suite");
+var _T_SAUDIT = _tt_tmp_path("span-suite-audit");
+
+var _T_INBOUND = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+var _T_CREW = "{\"name\":\"spanned\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}";
+
+# The worker's request arena, rewound before each request as sandhi rewinds it.
+var _t_harena = 0;
+
+fn _t_cfg() {
+    var c = agnostic_config_from_env();
+    store64(c + AGNOSTIC_CFG_ADDR, INADDR_LOOPBACK());
+    store64(c + AGNOSTIC_CFG_AUTH_MODE, AGNOSTIC_AUTH_OFF);
+    store64(c + AGNOSTIC_CFG_DB_PATH, str_from(_T_SDB));
+    store64(c + AGNOSTIC_CFG_AUDIT_PATH, str_from(_T_SAUDIT));
+    # Off by construction: the suite installs its own exporter below.
+    store64(c + AGNOSTIC_CFG_OTLP, 0);
+    return c;
+}
+
+# Send raw request `req` (a Str) through the real handler, on a freshly rewound request
+# arena, and answer the response as a Str (its first 8 KiB).
+fn _t_send(req) {
+    reset_via(_t_harena);
+    var fds: i64[1];
+    store64(&fds, 0);
+    if (sys_socketpair(1, SOCK_STREAM, 0, &fds) != 0) { return str_from(""); }
+    var server_fd = load32(&fds);
+    var client_fd = load32(&fds + 4);
+    agnostic_serve_handler(0, server_fd, str_data(req), str_len(req));
+    var buf[8192];
+    var n = sys_read(client_fd, &buf, 8191);
+    sys_close(server_fd);
+    sys_close(client_fd);
+    if (n <= 0) { return str_from(""); }
+    return str_from_buf(&buf, n);
+}
+
+# A request line and Host, then `extra` header lines (each ending CRLF), then the body.
+fn _t_req(method, target, extra, body) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, method);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, target);
+    str_builder_add_cstr(sb, " HTTP/1.1\r\nHost: localhost\r\n");
+    str_builder_add_cstr(sb, extra);
+    if (strlen(body) > 0) {
+        str_builder_add_cstr(sb, "Content-Type: application/json\r\nContent-Length: ");
+        str_builder_add_int(sb, strlen(body));
+        str_builder_add_cstr(sb, "\r\n");
+    }
+    str_builder_add_cstr(sb, "\r\n");
+    str_builder_add_cstr(sb, body);
+    return str_builder_build(sb);
+}
+
+fn _t_ring() { return agnosai_otlp_exporter_ring(agnosai_telemetry_exporter()); }
+
+# Every span recorded since the last drain, as a bayan array, or 0 when none was.
+fn _t_drain() {
+    var doc = agnosai_otlp_ring_drain(_t_ring(), str_from("agnostic"));
+    if (doc == 0) { return 0; }
+    var v = bayan_json_v_parse_buf(str_data(doc), str_len(doc));
+    var rs = bayan_json_v_arr_get(bayan_json_v_obj_get_by_cstr(v, "resourceSpans"), 0);
+    var ss = bayan_json_v_arr_get(bayan_json_v_obj_get_by_cstr(rs, "scopeSpans"), 0);
+    return bayan_json_v_obj_get_by_cstr(ss, "spans");
+}
+
+# A span's string field `key`, as a Str, or 0.
+fn _t_field(span, key) {
+    var v = bayan_json_v_obj_get_by_cstr(span, key);
+    if (v == 0) { return 0; }
+    return bayan_json_v_str(v);
+}
+
+# The value object of a span's attribute `key` (`{"stringValue":..}` or `{"intValue":..}`), or 0.
+fn _t_attr(span, key) {
+    var attrs = bayan_json_v_obj_get_by_cstr(span, "attributes");
+    var n = bayan_json_v_arr_len(attrs);
+    var i = 0;
+    while (i < n) {
+        var at = bayan_json_v_arr_get(attrs, i);
+        if (str_eq_cstr(_t_field(at, "key"), key) == 1) { return bayan_json_v_obj_get_by_cstr(at, "value"); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 when attribute `key` is the string `want`.
+fn _t_attr_is(span, key, want) {
+    var v = _t_attr(span, key);
+    if (v == 0) { return 0; }
+    return str_eq_cstr(_t_field(v, "stringValue"), want);
+}
+
+# 1 when string field `key` of `span` is `want` (a C string).
+fn _t_is(span, key, want) {
+    var s = _t_field(span, key);
+    if (s == 0) { return 0; }
+    return str_eq_cstr(s, want);
+}
+
+# The span's status code.
+fn _t_status(span) {
+    return bayan_json_v_int(bayan_json_v_obj_get_by_cstr(bayan_json_v_obj_get_by_cstr(span, "status"), "code"));
+}
+
+# The one span a request recorded, or 0 when it recorded none or more than one.
+fn _t_one(req) {
+    _t_drain();
+    _t_send(req);
+    var spans = _t_drain();
+    if (spans == 0) { return 0; }
+    if (bayan_json_v_arr_len(spans) != 1) { return 0; }
+    return bayan_json_v_arr_get(spans, 0);
+}
+
+fn test_off_records_nothing() {
+    test_group("span/off");
+    assert_eq(agnosai_telemetry_exporter(), 0, "precondition: no exporter");
+    var h = _t_send(_t_req("GET", "/health", "", ""));
+    assert_eq(str_starts_with(h, str_from("HTTP/1.1 200")), 1, "the request is answered");
+    assert_eq(_agnostic_serve_record_span_a(_t_harena, AGNOSTIC_METHOD_GET, str_from("/health"), 0, 200,
+        clock_epoch_ns()), 0, "and with export off nothing is recorded");
+}
+
+fn test_root_span() {
+    test_group("span/root");
+    var sp = _t_one(_t_req("GET", "/health", "", ""));
+    assert_neq(sp, 0, "⭐ a request records exactly one span");
+    if (sp == 0) { return 0; }
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_cstr(sp, "kind")), AGNOSAI_OTLP_KIND_SERVER, "of kind SERVER");
+    assert_eq(_t_is(sp, "name", "GET /health"), 1, "named <method> <route>");
+    assert_eq(_t_attr_is(sp, "http.request.method", "GET"), 1, "http.request.method");
+    assert_eq(_t_attr_is(sp, "http.route", "/health"), 1, "http.route");
+    assert_eq(_t_attr_is(sp, "url.path", "/health"), 1, "url.path");
+    assert_eq(_t_attr_is(sp, "url.scheme", "http"), 1, "url.scheme");
+    assert_eq(_t_is(_t_attr(sp, "http.response.status_code"), "intValue", "200"), 1, "the status answered");
+    assert_eq(_t_status(sp), AGNOSAI_OTLP_STATUS_UNSET, "a 200 leaves the span status unset");
+    assert_eq(bayan_json_v_obj_get_by_cstr(sp, "parentSpanId"), 0, "⭐ a minted id is a root: no parent");
+    assert_eq(str_len(_t_field(sp, "traceId")), 32, "a 32-hex trace id");
+    assert_eq(str_len(_t_field(sp, "spanId")), 16, "a 16-hex span id");
+    var t0 = str_to_int(_t_field(sp, "startTimeUnixNano"));
+    var t1 = str_to_int(_t_field(sp, "endTimeUnixNano"));
+    assert_eq(t0 > 1000000000000000000 && t1 >= t0, 1, "epoch nanoseconds, ending after it starts");
+}
+
+fn test_inbound_parent() {
+    test_group("span/inbound");
+    var extra = "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n";
+    var sp = _t_one(_t_req("GET", "/health", extra, ""));
+    assert_neq(sp, 0, "one span");
+    if (sp == 0) { return 0; }
+    assert_eq(_t_is(sp, "traceId", "4bf92f3577b34da6a3ce929d0e0e4736"), 1, "⭐ in the caller's trace");
+    assert_eq(_t_is(sp, "parentSpanId", "00f067aa0ba902b7"), 1, "⭐ under the caller's span");
+    assert_eq(_t_is(sp, "spanId", "00f067aa0ba902b7"), 0, "with a span id of its own");
+
+    # ParentBased sampling (ADR 0018): a caller that said `-00` gets no span from agnostic.
+    _t_drain();
+    var unsampled = "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00\r\n";
+    _t_send(_t_req("GET", "/health", unsampled, ""));
+    assert_eq(agnosai_otlp_ring_count(_t_ring()), 0, "⭐ an unsampled trace records nothing");
+
+    # A header the engine refuses is ignored, as before: a new root.
+    var upper = "traceparent: 00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01\r\n";
+    var bad = _t_one(_t_req("GET", "/health", upper, ""));
+    assert_neq(bad, 0, "a malformed header still records a span");
+    if (bad == 0) { return 0; }
+    assert_eq(bayan_json_v_obj_get_by_cstr(bad, "parentSpanId"), 0, "as a root");
+}
+
+fn test_unrouted() {
+    test_group("span/unrouted");
+    var nf = _t_one(_t_req("GET", "/nope/abc123", "", ""));
+    assert_neq(nf, 0, "a 404 records a span");
+    if (nf == 0) { return 0; }
+    assert_eq(_t_is(nf, "name", "GET"), 1, "⭐ named by its method alone: no route matched");
+    assert_eq(_t_attr(nf, "http.route"), 0, "and no http.route — never the path");
+    assert_eq(_t_is(_t_attr(nf, "http.response.status_code"), "intValue", "404"), 1, "404");
+    assert_eq(_t_status(nf), AGNOSAI_OTLP_STATUS_UNSET, "a 4xx leaves a SERVER span's status unset");
+
+    var other = _t_one(_t_req("PATCH", "/health", "", ""));
+    assert_neq(other, 0, "a verb agnostic does not serve records a span");
+    if (other == 0) { return 0; }
+    assert_eq(_t_is(other, "name", "_OTHER"), 1, "⭐ named _OTHER: a client cannot mint span names");
+    assert_eq(_t_attr_is(other, "http.request.method", "_OTHER"), 1, "and so is its method");
+    assert_eq(_t_is(_t_attr(other, "http.response.status_code"), "intValue", "405"), 1, "405");
+
+    var q = _t_one(_t_req("GET", "/api/v1/presets?x=1", "", ""));
+    assert_neq(q, 0, "a request with a query records a span");
+    if (q == 0) { return 0; }
+    assert_eq(_t_attr_is(q, "url.path", "/api/v1/presets"), 1, "⭐ url.path drops the query");
+    assert_eq(_t_is(q, "name", "GET /api/v1/presets"), 1, "and the name is the route's");
+    var id = _t_one(_t_req("GET", "/api/v1/presets/quality-lean", "", ""));
+    assert_eq(_t_is(id, "name", "GET /api/v1/presets/:name"), 1, "⭐ a parameter stays a pattern in the name");
+    assert_eq(_t_attr_is(id, "url.path", "/api/v1/presets/quality-lean"), 1, "and is in url.path");
+}
+
+fn test_status_mapping() {
+    test_group("span/status");
+    assert_eq(_agnostic_serve_span_status(500), AGNOSAI_OTLP_STATUS_ERROR, "a 500 is an error");
+    assert_eq(_agnostic_serve_span_status(503), AGNOSAI_OTLP_STATUS_ERROR, "so is any 5xx");
+    assert_eq(_agnostic_serve_span_status(499), AGNOSAI_OTLP_STATUS_UNSET, "a 4xx is not the server's");
+    assert_eq(_agnostic_serve_span_status(200), AGNOSAI_OTLP_STATUS_UNSET, "nor is a 2xx");
+}
+
+# ⭐ The point of the span: a crew the request submits sits under it.
+fn test_crew_nests_under_the_request() {
+    test_group("span/crew-parent");
+    _t_drain();
+    var extra = "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n";
+    var h = _t_send(_t_req("POST", "/api/v1/crews", extra, _T_CREW));
+    assert_eq(str_starts_with(h, str_from("HTTP/1.1 202")), 1, "the crew is accepted");
+    var at = str_index_of_cstr(h, "\r\n\r\n");
+    if (at < 0) { return 0; }
+    var body = bayan_json_v_parse_buf(str_data(h) + at + 4, str_len(h) - at - 4);
+    var id = agnostic_req_str(body, AGNOSTIC_JK_CREW_ID);
+    assert_neq(id, 0, "with its id");
+    if (id == 0) { return 0; }
+
+    # Dispatched directly, so the polls record no span of their own.
+    var a = arena_allocator(262144);
+    var url = str_cat(str_from("/api/v1/crews/"), id);
+    var status = AGNOSTIC_CREW_PENDING;
+    var tries = 0;
+    while (tries < 200) {
+        var r = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, url, str_from(""), 1048576, 0);
+        status = agnostic_crew_status_from_engine(
+          agnosai_crew_status_from_wire(agnostic_req_str(agnostic_response_body(r), AGNOSTIC_JK_STATUS)));
+        if (agnostic_status_is_terminal(status) == 1) { break; }
+        sleep_ms(10);
+        tries = tries + 1;
+    }
+    assert_eq(agnostic_status_is_terminal(status), 1, "the crew finishes");
+
+    var spans = _t_drain();
+    var server = 0;
+    var workflow = 0;
+    var n = bayan_json_v_arr_len(spans);
+    var i = 0;
+    while (i < n) {
+        var sp = bayan_json_v_arr_get(spans, i);
+        if (_t_is(sp, "name", "POST /api/v1/crews") == 1) { server = sp; }
+        var nm = _t_field(sp, "name");
+        if (nm != 0 && str_starts_with(nm, str_from("invoke_workflow")) == 1) { workflow = sp; }
+        i = i + 1;
+    }
+    assert_neq(server, 0, "the submit recorded its SERVER span");
+    assert_neq(workflow, 0, "and the crew its invoke_workflow span");
+    if (server == 0 || workflow == 0) { return 0; }
+    assert_eq(_t_is(server, "parentSpanId", "00f067aa0ba902b7"), 1, "the request sits under the caller");
+    assert_eq(str_eq(_t_field(workflow, "parentSpanId"), _t_field(server, "spanId")), 1,
+      "⭐ and the crew under the request — its parent is now a span the backend has");
+    assert_eq(str_eq(_t_field(workflow, "traceId"), _t_field(server, "traceId")), 1, "one trace");
+}
+
+# What the handler alone keeps on the global heap for `req` — not this suite's own copy of
+# the response, which `_t_send` makes.
+fn _t_cost(req) {
+    reset_via(_t_harena);
+    var fds: i64[1];
+    store64(&fds, 0);
+    if (sys_socketpair(1, SOCK_STREAM, 0, &fds) != 0) { return 0 - 1; }
+    var before = alloc_used();
+    agnostic_serve_handler(0, load32(&fds), str_data(req), str_len(req));
+    var cost = alloc_used() - before;
+    sys_close(load32(&fds));
+    sys_close(load32(&fds + 4));
+    return cost;
+}
+
+fn test_global_heap() {
+    test_group("span/global-heap");
+    var req = _t_req("GET", "/health", "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n", "");
+    var e = agnosai_telemetry_exporter();
+    _agnosai_telemetry_exporter = 0;
+    _t_cost(req);
+    var off = _t_cost(req);
+    _agnosai_telemetry_exporter = e;
+    _t_drain();
+    _t_cost(req);
+    var on = _t_cost(req);
+    assert_eq(agnosai_otlp_ring_count(_t_ring()), 2, "precondition: both requests were recorded");
+    assert_eq(off, 0, "⭐ a request through the handler keeps nothing on the global heap (48 B until 0.1.16)");
+    _agnosai_telemetry_exporter = 0;
+    _t_cost(_t_req("GET", "/nope", "", ""));
+    assert_eq(_t_cost(_t_req("GET", "/nope", "", "")), 0, "nor does a 404");
+    _t_cost(_t_req("GET", "/api/v1/presets", "", ""));
+    assert_eq(_t_cost(_t_req("GET", "/api/v1/presets", "", "")), 0, "nor a listing of every preset");
+    _agnosai_telemetry_exporter = e;
+    assert_eq(on, off, "⭐ and recording its span costs it nothing either — all of it is in the arena");
+    _t_drain();
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    sys_unlink(_T_SDB);
+    sys_unlink(_T_SAUDIT);
+    assert_neq(agnostic_serve_mount(_t_cfg()), 0, "mount succeeds");
+
+    # A pooled worker's request arena, published where the handler looks for it.
+    _sandhi_req_arena_slot = thread_local_alloc();
+    _t_harena = arena_allocator(AGNOSTIC_SERVE_ARENA_BYTES);
+    thread_local_set(_sandhi_req_arena_slot, _t_harena);
+
+    test_off_records_nothing();
+    # An exporter that is never started, so nothing drains the ring but the suite.
+    _agnosai_telemetry_exporter = agnosai_otlp_exporter_new(0, str_from("agnostic"), 3600000);
+    test_root_span();
+    test_inbound_parent();
+    test_unrouted();
+    test_status_mapping();
+    test_crew_nests_under_the_request();
+    test_global_heap();
+    _agnosai_telemetry_exporter = 0;
+
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_SDB);
+    _tt_unlink_store(_T_SAUDIT);
+    return assert_summary();
+}
+
+var _agnostic_server_span_test_exit = main();
+if (_agnostic_server_span_test_exit > 0) { _agnostic_server_span_test_exit = 1; }
+sys_exit_group(_agnostic_server_span_test_exit);

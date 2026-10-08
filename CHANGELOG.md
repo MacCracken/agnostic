@@ -4,6 +4,95 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.16] — 2026-10-08
+
+**Re-pin to agnosai 2.1.7, and agnostic records an HTTP SERVER span per request (ADR 0020), so a
+crew's trace has a root a backend can find.** No toolchain change: Cyrius 6.6.14 and libro 2.10.6,
+and `cyrius.lock` moved by agnosai's two lines alone.
+- **Each request is a span** through agnosai's exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is set:
+  `<method> <route>`, SERVER, with the HTTP semantic-convention attributes. Its span id is the one
+  the request's crews name as their parent and its log lines carry.
+- **With an inbound `traceparent`, agnostic's span is a child of the caller's**, and the crews the
+  request submits sit under agnostic's span instead of beside it.
+- **The serve adapter keeps nothing on the global heap per request.** It kept 48 B: three
+  `str_from` literals, each a Str header on the never-freed heap, on every request.
+
+⚠ Visible: the `traceparent` on an inbound-traced request's log lines now carries agnostic's own
+span id, a child of the caller's; the trace id is unchanged. A crew's `invoke_workflow` span names
+agnostic's span as its parent, not the caller's. No HTTP response changes.
+
+**33 suites, 2,784 assertions, 0 failed** — on x86_64 and natively on aarch64 (the Raspberry Pi),
+with the same per-suite counts — plus **80 JavaScript tests**, unchanged; 0.1.15 had 32, 2,701 and
+80. Live, with the real binary exporting to a local OTLP sink on both machines: a traced crew
+submission arrives as the caller's span → `POST /api/v1/crews` → `invoke_workflow` →
+`invoke_agent`, one trace, and its log line carries agnostic's span id. A sibling-free replica with
+an empty dep cache reproduced `lib/` and the lock byte for byte, and its DCE binary is
+byte-identical.
+
+### Changed — re-pin to agnosai 2.1.7
+
+- **`[deps.agnosai]` 2.1.6 → 2.1.7** (tag `9210905`). agnosai 2.1.7 changed no dependency, so
+  `cyrius.lock` moved by exactly two lines: the agnosai commit pin and `lib/agnosai.cyr`'s hash,
+  which is byte-identical to the tag's `dist/agnosai.cyr`. Nothing else in `lib/` moved.
+- What 2.1.7 brings that agnostic uses: the HTTP server span (its ADR 024), checked against
+  agnostic's plan for it before agnosai's cut. What it brings that agnostic does not use: `Allow`
+  on agnosai's own 405s, the `/mcp` fix, the exporter thread joined at stop, and its log fixes.
+  agnostic called none of the internals 2.1.7 renamed or removed (`_agnosai_loader_read`,
+  `_agnosai_signal_default`).
+- Two `cyrius.cyml` comments that named 2.1.6 as the agnosai declaring sigil 3.13.7.
+
+### Added — an HTTP SERVER span per request (ADR 0020)
+
+- **`_agnostic_serve_record_span_a`** (`src/server/serve.cyr`), called once the response is sent:
+  `agnosai_http_server_span_a` built in the request's arena and recorded with
+  `agnosai_telemetry_record_span_in`, under the request's trace id and the inbound header as its
+  parent. Named `<method> <route>`; `http.request.method`, `http.route`, `http.response.status_code`,
+  `url.path` (without the query) and `url.scheme` (`http`). A method agnostic does not serve is
+  `_OTHER`; a request no route answered is named by its method alone, with no `http.route`; the
+  status is ERROR for a 5xx and unset otherwise. Starts when the handler is entered.
+- **The route reaches the serve adapter**: a hit's match record keeps its row's pattern
+  (`agnostic_route_match_pattern`), and dispatch writes it into the request context
+  (`agnostic_reqctx_set_route` / `agnostic_reqctx_route`) once the route resolves, so a 401 or 403
+  on a real route is named by it.
+- **`_agnostic_serve_send` answers the status it sent**, including the 500 that replaces a body
+  that would not encode, and the span reports that one.
+- **A child of an inbound traceparent** (`agnostic_trace_child_a`): the same version, trace id and
+  flags, a fresh span id. `agnostic_trace_begin_a` sets it as the request's id and keeps the header
+  as `agnostic_trace_parent()`, a second thread-local slot that `agnostic_trace_clear` clears too.
+  The span-id mix the minter always used is one function now (`_agnostic_trace_span_id`), shared by
+  both. A copied `-00` flag keeps an unsampled caller unsampled.
+- **Costs.** With export off, one load per request. With it on, all of it in the request's arena,
+  and nothing more kept on the global heap. `server_span_record` measures **12.0–12.2 µs** per
+  request, most of it agnosai encoding the span into OTLP JSON; `trace_child` **1.7 µs**, most of it
+  the clock read in the span-id mix (`tests/agnostic.bcyr`, x86_64, two runs).
+
+### Fixed
+
+- **48 B on the global heap per request, in the serve adapter.** `agnostic_serve_handler` started
+  the path and body as `str_from("/")` and `str_from("")`, and `_agnostic_serve_send` its body as
+  `str_from("")`, which every branch then replaced. Each `str_from` is a Str header on the
+  never-freed bump, so a server kept 48 B for every request it answered: about 4 GB a day at 1,000
+  requests a second. `tests/request_alloc.tcyr` measures dispatch and could not see it; the new
+  suite measures the handler. The defaults are made in the request's arena, and the dead one is
+  gone.
+- ADR 0019 was missing from `docs/adr/README.md`'s index.
+
+### Tests
+
+- **`tests/server_span.tcyr`**, a new suite: through the real handler, on a request arena
+  installed as sandhi installs one on each pooled worker, with an exporter that is never started so
+  the suite reads every span recorded. The root span and its attributes; a caller's trace and
+  parent; an unsampled caller records nothing; a malformed header is a new root; a 404 named by its
+  method; `_OTHER`; the query dropped; a parameter kept as a pattern in the name; the status
+  mapping; **a crew's `invoke_workflow` span under the request's SERVER span, in one trace**; and
+  the global heap: 0 B per request through the handler for `/health`, a 404 and the preset
+  listing, and the same with a span recorded. Ten mutations fail it by name: no child, no record,
+  no parent, the raw method, the query kept, a global Str in the span, no route, the crew under the
+  caller, and each of the two literals put back.
+- `tests/trace.tcyr` +20 (`trace/child`, `trace/begin`); `tests/router.tcyr` +8 (every hit names its
+  own row's pattern, misses name none, dispatch fills the context).
+- `tests/agnostic.bcyr`: `trace_child` and `server_span_record`.
+
 ## [0.1.15] — 2026-10-08
 
 **Every agnostic-only item on the roadmap that needs no dependency move, and what the work found.**

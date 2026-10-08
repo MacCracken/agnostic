@@ -131,6 +131,80 @@ fn test_valid() {
       "55 bytes of garbage");
 }
 
+# 1 when `a` and `b` (traceparents) agree on bytes [from, to).
+fn _t_same_bytes(a, b, from, to) {
+    var i = from;
+    while (i < to) {
+        if ((load8(str_data(a) + i) & 255) != (load8(str_data(b) + i) & 255)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# ⭐ 0.1.16 (ADR 0020): a child of an inbound traceparent is agnostic's own span under the
+# caller's — the same trace id and flags, a span id of its own.
+fn test_child() {
+    test_group("trace/child");
+    var a = arena_allocator(65536);
+    var inbound = str_from("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+
+    var c = agnostic_trace_child_a(a, inbound);
+    assert_neq(c, 0, "a child is minted");
+    if (c == 0) { return 0; }
+    assert_eq(str_len(c), AGNOSTIC_TRACE_LEN, "55 bytes");
+    assert_eq(_t_same_bytes(c, inbound, 0, 36), 1, "the same version and trace id");
+    assert_eq(_t_same_bytes(c, inbound, 52, 55), 1, "the same flags");
+    assert_eq(_t_same_bytes(c, inbound, 36, 52), 0, "⭐ and a span id of its own");
+    assert_eq(agnostic_trace_valid_a(a, c), 1, "a traceparent the engine accepts");
+    assert_eq(str_eq(c, agnostic_trace_child_a(a, inbound)), 0, "two children differ");
+
+    var off = str_from("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00");
+    var oc = agnostic_trace_child_a(a, off);
+    assert_eq(_t_same_bytes(oc, off, 52, 55), 1, "⭐ an unsampled caller's child is unsampled too");
+
+    assert_eq(agnostic_trace_child_a(arena_allocator(16), inbound), 0, "an exhausted arena answers 0");
+}
+
+# A raw request carrying `header` (a C string ending CRLF, or "" for none).
+fn _t_req(header) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+    str_builder_add_cstr(sb, header);
+    str_builder_add_cstr(sb, "\r\n");
+    return str_builder_build(sb);
+}
+
+# What `agnostic_trace_begin_a` sets for a request: the current id, and its parent.
+fn test_begin() {
+    test_group("trace/begin");
+    var a = arena_allocator(65536);
+    var inbound = str_from("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+
+    var r = _t_req("traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n");
+    var tp = agnostic_trace_begin_a(a, str_data(r), str_len(r));
+    assert_eq(str_eq(agnostic_trace_current(), tp), 1, "begin sets the id it answers");
+    assert_eq(str_eq(agnostic_trace_parent(), inbound), 1, "⭐ the inbound header is the parent");
+    assert_eq(_t_same_bytes(tp, inbound, 0, 36), 1, "the current id keeps the caller's trace id");
+    assert_eq(_t_same_bytes(tp, inbound, 36, 52), 0, "⭐ under a span id of agnostic's own");
+
+    r = _t_req("");
+    tp = agnostic_trace_begin_a(a, str_data(r), str_len(r));
+    assert_eq(agnostic_trace_parent(), 0, "no header: no parent — the minted id is a root");
+    assert_eq(agnostic_trace_valid_a(a, tp), 1, "and a valid one");
+
+    r = _t_req("traceparent: 00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01\r\n");
+    tp = agnostic_trace_begin_a(a, str_data(r), str_len(r));
+    assert_eq(agnostic_trace_parent(), 0, "a header the engine refuses is no parent either");
+    assert_eq(_t_same_bytes(tp, inbound, 3, 35), 0, "and the minted id is a new trace");
+
+    r = _t_req("traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n");
+    agnostic_trace_begin_a(a, str_data(r), str_len(r));
+    agnostic_trace_clear();
+    assert_eq(agnostic_trace_current() + agnostic_trace_parent(), 0, "clear resets both slots");
+    assert_gte(AGNOSTIC_TRACE_PARENT_SLOT, 16, "the parent slot is claimed at load too");
+    assert_neq(AGNOSTIC_TRACE_PARENT_SLOT, AGNOSTIC_TRACE_SLOT, "and is its own");
+}
+
 fn main() {
     alloc_init();
     # See the header — without this the first trace_set segfaults.
@@ -141,6 +215,8 @@ fn main() {
     test_generate();
     test_generate_exhausted_arena();
     test_valid();
+    test_child();
+    test_begin();
     return assert_summary();
 }
 

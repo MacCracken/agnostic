@@ -79,7 +79,9 @@ traceparents the engine does; and span export starts when `OTEL_EXPORTER_OTLP_EN
   - **agnostic exports no span of its own.** When agnostic minted the traceparent, the crew's
     workflow span names a parent span that is never exported, so a backend shows the trace's root
     as missing. The trace id still joins the spans to the request's logs. Exporting an HTTP server
-    span per request is recorded on the roadmap.
+    span per request is recorded on the roadmap. *Since 0.1.16 ([ADR 0020](0020-each-request-records-an-http-server-span.md)) each
+    request records one, and a crew sits under it; with an inbound header the crew's parent is
+    agnostic's span, a child of the caller's.*
   - **The inbound context is trusted as it is**, which is agnosai's recorded trust boundary
     (its ADR 023 and threat-model surface 7). An authenticated caller can choose the trace id a crew's
     spans join, and a `-00` flag (not sampled) switches off span export for its own crews. Only spans

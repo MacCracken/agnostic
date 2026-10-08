@@ -113,18 +113,20 @@ fn agnostic_serve_install_signals(): i64 {
     return 1;
 }
 
-# Write a response record to the connection.
+# Write a response record to the connection, and answer the status it sent — the record's,
+# or 500 when there was no record or its body would not encode (0.1.16: what the server span
+# reports).
 #
-# Errors from the send are logged, not propagated: the client is already gone in
-# every case that produces one, and sandhi closes the connection regardless.
+# Errors from the send are not propagated: the client is already gone in every case that
+# produces one, and sandhi closes the connection regardless.
 fn _agnostic_serve_send(a, cfd, resp): i64 {
     var status = agnostic_response_status(resp);
     var reason = agnostic_http_reason(status);
 
     var ctype = "application/json";
-    # `: i64`, not the `Str` `str_from` would infer: `body` later takes
-    # `agnostic_response_body(resp)` and `rendered`, which are untyped.
-    var body: i64 = str_from("");
+    # Every branch below sets it. Until 0.1.16 it started as `str_from("")`, a Str header on
+    # the no-free global heap per request that nothing read.
+    var body: i64 = 0;
     # Extra header lines, CRLF-terminated, or 0: the WebGUI's pages carry their
     # Content-Security-Policy, a plugin document its ETag, and a 405 its `Allow` — a JSON
     # body, which is why this is read for both kinds (0.1.15).
@@ -158,11 +160,54 @@ fn _agnostic_serve_send(a, cfd, resp): i64 {
     }
 
     if (a != 0) {
-        return sandhi_server_send_response_a(a, cfd, status, reason, ctype,
+        sandhi_server_send_response_a(a, cfd, status, reason, ctype,
+          str_data(body), str_len(body), extra);
+    } else {
+        sandhi_server_send_response(cfd, status, reason, ctype,
           str_data(body), str_len(body), extra);
     }
-    return sandhi_server_send_response(cfd, status, reason, ctype,
-      str_data(body), str_len(body), extra);
+    return status;
+}
+
+# The OTLP status of a server span for HTTP status `code`: ERROR for a 5xx, and UNSET for
+# everything else — a 4xx is the client's error, not the server's, and the HTTP semantic
+# conventions leave a SERVER span's status unset for it.
+fn _agnostic_serve_span_status(code): i64 {
+    if (code >= 500) { return AGNOSAI_OTLP_STATUS_ERROR; }
+    return AGNOSAI_OTLP_STATUS_UNSET;
+}
+
+# Record this request's HTTP SERVER span through agnosai's exporter (0.1.16, ADR 0020).
+#
+# Its identity is the request's trace id (`agnostic_trace_current`) — the span id the crews
+# it submits name as their parent, and its log lines carry — under the inbound traceparent
+# when there was one (`agnostic_trace_parent`). Named `<method> <route>`; a method agnostic
+# does not serve is `_OTHER`, so a client cannot mint span names, and a request no route
+# matched is named by its method alone. `url.path` drops the query, which can carry
+# anything.
+#
+# ⚠ **Off costs one load.** Nothing is built unless an exporter is running, and with one
+# everything is built in `a`, the request's arena: the ring encodes the span into its own
+# arena and keeps nothing (agnosai ADR 024), so a recorded request costs the global heap
+# nothing more (`tests/server_span.tcyr`). An unsampled trace (`-00`) records nothing.
+fn _agnostic_serve_record_span_a(a, method, path: Str, rctx, status, start_ns): i64 {
+    if (agnosai_telemetry_exporter() == 0) { return 0; }
+    if (a == 0) { return 0; }
+    var self_sc = agnosai_otlp_span_context_parse_a(a, agnostic_trace_current());
+    if (self_sc == 0) { return 0; }
+    var parent_sc = 0;
+    var parent = agnostic_trace_parent();
+    if (parent != 0) { parent_sc = agnosai_otlp_span_context_parse_a(a, parent); }
+
+    var name = agnostic_method_name(method);
+    if (name == 0) { name = "_OTHER"; }
+    var route = 0;
+    var pattern = agnostic_reqctx_route(rctx);
+    if (pattern != 0) { route = str_from_a(a, pattern); }
+    var span = agnosai_http_server_span_a(a, str_from_a(a, name), route,
+      agnostic_path_only_a(a, path), str_from_a(a, "http"), status);
+    return agnosai_telemetry_record_span_in(span, self_sc, parent_sc, start_ns, clock_epoch_ns(),
+      _agnostic_serve_span_status(status));
 }
 
 # A request header as a `Str` in `a`, or 0 when the request does not carry it. `name` is
@@ -180,6 +225,8 @@ fn _agnostic_serve_header_a(a, buf, blen, name): i64 {
 # answers "no method" and `str_len(path)` returns garbage, so every request 404s
 # or faults. `str_from_a` wraps without copying the bytes — it is not optional.
 fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
+    # When the request arrived: its server span's start (0.1.16).
+    var start_ns = clock_epoch_ns();
     var a = _agnostic_spill_for(sandhi_server_request_arena());
     # Never 0 past this line — see the module header and 0.1.5.
     if (a == 0) { a = _agnostic_serve_fallback_alloc(); }
@@ -208,13 +255,23 @@ fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
     # 400 for it is indistinguishable to a client from a bad route, and sandhi
     # has already accepted the connection. Route "/" so it lands on the normal
     # not-found path rather than a special case.
-    var path = str_from("/");
+    #
+    # ⚠ In the arena, like everything else here (0.1.16): the two defaults below were
+    # `str_from` literals, 16 B each on the no-free global heap per request.
+    var path = 0;
+    var body = 0;
+    if (a != 0) {
+        path = str_from_a(a, "/");
+        body = str_from_a(a, "");
+    } else {
+        path = str_from("/");
+        body = str_from("");
+    }
     if (raw_path != 0) {
         if (a != 0) { path = str_from_a(a, raw_path); }
         else { path = str_from(raw_path); }
     }
 
-    var body = str_from("");
     var off = sandhi_server_body_offset(buf, blen);
     if (off > 0) {
         if (off < blen) {
@@ -264,7 +321,10 @@ fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
     # context could not be built is refused, never dispatched without them.
     var resp = 0;
     if (rctx != 0) { resp = agnostic_route_dispatch_a(a, method, path, body, max_body, rctx); }
-    _agnostic_serve_send(a, cfd, resp);
+    var sent = _agnostic_serve_send(a, cfd, resp);
+    # After the send, so the span covers the whole answer; before the clear below, which
+    # takes the trace id with it.
+    _agnostic_serve_record_span_a(a, method, path, rctx, sent, start_ns);
 
     # Clear the trace id so a worker cannot leak the previous request's id onto
     # the next one if that request never sets one.

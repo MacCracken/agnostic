@@ -31,7 +31,7 @@ stdlib = [
     #
     # ⚠ **Declaring it changes nothing today, and that is the point.** sigil
     # already reaches the compile unit transitively — agnosai declares
-    # `[deps.sigil]` (3.13.7 at 2.1.6; 3.12.9 when this was measured) — and the
+    # `[deps.sigil]` (3.13.7 at 2.1.7; 3.12.9 when this was measured) — and the
     # duplicate-fn warning count was identical with and without this line. It is here so that a future agnosai
     # which stops depending on sigil cannot silently take the crypto tier away
     # from the identity surface. Same defensive reasoning the `sakshi` note in
@@ -71,7 +71,7 @@ stdlib = [
 # dep's artifact ("refusing to overwrite stdlib leaf"), so `lib/sigil.cyr` /
 # `lib/patra.cyr` stay the 6.6.14 snapshot — byte-identical to the toolchain's own
 # `lib/` — and `check-clean.sh` stays green. Since 0.1.12 the whole chain declares
-# exactly the folds — sigil 3.13.7 from agnosai (2.1.6 now), kavach 3.13.2 and libro
+# exactly the folds — sigil 3.13.7 from agnosai (2.1.7 now), kavach 3.13.2 and libro
 # 2.10.6, patra 1.15.1 from libro — so the skipped artifacts are the folds' own bytes
 # and the lock's sigil and patra lines name the commits `lib/` holds. A chain that
 # declares a sigil or patra the pin does not fold is red in either direction: move
@@ -99,7 +99,7 @@ stdlib = [
 # ai-hwaccel or tyche arrives with an agnosai release that pins it.
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
-tag = "2.1.6"
+tag = "2.1.7"
 modules = ["dist/agnosai.cyr"]
 
 # libro — the audit chain `src/engine/audit.cyr` calls directly. Through 0.1.6 it

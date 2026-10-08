@@ -222,6 +222,60 @@ fn _agnostic_bench_inflight(): i64 {
     return n;
 }
 
+# 0.1.16 (ADR 0020): what a request pays for its server span with export on — the child of an
+# inbound traceparent, and the record: parse the two contexts, build the span in the request's
+# arena, encode it into the exporter's ring. With export off the record costs one load.
+#
+# The exporter is never started, so nothing drains its ring but this: 200 records per batch
+# (the ring holds 256, so none is dropped), drained between batches, outside the timing.
+fn _agnostic_bench_server_span(): i64 {
+    thread_local_init();
+    var a = arena_allocator(1048576);
+    var keep = arena_allocator(4096);
+    var inbound = str_from("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+
+    var bc = bench_new("trace_child");
+    bench_batch_start(bc);
+    var i = 0;
+    while (i < 100000) {
+        if ((i & 1023) == 0) { reset_via(a); }
+        agnostic_trace_child_a(a, inbound);
+        i = i + 1;
+    }
+    bench_batch_stop(bc, 100000);
+    bench_report(bc);
+
+    var saved = _agnosai_telemetry_exporter;
+    var e = agnosai_otlp_exporter_new(0, str_from("bench"), 3600000);
+    _agnosai_telemetry_exporter = e;
+    var ring = agnosai_otlp_exporter_ring(e);
+    var service = str_from("bench");
+    agnostic_trace_set(agnostic_trace_child_a(keep, inbound));
+    thread_local_set(AGNOSTIC_TRACE_PARENT_SLOT, inbound);
+    var path = str_from("/api/v1/crews/6ba7b810-9dad-41d1-80b4-00c04fd430c8");
+    var ctx = agnostic_reqctx_new_a(keep, 0, 0);
+    agnostic_reqctx_set_route(ctx, "/api/v1/crews/:id");
+    var bs = bench_new("server_span_record");
+    var round = 0;
+    while (round < 100) {
+        agnosai_otlp_ring_drain(ring, service);
+        reset_via(a);
+        bench_batch_start(bs);
+        i = 0;
+        while (i < 200) {
+            _agnostic_serve_record_span_a(a, AGNOSTIC_METHOD_GET, path, ctx, 200, 1);
+            i = i + 1;
+        }
+        bench_batch_stop(bs, 200);
+        round = round + 1;
+    }
+    bench_report(bs);
+    agnosai_otlp_ring_drain(ring, service);
+    _agnosai_telemetry_exporter = saved;
+    agnostic_trace_clear();
+    return 0;
+}
+
 fn main(): i64 {
     alloc_init();
     var b = bench_new("noop");
@@ -283,6 +337,7 @@ fn main(): i64 {
     _agnostic_bench_ledger_snapshot();
     _agnostic_bench_audit_entries();
     _agnostic_bench_inflight();
+    _agnostic_bench_server_span();
     return 0;
 }
 

@@ -39,3 +39,5 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0016](0016-a-selection-explanation-is-recomputed-at-read-time.md) | A crew's agent selection is explained by recomputing it when asked (`/plan?explain=selection`), within a fixed budget and a shared scratch |
 | [0017](0017-a-task-carries-selection-hints.md) | A task carries the hints the engine selects its agent by (`required_tools`, `complexity`, `domain`, `gpu_required`), checked at the door and forwarded into its context |
 | [0018](0018-crews-join-the-request-trace-and-export-is-opt-in.md) | A crew joins the trace of the request that submitted it, inbound traceparents are checked by the engine's own parser, and OTLP span export is switched on by `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| [0019](0019-an-interrupted-crew-keeps-what-its-finished-tasks-answered.md) | An interrupted crew keeps the output its finished tasks answered, and the start-up sweep reports it |
+| [0020](0020-each-request-records-an-http-server-span.md) | Each request records an HTTP SERVER span through agnosai's exporter, and an inbound traceparent gets a child, so crews nest under the request |

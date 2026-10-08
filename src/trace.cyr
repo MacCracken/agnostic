@@ -28,6 +28,11 @@
 
 var AGNOSTIC_TRACE_SLOT = thread_local_alloc();
 
+# The inbound `traceparent` the request arrived with, or 0 when it brought none (0.1.16,
+# ADR 0020). The current id above is then a CHILD of it — agnostic's own span — and this
+# is that span's parent. Claimed at load for the same reasons as the slot above.
+var AGNOSTIC_TRACE_PARENT_SLOT = thread_local_alloc();
+
 # Length of a W3C traceparent: "00-" + 32 hex + "-" + 16 hex + "-01".
 var AGNOSTIC_TRACE_LEN = 55;
 
@@ -48,6 +53,15 @@ fn _agnostic_trace_hex(dst, v, nybbles): i64 {
     return nybbles;
 }
 
+# A fresh span id: a counter mixed with the clock, so ids stay distinct even if the random
+# source degrades. Never 0 — the all-zero span id is INVALID in W3C Trace Context.
+fn _agnostic_trace_span_id(): i64 {
+    _agnostic_trace_counter = _agnostic_trace_counter + 1;
+    var span = clock_epoch_ns() ^ (_agnostic_trace_counter * 0x9E3779B97F4A7C15);
+    if (span == 0) { span = 1; }
+    return span;
+}
+
 # Mint a fresh traceparent into arena `a`. Returns a Str of exactly
 # AGNOSTIC_TRACE_LEN bytes, or 0 if the allocation failed.
 #
@@ -64,14 +78,11 @@ fn agnostic_trace_generate_a(a): i64 {
     random_bytes(&hi, 8);
     random_bytes(&lo, 8);
 
-    _agnostic_trace_counter = _agnostic_trace_counter + 1;
-    var span = clock_epoch_ns() ^ (_agnostic_trace_counter * 0x9E3779B97F4A7C15);
+    var span = _agnostic_trace_span_id();
 
-    # An all-zero trace id or span id is INVALID in W3C Trace Context, and the engine
-    # would refuse the traceparent and start a new trace (0.1.14). Drawing one is a
-    # 2^-64 event; the guard is two compares.
+    # An all-zero trace id is INVALID in W3C Trace Context, and the engine would refuse
+    # the traceparent and start a new trace (0.1.14). Drawing one is a 2^-64 event.
     if (hi == 0 && lo == 0) { lo = 1; }
-    if (span == 0) { span = 1; }
 
     store8(buf, 48);      # '0'
     store8(buf + 1, 48);  # '0'
@@ -90,6 +101,22 @@ fn agnostic_trace_generate_a(a): i64 {
     return str_from_a(a, buf);
 }
 
+# A child of traceparent `tp` in arena `a` (0.1.16, ADR 0020): the same version, trace id and
+# flags, and a fresh span id — agnostic's own span under the caller's. `tp` must be one
+# `agnostic_trace_valid_a` accepts. 0 if the allocation failed.
+#
+# The flags are copied, not set: a caller that sent `-00` (not sampled) gets a child that is
+# not sampled either, so ParentBased sampling (ADR 0018) still holds for agnostic's span and
+# the crew's.
+fn agnostic_trace_child_a(a, tp: Str): i64 {
+    var buf = alloc_via(a, AGNOSTIC_TRACE_LEN + 1);
+    if (buf == 0) { return 0; }
+    memcpy(buf, str_data(tp), AGNOSTIC_TRACE_LEN);
+    _agnostic_trace_hex(buf + 36, _agnostic_trace_span_id(), 16);
+    store8(buf + AGNOSTIC_TRACE_LEN, 0);
+    return str_from_a(a, buf);
+}
+
 # Set the calling thread's trace id. `tp` is a Str, or 0 to clear.
 #
 # ⚠ Faults unless the thread's local table is initialised — see the module
@@ -105,9 +132,16 @@ fn agnostic_trace_current(): i64 {
     return thread_local_get(AGNOSTIC_TRACE_SLOT);
 }
 
-# Clear the calling thread's trace id. Used between requests and by tests.
+# The inbound traceparent the calling thread's request arrived with — the parent of the
+# current id — or 0 when it brought none and the current id is a root (0.1.16).
+fn agnostic_trace_parent(): i64 {
+    return thread_local_get(AGNOSTIC_TRACE_PARENT_SLOT);
+}
+
+# Clear the calling thread's trace id and its parent. Used between requests and by tests.
 fn agnostic_trace_clear(): i64 {
     thread_local_set(AGNOSTIC_TRACE_SLOT, 0);
+    thread_local_set(AGNOSTIC_TRACE_PARENT_SLOT, 0);
     return 0;
 }
 
@@ -134,21 +168,34 @@ fn agnostic_trace_valid_a(a, s): i64 {
 # here rather than being broken into two unrelated traces; mints a fresh one when
 # the header is absent or malformed.
 #
+# Since 0.1.16 (ADR 0020) the id it sets for an inbound header is a CHILD of it, not the
+# header itself: agnostic records an HTTP SERVER span per request under that child's span
+# id, so the crews the request submits and its log lines sit under agnostic's span, and
+# agnostic's span under the caller's. The header is kept as `agnostic_trace_parent()`.
+#
 # ⚠ `sandhi_server_find_header_a` returns a NUL-terminated cstring, not a Str.
 # Wrapping with `str_from_a` is not optional: passing the raw pointer where a Str
 # is expected reads the pointer itself as a Str header, and every downstream
 # length is garbage.
 fn agnostic_trace_begin_a(a, buf, blen): i64 {
     var tp = 0;
+    var parent = 0;
     var raw = sandhi_server_find_header_a(a, buf, blen, "traceparent");
     if (raw != 0) {
         var s = str_from_a(a, raw);
         # Only accept a well-formed traceparent. A malformed one is discarded
         # rather than propagated — forwarding garbage corrupts every downstream
         # span too. Until 0.1.14 this checked the length alone.
-        if (agnostic_trace_valid_a(a, s) == 1) { tp = s; }
+        if (agnostic_trace_valid_a(a, s) == 1) {
+            parent = s;
+            tp = agnostic_trace_child_a(a, s);
+        }
     }
-    if (tp == 0) { tp = agnostic_trace_generate_a(a); }
+    if (tp == 0) {
+        parent = 0;
+        tp = agnostic_trace_generate_a(a);
+    }
     agnostic_trace_set(tp);
+    thread_local_set(AGNOSTIC_TRACE_PARENT_SLOT, parent);
     return tp;
 }

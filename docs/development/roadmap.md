@@ -238,7 +238,7 @@ its F1–F3, F5 and F9 rows; each goes into the ADR of the item it names.
 ## Moving the cyrius pin to 6.6.15 — found 2026-10-04, siblings first
 
 cyrius **6.6.15** is tagged; its fold carries sigil **3.13.9**. agnostic pins 6.6.14, and so do
-agnosai 2.1.6, kavach 3.13.2, libro 2.10.6 and bote 3.3.16. agnosai's roadmap holds the reading of
+agnosai 2.1.7, kavach 3.13.2, libro 2.10.6 and bote 3.3.16. agnosai's roadmap holds the reading of
 what 6.6.15 fixes; the parts that reach agnostic, which makes outbound HTTPS through sandhi to an
 `https` LLM gateway and, since 0.1.14, to an `https` OTLP collector:
 
@@ -285,7 +285,8 @@ Found while building, grouped by area. H and B numbers in this file are those of
     objects only once nothing can be refused. Then add the three cases to `request_alloc`.
 - [ ] **An audited request keeps libro's entry on the global heap** (~250 B per audit record,
   measured at 0.1.15 by `tests/request_alloc.tcyr`'s `_t_libro_record_cost`). Every other byte a
-  request path kept is in the request's arena since 0.1.15, and that suite holds them to 0.
+  request path kept is in the request's arena — dispatch's since 0.1.15, the serve adapter's since
+  0.1.16 — and `request_alloc` and `server_span` hold them to 0.
   `chain_append` builds an entry (struct, timestamp, hash, algorithm Strs) per append; a streaming
   chain keeps only its hash. libro 2.9.0's `chain_append_nokeep` reuses one scratch entry but
   returns only the head hash, and agnostic needs the entry to store it (`patrastore_append`) and
@@ -297,19 +298,6 @@ Found while building, grouped by area. H and B numbers in this file are those of
 
 ### Telemetry
 
-- [ ] **agnostic exports no span of its own** (ADR 0018). When agnostic mints the traceparent, a
-  crew's `invoke_workflow` span names a parent that is never exported, so a backend shows the
-  trace's root as missing; the trace id still joins it to the request's logs. Fix: record an HTTP
-  SERVER span per request through agnosai's exporter (`agnosai_telemetry_record_span_in`), whose
-  span id is the minted one. Additive. agnosai 2.1.7 carries what it needs (its ADR 024; checked
-  against this plan before the cut): build the span with `agnosai_http_server_span_a` in the
-  request's arena and record it with `self_sc = agnosai_otlp_span_context_parse_a(a, tp)`; the
-  ring encodes into its own arena, so neither step touches the global heap. With an inbound
-  `traceparent`, mint a child of it in `src/trace.cyr` (same trace id and flags, a fresh span id,
-  in the arena), record the SERVER span under it with the inbound one as `parent_sc`, and hand
-  the crew the child, so `invoke_workflow` nests under agnostic's span. Not
-  `agnosai_otlp_span_context_child`: it allocates 32 B on the global heap per call, which
-  `tests/request_alloc.tcyr` would catch. Waits on the 2.1.7 tag and the re-pin.
 - [ ] **OTel variables not read** (ADR 0018): `OTEL_SDK_DISABLED` and the sampler variables
   (`OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`). Add them only with a deployment that needs
   them.
@@ -319,8 +307,14 @@ Found while building, grouped by area. H and B numbers in this file are those of
 
 ### Tests, tooling and docs
 
+- [ ] **`check-clean.sh` lints `tests/**/*.cyr` but not the suites, `tests/*.tcyr`** (found
+  2026-10-08, at 0.1.16). fmt covers the suites; lint does not, so a line over 120 characters or an
+  untracked deferral in a suite passes the gate. At 0.1.16, 18 of the 33 suites carry findings —
+  104 warnings, nearly all long lines (`crew_request` 31, `webgui` 14 and a deferral, `crew_tenancy`
+  12), and 9 untracked deferrals (`store_concurrency` 6). Fix: wrap or tag each, then add
+  `$(find tests -name "*.tcyr" | sort)` to the lint loop. agnosai has the same gap (its B31).
 - [ ] **`BENCHMARKS.md` was last generated at 0.1.0** (`59325f3`, dirty, one benchmark); the bench
-  has 16 now. The parser is not the problem: checked at 0.1.15, `scripts/bench-history.sh`'s pattern
+  has 18 rows now. The parser is not the problem: checked at 0.1.15, `scripts/bench-history.sh`'s pattern
   matches every line of `cyrius bench`'s output at 6.6.14. What is owed is the run, on a clean tree
   right after a tag so the row names a commit: `git checkout 0.1.15 && ./scripts/bench-history.sh`,
   then commit `BENCHMARKS.md` and `bench-history.csv`. Do it at each tag from then on, and add that

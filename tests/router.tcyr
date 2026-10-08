@@ -254,6 +254,7 @@ fn test_route_table() {
     # with its captures. An earlier row that shadowed a later one would fail here.
     # A failure prints `got` (what resolved) against `expected` (the arm's id).
     var arms = 0;
+    var unnamed = 0 - 1;
     var i = 0;
     while (i < rows) {
         var pattern = agnostic_route_row_pattern(i);
@@ -269,12 +270,16 @@ fn test_route_table() {
                 var carried = AGNOSTIC_ROUTE_NONE;
                 if (_t_carries(m, caps) == 1) { carried = id; }
                 assert_eq(carried, id, "and carries x1 as param, x2 as param2, 0 where there is none");
+                if (_t_cstr_is(agnostic_route_match_pattern(m), pattern) == 0 && unnamed < 0) { unnamed = i; }
             }
             k = k + 1;
         }
         i = i + 1;
     }
     assert_eq(arms, 27, "27 arms: 26 route ids, the shell's twice");
+    # ⭐ 0.1.16 (ADR 0020): and names its own row's pattern — the server span's `http.route`.
+    # A failure prints the first row at fault as `got`.
+    assert_eq(unnamed, 0 - 1, "every hit names the pattern of the row that answered");
 
     # Every route id has an arm, and only the shell has two (`/ui`, `/ui/`). A failure
     # prints the first id at fault as `got`.
@@ -336,6 +341,21 @@ fn test_route_table() {
     assert_eq(agnostic_route_match_allow(hit), 0, "a hit allows nothing: only a 405 reads it");
     var miss = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, str_from("/nope"));
     assert_eq(agnostic_route_match_allow(miss), 0, "nor does a path no row has");
+    assert_eq(agnostic_route_match_pattern(miss), 0, "a 404 names no route");
+    assert_eq(agnostic_route_match_pattern(agnostic_route_resolve_a(a, AGNOSTIC_METHOD_POST, str_from("/health"))), 0,
+      "nor does a 405: no row answered its method");
+    assert_eq(agnostic_route_match_pattern(0), 0, "nor no match at all");
+
+    # Dispatch hands the pattern to the request context, where the serve adapter reads it.
+    var rc = agnostic_reqctx_new_a(a, 0, 0);
+    assert_eq(agnostic_reqctx_route(rc), 0, "a new context names no route");
+    agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/presets/x?y=1"), str_from(""), 1048576, rc);
+    assert_eq(_t_cstr_is(agnostic_reqctx_route(rc), "/api/v1/presets/:name"), 1,
+      "⭐ dispatch records the pattern, not the path or its query");
+    var rc2 = agnostic_reqctx_new_a(a, 0, 0);
+    agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from("/nope"), str_from(""), 1048576, rc2);
+    assert_eq(agnostic_reqctx_route(rc2), 0, "and none for a 404");
+    assert_eq(agnostic_reqctx_route(0) + agnostic_reqctx_set_route(0, "/x"), 0, "no context, no route");
 
     # The header line, in the table's column order.
     var line = agnostic_route_allow_header_a(a, (1 << AGNOSTIC_METHOD_DELETE) | (1 << AGNOSTIC_METHOD_GET)

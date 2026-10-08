@@ -61,7 +61,8 @@ enum AgnosticReqCtxOff {
     AGNOSTIC_REQCTX_PLUGIN    = 56;   # `X-Agnostic-Plugin`, or 0 (0.1.9)
     AGNOSTIC_REQCTX_IFMATCH   = 64;   # `If-Match`, or 0 (0.1.9)
     AGNOSTIC_REQCTX_IFNONE    = 72;   # `If-None-Match`, or 0 (0.1.9)
-    AGNOSTIC_REQCTX_SIZE      = 80;
+    AGNOSTIC_REQCTX_ROUTE     = 80;   # the matched route's pattern, a cstring, or 0 (0.1.16)
+    AGNOSTIC_REQCTX_SIZE      = 88;
 }
 
 # Build a request context in `a`. 0 on exhaustion.
@@ -78,6 +79,7 @@ fn agnostic_reqctx_new_a(a, authz, peer_ip): i64 {
     store64(c + AGNOSTIC_REQCTX_PLUGIN, 0);
     store64(c + AGNOSTIC_REQCTX_IFMATCH, 0);
     store64(c + AGNOSTIC_REQCTX_IFNONE, 0);
+    store64(c + AGNOSTIC_REQCTX_ROUTE, 0);
     return c;
 }
 
@@ -102,6 +104,20 @@ fn agnostic_reqctx_set_headers(ctx, idem, plugin, if_match, if_none): i64 {
     store64(ctx + AGNOSTIC_REQCTX_IFMATCH, if_match);
     store64(ctx + AGNOSTIC_REQCTX_IFNONE, if_none);
     return ctx;
+}
+
+# Record the route dispatch matched — its pattern, a C string, or 0 when none did (0.1.16).
+# Dispatch writes it; the serve adapter reads it back to name the request's server span.
+fn agnostic_reqctx_set_route(ctx, pattern): i64 {
+    if (ctx == 0) { return 0; }
+    store64(ctx + AGNOSTIC_REQCTX_ROUTE, pattern);
+    return ctx;
+}
+
+# The matched route's pattern as a C string, or 0 — before dispatch, or when no route matched.
+fn agnostic_reqctx_route(ctx): i64 {
+    if (ctx == 0) { return 0; }
+    return load64(ctx + AGNOSTIC_REQCTX_ROUTE);
 }
 
 # The `Idempotency-Key` header as a Str, or 0.

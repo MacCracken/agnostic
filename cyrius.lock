@@ -1,4 +1,4 @@
-commit	c2c75c02fc5a3ab0a7a31bfdba444bad803ac2eb	agnosai	https://github.com/MacCracken/agnosai.git	2.1.6
+commit	9210905b76b5d7d54362be9429ed7ddacf811c3c	agnosai	https://github.com/MacCracken/agnosai.git	2.1.7
 commit	3273fdef3475d41f9d691a75db59a46d691e782a	libro	https://github.com/MacCracken/libro.git	2.10.6
 commit	2c8edf810ad3d686e269d98f808896795b9cda50	sigil	https://github.com/MacCracken/sigil.git	3.13.7
 commit	b705b274bc2502eee53a94ec10e020f46794d137	bote	https://github.com/MacCracken/bote.git	3.3.16
@@ -7,7 +7,7 @@ commit	88dc85d7770648555c2b3683457e3a3b4c290e76	kavach	https://github.com/MacCra
 commit	5fc564ce95481703d5a0f7d5fe0322dceb0985c5	ai-hwaccel	https://github.com/MacCracken/ai-hwaccel.git	2.4.1
 commit	f416ab68e510af8a3e117e0bb8abda21ca02f58f	tyche	https://github.com/MacCracken/tyche.git	1.1.0
 commit	c10965683a53b847313962b2f4a573974bfa3fd5	patra	https://github.com/MacCracken/patra.git	1.15.1
-9b4f5722d4c18b52f799a2425341f93f72167da14fb7bbf0f30c173cce2991c4  lib/agnosai.cyr
+c594d8e148826592879f0bce47f90f02f3c95ee004a27f5cbc70323795da3fb3  lib/agnosai.cyr
 facaf5b7e77559cc41349c0b4db2fd05d698e43de2c45cae5f85f230ec4c746f  lib/ai-hwaccel.cyr
 b1593105548307531c309458f9b701acae223eea8878cf1b2197f07fc260f591  lib/alloc.cyr
 69e92cc4b67f1a936f94c92ce8a4c66673758b84dba385e96fbeaa46fa692b4c  lib/alloc_agnos.cyr

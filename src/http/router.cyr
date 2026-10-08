@@ -85,7 +85,8 @@ enum AgnosticRouteMatchOff {
     AGNOSTIC_RM_METHOD_MISMATCH = 16;
     AGNOSTIC_RM_PARAM2          = 24;
     AGNOSTIC_RM_ALLOW           = 32;   # a miss: the methods the matched path takes (0.1.15)
-    AGNOSTIC_RM_SIZE            = 40;
+    AGNOSTIC_RM_PATTERN         = 40;   # a hit: the row's pattern, a cstring (0.1.16)
+    AGNOSTIC_RM_SIZE            = 48;
 }
 
 # Map an HTTP method name to its constant. Unknown methods are NONE, which no row
@@ -124,6 +125,7 @@ fn _agnostic_rm_new2_a(a, id, param, param2, mismatch): i64 {
     store64(m + AGNOSTIC_RM_METHOD_MISMATCH, mismatch);
     store64(m + AGNOSTIC_RM_PARAM2, param2);
     store64(m + AGNOSTIC_RM_ALLOW, 0);
+    store64(m + AGNOSTIC_RM_PATTERN, 0);
     return m;
 }
 
@@ -159,6 +161,14 @@ fn agnostic_route_match_method_mismatch(m): i64 {
 fn agnostic_route_match_allow(m): i64 {
     if (m == 0) { return 0; }
     return load64(m + AGNOSTIC_RM_ALLOW);
+}
+
+# On a hit, the pattern of the row that answered — `/api/v1/crews/:id`, a C string, `:name`
+# segments kept — or 0 on any miss (0.1.16). What a server span names as `http.route`: the
+# route, not the path, so ids stay out of the span name.
+fn agnostic_route_match_pattern(m): i64 {
+    if (m == 0) { return 0; }
+    return load64(m + AGNOSTIC_RM_PATTERN);
 }
 
 # Whether `path`, starting at byte `start`, matches `pattern`.
@@ -441,7 +451,9 @@ fn agnostic_route_resolve_a(a, method, path: Str): i64 {
             path_hit = 1;
             var id = _agnostic_route_arm(row, method);
             if (id != AGNOSTIC_ROUTE_NONE) {
-                return _agnostic_rm_new2_a(a, id, param, param2, 0);
+                var hit = _agnostic_rm_new2_a(a, id, param, param2, 0);
+                if (hit != 0) { store64(hit + AGNOSTIC_RM_PATTERN, load64(row + AGNOSTIC_RR_PATTERN)); }
+                return hit;
             }
             allow = allow | _agnostic_route_row_mask(row);
         }
@@ -575,6 +587,9 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
 
     var m = agnostic_route_resolve_a(a, method, path);
     var id = agnostic_route_match_id(m);
+    # The matched route, for the server span the serve adapter records (0.1.16, ADR 0020):
+    # known from here on, so a 401 or 403 on a real route is named by it too.
+    agnostic_reqctx_set_route(ctx, agnostic_route_match_pattern(m));
 
     if (id == AGNOSTIC_ROUTE_NONE) {
         if (agnostic_route_match_method_mismatch(m) == 1) {
