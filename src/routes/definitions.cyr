@@ -140,9 +140,10 @@ fn _agnostic_def_not_found_a(a): i64 {
       str_from_a(a, "agent definition not found"));
 }
 
-# Decode a request body into a definition, or answer with the rejection.
-# Returns the definition, storing a ready-made error response through `out_resp`.
-fn _agnostic_def_decode(a, body: Str, out_resp): i64 {
+# Check a request body as a definition, and answer its parsed value, or 0 with a ready-made
+# error response through `out_resp`. Builds nothing on the global heap (0.1.17): every refusal
+# the decoder makes, and the door's `complexity` rule, are made in `a`.
+fn _agnostic_def_check_a(a, body: Str, out_resp): i64 {
     store64(out_resp, 0);
     var v = agnostic_decode_a(a, body);
     if (v == 0) {
@@ -153,17 +154,36 @@ fn _agnostic_def_decode(a, body: Str, out_resp): i64 {
     var reject: i64[1];
     store64(&reject, 0);
     # -1: not inside an `agents` array, so messages go out unprefixed.
-    var d = agnostic_agent_def_decode_a(a, v, 0 - 1, &reject);
-    if (d == 0 || agnostic_agent_def_complexity_ok(d) == 0) {
-        # An unknown `complexity` is refused here, at the door, not by the decoder: stored
-        # definitions are decoded by the same path and are read as they are (0.1.15).
-        if (d != 0) { agnostic_agent_def_complexity_reject_a(a, &reject, 0 - 1); }
+    if (agnostic_agent_def_check_a(a, v, 0 - 1, &reject) == 0) {
         var rj = load64(&reject);
         store64(out_resp, agnostic_response_error_a(a, agnostic_reject_status(rj),
             agnostic_reject_message(rj)));
         return 0;
     }
+    return v;
+}
+
+# Build a checked body's definition on the global heap, where the definition cache keeps it.
+# 0 with an error response through `out_resp` only if an allocation failed.
+#
+# ⚠ **Last, after every refusal this request can know of** (0.1.17): a definition built and
+# then refused stays on the never-freed heap — 392 B a time until 0.1.17.
+fn _agnostic_def_build_a(a, v, out_resp): i64 {
+    var reject: i64[1];
+    store64(&reject, 0);
+    var d = agnostic_agent_def_decode_a(a, v, 0 - 1, &reject);
+    if (d == 0) {
+        var rj = load64(&reject);
+        store64(out_resp, agnostic_response_error_a(a, agnostic_reject_status(rj),
+            agnostic_reject_message(rj)));
+    }
     return d;
+}
+
+# The refusal for a `POST` whose key is taken.
+fn _agnostic_def_exists_a(a): i64 {
+    return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
+      str_from_a(a, "an agent definition with this key already exists; use PUT to replace it"));
 }
 
 # `GET /api/v1/agents/definitions` — every stored definition, as summaries.
@@ -197,16 +217,18 @@ fn agnostic_route_definitions_list_a(a): i64 {
 # `POST /api/v1/agents/definitions` — create one. 201, or 409 if the key is taken.
 fn agnostic_route_definition_create_a(a, body: Str): i64 {
     var resp: i64[1];
-    var d = _agnostic_def_decode(a, body, &resp);
+    var v = _agnostic_def_check_a(a, body, &resp);
+    if (v == 0) { return load64(&resp); }
+    # A taken key is refused before anything is built. The store checks again under its lock
+    # with the write: only two creates of one key racing each other build one to refuse.
+    if (agnostic_definitions_get(agnostic_req_str(v, AGNOSTIC_JK_KEY)) != 0) { return _agnostic_def_exists_a(a); }
+    var d = _agnostic_def_build_a(a, v, &resp);
     if (d == 0) { return load64(&resp); }
 
     var key = agnostic_agent_def_key(d);
     var rc = agnostic_definitions_create(key, d);
 
-    if (rc == AGNOSTIC_DEF_EXISTS) {
-        return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
-          str_from_a(a, "an agent definition with this key already exists; use PUT to replace it"));
-    }
+    if (rc == AGNOSTIC_DEF_EXISTS) { return _agnostic_def_exists_a(a); }
     if (rc == AGNOSTIC_DEF_FULL) {
         # ⚠ 507, and the message says what to do about it. The store never
         # evicts, so this is a real ceiling rather than a transient — a retry
@@ -254,13 +276,17 @@ fn agnostic_route_definition_replace_a(a, key: Str, body: Str, ctx): i64 {
     }
 
     var resp: i64[1];
-    var d = _agnostic_def_decode(a, body, &resp);
-    if (d == 0) { return load64(&resp); }
-
-    if (str_eq(agnostic_agent_def_key(d), key) == 0) {
+    var v = _agnostic_def_check_a(a, body, &resp);
+    if (v == 0) { return load64(&resp); }
+    if (str_eq(agnostic_req_str(v, AGNOSTIC_JK_KEY), key) == 0) {
         return agnostic_response_error_a(a, HTTP_BAD_REQUEST,
           str_from_a(a, "the 'key' in the body must match the key in the path"));
     }
+    # An absent definition is refused before anything is built, as a taken key is on create;
+    # the store checks again under its lock with the write.
+    if (if_match == 0 && agnostic_definitions_get(key) == 0) { return _agnostic_def_not_found_a(a); }
+    var d = _agnostic_def_build_a(a, v, &resp);
+    if (d == 0) { return load64(&resp); }
 
     var rc = agnostic_definitions_replace_if_a(a, key, d, if_match);
     if (rc == AGNOSTIC_DEF_MISSING) { return _agnostic_def_not_found_a(a); }

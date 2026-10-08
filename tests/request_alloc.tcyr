@@ -15,9 +15,9 @@
 # libro's entry, which is libro's to settle (`_t_libro_record_cost`).
 #
 # Not held to it, by design: a submitted crew (the engine and the ledger keep it), a created
-# definition (the definition cache keeps what it stores), and creating a user. Not held to it YET:
-# a crew or definition body the decoder refuses part-way, which keeps the engine objects it had
-# built (roadmap, Memory).
+# definition (the definition cache keeps what it stores), and creating a user. Since 0.1.17 a
+# crew or definition body refused part-way is held to it too: the doors check the whole body
+# before they build anything (`alloc/refused-bodies`).
 include "src/app.cyr"
 include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
@@ -166,6 +166,60 @@ fn test_audited_writes_keep_nothing() {
     assert_eq(agnostic_audit_appended(), n0 + 3, "and all three were audited");
 }
 
+# ⭐ 0.1.17: a body refused part-way keeps nothing. Until then the doors decoded straight into
+# the global heap and kept everything built before the refusal: 152 B for a crew refused at its
+# second agent, 672 B at its second task, 392 B for a definition refused for its `complexity`,
+# and a whole crew's worth for a dependency cycle, which was found last.
+var _T_AG = "{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}";
+
+# A crew body: its agents array's contents, then its tasks array's.
+fn _t_crew(agents, tasks) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"c\",\"agents\":[");
+    str_builder_add_cstr(sb, agents);
+    str_builder_add_cstr(sb, "],\"tasks\":[");
+    str_builder_add_cstr(sb, tasks);
+    str_builder_add_cstr(sb, "]}");
+    return str_data(str_builder_build(sb));
+}
+
+fn test_refused_bodies_keep_nothing() {
+    test_group("alloc/refused-bodies");
+    var two = str_data(str_cat(str_cat(str_from(_T_AG), str_from(",")),
+        str_from("{\"key\":\"a2\",\"role\":\"r\",\"goal\":\"g\",\"bogus\":1}")));
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/crews", _t_crew(two, "{\"description\":\"t\"}"), 1, 0), 0,
+      "⭐ a crew refused at its second agent keeps nothing (152 B until 0.1.17)");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/crews",
+        _t_crew(_T_AG, "{\"description\":\"t\"},{\"description\":\"u\",\"bogus\":1}"), 1, 0), 0,
+      "⭐ nor one refused at its second task (672 B)");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/crews",
+        _t_crew(_T_AG, "{\"description\":\"t\",\"dependencies\":[1]},{\"description\":\"u\",\"dependencies\":[0]}"),
+        1, 0), 0, "⭐ nor one refused for a dependency cycle, found after every task decoded");
+    var cx = str_data(str_cat(str_cat(str_from(_T_AG), str_from(",")),
+        str_from("{\"key\":\"a2\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"extreme\"}")));
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/crews", _t_crew(cx, "{\"description\":\"t\"}"), 1, 0), 0,
+      "nor one refused for an agent's complexity");
+
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions",
+        "{\"key\":\"cx\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"extreme\"}", 1, 0), 0,
+      "⭐ a definition refused for its complexity keeps nothing (392 B)");
+    var taken = "{\"key\":\"taken\",\"role\":\"r\",\"goal\":\"g\"}";
+    _t_cost_once(AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", taken, 1, 0);
+    assert_neq(agnostic_definitions_get(str_from("taken")), 0, "precondition: `taken` is stored");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", taken, 1, 0), 0,
+      "⭐ nor does a 409 for a taken key, refused before it is built");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/absent",
+        "{\"key\":\"absent\",\"role\":\"r\",\"goal\":\"g\"}", 1, 0), 0,
+      "nor a PUT to an absent definition (404)");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/taken",
+        "{\"key\":\"other\",\"role\":\"r\",\"goal\":\"g\"}", 1, 0), 0,
+      "nor a PUT whose body names another key (400)");
+    # The pre-checks look the key up first. A lookup that misses keeps nothing, so a create
+    # that succeeds pays nothing more for them than the store's own check under its lock.
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/absent", "", 1, 0), 0,
+      "a lookup that misses keeps nothing");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -175,6 +229,7 @@ fn main() {
     test_authenticated_requests_keep_nothing();
     test_login_keeps_nothing();
     test_audited_writes_keep_nothing();
+    test_refused_bodies_keep_nothing();
     agnostic_audit_close();
     agnostic_store_close();
     _tt_unlink_store(_T_RADB);

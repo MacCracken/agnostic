@@ -670,6 +670,39 @@ fn test_bounds_match_the_engine() {
       < AGNOSAI_MAX_INPUT_LENGTH, 1, "the hint caps leave room under the engine's context cap");
 }
 
+# ⭐ 0.1.17: an accepted crew outlives its request's arena. The door checks the tasks in the arena
+# and copies them out, so a field the copy left pointing in would read whatever the next request
+# wrote there. The arena is rewound and scribbled over before anything is read back.
+fn test_an_accepted_crew_outlives_the_arena() {
+    test_group("request/outlives-arena");
+    var a = arena_allocator(65536);
+    var rj: i64[1];
+    var r = _t_decode(a, "{\"name\":\"keep\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"tools\":[\"k6\"],\"focus\":\"api\"}],\"tasks\":[{\"description\":\"first\",\"expected_output\":\"a report\",\"required_tools\":[\"k6\"],\"domain\":\"performance\",\"complexity\":\"high\",\"priority\":\"high\",\"risk\":\"low\",\"gpu_required\":true},{\"description\":\"second\",\"dependencies\":[0]}]}", &rj);
+    assert_neq(r, 0, "the crew is accepted");
+    if (r == 0) { return 0; }
+    reset_via(a);
+    var junk = alloc_via(a, 60000);
+    memset(junk, 120, 60000);
+
+    var t0 = vec_get(agnostic_crew_req_tasks(r), 0);
+    var t1 = vec_get(agnostic_crew_req_tasks(r), 1);
+    assert_eq(str_eq_cstr(agnostic_task_req_description(t0), "first"), 1, "a task's description");
+    assert_eq(str_eq_cstr(agnostic_task_req_expected_output(t0), "a report"), 1, "its expected output");
+    var tools = agnostic_task_req_required_tools(t0);
+    assert_eq(tools != 0 && vec_len(tools) == 1 && str_eq_cstr(vec_get(tools, 0), "k6") == 1, 1,
+      "its required tools");
+    assert_eq(str_eq_cstr(agnostic_task_req_domain(t0), "performance"), 1, "its domain");
+    assert_eq(agnostic_task_req_complexity(t0), agnostic_complexity_from_wire(str_from("high")), "its complexity");
+    assert_eq(agnostic_task_req_priority(t0), agnostic_priority_from_wire(str_from("high")), "its priority");
+    assert_eq(agnostic_task_req_risk(t0), agnostic_risk_from_wire(str_from("low")), "its risk");
+    assert_eq(agnostic_task_req_gpu_required(t0), 1, "its GPU requirement");
+    var deps = agnostic_task_req_dependencies(t1);
+    assert_eq(vec_len(deps) == 1 && vec_get(deps, 0) == 0, 1, "and the second task's dependency");
+    assert_eq(str_eq_cstr(agnostic_crew_req_name(r), "keep"), 1, "the crew's name");
+    var e = agnostic_agent_def_engine(vec_get(agnostic_crew_req_agents(r), 0));
+    assert_eq(str_eq_cstr(agnosai_agent_key(e), "a1"), 1, "and its agent's key");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -692,6 +725,7 @@ fn main() {
     test_agent_complexity_is_checked();
     test_swarm_role_hints_pick_the_role();
     test_bounds_match_the_engine();
+    test_an_accepted_crew_outlives_the_arena();
     return assert_summary();
 }
 

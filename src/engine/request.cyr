@@ -24,7 +24,7 @@
 #
 # ## The dependency graph is validated here, and that is load-bearing
 #
-# `agnostic_crew_req_has_cycle` is not politeness. `agnosai_crew_runner_run`
+# `agnostic_crew_req_has_cycle_a` is not politeness. `agnosai_crew_runner_run`
 # returns 0 on its error arm — a cyclic DAG, or a dependency naming a task the spec
 # does not hold — and on that arm `_agnosai_orch_finish_err` stores **no outcome**:
 # since agnosai 2.1.5 (its ADR 022) it puts back the PENDING that
@@ -351,9 +351,9 @@ fn agnostic_task_req_gpu_required(t): i64 {
 # engine's prompt-input cap — past it the model would see them cut off.
 #   * `gpu_required`: a boolean. `"true"` is a 422, as everywhere here.
 #
-# Global allocator: the hints become the engine task's context, which outlives the
-# request.
-fn _agnostic_task_req_hints_a(a, v, index, t, out): i64 {
+# Built in `al` (0.1.17): the global heap when the hints become the engine task's context,
+# which outlives the request, or the request's arena while a door checks the body.
+fn _agnostic_task_req_hints_a(a, al, v, index, t, out): i64 {
     var tv = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_REQ_TOOLS);
     if (tv != 0) {
         if (bayan_json_v_is_null(tv) != 1) {
@@ -368,7 +368,8 @@ fn _agnostic_task_req_hints_a(a, v, index, t, out): i64 {
                   "tasks[", index, "]: too many required_tools");
                 return 0;
             }
-            var tools = vec_new();
+            var tools = vec_new_a(al);
+            if (tools == 0) { return _agnostic_task_req_oom_a(a, out, index); }
             var i = 0;
             while (i < n) {
                 var e = bayan_json_v_arr_get(tv, i);
@@ -383,7 +384,9 @@ fn _agnostic_task_req_hints_a(a, v, index, t, out): i64 {
                       "tasks[", index, "]: each of 'required_tools' must be 1 to 256 bytes");
                     return 0;
                 }
-                vec_push(tools, str_clone(name));
+                if (vec_push_a(al, tools, str_clone_a(al, name)) < 0) {
+                    return _agnostic_task_req_oom_a(a, out, index);
+                }
                 i = i + 1;
             }
             store64(t + AGNOSTIC_TQ_REQ_TOOLS, tools);
@@ -418,7 +421,7 @@ fn _agnostic_task_req_hints_a(a, v, index, t, out): i64 {
               "tasks[", index, "]: 'domain' must be 1 to 256 bytes");
             return 0;
         }
-        store64(t + AGNOSTIC_TQ_DOMAIN, str_clone(dom));
+        store64(t + AGNOSTIC_TQ_DOMAIN, str_clone_a(al, dom));
     }
 
     var gpu = _agnostic_opt_bool(v, "gpu_required");
@@ -497,6 +500,65 @@ fn _agnostic_task_req_hints_rendered_len_a(a, t): i64 {
 # the description and expected output are handed to engine tasks that outlive
 # the request.
 fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
+    return agnostic_task_req_decode_in_a(a, default_alloc(), v, index, count, out);
+}
+
+# A copy of task `t` on the global heap, whatever `t` was decoded into, with every Str and vec
+# it holds copied too, so nothing of it points into the request's arena (0.1.17). 0 if an
+# allocation failed. What a door builds an accepted crew's tasks with: decoding the body a
+# second time would repeat every JSON lookup and each task's hint rendering for nothing.
+#
+# ⚠ **Field by field.** A field added to the task record must be added here too, or an accepted
+# crew's tasks lose it. `tests/crew_request.tcyr` reads every field back from a built crew.
+fn _agnostic_task_req_copy(t): i64 {
+    var c = alloc(AGNOSTIC_TQ_SIZE);
+    var deps = vec_new();
+    if (c == 0 || deps == 0) { return 0; }
+    store64(c + AGNOSTIC_TQ_DESCRIPTION, str_clone(load64(t + AGNOSTIC_TQ_DESCRIPTION)));
+    var eo = load64(t + AGNOSTIC_TQ_EXPECTED_OUTPUT);
+    if (eo != 0) { eo = str_clone(eo); }
+    store64(c + AGNOSTIC_TQ_EXPECTED_OUTPUT, eo);
+    store64(c + AGNOSTIC_TQ_PRIORITY, load64(t + AGNOSTIC_TQ_PRIORITY));
+    store64(c + AGNOSTIC_TQ_RISK, load64(t + AGNOSTIC_TQ_RISK));
+    var from = load64(t + AGNOSTIC_TQ_DEPENDENCIES);
+    var i = 0;
+    while (i < vec_len(from)) {
+        vec_push(deps, vec_get(from, i));
+        i = i + 1;
+    }
+    store64(c + AGNOSTIC_TQ_DEPENDENCIES, deps);
+    var tools = load64(t + AGNOSTIC_TQ_REQ_TOOLS);
+    if (tools != 0) {
+        var copied = vec_new();
+        if (copied == 0) { return 0; }
+        i = 0;
+        while (i < vec_len(tools)) {
+            vec_push(copied, str_clone(vec_get(tools, i)));
+            i = i + 1;
+        }
+        tools = copied;
+    }
+    store64(c + AGNOSTIC_TQ_REQ_TOOLS, tools);
+    store64(c + AGNOSTIC_TQ_COMPLEXITY, load64(t + AGNOSTIC_TQ_COMPLEXITY));
+    var dom = load64(t + AGNOSTIC_TQ_DOMAIN);
+    if (dom != 0) { dom = str_clone(dom); }
+    store64(c + AGNOSTIC_TQ_DOMAIN, dom);
+    store64(c + AGNOSTIC_TQ_GPU_REQUIRED, load64(t + AGNOSTIC_TQ_GPU_REQUIRED));
+    return c;
+}
+
+# The refusal for a task whose record could not be allocated, as `index`'s task. 0.
+fn _agnostic_task_req_oom_a(a, out, index): i64 {
+    _agnostic_reject_at(a, out, HTTP_INTERNAL, "tasks[", index, "]: could not allocate task");
+    return 0;
+}
+
+# `agnostic_task_req_decode_a`, building the task in `al` (0.1.17). A door decodes each task
+# into the request's arena first, so every refusal — this decoder's and the crew's cycle
+# check — is made before anything reaches the global heap; only a body that passed is decoded
+# again into the global heap, which the engine's tasks outlive the request in. `a` holds the
+# rejection either way.
+fn agnostic_task_req_decode_in_a(a, al, v, index, count, out): i64 {
     if (bayan_json_v_is_obj(v) != 1) {
         return _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
           "tasks[", index, "] is not an object");
@@ -528,16 +590,14 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
           "tasks[", index, "]: 'description' exceeds the maximum length");
     }
 
-    var t = alloc(AGNOSTIC_TQ_SIZE);
-    if (t == 0) {
-        return _agnostic_reject_at(a, out, HTTP_INTERNAL,
-          "tasks[", index, "]: could not allocate task");
-    }
-    store64(t + AGNOSTIC_TQ_DESCRIPTION, str_clone(desc));
+    var t = alloc_via(al, AGNOSTIC_TQ_SIZE);
+    var deps0 = vec_new_a(al);
+    if (t == 0 || deps0 == 0) { return _agnostic_task_req_oom_a(a, out, index); }
+    store64(t + AGNOSTIC_TQ_DESCRIPTION, str_clone_a(al, desc));
     store64(t + AGNOSTIC_TQ_EXPECTED_OUTPUT, 0);
     store64(t + AGNOSTIC_TQ_PRIORITY, AGNOSTIC_REQ_UNSET);
     store64(t + AGNOSTIC_TQ_RISK, AGNOSTIC_REQ_UNSET);
-    store64(t + AGNOSTIC_TQ_DEPENDENCIES, vec_new());
+    store64(t + AGNOSTIC_TQ_DEPENDENCIES, deps0);
     store64(t + AGNOSTIC_TQ_REQ_TOOLS, 0);
     store64(t + AGNOSTIC_TQ_COMPLEXITY, AGNOSTIC_REQ_UNSET);
     store64(t + AGNOSTIC_TQ_DOMAIN, 0);
@@ -553,7 +613,7 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
             return _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
               "tasks[", index, "]: 'expected_output' exceeds the maximum length");
         }
-        store64(t + AGNOSTIC_TQ_EXPECTED_OUTPUT, str_clone(eo));
+        store64(t + AGNOSTIC_TQ_EXPECTED_OUTPUT, str_clone_a(al, eo));
     }
 
     # Priority and risk arrive as wire names, never as raw integers. Accepting
@@ -587,7 +647,7 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
         store64(t + AGNOSTIC_TQ_RISK, rv);
     }
 
-    if (_agnostic_task_req_hints_a(a, v, index, t, out) == 0) { return 0; }
+    if (_agnostic_task_req_hints_a(a, al, v, index, t, out) == 0) { return 0; }
 
     var deps_v = bayan_json_v_obj_get_by_str(v, str_from_a(a, "dependencies"));
     if (deps_v != 0) {
@@ -618,7 +678,7 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
                     return _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
                       "tasks[", index, "]: a task cannot depend on itself");
                 }
-                vec_push(deps, d);
+                if (vec_push_a(al, deps, d) < 0) { return _agnostic_task_req_oom_a(a, out, index); }
                 di = di + 1;
             }
         }
@@ -635,23 +695,31 @@ fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
 # submitted asynchronously leaves a crew reporting `pending` forever, because the
 # engine's error return is discarded on the submit thread and the registry keeps
 # the PENDING entry `_agnosai_orch_register` seeded.
-fn agnostic_crew_req_has_cycle(tasks): i64 {
+#
+# Its two working vectors are built in `a` (0.1.17): until then they went on the global heap,
+# for every crew submitted. -1 if `a` ran out.
+fn agnostic_crew_req_has_cycle_a(a, tasks): i64 {
     if (tasks == 0) { return 0; }
     var n = vec_len(tasks);
     if (n == 0) { return 0; }
 
     # indegree[i] = how many tasks task i waits on.
-    var indegree = vec_new();
+    var indegree = vec_new_a(a);
+    var queue = vec_new_a(a);
+    if (indegree == 0 || queue == 0) { return 0 - 1; }
     var i = 0;
     while (i < n) {
-        vec_push(indegree, vec_len(agnostic_task_req_dependencies(vec_get(tasks, i))));
+        if (vec_push_a(a, indegree, vec_len(agnostic_task_req_dependencies(vec_get(tasks, i)))) < 0) {
+            return 0 - 1;
+        }
         i = i + 1;
     }
 
-    var queue = vec_new();
     var q = 0;
     while (q < n) {
-        if (vec_get(indegree, q) == 0) { vec_push(queue, q); }
+        if (vec_get(indegree, q) == 0) {
+            if (vec_push_a(a, queue, q) < 0) { return 0 - 1; }
+        }
         q = q + 1;
     }
 
@@ -670,7 +738,9 @@ fn agnostic_crew_req_has_cycle(tasks): i64 {
                 if (vec_get(deps, k) == node) {
                     var left = vec_get(indegree, j) - 1;
                     vec_set(indegree, j, left);
-                    if (left == 0) { vec_push(queue, j); }
+                    if (left == 0) {
+                        if (vec_push_a(a, queue, j) < 0) { return 0 - 1; }
+                    }
                 }
                 k = k + 1;
             }
@@ -779,30 +849,53 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
           str_from_a(a, "at most 1000 tasks are allowed"));
     }
 
-    var agents = vec_new();
+    # ⚠ **Every refusal before anything is built** (0.1.17). The agents are checked, the tasks
+    # decoded into the request's arena and the dependency graph checked there; only then are the
+    # agents decoded into the global heap, where the engine's objects outlive the request, and
+    # the checked tasks copied there. Until 0.1.17 a body refused part-way kept everything decoded before the refusal
+    # — 152 B for a crew refused at its second agent, 672 B at its second task, and a whole
+    # crew's worth for a cycle, found last.
     var ai = 0;
+    while (ai < an) {
+        if (agnostic_agent_def_check_a(a, bayan_json_v_arr_get(agents_v, ai), ai, out) == 0) { return 0; }
+        ai = ai + 1;
+    }
+    var checked = vec_new_a(a);
+    if (checked == 0) {
+        return _agnostic_reject(a, out, HTTP_INTERNAL, str_from_a(a, "could not check the tasks"));
+    }
+    var ti = 0;
+    while (ti < tn) {
+        var ct = agnostic_task_req_decode_in_a(a, a, bayan_json_v_arr_get(tasks_v, ti), ti, tn, out);
+        if (ct == 0) { return 0; }
+        if (vec_push_a(a, checked, ct) < 0) { return _agnostic_task_req_oom_a(a, out, ti); }
+        ti = ti + 1;
+    }
+    var cyc = agnostic_crew_req_has_cycle_a(a, checked);
+    if (cyc < 0) {
+        return _agnostic_reject(a, out, HTTP_INTERNAL, str_from_a(a, "could not check the tasks"));
+    }
+    if (cyc == 1) {
+        return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
+          str_from_a(a, "task dependencies contain a cycle"));
+    }
+
+    # Built — nothing below refuses but an allocation that fails.
+    var agents = vec_new();
+    ai = 0;
     while (ai < an) {
         var def = agnostic_agent_def_decode_a(a, bayan_json_v_arr_get(agents_v, ai), ai, out);
         if (def == 0) { return 0; }
-        if (agnostic_agent_def_complexity_ok(def) == 0) {
-            return agnostic_agent_def_complexity_reject_a(a, out, ai);
-        }
         vec_push(agents, def);
         ai = ai + 1;
     }
-
     var tasks = vec_new();
-    var ti = 0;
+    ti = 0;
     while (ti < tn) {
-        var t = agnostic_task_req_decode_a(a, bayan_json_v_arr_get(tasks_v, ti), ti, tn, out);
-        if (t == 0) { return 0; }
+        var t = _agnostic_task_req_copy(vec_get(checked, ti));
+        if (t == 0) { return _agnostic_task_req_oom_a(a, out, ti); }
         vec_push(tasks, t);
         ti = ti + 1;
-    }
-
-    if (agnostic_crew_req_has_cycle(tasks) == 1) {
-        return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
-          str_from_a(a, "task dependencies contain a cycle"));
     }
 
     var r = alloc(AGNOSTIC_CQ_SIZE);

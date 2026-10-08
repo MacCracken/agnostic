@@ -4,6 +4,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.17] — 2026-10-08
+
+**A crew or definition body refused part-way keeps nothing on the global heap.** The roadmap's
+open memory item (measured at 0.1.15): the doors decoded straight into the never-freed heap and
+kept everything built before a refusal. They check the whole body first now, and build only what
+they accept. No dependency change.
+
+**33 suites, 2,806 assertions, 0 failed** — on x86_64 and natively on aarch64 (the Raspberry Pi),
+with the same per-suite counts — plus **80 JavaScript tests**; 0.1.16 had 33, 2,784 and 80.
+`BENCHMARKS.md` and `bench-history.csv` carry the benchmarks recorded at the 0.1.16 tag (`024be8b`):
+all 18, the first full run since 0.1.0, which meets that v1.0 criterion.
+
+### Fixed
+
+- **A refused crew body kept what had been decoded before the refusal**: 152 B for a crew refused
+  at its second agent, 672 B at its second task, and a whole crew's worth for a dependency cycle,
+  which was checked last. `agnostic_crew_req_from_value_a` now checks every agent
+  (`agnostic_agent_def_check_a`, which builds nothing), decodes every task into the request's arena
+  (`agnostic_task_req_decode_in_a`) and checks the dependency graph there, and only then builds:
+  the agents decoded onto the global heap, the checked tasks copied there
+  (`_agnostic_task_req_copy`).
+- **A refused definition body kept its definition**: 392 B for one refused for its `complexity`,
+  and as much again for a 409 (key taken), a `PUT` 404 (absent) or a `PUT` whose body named another
+  key. The routes check the body (`_agnostic_def_check_a`), refuse a key mismatch from the parsed
+  value, and look the key up before building (`_agnostic_def_build_a`). The store still decides
+  under its lock with the write; only two creates of one key racing each other build one to
+  refuse.
+- **Every accepted crew kept the cycle check's two working vectors** on the global heap. They are
+  built in the request's arena (`agnostic_crew_req_has_cycle_a`).
+- Not covered, each rare: a crew accepted while the engine is down (503), and a definition refused
+  because the store is full (507), are still refused after the build.
+
+### Performance
+
+- **Decoding an accepted crew costs more**, since every refusal is made before anything is built:
+  29 → 45 µs for 4 agents and 8 tasks (`crew_decode_4a_8t`, three interleaved rounds against a
+  0.1.16 build). Re-decoding the tasks instead of copying them cost 54 µs. The rest is the agents,
+  checked and then built: an agent built in the arena would still put agnosai's default
+  `complexity` on the global heap (fixed in agnosai, unreleased). Under 1% of a submission, whose
+  in-flight row is written with an fsync.
+
+### Tests
+
+- `tests/request_alloc.tcyr` +10 (`alloc/refused-bodies`): each refusal above keeps 0 B, and a
+  lookup that misses keeps 0 B, so the new pre-checks cost a successful create nothing. Six
+  mutations fail it by name: the agent check building, the tasks checked on the global heap, the
+  cycle check's vectors there, and each pre-check removed.
+- `tests/crew_request.tcyr` +12 (`request/outlives-arena`): an accepted crew is read back after its
+  arena is rewound and overwritten, every task field and the agent's key. A field the copy left
+  pointing into the arena fails it by name.
+- `tests/agnostic.bcyr`: `crew_decode_4a_8t`.
+
 ## [0.1.16] — 2026-10-08
 
 **Re-pin to agnosai 2.1.7, and agnostic records an HTTP SERVER span per request (ADR 0020), so a

@@ -323,7 +323,32 @@ fn agnostic_agent_def_unforwarded_count(d): i64 {
 # The order is `src/http/codec.cyr`'s and it matters: reject a non-object, then
 # refused capabilities, then unknown keys, then required fields, then optional.
 # Shape before content means a request is refused whole rather than half-applied.
+#
+# ⚠ **A door checks first** (0.1.17): `agnostic_agent_def_check_a` makes every refusal this
+# makes, and the door's own rules, and builds nothing. Until 0.1.17 the doors decoded straight
+# into the global heap, so a body refused part-way kept what had been built — 152 B for a
+# crew refused at its second agent, 392 B for a definition refused for its `complexity`.
 fn agnostic_agent_def_decode_a(a, v, index, out): i64 {
+    return _agnostic_agent_def_decode_as(a, v, index, out, 1);
+}
+
+# Whether `v` is an agent definition a door accepts: every refusal
+# `agnostic_agent_def_decode_a` makes, then the door's `complexity` rule — one of low,
+# medium and high, which the decoder does not apply, since stored definitions are decoded by
+# it too (0.1.15). Answers 1, or 0 with the rejection in `out`. Builds nothing: a refused body
+# keeps nothing on the global heap, and the rejection lives in `a` (0.1.17).
+fn agnostic_agent_def_check_a(a, v, index, out): i64 {
+    if (_agnostic_agent_def_decode_as(a, v, index, out, 0) == 0) { return 0; }
+    var cx = agnostic_opt_str(v, AGNOSTIC_JK_COMPLEXITY, 0 - 1);
+    if (cx != 0 - 1 && agnostic_complexity_from_wire(cx) < 0) {
+        return agnostic_agent_def_complexity_reject_a(a, out, index);
+    }
+    return 1;
+}
+
+# The decoder's one body. `build` 1 answers the record, built on the global heap; `build` 0
+# makes every check and builds nothing — no engine agent, no record, no clone — answering 1.
+fn _agnostic_agent_def_decode_as(a, v, index, out, build): i64 {
     if (bayan_json_v_is_obj(v) != 1) {
         return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "an agent must be a JSON object"));
@@ -374,10 +399,14 @@ fn agnostic_agent_def_decode_a(a, v, index, out): i64 {
           str_from_a(a, "a field exceeds the maximum length"));
     }
 
-    var e = agnosai_agent_new(str_clone(key), str_clone(role), str_clone(goal));
-    if (e == 0) {
-        return _agnostic_ad_reject(a, out, index, HTTP_INTERNAL,
-          str_from_a(a, "could not allocate the agent definition"));
+    # `e` stays 0 when checking: the helpers below check and set nothing.
+    var e = 0;
+    if (build == 1) {
+        e = agnosai_agent_new(str_clone(key), str_clone(role), str_clone(goal));
+        if (e == 0) {
+            return _agnostic_ad_reject(a, out, index, HTTP_INTERNAL,
+              str_from_a(a, "could not allocate the agent definition"));
+        }
     }
 
     if (_agnostic_ad_opt_str(a, out, index, v, AGNOSTIC_JK_NAME, e, 0) == 0) { return 0; }
@@ -388,14 +417,17 @@ fn agnostic_agent_def_decode_a(a, v, index, out): i64 {
     if (_agnostic_ad_tools(a, out, index, v, e) == 0) { return 0; }
     if (_agnostic_ad_gpu(a, out, index, v, e) == 0) { return 0; }
 
-    var d = alloc(AGNOSTIC_AD_SIZE);
-    if (d == 0) {
-        return _agnostic_ad_reject(a, out, index, HTTP_INTERNAL,
-          str_from_a(a, "could not allocate the agent definition"));
+    var d = 0;
+    if (build == 1) {
+        d = alloc(AGNOSTIC_AD_SIZE);
+        if (d == 0) {
+            return _agnostic_ad_reject(a, out, index, HTTP_INTERNAL,
+              str_from_a(a, "could not allocate the agent definition"));
+        }
+        store64(d + AGNOSTIC_AD_ENGINE, e);
+        store64(d + AGNOSTIC_AD_FOCUS, 0);
+        store64(d + AGNOSTIC_AD_DELEGATION, AGNOSTIC_REQ_UNSET);
     }
-    store64(d + AGNOSTIC_AD_ENGINE, e);
-    store64(d + AGNOSTIC_AD_FOCUS, 0);
-    store64(d + AGNOSTIC_AD_DELEGATION, AGNOSTIC_REQ_UNSET);
 
     var focus = agnostic_opt_str(v, AGNOSTIC_JK_FOCUS, 0 - 1);
     if (focus == 0) {
@@ -407,7 +439,7 @@ fn agnostic_agent_def_decode_a(a, v, index, out): i64 {
             return _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
               str_from_a(a, "'focus' exceeds the maximum length"));
         }
-        store64(d + AGNOSTIC_AD_FOCUS, str_clone(focus));
+        if (d != 0) { store64(d + AGNOSTIC_AD_FOCUS, str_clone(focus)); }
     }
 
     var deleg = _agnostic_opt_bool(v, "allow_delegation");
@@ -415,12 +447,13 @@ fn agnostic_agent_def_decode_a(a, v, index, out): i64 {
         return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "'allow_delegation' must be a boolean"));
     }
+    if (d == 0) { return 1; }
     store64(d + AGNOSTIC_AD_DELEGATION, deleg);
     return d;
 }
 
-# One optional string field, forwarded through the setter `which` names.
-# Returns 1 on success, 0 with a rejection stored.
+# One optional string field, forwarded through the setter `which` names — checked only, and
+# nothing set, when `e` is 0. Returns 1 on success, 0 with a rejection stored.
 #
 # A dispatch integer rather than a function pointer: `fncall2` would need every
 # setter to share one signature, and the five here already do — but the integer
@@ -446,6 +479,7 @@ fn _agnostic_ad_opt_str(a, out, index, v, key: Str, e, which): i64 {
         _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST, str_builder_build_a(a, sb2));
         return 0;
     }
+    if (e == 0) { return 1; }
     var c = str_clone(s);
     if (which == 0) { agnosai_agent_with_name(e, c); }
     if (which == 1) { agnosai_agent_with_backstory(e, c); }
@@ -459,7 +493,8 @@ fn _agnostic_ad_opt_str(a, out, index, v, key: Str, e, which): i64 {
     return 1;
 }
 
-# The `tools` array. Returns 1 on success, 0 with a rejection stored.
+# The `tools` array — checked only, and nothing built, when `e` is 0. Returns 1 on success, 0
+# with a rejection stored.
 #
 # ⚠ **Never filtered against a registry.** There is no tool registry in the
 # Cyrius tree yet — M6 owns it — and filtering against an empty one would drop
@@ -481,7 +516,8 @@ fn _agnostic_ad_tools(a, out, index, v, e): i64 {
           str_from_a(a, "too many tools"));
         return 0;
     }
-    var tools = vec_new();
+    var tools = 0;
+    if (e != 0) { tools = vec_new(); }
     var i = 0;
     while (i < n) {
         var t = bayan_json_v_arr_get(tv, i);
@@ -490,15 +526,16 @@ fn _agnostic_ad_tools(a, out, index, v, e): i64 {
               str_from_a(a, "'tools' must be an array of strings"));
             return 0;
         }
-        vec_push(tools, str_clone(bayan_json_v_str(t)));
+        if (e != 0) { vec_push(tools, str_clone(bayan_json_v_str(t))); }
         i = i + 1;
     }
-    agnosai_agent_with_tools(e, tools);
+    if (e != 0) { agnosai_agent_with_tools(e, tools); }
     return 1;
 }
 
 # The three GPU placement fields, which travel together through one engine
-# setter. Returns 1 on success, 0 with a rejection stored.
+# setter — checked only, and nothing set, when `e` is 0. Returns 1 on success, 0 with a
+# rejection stored.
 fn _agnostic_ad_gpu(a, out, index, v, e): i64 {
     var rq = _agnostic_opt_bool(v, "gpu_required");
     if (rq == AGNOSTIC_REQ_UNSET - 1) {
@@ -523,6 +560,7 @@ fn _agnostic_ad_gpu(a, out, index, v, e): i64 {
           str_from_a(a, "'gpu_memory_min_mb' must not be negative"));
         return 0;
     }
+    if (e == 0) { return 1; }
     if (rq == AGNOSTIC_REQ_UNSET && pf == AGNOSTIC_REQ_UNSET && mm == AGNOSTIC_REQ_UNSET) {
         return 1;
     }

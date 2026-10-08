@@ -23,7 +23,7 @@
 # value, so the registry says `pending` for a crew that has definitively failed —
 # forever. Agnostic closes that at the front door: a submission's dependencies are
 # range-checked task indices and a cyclic graph is refused (see
-# `agnostic_crew_req_has_cycle`), and the ledger is the belt to that pair of braces.
+# `agnostic_crew_req_has_cycle_a`), and the ledger is the belt to that pair of braces.
 # ⚠ Through agnosai 2.1.5 a THIRD way in got past both: a DAG with a failed branch
 # beside a successful one took the deadlock arm, because the runner's failure flag
 # was per wave, and such a crew read `running` here forever. agnosai 2.1.6 ends that

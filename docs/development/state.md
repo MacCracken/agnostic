@@ -2,7 +2,12 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-10-08, at **0.1.16** — the re-pin to **agnosai 2.1.7**, and an HTTP
+> Last refreshed: 2026-10-08, at **0.1.17** — a crew or definition body refused part-way keeps
+> nothing on the global heap (the doors check the whole body before they build), and the cycle
+> check's vectors are in the request's arena. The benchmarks were recorded at the 0.1.16 tag:
+> `BENCHMARKS.md`, 18 rows, the v1.0 criterion met. No dependency moved. Version, Source, Tests
+> and Hardening were refreshed then.
+> Before that, 2026-10-08, at **0.1.16** — the re-pin to **agnosai 2.1.7**, and an HTTP
 > SERVER span per request through its exporter (ADR 0020): a crew's trace now has a root a backend
 > can find, and with an inbound `traceparent` agnostic's span is a child of the caller's and the
 > crews sit under it. The serve adapter's 48 B per request on the global heap is gone. Cyrius
@@ -52,7 +57,7 @@
 
 ## Version
 
-**0.1.16** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.17** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -68,7 +73,7 @@ line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
   `dist/agnosai.cyr`, and the empty-cache replica reproduced `lib/` and the lock byte for byte.
   At 0.1.15 nothing moved: `lib/` and the lock are byte-identical to 0.1.14's. At 0.1.16 only
   agnosai moved (2.1.6 → 2.1.7, tag `9210905`): the lock by its two lines, `lib/agnosai.cyr`
-  byte-identical to the tag's `dist/agnosai.cyr`, nothing else in `lib/`.
+  byte-identical to the tag's `dist/agnosai.cyr`, nothing else in `lib/`. At 0.1.17 nothing moved.
 
 ✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.14 folds **sigil 3.13.7** and
 **patra 1.15.1**. Since 0.1.11 the deps declare exactly those: agnosai (2.1.7 now) declares sigil 3.13.7,
@@ -141,13 +146,13 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 50 files, 29,127 lines, 1,183 top-level definitions (0.1.16; 28,989
-lines and 1,174 at 0.1.15), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
+the real surface (0.1.10)** — 50 files, 29,284 lines, 1,190 top-level definitions (0.1.17; 29,127
+lines and 1,183 at 0.1.16), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
 `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,903 — five embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 33 suites, 2,784 assertions, 0 failed** (`cyrius test`, 0.1.16; 2,701 at 0.1.15), plus
-**80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.1.15) — **and the
+**Tests: 33 suites, 2,806 assertions, 0 failed** (`cyrius test`, 0.1.17; 2,784 at 0.1.16), plus
+**80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.1.16) — **and the
 same 33 suites natively on aarch64, with the same per-suite counts** (Raspberry Pi 4). Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
 shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
@@ -462,9 +467,12 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**33 suites, 2,784 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin, 0.1.16, 2026-10-08;
-2,701 at 0.1.15), and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). 0.1.16's
-additions, each guard mutation-checked (CHANGELOG [0.1.16]): a new suite, `tests/server_span.tcyr`
+**33 suites, 2,806 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin, 0.1.17, 2026-10-08;
+2,784 at 0.1.16), and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). 0.1.17's
+additions, each guard mutation-checked (CHANGELOG [0.1.17]): `alloc/refused-bodies` (+10 — every
+refusal of a crew or definition body keeps 0 B) and `request/outlives-arena` (+12 — an accepted
+crew read back after its arena is overwritten).
+At 0.1.16: 33 suites and 2,784 assertions. Its additions (CHANGELOG [0.1.16]): a new suite, `tests/server_span.tcyr`
 (55 — the SERVER span through the real handler, a crew's `invoke_workflow` under it, and 0 B per
 request on the global heap through the handler), `trace/child` and `trace/begin` (+20), and the
 route-pattern checks in `router/table` (+8).
@@ -629,8 +637,8 @@ Agnostic is built to stand on its own, not as a required layer.
 | agent skill (0.1.13) | `skills/agnostic/SKILL.md`; `scripts/check-skill.py` in `check-clean.sh` checks its frontmatter, and every route, method, query parameter, curl header, response example and `<!-- schema: … -->` list against `docs/api/generated/schema.json`; 22 mutations, each failing by name |
 | views (0.1.10) | [ADR 0010](../adr/0010-views-link-through-the-shell-and-share-one-bridge-client.md): a navigate only to a view that is switched on, params in a fixed alphabet (`shell.test.mjs`); every plugin's bridge client verified byte for byte by the generator |
 | aarch64 (0.1.10) | every suite and the server run natively on a Raspberry Pi 4 before an aarch64 artifact ships |
-| symbols | `check-symbols.sh` OK — 1,183 top-level definitions across 50 files, no duplicates, all prefixed (0.1.16; 1,174 at 0.1.15) |
-| request allocations (0.1.15) | `tests/request_alloc.tcyr`: every refusal arm, an authenticated read, a failed and a successful login, and an audited write keep 0 bytes of agnostic's own on the global heap; an audited request keeps only libro's entry (roadmap, Memory). Since 0.1.16 the serve adapter around dispatch too: `tests/server_span.tcyr` holds a request through the real handler to 0 B, with its span recorded or not |
+| symbols | `check-symbols.sh` OK — 1,190 top-level definitions across 50 files, no duplicates, all prefixed (0.1.17; 1,183 at 0.1.16) |
+| request allocations (0.1.15) | `tests/request_alloc.tcyr`: every refusal arm, an authenticated read, a failed and a successful login, and an audited write keep 0 bytes of agnostic's own on the global heap; an audited request keeps only libro's entry (roadmap, Memory). Since 0.1.16 the serve adapter around dispatch too: `tests/server_span.tcyr` holds a request through the real handler to 0 B, with its span recorded or not. Since 0.1.17 a crew or definition body refused part-way, and the cycle check of an accepted one (`alloc/refused-bodies`) |
 | server spans (0.1.16) | [ADR 0020](../adr/0020-each-request-records-an-http-server-span.md): one SERVER span per request when OTLP is on, under the request's own span id; a crew's `invoke_workflow` under it, in one trace; ten mutations in `tests/server_span.tcyr`, each failing by name |
 | one process per database (0.1.15) | mount claims `<db>.owner` with an exclusive `flock` before anything opens; `restart/one-process` holds a claim from a separate open and checks mount refuses and sweeps nothing |
 | security | CI `security` job clean |

@@ -39,7 +39,9 @@ before porting any behaviour.
       (`first-party-standards.md:53`). ⚠ The benchmark half of that rule cannot be satisfied as
       written: `ORACLE-AUDIT.md` §4 shows the oracle's published numbers are invalid, so parity is
       assessed on coverage and behaviour, not on its timings.
-- [ ] Benchmarks captured in `BENCHMARKS.md` with a CSV trail
+- [x] Benchmarks captured in `BENCHMARKS.md` with a CSV trail — met at 0.1.16: all 18 benchmarks,
+      run on the clean tagged tree (`024be8b`, 2026-10-08), the first full run since 0.1.0's one
+      row. Keep it met: re-run `./scripts/bench-history.sh` right after each tag.
 - [ ] At least one consumer green against the published API — Agnostic's own, not a
       pre-existing client's contract (see M7)
 - [ ] CHANGELOG complete from v0.1.0 onward
@@ -272,21 +274,11 @@ Found while building, grouped by area. H and B numbers in this file are those of
 
 ### Memory
 
-- [ ] **A crew or definition body refused part-way keeps what the decoder had built** (measured at
-  0.1.15 with `tests/request_alloc.tcyr`'s method: 152 B for a crew refused for an agent's unknown
-  field, 672 B for one refused for a task's, 392 B for a definition refused for its `complexity`).
-  `agnostic_crew_req_from_value_a` and `agnostic_agent_def_decode_a` build the engine's objects as
-  they go — `agnosai_agent_new` and the `str_clone`d fields, the agents and tasks vecs, the
-  definition record — on the global heap, because an accepted request hands them to the engine or
-  the definition cache; a refusal after the first of them strands them. 0.1.15 moved the refusal
-  messages, the field-name keys and the wire names into the arena or interned them; what is left is
-  the objects. Authenticated callers only (`crews:write`, `definitions:write`).
-  - Fix direction: validate the whole body first, in the request's arena, and build the engine
-    objects only once nothing can be refused. Then add the three cases to `request_alloc`.
 - [ ] **An audited request keeps libro's entry on the global heap** (~250 B per audit record,
   measured at 0.1.15 by `tests/request_alloc.tcyr`'s `_t_libro_record_cost`). Every other byte a
   request path kept is in the request's arena — dispatch's since 0.1.15, the serve adapter's since
-  0.1.16 — and `request_alloc` and `server_span` hold them to 0.
+  0.1.16, a refused crew or definition body's since 0.1.17 — and `request_alloc` and `server_span`
+  hold them to 0.
   `chain_append` builds an entry (struct, timestamp, hash, algorithm Strs) per append; a streaming
   chain keeps only its hash. libro 2.9.0's `chain_append_nokeep` reuses one scratch entry but
   returns only the head hash, and agnostic needs the entry to store it (`patrastore_append`) and
@@ -313,12 +305,6 @@ Found while building, grouped by area. H and B numbers in this file are those of
   104 warnings, nearly all long lines (`crew_request` 31, `webgui` 14 and a deferral, `crew_tenancy`
   12), and 9 untracked deferrals (`store_concurrency` 6). Fix: wrap or tag each, then add
   `$(find tests -name "*.tcyr" | sort)` to the lint loop. agnosai has the same gap (its B31).
-- [ ] **`BENCHMARKS.md` was last generated at 0.1.0** (`59325f3`, dirty, one benchmark); the bench
-  has 18 rows now. The parser is not the problem: checked at 0.1.15, `scripts/bench-history.sh`'s pattern
-  matches every line of `cyrius bench`'s output at 6.6.14. What is owed is the run, on a clean tree
-  right after a tag so the row names a commit: `git checkout 0.1.15 && ./scripts/bench-history.sh`,
-  then commit `BENCHMARKS.md` and `bench-history.csv`. Do it at each tag from then on, and add that
-  step to the Process if the user agrees (CLAUDE.md is the user's file).
 - [ ] **Retire the `CYRIUS_PKG_VERSION` setter when cyrius resolves it two includes deep.**
   `src/main.cyr` hands the version to `src/routes/health.cyr` (`agnostic_version_set`) because the
   constant resolves only in the entry file and the files it includes directly; health is two deep.
@@ -377,6 +363,11 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
   filed with bote yet.
 
 ## Decisions awaiting the user
+
+- [ ] **Make the post-tag benchmark run part of the Process?** 0.1.16's was run on request, right
+  after the tag, on the clean tree: `./scripts/bench-history.sh`, then commit `BENCHMARKS.md` and
+  `bench-history.csv`, so each row names a tagged commit. The proposal is a clause in CLAUDE.md's
+  Process; CLAUDE.md is the user's file.
 
 - [ ] **Should a change to the HTTP surface also update its two derived artefacts?** The proposal is
   a clause in CLAUDE.md's Process step 5: "an API change regenerates

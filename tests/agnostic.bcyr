@@ -276,6 +276,51 @@ fn _agnostic_bench_server_span(): i64 {
     return 0;
 }
 
+# 0.1.17: what decoding an accepted crew body costs — 4 agents, 8 tasks, two of them with
+# dependencies. Since 0.1.17 the door checks the whole body in the request's arena before it
+# builds anything, so an accepted body is decoded twice; this is the price. The arena is
+# rewound each time; what the build keeps on the global heap is the engine's to keep.
+fn _agnostic_bench_crew_decode(): i64 {
+    var a = arena_allocator(1048576);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"bench\",\"process\":\"dag\",\"agents\":[");
+    var i = 0;
+    while (i < 4) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "{\"key\":\"agent-");
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, "\",\"role\":\"tester\",\"goal\":\"find the bugs\",\"complexity\":\"medium\"");
+        str_builder_add_cstr(sb, ",\"tools\":[\"k6\",\"playwright\"]}");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "],\"tasks\":[");
+    i = 0;
+    while (i < 8) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "{\"description\":\"run the suite and report what failed\"");
+        if (i >= 6) { str_builder_add_cstr(sb, ",\"dependencies\":[0,1]"); }
+        str_builder_add_cstr(sb, "}");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "]}");
+    var body = str_builder_build(sb);
+    var v = bayan_json_v_parse_buf(str_data(body), str_len(body));
+    var rj: i64[1];
+    var ok = 0;
+    var b = bench_new("crew_decode_4a_8t");
+    bench_batch_start(b);
+    i = 0;
+    while (i < 2000) {
+        reset_via(a);
+        store64(&rj, 0);
+        if (agnostic_crew_req_from_value_a(a, v, &rj) != 0) { ok = ok + 1; }
+        i = i + 1;
+    }
+    bench_batch_stop(b, 2000);
+    bench_report(b);
+    return ok;
+}
+
 fn main(): i64 {
     alloc_init();
     var b = bench_new("noop");
@@ -338,6 +383,7 @@ fn main(): i64 {
     _agnostic_bench_audit_entries();
     _agnostic_bench_inflight();
     _agnostic_bench_server_span();
+    _agnostic_bench_crew_decode();
     return 0;
 }
 
