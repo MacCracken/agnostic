@@ -633,3 +633,15 @@ is this repo's to adopt when it pins ≥ 6.6.17. Nothing here gates a cyrius rel
     and `:58` `fn agnostic_version_set` — `agnostic_version()` (`:64`) can read the constant itself;
   - `tests/health.tcyr:299-315` (`test_version_threading`, which sets the version by hand) — pin the
     expected version to `VERSION` instead.
+
+## Moved from cyrius's roadmap (2026-10-08) — for the next cyrius pin move
+
+cyrius no longer carries this repo's follow-ups; the items below were moved here from its roadmap. Each
+applies from the cyrius version it names. Everything else that changes between this repo's pin and cyrius
+6.7.6 is in cyrius's `CHANGELOG.md` and `docs/development/ecosystem-migration.md`.
+
+- **Same-arity duplicate fns** — cyrius's 6.6.3 ecosystem sweep (2026-09-12) recorded **22** same-arity
+  duplicate-fn warning(s) in this repo's build (not re-derived since). Since cyrius **6.6.20** every call binds
+  the LAST definition (before, a non-tail call to an already-defined fn bound the first), so a duplicate whose
+  body differs changes what runs at the pin bump. Remove the duplicates or confirm the last definition is the
+  intended one.
