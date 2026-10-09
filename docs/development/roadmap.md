@@ -620,3 +620,16 @@ is this repo's to adopt when it pins ≥ 6.6.17. Nothing here gates a cyrius rel
     `gen-webgui.sh`). `[embed]` does not hash; compute the CSP hashes from the same files in a script, or at run
     time from `NAME()` / `NAME_len()`.
   - Freshness: a page edited without a rebuild can no longer ship stale — the build reads the file.
+
+## Recorded by cyrius 6.7.6 (2026-10-08) — for the next cyrius pin move
+
+⛔ Needs cyrius >= 6.7.6 — nothing to do until cyrius 6.7.6 is tagged; then at your pin bump:
+
+- **`CYRIUS_PKG_VERSION` resolves at any include depth from 6.7.6** — this repo's 2026-10-07 filing
+  (cyrius `2026-10-07-pkgver-not-visible-in-nested-includes.md`) is fixed, so the setter workaround the
+  open item under *Tests, tooling and docs* describes can be retired:
+  - `src/main.cyr:42-47` — the comment and `agnostic_version_set(str_from(CYRIUS_PKG_VERSION));`;
+  - `src/routes/health.cyr:43-54` (the "Why this is not read directly" comment), `:55` `_agnostic_version`
+    and `:58` `fn agnostic_version_set` — `agnostic_version()` (`:64`) can read the constant itself;
+  - `tests/health.tcyr:299-315` (`test_version_threading`, which sets the version by hand) — pin the
+    expected version to `VERSION` instead.
