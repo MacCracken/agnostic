@@ -189,10 +189,22 @@ owed for 1.0.0:
   status and in its events. Roll it up as a badge from task to crew to tenant in Crews and
   Swarm Command, with an approve/reject action behind a permission. This is the HITL surface
   agnostic has none of today. The model is herdr's `blocked` roll-up (landscape review H2).
+- [ ] **Pick a model from the gateway's catalog** (recorded 2026-10-09). Two places take a model id as
+  free text today: the Library's agent editor (`input('llm_model', …)`,
+  `src/webgui/plugins/library/index.html:705`) and Swarm Command's Live tab, one field per role
+  (`paneLive`, `src/webgui/plugins/swarm/index.html`, checked against `RE_LIVE_MODEL` at `:2063`). Both say
+  that leaving it empty means "the server's default", which today is agnosai's `llama3:70b` or
+  `llama3:405b` (see *Waiting on agnosai*). Offer the ids hoosh's `GET /v1/models/catalog` lists, with each
+  one's provider, context window and price, through an agnostic route, so the browser never holds the
+  gateway's address or `AGNOSTIC_LLM_API_KEY`. Keep free text for an id the catalog does not list. With no
+  `AGNOSTIC_LLM_URL` (placeholder mode) the route says there is no gateway and the field stays plain. Once
+  B33 ships, the route serves agnosai's cached copy rather than a second fetch, and an empty field says what
+  agnosai picks for the agent's complexity. The route sits behind a permission, as the presets list does
+  (`presets:read`); the route, its permission and the cache go in an ADR.
 
 ## Waiting on agnosai (release agnosai, then re-pin)
 
-Each of these is filed on agnosai's roadmap under **F** ("Past parity").
+Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity"), B33 under **B** ("Owed").
 
 - **F1 — tool loop:** M6's prerequisite.
 - **F2 — hierarchical wired:** agnostic then accepts `hierarchical`, which
@@ -203,6 +215,15 @@ Each of these is filed on agnosai's roadmap under **F** ("Past parity").
 - **F4 — durable crew log:** turns an `interrupted` crew (ADR 0013) into a resumable one.
 - **F5 — budgets and caps:** brings back an `AGNOSTIC_CREW_MAX_CONCURRENT_TASKS` that is actually
   enforced.
+- **B33 — models from hoosh's catalog (recorded 2026-10-09):** a crew whose agents name no model is
+  sent a model agnosai names itself: `llama3:70b`, or `llama3:405b` for a complex agent. That covers every
+  preset, since none sets `llm_model`, and every agent whose *LLM model* field is left empty in the Library
+  or in Swarm Command's Live tab. A gateway with no `llama*` route answers each such call
+  `404 "no provider for model"`. An id an operator does type loses a leading `openai/`, `anthropic/` and the
+  like, so a vendor-prefixed id such as Groq's `openai/gpt-oss-120b` reaches hoosh renamed. And a response
+  that names no provider is billed by agnosai's guess from the name, which bills `o4-mini` and newer
+  families to Ollama. B33 has agnosai choose and attribute from hoosh 2.8.0's `GET /v1/models/catalog`
+  instead. Re-pin when it ships (the pin is `[deps.agnosai]` tag 2.1.7); M9's model picker builds on it.
 
 **What agnostic will hold them to — harness rules, recorded 2026-10-07.** From a comparison with
 [turnstone](https://github.com/turnstonelabs/turnstone), a self-hosted, tool-using agent harness,
