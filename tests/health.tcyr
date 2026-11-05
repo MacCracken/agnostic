@@ -296,23 +296,25 @@ fn test_ready_one_fails() {
     agnostic_ready_reset();
 }
 
-fn test_version_threading() {
+fn test_version() {
     test_group("routes/version");
 
-    # CYRIUS_PKG_VERSION does not resolve two includes deep (cyrius issue 2026-10-07), so
-    # mount threads it in.
-    # Unset, /ready must say "unknown" rather than emit an empty or absent value.
-    agnostic_version_set(0);
-    assert_eq(str_eq_cstr(agnostic_version(), "unknown"), 1, "unset version reads as unknown");
-
-    agnostic_version_set(str_from("9.9.9"));
-    assert_eq(str_eq_cstr(agnostic_version(), "9.9.9"), 1, "set version round-trips");
+    # The file the manifest reads, so a version that stops being derived from it fails here.
+    var n = 0;
+    var raw = file_read_whole("VERSION", &n);
+    assert_eq(raw != 0, 1, "VERSION reads from the repo root");
+    while (n > 0 && load8(raw + n - 1) <= 32) { n = n - 1; }
+    var want = str_new(raw, n);
+    assert_eq(str_eq(agnostic_version(), want), 1, "the version is the VERSION file's");
 
     var a = arena_allocator(65536);
     agnostic_ready_reset();
     var r = agnostic_route_ready_a(a);
-    assert_eq(_t_has(_t_body(a, r), "\"version\":\"9.9.9\""), 1, "ready reports the threaded version");
-    agnostic_version_set(0);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "\"version\":\"");
+    str_builder_add_str(sb, want);
+    str_builder_add_cstr(sb, "\"");
+    assert_eq(_t_has(_t_body(a, r), str_data(str_builder_build(sb))), 1, "ready reports it");
 }
 
 fn main() {
@@ -326,7 +328,7 @@ fn main() {
     test_ready_no_checks();
     test_ready_all_pass();
     test_ready_one_fails();
-    test_version_threading();
+    test_version();
     return assert_summary();
 }
 

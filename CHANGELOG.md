@@ -4,6 +4,88 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-05
+
+**Cyrius 6.7.9, the first pin on the 6.7 language minor, with every dependency on its release for
+that toolchain.** Cyrius 6.6.20 → 6.7.9, agnosai 2.1.8 → 2.2.0 and libro 2.10.8 → 2.11.0, with no
+override pin. The one source change retires the `CYRIUS_PKG_VERSION` setter, which this pin makes
+unnecessary.
+
+**33 suites, 2,806 assertions, 0 failed** — on x86_64 and natively on aarch64 (the Raspberry Pi), with
+the same per-suite counts — plus **80 JavaScript tests**; the same totals as 0.1.18, and the same again
+before the setter was touched. A sibling-free replica with an empty dep cache reproduced `lib/`, the lock
+and both binaries byte for byte, every CI gate passed there in CI's order, and the 6.7.9 release
+tarball's stdlib matches `lib/`. Both binaries served a crew end to end and answered a dribbled request
+408 at 60.0 s. A database and audit chain written by a 0.1.18 binary opened under 0.2.0: the crew and the
+agent definition read back, and the chain verified `intact`.
+
+### Changed
+
+- **Cyrius pin `6.6.20` → `6.7.9`.** `lib/` holds 113 stdlib files, each byte-identical to
+  `git show 6.7.9:lib/<mod>`. The folds move: sigil 3.13.10 → 3.13.11, patra 1.15.2 → 1.16.0, sandhi
+  1.10.8 → 1.10.9, sakshi 2.5.7 → 2.5.8, bayan 1.5.12 → 1.5.13 and sankoch 2.8.1 → 2.8.3.
+- **Each dep moves to its release on the 6.7.9 line, not its latest tag.** Each dist in `lib/` is
+  byte-identical to `dist/` at its tag, and every tag was confirmed on the GitHub remote first.
+
+  | dep | from | to | how it arrives |
+  |---|---|---|---|
+  | `agnosai` | 2.1.8 | **2.2.0** | root `[deps.agnosai]` |
+  | `libro` | 2.10.8 | **2.11.0** | root `[deps.libro]` |
+  | `bote` | 3.3.17 | **3.4.10** | through agnosai 2.2.0 |
+  | `majra` | 2.9.3 | **2.12.0** | through agnosai 2.2.0 |
+  | `kavach` | 3.13.3 | **3.14.0** | through agnosai 2.2.0 |
+  | `tyche` | 1.1.1 | **1.2.0** | through agnosai 2.2.0 |
+  | `ai-hwaccel` | 2.4.2 | 2.4.2 | unchanged: it has no release on 6.7.9, and agnosai 2.2.0 pins 2.4.2 |
+  | `sigil` | 3.13.10 | **3.13.11** | the 6.7.9 fold; agnosai declares it first |
+  | `patra` | 1.15.2 | **1.16.0** | the 6.7.9 fold; libro declares the same |
+
+  Two pins inside the new tags are off the folds, and the fold wins both. libro 2.11.0 declares sigil
+  3.13.12, one patch past the fold, and ai-hwaccel 2.4.2 declares bayan 1.5.12. `[deps.libro]` comes
+  after `[deps.agnosai]`, so `cyrius deps` reports `sigil 3.13.12 (wanted by libro) not used; 3.13.11
+  (agnosai) resolved first` and the lock names the bytes `lib/` holds.
+- **The `CYRIUS_PKG_VERSION` setter is retired.** Since 6.7.6 the constant resolves at any include
+  depth, so `src/routes/health.cyr` reads it directly and `src/main.cyr` no longer hands it over. It is
+  built once at load, so a `/ready` request still keeps nothing on the global heap, and `/ready` can no
+  longer report `unknown`. `routes/version` now pins the value to the `VERSION` file, with the same
+  assertion count; a hand-written version fails 2 of them.
+- **`cyrius.lock` was regenerated from empty: 120 files, 9 commit pins.**
+- **`docs/architecture/002-the-dependency-pins.md` states what 6.7.x changed:** a `path` beside a `tag`
+  is a local-mode override now and no longer beats the tag, and only the first declaration of a folded
+  module has to be the fold. `CONTRIBUTING.md` no longer names the deprecated `cyrius tests`.
+- The x86_64 binary grows 43,832 B to 6,347,560 B under `CYRIUS_DCE=1`.
+
+### What the pin brings
+
+The language minor changes the meaning of some code without a build error, so each such shape was
+searched for across `src/`, `tests/` and `benches/`, with strings and comments stripped, rather than
+left to the build. None occurs: a bare `!` (dropped by the lexer before 6.7.3, a real operator now),
+unary `-` or `~` on a constant, a `bool`, a narrow `*T`, a signed slice, a struct argument, `self`
+arithmetic, and the reserved words `trait`, `const`, `true`, `false`, `do` and `dyn`.
+
+- **patra 1.16.0's five corrected queries change no statement here.** `LIMIT 0`, `SUM` / `MIN` / `MAX`
+  on a non-`INT` column, identifiers over 31 bytes and `ORDER BY` an unknown or `TEXT` / `BYTES` column
+  now fail or return the right answer. agnostic issues no `LIMIT`, `ORDER BY` or those aggregates, and
+  its longest identifier is 22 bytes. The on-disk format did not change.
+- **WAL recovery runs before every statement** (patra 1.16.0), so a survivor can no longer read a dead
+  process's uncommitted rows. agnostic runs one process per database file, so it reaches this at the
+  next start.
+- **A process-isolated tool that names a coreutils binary runs on Ubuntu 25.10 and later** (kavach
+  3.14.0). This closes the roadmap's upstream item and 0.1.18's *Known*.
+- **`sha256()` wipes its context** (sigil 3.13.11), with identical output, on every path that hashes
+  a credential here.
+- **A child kavach's capture starts has SIGPIPE and SIGXFSZ at their defaults and an empty signal
+  mask** (6.7.9). agnostic starts no child itself.
+- **cyrius renumbered its security advisories** (6.7.6). Earlier entries here keep the ids they were
+  written with: CVE-68 is now CYRIUS-2026-0023 and CVE-75 is 0026, and CVE-69, -70 and -71 are
+  withdrawn as hardening items.
+
+### Performance
+
+Flat. Built from the 0.1.18 tree on 6.6.20 and from this tree on 6.7.9, the two bench binaries ran
+interleaved for five rounds, alternating which went first. All 19 rows are within +2.8%, and the
+medians move by 1% or so. `crew_inflight_mark_clear`, which is where a per-statement WAL probe would
+show, moves +0.2%.
+
 ## [0.1.18] — 2026-11-05
 
 **Cyrius 6.6.20, with every dependency on its release for that toolchain.** This is the pin move the

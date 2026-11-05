@@ -12,28 +12,31 @@ which a reader cannot get from the file. Current versions are in
 folds first-party libraries, sigil and patra among them. `cyrius deps` then resolves the dep chain
 on top of it.
 
-- **The chain must declare exactly the folds.** `cyrius deps` will not replace a folded file, so
-  `lib/` keeps the fold's bytes and the lock's commit pin names whatever the chain declared.
-  `scripts/check-clean.sh` allows no file in `lib/` to differ from the snapshot. A chain that
-  declares a sigil or patra the pin does not fold is wrong in either direction, and a
-  `[deps.patra]` hold here or an allowance in that gate does not fix it.
+- **The first declaration of a folded module must be the fold.** `cyrius deps` will not replace a
+  folded file, so `lib/` keeps the fold's bytes, and the lock's commit pin names whatever was declared
+  first. `scripts/check-clean.sh` allows no file in `lib/` to differ from the snapshot. A first
+  declaration off the fold leaves a pin that names bytes `lib/` does not hold, and a `[deps.patra]`
+  hold here or an allowance in that gate does not fix it. A later declaration off the fold is
+  harmless, and `cyrius deps` reports it: `note: sigil 3.13.12 (wanted by libro) not used; 3.13.11
+  (agnosai) resolved first`.
 - **The compiler moves too.** A release can refuse what an older dep's `dist/` bundle contains, so
   a pin bumped alone can break `lib/` with `src/` untouched. Going the other way, a dep moved alone
   can need a toolchain the pin does not provide.
 - **Take each sibling's release on the pin's line, not its latest tag.** Siblings keep releasing on
   newer toolchains. Read the sibling's own `cyrius.cyml` at the tag (`git show <tag>:cyrius.cyml`).
-  The agnosai tag decides most of the rest, as below.
+  The agnosai tag decides most of the rest, as below. A sibling with no release on the pin's line
+  stays on the one the agnosai tag names.
 
 `cyrius deps` prints `refusing to overwrite stdlib leaf 'sigil'` and `'patra'` on every resolve.
 That is expected: the warning names the skipped artifact, which is the fold's own bytes when the
-chain declares the folds. Hash it against the tag if in doubt.
+first declaration is the fold. Hash it against the tag if in doubt.
 
 ## Tags only, never `path`
 
-`path` beats `tag` when a checkout is present, so a local resolve vendors the sibling's work in
-progress into `lib/` and the lock. That content matches no tag, and CI cannot fetch it. This holds
-for this manifest only: a `path` in a dep resolved from the cache points into the cache and is
-inert.
+A committed `path` has no use here. Since cyrius 6.7.6 a `path` beside `git` and `tag` is a
+development override, used only in local mode (`--local`, `CYRIUS_LOCAL`); a default build builds
+the tag and prints a hint naming the checkout it did not use. An entry with only a local `path` is
+refused. To try a sibling's work in progress, use local mode, which leaves `lib/` and the lock alone.
 
 ## agnosai's deps are pinned by agnosai
 
@@ -51,7 +54,7 @@ version to whatever bote pinned.
 It comes after `[deps.agnosai]` on purpose. The root manifest resolves first, then each dep's own
 deps breadth-first in manifest order, and the first declaration of a name wins. agnosai declares
 the sigil fold. Listed first, libro's sigil would be the one the lock records whenever the two
-differ.
+differ, and libro can declare a sigil past the fold (`state.md` says whether it does now).
 
 Each block needs `modules`, or it is not the dep it looks like (above).
 

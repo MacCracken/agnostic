@@ -38,31 +38,13 @@ enum AgnosticReadyCheckOff {
 # Vec of check records. Built at mount, read-only thereafter.
 var _agnostic_ready_checks = 0;
 
-# The version string reported by /ready, set once at mount.
-#
-# ⚠ **Why this is not read directly from CYRIUS_PKG_VERSION here.** cbt injects
-# `#@pkgver` at byte 0 and cycc replaces it with the declaration, but the symbol
-# resolved ONLY in the entry file's own text until cyrius 6.5.34, and since then
-# only one include deep: a file the entry includes may name it, a file THAT file
-# includes may not. This module is two deep (`src/main.cyr` → `src/app.cyr` →
-# here), so `src/main.cyr` reads it and hands it here at mount. Measured at 6.6.14
-# and 6.7.3; filed 2026-10-07 as cyrius
-# `2026-10-07-pkgver-not-visible-in-nested-includes.md`.
-#
-# It is still DERIVED from `version = "${file:VERSION}"`, not hand-maintained —
-# which is the point. AgnosAI hardcodes its equivalent and has been reporting
-# 1.1.0 since it shipped 2.0.x.
-var _agnostic_version = 0;
+# The version /ready reports. CYRIUS_PKG_VERSION comes from the manifest's
+# `version = "${file:VERSION}"`, so it is derived, not hand-maintained. It is built
+# once at load so that a /ready request keeps nothing on the global heap.
+var _agnostic_version = str_from(CYRIUS_PKG_VERSION);
 
-# Set the version reported by /ready. Mount time only.
-fn agnostic_version_set(v: Str): i64 {
-    _agnostic_version = v;
-    return 0;
-}
-
-# The configured version, or "unknown" when mount never set it.
-fn agnostic_version(): i64 {
-    if (_agnostic_version == 0) { return str_from("unknown"); }
+# The version this binary was built as.
+fn agnostic_version(): Str {
     return _agnostic_version;
 }
 
@@ -112,10 +94,7 @@ fn agnostic_route_health(): i64 {
 # an operator can see *which* dependency is down without reading logs — the
 # thing a bare 503 makes them guess at.
 #
-# `version` is whatever mount handed to `agnostic_version_set` — derived from
-# `version = "${file:VERSION}"` via CYRIUS_PKG_VERSION in src/main.cyr, never
-# hand-maintained. See the note on `_agnostic_version` for why it is threaded
-# rather than read here.
+# `version` is `agnostic_version()`, derived from `version = "${file:VERSION}"`.
 fn agnostic_route_ready_a(a): i64 {
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }

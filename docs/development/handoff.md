@@ -57,11 +57,11 @@ What a newcomer must not miss, wherever they start:
 
 This has bitten repeatedly and is the single most important operational fact here.
 
-**The pin is `6.6.20`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
+**The pin is `6.7.9`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
 under a toolchain other than the pin rewrites `lib/` and `cyrius.lock` with content
 CI — which installs the pin — cannot reproduce. CI has a fatal drift gate precisely
 for this. Read `cyrius --version` before provisioning: it must print
-`manifest-pin: 6.6.20` with **no** `drift` on the line.
+`manifest-pin: 6.7.9` with **no** `drift` on the line.
 
 ⚠ **Your editor may be building too.** The cyrius language server runs a build on save,
 and a build re-provisions `lib/` and rewrites the lock (below). During 0.1.7 it did so
@@ -408,12 +408,6 @@ then, against a real requirement. Out of scope for v1.0.
   function returned through `return f(...)`, so a deferred unlock was a deadlock on the next
   caller. Fixed in cyrius 6.6.7; `rlock/ownership` pins the fix at the pin (0.1.15). The store
   wrappers keep their explicit shape because `check-store-lock.py` reads it.
-- **`CYRIUS_PKG_VERSION` resolves in the entry file and one include deep, not two** — 6.5.34
-  fixed the first level only. `src/routes/health.cyr` is two deep (via `src/app.cyr`), so the
-  work-around stays: `main.cyr` reads it and hands it to the module through a setter. Filed
-  2026-10-07 (`2026-10-07-pkgver-not-visible-in-nested-includes.md`, measured at 6.6.14–6.7.3).
-  ⚠ A comment naming the constant in a file one include deep keeps the declaration, so a probe
-  can pass by accident: `tests/health.tcyr` compiles either way.
 
 ⚠ **Never modify the cyrius tree from a consumer repo.** File an issue or proposal instead. Two are
 already filed from this port.
@@ -424,12 +418,13 @@ already filed from this port.
 
 | Repo | Version | How it arrives |
 |---|---|---|
-| `agnosai` | **2.1.8** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below at its release on the 6.6.20 line |
-| `libro` | **2.10.8** | direct since 0.1.7 (`modules`, after agnosai) — the audit chain |
-| `bote` / `majra` | **3.3.17** / **2.9.3** | transitive via agnosai 2.1.8 |
-| `ai-hwaccel` / `tyche` / `kavach` | **2.4.2** / **1.1.1** / **3.13.3** | transitive via agnosai 2.1.8 |
-| `sigil` | **3.13.10** | folded into the 6.6.20 stdlib; agnosai and libro declare the same 3.13.10 |
-| `patra` | **1.15.2** | folded into the 6.6.20 stdlib; libro declares the same version |
+| `agnosai` | **2.2.0** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below at its release on the 6.7.9 line |
+| `libro` | **2.11.0** | direct since 0.1.7 (`modules`, after agnosai) — the audit chain |
+| `bote` / `majra` | **3.4.10** / **2.12.0** | transitive via agnosai 2.2.0 |
+| `kavach` / `tyche` | **3.14.0** / **1.2.0** | transitive via agnosai 2.2.0 |
+| `ai-hwaccel` | **2.4.2** | transitive via agnosai 2.2.0; on 6.6.20, with no release on 6.7.9 |
+| `sigil` | **3.13.11** | folded into the 6.7.9 stdlib; agnosai declares it first, libro's 3.13.12 is not used |
+| `patra` | **1.16.0** | folded into the 6.7.9 stdlib; libro declares the same version |
 
 ✅ **All nine carry a commit pin in `cyrius.lock`**, and every tag was confirmed on
 the GitHub remote (API, not `gh`) before its pin moved. The agnosai 2.0.6 episode
@@ -439,23 +434,23 @@ bump: a pushed *commit* is not a pushed *tag*.
 
 ⚠ **To move a dep agnosai owns, release agnosai** — as 2.1.2 did for bote and majra, 2.1.3
 for bote 3.3.16 (which brought libro 2.10.6), and 2.1.4 for kavach 3.13.2 and ai-hwaccel 2.4.1.
-2.1.5 and 2.1.6 moved none (their locks are 2.1.4's byte for byte), and 2.1.8 moved all of them to
-their releases on the 6.6.20 line. Every sibling has newer tags on cyrius 6.7.x, so take a sibling's
-release on the pin's line, not its latest tag.
+2.1.5 and 2.1.6 moved none (their locks are 2.1.4's byte for byte), and 2.1.8 and 2.2.0 moved them
+to their releases on the 6.6.20 and 6.7.9 lines. Siblings have newer tags on later toolchains, so take
+a sibling's release on the pin's line, not its latest tag.
 A root block "ahead of" agnosai works only if it lists `modules` (§5), and it then has
 to be kept in step by hand; the four that existed through 0.1.6 never took effect.
 
 ### `[deps.agnosai]` has no `path`, deliberately
 
-`path` beats `tag` when a checkout is present, so a local resolve silently vendors
-the sibling's work-in-progress into `lib/` and the lock — content matching no tag,
-which CI cannot fetch. Deleting it took the lock from **1** commit pin to **9**.
-Do not add it back.
+A committed `path` has no use: since cyrius 6.7.6 it is a development override, read only in local
+mode (`--local`, `CYRIUS_LOCAL`), and a default build builds the tag. See
+[`002-the-dependency-pins.md`](../architecture/002-the-dependency-pins.md).
 
 ### ✅ No `[deps.patra]` hold at this pin
 
-6.6.20 folds patra 1.15.2 and sigil 3.13.10, and the deps declare exactly those: libro 2.10.8
-declares patra 1.15.2 and sigil 3.13.10, and agnosai 2.1.8 and kavach 3.13.3 declare sigil 3.13.10.
+6.7.9 folds patra 1.16.0 and sigil 3.13.11. libro 2.11.0 declares patra 1.16.0, and agnosai 2.2.0 and
+kavach 3.14.0 declare sigil 3.13.11. libro declares sigil 3.13.12, one patch past the fold, but agnosai
+is listed first, so `cyrius deps` reports that one as not used.
 `cyrius deps` refuses to overwrite a folded leaf ("refusing to overwrite stdlib leaf"), so
 `lib/sigil.cyr` and `lib/patra.cyr` are the fold's bytes and `lib/` matches the snapshot with
 **zero** files differing — and the lock's sigil and patra lines now name those same versions. At

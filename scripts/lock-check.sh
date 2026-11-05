@@ -2,11 +2,11 @@
 # lock-check.sh — verify the committed cyrius.lock still describes a clean
 # resolution from the tags in cyrius.cyml.
 #
-# WHAT IT GUARDS. A `path = "../<dep>"` override in cyrius.cyml silently WINS
-# over that dep's `tag`, so a lock produced with one active describes whatever
-# the sibling checkout happened to be — which is not what CI, with no siblings,
-# will build. This script fails the build when the committed lock disagrees with
-# a tag-only resolution.
+# WHAT IT GUARDS. A lock that describes anything but the tags in cyrius.cyml is
+# not what CI, with no siblings, will build. Before cyrius 6.7.6 a committed
+# `path = "../<dep>"` produced one silently; since then a stale lock still can.
+# This script fails the build when the committed lock disagrees with a tag-only
+# resolution.
 #
 # WHY NOT `git diff --exit-code -- cyrius.lock`. That was the first attempt and
 # it false-positived on the very first CI run: `cyrius deps` does NOT emit the

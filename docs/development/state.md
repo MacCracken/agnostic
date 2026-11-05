@@ -2,7 +2,11 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-05, at **0.1.18** — **Cyrius 6.6.20**, with **agnosai 2.1.8**, **libro
+> Last refreshed: 2026-11-05, at **0.2.0** — **Cyrius 6.7.9**, the first pin on the 6.7 language minor,
+> with **agnosai 2.2.0**, **libro 2.11.0** and every dep on its release for that toolchain. The
+> `CYRIUS_PKG_VERSION` setter is retired, and `/ready` reads the constant directly. Version, Toolchain,
+> Dependencies, Dependency layout, Tests and Next were refreshed then.
+> Before that, 2026-11-05, at **0.1.18** — **Cyrius 6.6.20**, with **agnosai 2.1.8**, **libro
 > 2.10.8** and every dep on its release for that toolchain, and no line of `src/` changed. The server
 > answers 408 to a request not complete within 60 s of accept. `cyrius.cyml` is configuration only,
 > and the constraints it carried are in `docs/architecture/002-the-dependency-pins.md`. Version,
@@ -62,21 +66,22 @@
 
 ## Version
 
-**0.1.18** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.2.0** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
 
-- **Cyrius pin**: `6.6.20` (`cyrius.cyml [package].cyrius`), since 0.1.18. Every stdlib file in
-  `lib/` (113) is byte-identical to `git show 6.6.20:lib/<mod>` in the cyrius repo, and
-  `~/.cyrius/versions/6.6.20/SOURCE_COMMIT` matches the tag (`ae682e2`). Each dep dist in `lib/` is
-  byte-identical to `dist/` at its tag, and the 6.6.20 release tarball's stdlib matches `lib/`. A
+- **Cyrius pin**: `6.7.9` (`cyrius.cyml [package].cyrius`), since 0.2.0. Every stdlib file in
+  `lib/` (113) is byte-identical to `git show 6.7.9:lib/<mod>` in the cyrius repo, and
+  `~/.cyrius/versions/6.7.9/SOURCE_COMMIT` matches the tag (`8bb8df5`). Each dep dist in `lib/` is
+  byte-identical to `dist/` at its tag, and the 6.7.9 release tarball's stdlib matches `lib/`. A
   sibling-free replica with an empty dep cache reproduced `lib/`, the lock and the x86_64 binary byte
   for byte, and CI's gates passed there. What moved at each earlier release is in `CHANGELOG.md`.
 
-✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.20 folds **sigil 3.13.10** and
-**patra 1.15.2**, and the chain declares exactly those: agnosai 2.1.8, kavach 3.13.3 and libro 2.10.8
-declare sigil 3.13.10, and libro 2.10.8 declares patra 1.15.2. So every commit pin the lock records
+✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.7.9 folds **sigil 3.13.11** and
+**patra 1.16.0**. agnosai 2.2.0 and kavach 3.14.0 declare sigil 3.13.11, and libro 2.11.0 declares
+patra 1.16.0. libro also declares sigil 3.13.12, one patch past the fold, and ai-hwaccel 2.4.2 declares
+bayan 1.5.12. The fold wins both, and because agnosai is listed first, every commit pin the lock records
 on a folded module names the bytes `lib/` holds.
 
 ⚠ **The pin and the dep tags move TOGETHER.** `cyrius deps` resolves a declared
@@ -104,14 +109,15 @@ order, the pin and the tags moving together) are in
 
 | dep | pin | how it arrives |
 |---|---|---|
-| `agnosai` | **2.1.8** | direct, `git` + `tag` + `modules` — pins every dep below at its release on the 6.6.20 line |
-| `libro` | **2.10.8** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
-| `bote` / `majra` | **3.3.17** / **2.9.3** | transitive via agnosai 2.1.8 |
-| `ai-hwaccel` / `tyche` / `kavach` | **2.4.2** / **1.1.1** / **3.13.3** | transitive via agnosai 2.1.8 |
-| `sigil` | **3.13.10** (folded) | folded stdlib (`[deps].stdlib`); agnosai and libro declare the same 3.13.10 |
-| `patra` | **1.15.2** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.15.2 |
+| `agnosai` | **2.2.0** | direct, `git` + `tag` + `modules` — pins every dep below at its release on the 6.7.9 line |
+| `libro` | **2.11.0** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
+| `bote` / `majra` | **3.4.10** / **2.12.0** | transitive via agnosai 2.2.0 |
+| `kavach` / `tyche` | **3.14.0** / **1.2.0** | transitive via agnosai 2.2.0 |
+| `ai-hwaccel` | **2.4.2** | transitive via agnosai 2.2.0; it pins 6.6.20 and has no release on 6.7.9 |
+| `sigil` | **3.13.11** (folded) | folded stdlib (`[deps].stdlib`); agnosai declares it first, libro's 3.13.12 is not used |
+| `patra` | **1.16.0** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.16.0 |
 
-`cyrius.lock` — **120 files locked, 9 commit pins** (every dep above), plus a trailing `cyrius 6.6.20`
+`cyrius.lock` — **120 files locked, 9 commit pins** (every dep above), plus a trailing `cyrius 6.7.9`
 line recording the toolchain that wrote it. Every tag was confirmed on the GitHub remote before the
 lock was written.
 
@@ -128,13 +134,13 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 50 files, 29,284 lines, 1,190 top-level definitions (0.1.17; 29,127
-lines and 1,183 at 0.1.16), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
+the real surface (0.1.10)** — 50 files, 29,256 lines, 1,189 top-level definitions (0.2.0; 29,284
+lines and 1,190 at 0.1.18), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
 `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,903 — five embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 33 suites, 2,806 assertions, 0 failed** (`cyrius test`, 0.1.18; the same at 0.1.17), plus
-**80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.1.17) — **and the
+**Tests: 33 suites, 2,806 assertions, 0 failed** (`cyrius test`, 0.2.0; the same at 0.1.18), plus
+**80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.1.18) — **and the
 same 33 suites natively on aarch64, with the same per-suite counts** (Raspberry Pi 4). Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
 shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
@@ -449,9 +455,10 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**33 suites, 2,806 assertions, 0 failed** (`cyrius test`, under the 6.6.20 pin, 0.1.18, 2026-11-05),
-and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). No test changed at 0.1.18. The run
-ends `34 passed`, because bare `cyrius test` also runs the empty `[build].test` entry since cyrius 6.6.17.
+**33 suites, 2,806 assertions, 0 failed** (`cyrius test`, under the 6.7.9 pin, 0.2.0, 2026-11-05),
+and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). At 0.2.0 `routes/version` was rewritten
+to pin the version to the `VERSION` file, with the same count; no other test changed. The run ends
+`34 passed`, because bare `cyrius test` also runs the empty `[build].test` entry since cyrius 6.6.17.
 At 0.1.17: 33 suites and 2,806 assertions. Its additions, each guard mutation-checked (CHANGELOG [0.1.17]): `alloc/refused-bodies` (+10 — every
 refusal of a crew or definition body keeps 0 B) and `request/outlives-arena` (+12 — an accepted
 crew read back after its arena is overwritten).
@@ -581,12 +588,12 @@ in this repo (`222`) and in agnosai (`8,038`) double-counted it.
 
 ## Dependency layout
 
-**agnosai 2.1.8** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
+**agnosai 2.2.0** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
 than called over HTTP. Everything crew/task/agent/scheduling-shaped lives there;
 Agnostic owns the product tier. Versions and pins: see the table under
 [Dependencies](#dependencies) above.
 
-`lib/` holds **120** `.cyr`: **113** from the 6.6.20 stdlib snapshot (`unicode/` included) plus 7 dep
+`lib/` holds **120** `.cyr`: **113** from the 6.7.9 stdlib snapshot (`unicode/` included) plus 7 dep
 dists (`agnosai`, `bote-core`, `majra`, `ai-hwaccel`, `tyche`, `kavach`, `libro`).
 `deps --verify` 120/0. The compile set `check-lib-symbols.py` resolves is **50** modules, down from 53
 at 0.1.18: since cyrius 6.6.18 a dep's `.deps` sidecar names only what its bundle needs, so `regex`,
@@ -621,7 +628,7 @@ Agnostic is built to stand on its own, not as a required layer.
 | agent skill (0.1.13) | `skills/agnostic/SKILL.md`; `scripts/check-skill.py` in `check-clean.sh` checks its frontmatter, and every route, method, query parameter, curl header, response example and `<!-- schema: … -->` list against `docs/api/generated/schema.json`; 22 mutations, each failing by name |
 | views (0.1.10) | [ADR 0010](../adr/0010-views-link-through-the-shell-and-share-one-bridge-client.md): a navigate only to a view that is switched on, params in a fixed alphabet (`shell.test.mjs`); every plugin's bridge client verified byte for byte by the generator |
 | aarch64 (0.1.10) | every suite and the server run natively on a Raspberry Pi 4 before an aarch64 artifact ships |
-| symbols | `check-symbols.sh` OK — 1,190 top-level definitions across 50 files, no duplicates, all prefixed (0.1.17; 1,183 at 0.1.16) |
+| symbols | `check-symbols.sh` OK — 1,189 top-level definitions across 50 files, no duplicates, all prefixed (0.2.0; 1,190 at 0.1.18) |
 | request allocations (0.1.15) | `tests/request_alloc.tcyr`: every refusal arm, an authenticated read, a failed and a successful login, and an audited write keep 0 bytes of agnostic's own on the global heap; an audited request keeps only libro's entry (roadmap, Memory). Since 0.1.16 the serve adapter around dispatch too: `tests/server_span.tcyr` holds a request through the real handler to 0 B, with its span recorded or not. Since 0.1.17 a crew or definition body refused part-way, and the cycle check of an accepted one (`alloc/refused-bodies`) |
 | server spans (0.1.16) | [ADR 0020](../adr/0020-each-request-records-an-http-server-span.md): one SERVER span per request when OTLP is on, under the request's own span id; a crew's `invoke_workflow` under it, in one trace; ten mutations in `tests/server_span.tcyr`, each failing by name |
 | one process per database (0.1.15) | mount claims `<db>.owner` with an exclusive `flock` before anything opens; `restart/one-process` holds a claim from a separate open and checks mount refuses and sweeps nothing |
@@ -817,11 +824,10 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). After 0.1.18: agnosai's F1 tool loop and F9's hand-off of dependency
-outputs (M6's prerequisites, with the tool-registry decision of `handoff.md` §8); `[embed]` in place of
-`gen-presets.sh` and the escaping half of `gen-webgui.sh`, available since this pin; and what 0.1.15
-recorded upstream (libro's per-append entry, patra's unchecked page write). The `CYRIUS_PKG_VERSION`
-setter retires at a pin of 6.7.6 or later. The notes below were written for M5 and remain true.
+See [`roadmap.md`](roadmap.md). After 0.2.0: agnosai's F1 tool loop and F9's hand-off of dependency
+outputs (M6's prerequisites, with the tool-registry decision of `handoff.md` §8), and what 0.1.15
+recorded upstream (libro's per-append entry, patra's unchecked page write). The toolchain options this
+pin makes available are at the end of the roadmap. The notes below were written for M5 and remain true.
 
 ✅ **patra's single index per table does NOT bind here — corrected 2026-08-21.**
 The earlier note said M5 needs users by id *and* by email and would therefore

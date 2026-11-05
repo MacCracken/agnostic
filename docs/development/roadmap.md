@@ -223,7 +223,7 @@ Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity")
   like, so a vendor-prefixed id such as Groq's `openai/gpt-oss-120b` reaches hoosh renamed. And a response
   that names no provider is billed by agnosai's guess from the name, which bills `o4-mini` and newer
   families to Ollama. B33 has agnosai choose and attribute from hoosh 2.8.0's `GET /v1/models/catalog`
-  instead. Re-pin when it ships (the pin is `[deps.agnosai]` tag 2.1.8); M9's model picker builds on it.
+  instead. Re-pin when it ships (the pin is `[deps.agnosai]` tag 2.2.0); M9's model picker builds on it.
 
 **What agnostic will hold them to — harness rules, recorded 2026-10-07.** From a comparison with
 [turnstone](https://github.com/turnstonelabs/turnstone), a self-hosted, tool-using agent harness,
@@ -307,14 +307,6 @@ Found while building, grouped by area. H and B numbers in this file are those of
   as Latin-1, so every non-ASCII byte counts twice and the gate would demand a length past the
   literal. None of the 88 literals in `src/` and `tests/` is wrong today, checked with
   `codecs.escape_decode` at 0.1.18. Fix: measure that way, with agnosai's seven-literal self-test.
-- [ ] **Retire the `CYRIUS_PKG_VERSION` setter when cyrius resolves it two includes deep.**
-  `src/main.cyr` hands the version to `src/routes/health.cyr` (`agnostic_version_set`) because the
-  constant resolves only in the entry file and the files it includes directly; health is two deep.
-  Filed 2026-10-07 as cyrius `2026-10-07-pkgver-not-visible-in-nested-includes.md` (⚠ untracked in
-  the cyrius checkout until its maintainer commits it). When a cyrius that fixes it is pinned:
-  read the constant in `health.cyr`, delete the setter and its call, and pin the version to the
-  `VERSION` file in `tests/health.tcyr` (`routes/version`). ⚠ A probe must not mention the name in
-  a comment of the entry or a directly included file — that alone keeps the declaration.
 
 ## Upstream — owed by sibling repos
 
@@ -324,12 +316,8 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
   ~2.6 KB including the reply it keeps, on the global bump in sandhi's dispatch path (16 B is the
   stdlib's `sockaddr_in`). Recorded on agnosai's roadmap as "To file"; not yet filed with sandhi
   (CHANGELOG 0.1.14, Known).
-- [ ] → **kavach**, through agnosai's sandbox: on a host whose coreutils are uutils (Ubuntu's default
-  from 25.10), kavach's pinned exec cannot run them, so a sandboxed `/bin/echo` or `cat` exits 1.
-  Filed with kavach (`docs/development/issues/2026-10-03-pinned-exec-breaks-uutils-coreutils.md`)
-  and recorded in agnosai's roadmap C. It matters to a deployment on such a host.
 - [ ] → **patra**: an over-length STR *query literal* is clamped (found by CNAME-255, 2026-10-04).
-  `row_write_str` and `_str_hash64` (`lib/patra.cyr:1719`, `:1771`, 1.15.2) cut a literal over 255 bytes to
+  `row_write_str` and `_str_hash64` (`lib/patra.cyr:1786`, `:1838`, 1.16.0) cut a literal over 255 bytes to
   its 255-byte prefix. So a `WHERE` on a STR column given a longer literal hashes and compares as
   that prefix. On a write, patra refuses an over-length value (`PATRA_ERR_ROWSZ`), so the two
   paths disagree.
@@ -338,7 +326,7 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
   - Fix direction: an upstream patra release that refuses an over-length literal the way it
     refuses an over-length value. Fix it at source; do not wrap it here. Then re-pin. Not filed yet.
 - [ ] → **patra**: an INSERT whose page write fails reports success (found 2026-10-07, reading
-  patra for 0.1.15's audit fix). `tbl_insert` (`lib/patra.cyr:4216`, 1.15.2) calls `page_write`
+  patra for 0.1.15's audit fix). `tbl_insert` (`lib/patra.cyr:4316`, 1.16.0) calls `page_write`
   three times and ignores each result, though `page_write` answers `PATRA_ERR_IO` or a WAL refusal;
   it returns `PATRA_OK`, and `_exec_insert` then commits the header. So a full disk or an I/O error
   loses the row while the caller is told it was stored. For agnostic: a crew outcome, a definition
@@ -580,10 +568,14 @@ per-milestone versions (v0.2.0 to v0.9.0) are not used.
   API — and it is built then, against a real requirement, rather than pre-emptively shaping v1.0
   around a client that may never call us.
 
-## Available since the 6.6.20 pin — from cyrius 6.6.19
+## Available from the toolchain, not adopted
 
-Optional, and not adopted at 0.1.18.
+Each is optional, and nothing here gates a release.
 
+- **`cyrius deps --locked`** (6.7.6) resolves, writes nothing and fails naming each difference, so it
+  can replace `scripts/lock-check.sh`.
+- **A `[test]` section** (6.7.6): `assert` and `bench` can move to `[test] stdlib`, which keeps them out
+  of the binary's compile set.
 - **`scripts/gen-presets.sh` retires, and `scripts/gen-webgui.sh` keeps only its CSP half, via `[embed]`**
   (cyrius P2, shipped in 6.6.19).
   `[embed] NAME = "path"` in cyrius.cyml gives every compile `NAME()` (the file's bytes, NUL-terminated) and
@@ -597,16 +589,3 @@ Optional, and not adopted at 0.1.18.
     `gen-webgui.sh`). `[embed]` does not hash; compute the CSP hashes from the same files in a script, or at run
     time from `NAME()` / `NAME_len()`.
   - Freshness: a page edited without a rebuild can no longer ship stale — the build reads the file.
-
-## Recorded by cyrius 6.7.6 (2026-10-08) — for the next cyrius pin move
-
-⛔ Needs cyrius >= 6.7.6 — nothing to do until cyrius 6.7.6 is tagged; then at your pin bump:
-
-- **`CYRIUS_PKG_VERSION` resolves at any include depth from 6.7.6** — this repo's 2026-10-07 filing
-  (cyrius `2026-10-07-pkgver-not-visible-in-nested-includes.md`) is fixed, so the setter workaround the
-  open item under *Tests, tooling and docs* describes can be retired:
-  - `src/main.cyr:42-47` — the comment and `agnostic_version_set(str_from(CYRIUS_PKG_VERSION));`;
-  - `src/routes/health.cyr:43-54` (the "Why this is not read directly" comment), `:55` `_agnostic_version`
-    and `:58` `fn agnostic_version_set` — `agnostic_version()` (`:64`) can read the constant itself;
-  - `tests/health.tcyr:299-315` (`test_version_threading`, which sets the version by hand) — pin the
-    expected version to `VERSION` instead.
