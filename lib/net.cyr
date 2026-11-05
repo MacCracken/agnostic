@@ -49,7 +49,7 @@ var SYS_SHUTDOWN = 48;
 # v6.2.10: AF_INET is 2 on both; AF_INET6 DIFFERS — Linux 10, Darwin (xnu
 # sys/socket.h) 30. Per-target so v6 sockets/sockaddrs are correct on Mach-O
 # (the backend SYSXLAT translates syscall NUMBERS, not this address-family
-# constant). See docs/development/issues/2026-06-15-cyrius-net-v6-darwin.md.
+# constant). See docs/development/issues/archived/2026-06-15-cyrius-net-v6-darwin.md.
 # 6.6.11: Windows (ws2def.h) has its own AF_INET6, 23. CHANGELOG [6.6.11]
 #ifdef CYRIUS_TARGET_MACOS
 enum SockDomain { AF_INET = 2; AF_INET6 = 30; }
@@ -74,7 +74,7 @@ enum SockOpt {
 # DIFFER from Linux (9-13 vs 32-36) — verified live on ecb Xcode MacOSX.sdk.
 # IPPROTO_IP=0 on both. struct ip_mreq is byte-identical 8 B across OSes; only
 # the option NUMBERS need per-target dispatch. See
-# docs/development/issues/2026-06-15-cyrius-mdns-multicast-primitives.md.
+# docs/development/issues/archived/2026-06-15-cyrius-mdns-multicast-primitives.md.
 enum IpOpt {
     IPPROTO_IP = 0;
     IP_MULTICAST_IF = 9;
@@ -167,7 +167,7 @@ fn sockaddr_in(addr, port): i64 {
 # NOTE: net_connect_nb6 inlines this exact 28-byte layout (it must stay
 # allocator-free, so it can't call this alloc-based builder) — keep the two in
 # lock-step if the layout ever changes (e.g. populating sin6_scope_id).
-# See docs/development/issues/2026-06-15-cyrius-net-v6-darwin.md.
+# See docs/development/issues/archived/2026-06-15-cyrius-net-v6-darwin.md.
 # Returns the 28-byte struct, or 0 when the allocation is refused. CHANGELOG [6.6.10]
 fn sockaddr_in6(addr16, port): i64 {
     var sa = alloc(28);
@@ -298,6 +298,12 @@ fn _net_wsa_nbio(fd, on): i64 {
 #endif
 
 # Send up to `len` bytes on socket `fd`: the count, or -errno.
+# ⛔ WHY the POSIX arm is not a plain sys_write: a write(2) to a peer that has reset the connection
+# raises SIGPIPE, which by default KILLS the process — every sock_send / sock_send_all / sock_send_a
+# caller (http, ws, ws_server, yantra, sandhi's client paths) was one reset peer away from a remote,
+# unauthenticated kill. lib/syscalls.cyr's _fd_write_nosigpipe answers -EPIPE instead (MSG_NOSIGNAL
+# on Linux, SO_NOSIGPIPE on macOS) and keeps write(2) for an fd that is not a socket; on agnos it
+# is the same sys_write as before (the peer routes a tagged fd to #48). CHANGELOG [6.6.16]
 fn _net_os_send(fd, buf, len): i64 {
     #ifdef CYRIUS_TARGET_WIN
     if (len > 0x7FFFFFFF) { len = 0x7FFFFFFF; }    # send() takes an int length; a short write is legal
@@ -306,7 +312,7 @@ fn _net_os_send(fd, buf, len): i64 {
     return n;
     #endif
     #ifndef CYRIUS_TARGET_WIN
-    return sys_write(fd, buf, len);                # agnos: the peer routes a tagged fd to #48
+    return _fd_write_nosigpipe(fd, buf, len);      # never SIGPIPE on a socket (CVE-74)
     #endif
 }
 
@@ -385,7 +391,13 @@ fn _net_os_listen(fd, backlog): i64 {
 }
 
 # accept(fd, NULL, NULL): the connection's fd, or -errno (-EAGAIN when a non-blocking listener
-# has nothing pending, on every target).
+# has nothing pending, on every target). The returned socket is BLOCKING on every target.
+# ⛔ WHY the Windows and macOS arms reset the mode: there an accepted socket INHERITS the
+# listener's non-blocking mode (Windows FIONBIO; BSD/macOS O_NONBLOCK), while Linux never does.
+# A server that made its listener non-blocking (the documented accept-loop pattern) handed native
+# TLS a non-blocking fd on those two targets only, and its no-deadline read failed TLS_ERR_IO at
+# once. On a failed mode reset the accepted socket is closed (never leaked) and the error returned.
+# Linux and agnos are unchanged: no extra syscall. CHANGELOG [6.6.16]
 fn _net_os_accept(fd): i64 {
     #ifdef CYRIUS_TARGET_WIN
     var c = syscall(0xF045, fd, 0, 0);
@@ -394,10 +406,34 @@ fn _net_os_accept(fd): i64 {
         if (e == 0 - 10035) { return 0 - _NET_EAGAIN; }        # WSAEWOULDBLOCK
         return e;
     }
+    # Windows cannot read FIONBIO back, so this is one ioctlsocket per accept, unconditionally.
+    var nb = _net_wsa_nbio(c, 0);
+    if (nb != 0) {
+        syscall(0xF023, c);                                    # closesocket
+        return nb;
+    }
     return c;
     #endif
     #ifndef CYRIUS_TARGET_WIN
-    return syscall(SYS_ACCEPT, fd, 0, 0);
+    var a = syscall(SYS_ACCEPT, fd, 0, 0);
+    #ifdef CYRIUS_TARGET_MACOS
+    if (a >= 0) {
+        var fl = sys_fcntl(a, 3, 0);                           # F_GETFL
+        if (fl < 0) {
+            sys_close(a);
+            return fl;
+        }
+        var onb = _fd_o_nonblock();
+        if ((fl & onb) != 0) {
+            var r = sys_fcntl(a, 4, fl & (~onb));              # F_SETFL, O_NONBLOCK cleared
+            if (r < 0) {
+                sys_close(a);
+                return r;
+            }
+        }
+    }
+    #endif
+    return a;
     #endif
 }
 
@@ -600,6 +636,10 @@ fn sock_listen(fd, backlog) : Result {
 }
 
 # Accept a connection. Returns Result(client_fd). On AGNOS it issues sock_accept#57 (see sock_bind).
+# Contract: the accepted socket is BLOCKING on every target, whatever the listener's mode — the
+# Linux semantics, now also on Windows and macOS, where the OS hands over a socket that inherits
+# the listener's non-blocking mode (_net_os_accept resets it). Set a timeout (SO_RCVTIMEO) or
+# sock_set_nonblocking on the accepted fd if the caller wants otherwise. CHANGELOG [6.6.16]
 fn sock_accept(fd) : Result {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS sock_accept(#57) is NON-BLOCKING: it drives net_poll (advancing the
@@ -773,7 +813,7 @@ fn sock_shutdown(fd, how): i64 {
 # "unsupported" (-1) — sandhi's mDNS resolver degrades to the QU-bit unicast
 # path. macOS/Linux dispatch the right option numbers via the per-target IpOpt
 # / SockOpt enums above. Spec:
-# docs/development/issues/2026-06-15-cyrius-mdns-multicast-primitives.md.
+# docs/development/issues/archived/2026-06-15-cyrius-mdns-multicast-primitives.md.
 
 # Allow multiple sockets to bind the same port (mDNS: coexist with the host's
 # mDNS daemon on 5353). Returns 0 / -errno; -1 on agnos (no setsockopt).
@@ -979,12 +1019,17 @@ fn net_connect_sa_nb(fd, sa, salen, timeout_ms): i64 {
             store16(&pfd + 6, 0);                           # revents
             var pr = syscall(7, &pfd, 1, timeout_ms);       # poll
             if (pr > 0) {
+                # 6.6.20: connected only when getsockopt itself succeeded AND read 0 — the
+                # buffer is primed non-zero, as the Windows arm's is. It was primed 0 with the
+                # return dropped, so a failed getsockopt reported a refused connect as connected.
+                # Pinned by tests/tcyr/crossos/net_connect_nb_so_error.tcyr. CHANGELOG [6.6.20]
                 var sb[4];
                 var slen[4];
-                store32(&sb,   0);
+                store32(&sb,   1);                          # not 0: an unwritten value is no success
                 store32(&slen, 4);
-                syscall(55, fd, SOL_SOCKET, SO_ERROR, &sb, &slen);  # getsockopt SO_ERROR
-                if (load32(&sb) == 0) { result = _NET_CONN_NB_OK; }
+                if (syscall(55, fd, SOL_SOCKET, SO_ERROR, &sb, &slen) == 0) {  # getsockopt SO_ERROR
+                    if (load32(&sb) == 0) { result = _NET_CONN_NB_OK; }
+                }
             } else { if (pr == 0) {
                     result = _NET_CONN_NB_TIMEOUT;
                 } }

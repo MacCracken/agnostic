@@ -263,8 +263,7 @@ if [ -d "$_snap" ]; then
     # manifests at an older tag, and `cyrius deps` overlays that transitive
     # resolution on top of the `lib sync --full` snapshot — on every `cyrius
     # build`, since build performs an implicit resolve. Bumping those tags fixed
-    # it; agnostic now also pins `[deps.sakshi]` itself so a lagging sibling
-    # cannot reintroduce it. See the comment on that pin in `cyrius.cyml`.
+    # it. See docs/architecture/002-the-dependency-pins.md.
     #
     # ⚠ This gate is the **only** thing that catches the class. `deps --verify`
     # cannot: the lock is written *from disk*, so a downgraded file just gets its

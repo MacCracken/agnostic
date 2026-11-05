@@ -630,9 +630,10 @@ fn async_recv(rt, fd, buf, len): i64 {
     store64(ctx + 32, rt);
     return async_spawn(rt, &_async_recv_task, ctx);
 }
-# send task: a plain write inline in the task (no park). v6.4.39.
+# send task: one write inline in the task (no park). v6.4.39. Through the SO_NOSIGPIPE leaf, so a
+# reset peer answers -EPIPE instead of killing the process with SIGPIPE. CHANGELOG [6.6.16]
 fn _async_send_task(ctx): i64 {
-    return sys_write(load64(ctx + 8), load64(ctx + 16), load64(ctx + 24));
+    return _fd_write_nosigpipe(load64(ctx + 8), load64(ctx + 16), load64(ctx + 24));
 }
 # Async single-shot send: spawn a task that writes from buf; task_join yields the byte count.
 # Returns the task handle, or 0 if an allocation is refused. v6.4.39.
@@ -667,9 +668,23 @@ fn async_read(fd, buf, len): i64 {
     return sys_read(fd, buf, len);
 }
 
-# Wait for `fd` to become readable. A no-op on macOS that returns 0 at once: a caller's following
-# read blocks until data. Inside a runtime, park with async_wait_fd instead.
+# Wait for `fd` to be readable, or until `ms` milliseconds elapse (`ms` < 0: no limit). Returns 1
+# if it became readable — data, a hang-up, or a pending connection on a listening socket — and 0
+# if the wait ended without it: the timeout, EINTR, or an fd that is not open (at once, never a
+# hang). Same contract as the Linux backend (lib/async.cyr), which since 6.6.20 is the same
+# fd_wait_ready; a bounded wait is what lets a cooperative server re-check a stop flag between
+# waits. One BSD poll through fd_wait_ready (lib/syscalls_linux_common.cyr, verified on ecb and
+# ach). Inside a runtime, park with async_wait_fd instead. CHANGELOG [6.6.19]
+fn async_await_readable_ms(fd, ms): i64 {
+    if (fd_wait_ready(fd, 0, ms) == 1) { return 1; }
+    return 0;
+}
+
+# Wait without limit for `fd` to become readable; always 0 (the Linux contract). ⛔ Until 6.6.19
+# this was a no-op that returned at once, so sandhi's cooperative accept loop (non-blocking
+# listener, EAGAIN, then this) spun at 100 % CPU on macOS. CHANGELOG [6.6.19]
 fn async_await_readable(fd): i64 {
+    async_await_readable_ms(fd, 0 - 1);
     return 0;
 }
 
@@ -712,10 +727,12 @@ fn async_wait_rw(rt, fd): i64 {
 
 # v6.5.26 — one direction of a byte relay. The same body as every backend (lib/async.cyr
 # explains why no park): read once, write what was read. Returns bytes WRITTEN, 0 on clean EOF.
+# The write takes the SO_NOSIGPIPE leaf (a reset socket answers -EPIPE; a pipe keeps write(2)).
+# CHANGELOG [6.6.16]
 fn async_relay_once(rt, rfd, wfd, buf, len): i64 {
     var n = sys_read(rfd, buf, len);
     if (n <= 0) { return n; }
-    return sys_write(wfd, buf, n);
+    return _fd_write_nosigpipe(wfd, buf, n);
 }
 
 # Run `fp(arg)` in a forked child and wait at most `ms` milliseconds for its 8-byte result

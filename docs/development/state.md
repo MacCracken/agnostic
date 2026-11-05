@@ -2,7 +2,12 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-10-08, at **0.1.17** — a crew or definition body refused part-way keeps
+> Last refreshed: 2026-11-05, at **0.1.18** — **Cyrius 6.6.20**, with **agnosai 2.1.8**, **libro
+> 2.10.8** and every dep on its release for that toolchain, and no line of `src/` changed. The server
+> answers 408 to a request not complete within 60 s of accept. `cyrius.cyml` is configuration only,
+> and the constraints it carried are in `docs/architecture/002-the-dependency-pins.md`. Version,
+> Toolchain, Dependencies, Dependency layout, Tests and Next were refreshed then.
+> Before that, 2026-10-08, at **0.1.17** — a crew or definition body refused part-way keeps
 > nothing on the global heap (the doors check the whole body before they build), and the cycle
 > check's vectors are in the request's arena. The benchmarks were recorded at the 0.1.16 tag:
 > `BENCHMARKS.md`, 18 rows, the v1.0 criterion met. No dependency moved. Version, Source, Tests
@@ -57,30 +62,22 @@
 
 ## Version
 
-**0.1.17** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.1.18** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
 
-- **Cyrius pin**: `6.6.14` (`cyrius.cyml [package].cyrius`), since 0.1.10. Every stdlib file in
-  `lib/` (112) is byte-identical to `git show 6.6.14:lib/<mod>` in the cyrius repo, and a
-  sibling-free replica with an **empty** dep cache (`lib sync --full` + `deps` from an empty `lib/`)
-  reproduced `lib/` and the lock byte for byte; CI's gates and both DCE builds passed there —
-  at 0.1.10, 0.1.11 and 0.1.12. At 0.1.13 nothing moved: `lib sync --full` + `deps` left `lib/`
-  and the lock byte-identical to 0.1.12's, and `lock-check.sh --no-resolve` matched a clean tag
-  resolution (9 commit pins). At 0.1.14 only agnosai moved (2.1.4 → 2.1.6): the lock by its commit
-  pin and `lib/agnosai.cyr`'s hash, `lib/agnosai.cyr` byte-identical to the tag's
-  `dist/agnosai.cyr`, and the empty-cache replica reproduced `lib/` and the lock byte for byte.
-  At 0.1.15 nothing moved: `lib/` and the lock are byte-identical to 0.1.14's. At 0.1.16 only
-  agnosai moved (2.1.6 → 2.1.7, tag `9210905`): the lock by its two lines, `lib/agnosai.cyr`
-  byte-identical to the tag's `dist/agnosai.cyr`, nothing else in `lib/`. At 0.1.17 nothing moved.
+- **Cyrius pin**: `6.6.20` (`cyrius.cyml [package].cyrius`), since 0.1.18. Every stdlib file in
+  `lib/` (113) is byte-identical to `git show 6.6.20:lib/<mod>` in the cyrius repo, and
+  `~/.cyrius/versions/6.6.20/SOURCE_COMMIT` matches the tag (`ae682e2`). Each dep dist in `lib/` is
+  byte-identical to `dist/` at its tag, and the 6.6.20 release tarball's stdlib matches `lib/`. A
+  sibling-free replica with an empty dep cache reproduced `lib/`, the lock and the x86_64 binary byte
+  for byte, and CI's gates passed there. What moved at each earlier release is in `CHANGELOG.md`.
 
-✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.14 folds **sigil 3.13.7** and
-**patra 1.15.1**. Since 0.1.11 the deps declare exactly those: agnosai (2.1.7 now) declares sigil 3.13.7,
-and libro 2.10.6 declares sigil 3.13.7 and patra 1.15.1. So every commit pin the lock records on a
-folded module names the bytes `lib/` holds; at 0.1.10 the sigil line named agnosai 2.1.2's 3.13.5
-while `lib/sigil.cyr` was the fold's 3.13.7. Since 0.1.12 no dep pins a module off the fold: kavach
-3.13.2 declares sigil 3.13.7 (3.13.1 declared 3.12.18), and ai-hwaccel 2.4.1 declares bayan 1.5.11.
+✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin.** 6.6.20 folds **sigil 3.13.10** and
+**patra 1.15.2**, and the chain declares exactly those: agnosai 2.1.8, kavach 3.13.3 and libro 2.10.8
+declare sigil 3.13.10, and libro 2.10.8 declares patra 1.15.2. So every commit pin the lock records
+on a folded module names the bytes `lib/` holds.
 
 ⚠ **The pin and the dep tags move TOGETHER.** `cyrius deps` resolves a declared
   dep's dist on top of the `lib sync --full` snapshot, and `check-clean.sh` allows
@@ -89,8 +86,7 @@ while `lib/sigil.cyr` was the fold's 3.13.7. Since 0.1.12 no dep pins a module o
   agnosai's `main` red before its 2.0.5). ⛔ The wrong fixes, both tried and
   rejected: a `[deps.patra]` hold in this manifest, and a `check-clean` allowance.
 - `cyrius deps` prints `refusing to overwrite stdlib leaf 'sigil'` / `'patra'` on
-  every resolve. Since 0.1.11 both skipped artifacts are the folded copies' own bytes again (at
-  0.1.10 sigil's was 3.13.5, older than the 3.13.7 fold — harmless, the fold won).
+  every resolve. Both skipped artifacts are the folded copies' own bytes.
 - ✅ **The wrapper pins `cycc` now** — fixed upstream at v6.5.42, and the installed
   `cyrius` re-execs the toolchain the manifest pins. The `CYRIUS_HOME` shim this
   section used to prescribe is no longer needed; confirm with `cyrius --version`
@@ -102,36 +98,22 @@ while `lib/sigil.cyr` was the fold's 3.13.7. Since 0.1.12 no dep pins a module o
 
 ## Dependencies
 
-`[deps.agnosai]` is **tag-only — no `path`**. `path` beats `tag` when a checkout is
-present, so a local resolve silently vendors the sibling's work-in-progress into
-`lib/` and the lock: content matching no tag, which CI cannot fetch. Deleting it
-took the lock from **1 commit pin to 9**.
-
-**Two root blocks, both with `modules`.** Before cyrius 6.6.13 `cyrius deps` cloned a `[deps.X]`
-only when it listed `modules`, so the four "pre-pins" this manifest carried through 0.1.6 (bote,
-majra, ai-hwaccel, tyche) never took effect, and 0.1.7 removed them. Filed upstream from here
-(`2026-10-01-git-dep-without-modules-silently-inert.md`) and fixed in 6.6.13 (I10): a block without
-`modules` now means `dist/X.cyr` — and the root's tag wins — or `cyrius deps` warns by name. Such a
-block is therefore an override pin, which this repo does not carry.
+`cyrius.cyml` holds configuration only. The constraints on it (tag-only, no override pins, block
+order, the pin and the tags moving together) are in
+[`002-the-dependency-pins.md`](../architecture/002-the-dependency-pins.md).
 
 | dep | pin | how it arrives |
 |---|---|---|
-| `agnosai` | **2.1.7** | direct, `git` + `tag` + `modules` — pins every dep below at its latest |
-| `libro` | **2.10.6** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
-| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.7 |
-| `ai-hwaccel` / `tyche` / `kavach` | **2.4.1** / **1.1.0** / **3.13.2** | transitive via agnosai 2.1.7 |
-| `sigil` | **3.13.7** (folded) | folded stdlib (`[deps].stdlib`); agnosai and libro declare the same 3.13.7 |
-| `patra` | **1.15.1** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.15.1 |
+| `agnosai` | **2.1.8** | direct, `git` + `tag` + `modules` — pins every dep below at its release on the 6.6.20 line |
+| `libro` | **2.10.8** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
+| `bote` / `majra` | **3.3.17** / **2.9.3** | transitive via agnosai 2.1.8 |
+| `ai-hwaccel` / `tyche` / `kavach` | **2.4.2** / **1.1.1** / **3.13.3** | transitive via agnosai 2.1.8 |
+| `sigil` | **3.13.10** (folded) | folded stdlib (`[deps].stdlib`); agnosai and libro declare the same 3.13.10 |
+| `patra` | **1.15.2** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.15.2 |
 
-`cyrius.lock` — **119 files locked, 9 commit pins** (every dep above; agnosai, kavach and
-ai-hwaccel moved at 0.1.12, none at 0.1.13, agnosai alone at 0.1.14 and again at 0.1.16), plus a
-trailing `cyrius 6.6.14` line recording the toolchain that wrote it. agnosai 2.1.7 — and 2.1.6,
-2.1.5 and 2.1.4, and ai-hwaccel 2.4.1, samay 1.1.6 and kavach 3.13.2 before them — was certified
-the same way before its tag: its full CI steps in a sibling-free replica against an empty dep
-cache (agnosai 2.1.7: 99 suites, 8,679 assertions, coverage 99%; and agnostic 0.1.15's 32 suites
-passed against it). Every tag was confirmed on the GitHub remote before the lock was
-written, and a sibling-free resolution from an empty dep cache reproduced `lib/` and the lock
-byte for byte.
+`cyrius.lock` — **120 files locked, 9 commit pins** (every dep above), plus a trailing `cyrius 6.6.20`
+line recording the toolchain that wrote it. Every tag was confirmed on the GitHub remote before the
+lock was written.
 
 ✅ **Both sibling work-arounds are REMOVED** (2026-08-22). patra 1.13.10 stopped
 `patra_init` clobbering the host log level, and libro 2.8.9 stopped a `PatraStore`
@@ -151,15 +133,15 @@ lines and 1,183 at 0.1.16), all `agnostic_*`-prefixed. 11,740 of those lines are
 `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,903 — five embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 33 suites, 2,806 assertions, 0 failed** (`cyrius test`, 0.1.17; 2,784 at 0.1.16), plus
-**80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.1.16) — **and the
+**Tests: 33 suites, 2,806 assertions, 0 failed** (`cyrius test`, 0.1.18; the same at 0.1.17), plus
+**80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.1.17) — **and the
 same 33 suites natively on aarch64, with the same per-suite counts** (Raspberry Pi 4). Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
 shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
 which since 0.1.10 verifies every plugin's copy of the bridge client; the WebGUI's JavaScript; and,
 since 0.1.13, `check-skill.py`, the agent skill against the API schema, and `gen-api-schema.sh
 --check` on `build/agnostic` when nothing in `src/` or `cyrius.cyml` is newer than it), `deps
---verify` 119/0.
+--verify` 120/0.
 
 **M5 — identity and tenancy — is done.** `src/auth/` holds credential primitives
 (`crypto`), users and API keys (`store`), HS256 tokens (`jwt`), the static
@@ -467,9 +449,10 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**33 suites, 2,806 assertions, 0 failed** (`cyrius test`, under the 6.6.14 pin, 0.1.17, 2026-10-08;
-2,784 at 0.1.16), and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). 0.1.17's
-additions, each guard mutation-checked (CHANGELOG [0.1.17]): `alloc/refused-bodies` (+10 — every
+**33 suites, 2,806 assertions, 0 failed** (`cyrius test`, under the 6.6.20 pin, 0.1.18, 2026-11-05),
+and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). No test changed at 0.1.18. The run
+ends `34 passed`, because bare `cyrius test` also runs the empty `[build].test` entry since cyrius 6.6.17.
+At 0.1.17: 33 suites and 2,806 assertions. Its additions, each guard mutation-checked (CHANGELOG [0.1.17]): `alloc/refused-bodies` (+10 — every
 refusal of a crew or definition body keeps 0 B) and `request/outlives-arena` (+12 — an accepted
 crew read back after its arena is overwritten).
 At 0.1.16: 33 suites and 2,784 assertions. Its additions (CHANGELOG [0.1.16]): a new suite, `tests/server_span.tcyr`
@@ -598,15 +581,16 @@ in this repo (`222`) and in agnosai (`8,038`) double-counted it.
 
 ## Dependency layout
 
-**agnosai 2.1.7** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
+**agnosai 2.1.8** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
 than called over HTTP. Everything crew/task/agent/scheduling-shaped lives there;
 Agnostic owns the product tier. Versions and pins: see the table under
 [Dependencies](#dependencies) above.
 
-`lib/` holds **119** `.cyr`: **112** from the 6.6.14 stdlib snapshot (`unicode/` included) plus 7 dep
+`lib/` holds **120** `.cyr`: **113** from the 6.6.20 stdlib snapshot (`unicode/` included) plus 7 dep
 dists (`agnosai`, `bote-core`, `majra`, `ai-hwaccel`, `tyche`, `kavach`, `libro`).
-`deps --verify` 119/0. The compile set `check-lib-symbols.py` resolves is **53**
-modules — `sys` joined at 0.1.3, because sigil 3.12.18 calls `sys_uname`.
+`deps --verify` 120/0. The compile set `check-lib-symbols.py` resolves is **50** modules, down from 53
+at 0.1.18: since cyrius 6.6.18 a dep's `.deps` sidecar names only what its bundle needs, so `regex`,
+`test` and `ws`, which nothing here compiles, left the set.
 
 ⚠ **`check-lib-symbols.py` evaluates `#ifdef` per target since 0.1.7.** sigil 3.13.5
 declares eight errno names in both arms of `#ifdef CYRIUS_TARGET_MACOS`, and a gate that
@@ -833,11 +817,11 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). After 0.1.16: the cyrius pin move through its
-sibling chain (kavach and libro, bote, agnosai, then agnostic), held for now by the user; agnosai's
-F1 tool loop and F9's hand-off of dependency outputs (M6's prerequisites, with the tool-registry
-decision of `handoff.md` §8); and what 0.1.15 recorded upstream (libro's per-append entry, patra's
-unchecked page write, cyrius's pkgver two includes deep). The notes below were written for M5 and remain true.
+See [`roadmap.md`](roadmap.md). After 0.1.18: agnosai's F1 tool loop and F9's hand-off of dependency
+outputs (M6's prerequisites, with the tool-registry decision of `handoff.md` §8); `[embed]` in place of
+`gen-presets.sh` and the escaping half of `gen-webgui.sh`, available since this pin; and what 0.1.15
+recorded upstream (libro's per-append entry, patra's unchecked page write). The `CYRIUS_PKG_VERSION`
+setter retires at a pin of 6.7.6 or later. The notes below were written for M5 and remain true.
 
 ✅ **patra's single index per table does NOT bind here — corrected 2026-08-21.**
 The earlier note said M5 needs users by id *and* by email and would therefore

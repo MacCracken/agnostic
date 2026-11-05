@@ -169,9 +169,8 @@ def compile_set(stdlib, deps):
 # a REAL future divergence of any of them, so the conditionals are evaluated instead,
 # once per target, and a divergence on ANY shipped target fails.
 #
-# The targets are what CI builds: the native x86_64 build and the aarch64 cross-build.
-# (aarch64 is withheld from releases since 0.1.7 — see `[release]` in cyrius.cyml — but
-# CI still compiles it so it can come back; it is checked here for the same reason.)
+# The targets are what CI builds and `[release]` ships: the native x86_64 build and the
+# aarch64 cross-build.
 # The compiler defines exactly one CYRIUS_TARGET_* per build, plus CYRIUS_ARCH_X86 or
 # CYRIUS_ARCH_AARCH64 (cyrius-guide, "Preprocessor").
 TARGETS = {

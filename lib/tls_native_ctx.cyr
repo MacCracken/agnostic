@@ -21,11 +21,12 @@
 # after it hold the parsed credentials, the traffic keys and sequence
 # numbers, the record buffers and the 6.6.13 additions, up to TLS_CTX_LEN.
 
-# 584 = 73 i64 slots. 512 held +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
+# 624 = 78 i64 slots. 512 held +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
 # +1 (v6.2.8) CERT_REQUESTED; 6.6.13 added +512..+568 (see the block after READ_HOLD_OFF), 6.6.14
-# filled +560 and +568 and added +576 (NOSIGPIPE).
+# filled +560 and +568 and added +576 (NOSIGPIPE), 6.6.15 the key-exchange block from +584, 6.6.17
+# the backend tag at +616 (at the end of the list).
 # Nothing outside _tn_ctx_new_in reads this; a new slot goes INSIDE it, never past it.
-var TLS_CTX_LEN          = 584;
+var TLS_CTX_LEN          = 624;
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -54,12 +55,18 @@ var TLS_CTX_OFF_CLIENT_RANDOM = 176; # ptr to client_random (32 B, from ClientHe
 var TLS_CTX_OFF_SERVER_RANDOM = 184; # ptr to server_random (32 B, ours)
 var TLS_CTX_OFF_SESSION_ID    = 192; # ptr to legacy_session_id echo bytes
 var TLS_CTX_OFF_SESSION_ID_LEN = 200; # session-id length (0..32)
-var TLS_CTX_OFF_GROUP         = 208; # negotiated TlsNamedGroup (0 until SH)
-var TLS_CTX_OFF_EPH_PRIV      = 216; # ptr to our ephemeral private scalar (32 B)
-var TLS_CTX_OFF_EPH_PUB       = 224; # ptr to our ephemeral public key (32 B)
-var TLS_CTX_OFF_SHARED        = 232; # ptr to the ECDHE shared secret (32 B)
-var TLS_CTX_OFF_PEER_PUB      = 240; # ptr to the client's x25519 pubkey (into CH buf)
-var TLS_CTX_OFF_SENT_HRR      = 248; # 1 if the last response was a HelloRetryRequest
+var TLS_CTX_OFF_GROUP         = 208; # negotiated TlsNamedGroup (0 until the SH / a 1.2 client's SKE; a 1.3 server
+#                                       sets it when it sends a HelloRetryRequest: the group it asked for)
+var TLS_CTX_OFF_EPH_PRIV      = 216; # ptr to our ephemeral private key: every buffer _TN_EPH_MAX = 48 B, whatever
+#                                       the group (32 B used on x25519 / secp256r1), so one wipe fits all
+var TLS_CTX_OFF_EPH_PUB       = 224; # ptr to our ephemeral public key, both versions: 32 B x25519, 65 B secp256r1,
+#                                       97 B secp384r1 (0x04 || X || Y)
+var TLS_CTX_OFF_SHARED        = 232; # ptr to the ECDHE shared secret / 1.2 premaster: every buffer 48 B
+#                                       (_TN_EPH_MAX; 32 B used on x25519 / secp256r1, 48 on secp384r1)
+var TLS_CTX_OFF_PEER_PUB      = 240; # ptr to the peer's ephemeral pubkey (server: into CH buf; 1.2 client: 32/65/97 B)
+var TLS_CTX_OFF_SENT_HRR      = 248; # 1 if the server's LAST respond_hello built a HelloRetryRequest (reset by each
+#                                       call); the once-per-connection latch is TLS_CTX_OFF_HRR
+# CHANGELOG [6.6.15] (the five comments above)
 var TLS_CTX_OFF_CLIENT_CERT   = 256; # ptr to the parsed client leaf cert (client auth)
 var TLS_CTX_OFF_STEK          = 264; # ptr to the server ticket-encryption key (32 B, lazy)
 # Record-protection traffic keys (.21) — installed after derive_handshake:
@@ -137,6 +144,27 @@ var TLS_CTX_OFF_HS_DONE = 568;           # server: 1 once the handshake COMPLETE
 # 6.6.14 — +576: the default transport's per-connection SIGPIPE guard (lib/tls_native_conn.cyr).
 var TLS_CTX_OFF_NOSIGPIPE      = 576; # macOS: fd + 1 of the socket SO_NOSIGPIPE was set on (_tn_nosigpipe); 0 = not yet
 # CHANGELOG [6.6.14]
+# 6.6.15 — key exchange on secp256r1 / secp384r1 in TLS 1.3 and on the 1.2 server, and the
+# HelloRetryRequest round trip (lib/tls_native_hs13.cyr, "ECDHE groups"):
+var TLS_CTX_OFF_GROUPS         = 584; # the groups this ctx offers (client) or accepts (server), in preference order,
+#                                       16 bits each from the low end; 0 = the default x25519, secp256r1,
+#                                       secp384r1 (tls_native_set_groups)
+var TLS_CTX_OFF_HS_ALERT       = 592; # the fatal alert description a refusing handshake step asks its driver to send
+#                                       (_tn_hs_fail sets it, _tn_send_hs_alert sends it once); 0 = none
+var TLS_CTX_OFF_HRR            = 600; # 1 once a HelloRetryRequest was SENT (server) / PROCESSED (client); never
+#                                       cleared — there is never a second one (RFC 8446 §4.1.4)
+var TLS_CTX_OFF_KS_GROUP       = 608; # 1.3 client: the group of the key_share in our latest ClientHello (its key is
+#                                       EPH_PRIV / EPH_PUB); the ServerHello's share must be on it
+# CHANGELOG [6.6.15]
+# 6.6.17 — +616: what makes a native ctx recognisable as one. lib/tls.cyr's hook-handle verbs
+# (tls_set_alpn, tls_ctx_set_session_*_cb, …) take either a native ctx or a libssl SSL_CTX*, and
+# dispatched on the GLOBAL backend, so a handle used after tls_set_backend flipped reached the wrong
+# backend (an SSL_CTX* handed to native code, a native ctx handed to libssl). They dispatch on this
+# tag instead (_tls_handle_native). A 64-bit value no pointer or flag word holds — its top 16 bits
+# make it a non-canonical address — so reading it at +616 of an SSL_CTX (over 1 KiB on OpenSSL 3)
+# cannot match. Written by _tn_ctx_new_in, never changed. CHANGELOG [6.6.17]
+var TLS_CTX_OFF_BACKEND_TAG    = 616; # _TN_CTX_TAG on every native ctx
+var _TN_CTX_TAG = 0x434E534C54525943;   # "CYRTLSNC", little-endian
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
@@ -171,6 +199,7 @@ fn _tn_ctx_new_in(a, role): i64 {
     store64(ctx + TLS_CTX_OFF_MIN_VER, TLS_VERSION_1_2);
     store64(ctx + TLS_CTX_OFF_MAX_VER, TLS_VERSION_1_3);
     store64(ctx + TLS_CTX_OFF_ALLOC,   a);
+    store64(ctx + TLS_CTX_OFF_BACKEND_TAG, _TN_CTX_TAG);
     return ctx;
 }
 
@@ -210,6 +239,65 @@ fn tls_native_set_alloc(ctx, a): i64 {
     return 0;
 }
 
+# The ECDHE groups a ctx offers (client) or accepts (server), most preferred first: the list
+# tls_native_set_groups installed, else the default x25519, secp256r1, secp384r1. Packed 16 bits
+# per group from the low end, so lane i is (g >> (16 * i)) & 0xFFFF and an empty lane is 0.
+fn _tn_groups(ctx): i64 {
+    var g = load64(ctx + TLS_CTX_OFF_GROUPS);
+    if (g == 0) { g = TLS_GROUP_X25519 | (TLS_GROUP_SECP256R1 << 16) | (TLS_GROUP_SECP384R1 << 32); }
+    return g;
+}
+
+# 1 if `group` is in the packed list `g` (_tn_groups), else 0.
+fn _tn_groups_has(g, group): i64 {
+    if (group == 0) { return 0; }
+    var i = 0;
+    while (i < 3) {
+        if (((g >> (16 * i)) & 0xFFFF) == group) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The number of groups in the packed list `g` (_tn_groups): 1 to 3 (lanes are filled from the low end).
+fn _tn_groups_n(g): i64 {
+    var n = 0;
+    while (n < 3) {
+        if (((g >> (16 * n)) & 0xFFFF) == 0) { return n; }
+        n = n + 1;
+    }
+    return 3;
+}
+
+# Set the ECDHE groups `ctx` offers (a client: its supported_groups, in this order, and — TLS 1.3 —
+# a key_share for the FIRST of them) or accepts (a server: it picks the first of these the client
+# can use). `groups` points at `n` i64 TlsNamedGroup values, 1 <= n <= 3, each one of
+# TLS_GROUP_X25519, TLS_GROUP_SECP256R1, TLS_GROUP_SECP384R1, none twice. The default, until this
+# is called, is all three with x25519 first. Set before connect / accept. Returns TLS_OK, or
+# TLS_ERR_INVALID_PARAM (ctx 0, `groups` 0, n out of range, an unknown or repeated group — the ctx
+# is then unchanged). The OpenSSL analogue is SSL_set1_groups. CHANGELOG [6.6.15]
+fn tls_native_set_groups(ctx, groups, n): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (groups == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (n < 1) { return TLS_ERR_INVALID_PARAM; }
+    if (n > 3) { return TLS_ERR_INVALID_PARAM; }
+    var packed = 0;
+    var i = 0;
+    while (i < n) {
+        var g = load64(groups + i * 8);
+        var known = 0;
+        if (g == TLS_GROUP_X25519) { known = 1; }
+        if (g == TLS_GROUP_SECP256R1) { known = 1; }
+        if (g == TLS_GROUP_SECP384R1) { known = 1; }
+        if (known == 0) { return TLS_ERR_INVALID_PARAM; }
+        if (_tn_groups_has(packed, g) == 1) { return TLS_ERR_INVALID_PARAM; }
+        packed = packed | (g << (16 * i));
+        i = i + 1;
+    }
+    store64(ctx + TLS_CTX_OFF_GROUPS, packed);
+    return TLS_OK;
+}
+
 # Record a fatal error: stash it in LAST_ERR and drive the ctx to the
 # ERROR state (unusable). Returns `err` so callers can `return
 # _tn_ctx_fail(ctx, ...)` directly.
@@ -217,6 +305,21 @@ fn _tn_ctx_fail(ctx, err): i64 {
     store64(ctx + TLS_CTX_OFF_LAST_ERR, err);
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_ERROR);
     return err;
+}
+
+# A handshake step refusing its peer: record the fatal alert `desc` (TLS_AD_*) the step's driver is
+# to send — a step that parses a message never writes to the socket, its driver does
+# (_tn_send_hs_alert) — and return `err`, which the caller fails the ctx with as before. RFC 8446
+# §6.2 / RFC 5246 §7.2 name the alert for each refusal; 0 (close_notify) is never one, so 0 means
+# none recorded. CHANGELOG [6.6.15]
+fn _tn_hs_fail(ctx, desc, err): i64 {
+    store64(ctx + TLS_CTX_OFF_HS_ALERT, desc);
+    return err;
+}
+
+# _tn_hs_fail, and the ctx failed with `err` (_tn_ctx_fail). Returns `err`.
+fn _tn_hs_refuse(ctx, desc, err): i64 {
+    return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, desc, err));
 }
 
 # Server-side handshake state machine (RFC 8446 §A.2). Drives one

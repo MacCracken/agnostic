@@ -57,17 +57,24 @@ What a newcomer must not miss, wherever they start:
 
 This has bitten repeatedly and is the single most important operational fact here.
 
-**The pin is `6.6.14`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
+**The pin is `6.6.20`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
 under a toolchain other than the pin rewrites `lib/` and `cyrius.lock` with content
 CI — which installs the pin — cannot reproduce. CI has a fatal drift gate precisely
 for this. Read `cyrius --version` before provisioning: it must print
-`manifest-pin: 6.6.14` with **no** `drift` on the line.
+`manifest-pin: 6.6.20` with **no** `drift` on the line.
 
 ⚠ **Your editor may be building too.** The cyrius language server runs a build on save,
 and a build re-provisions `lib/` and rewrites the lock (below). During 0.1.7 it did so
 from a half-edited manifest. Treat `lib/` and `cyrius.lock` as scratch until a
 deliberate `lib sync --full` + `deps` under the final manifest, then compare them with
 the clean replica's.
+
+**Moving the pin:** the constraints are in
+[`002-the-dependency-pins.md`](../architecture/002-the-dependency-pins.md). Remove `lib/` and
+`cyrius.lock` first, then run `cyrius lib sync --full` and `cyrius deps`, in that order. `lib sync`
+carries commit pins forward, so re-resolving over the old lock keeps each old tag's pin beside the
+new one. Then certify in a sibling-free replica with an empty dep cache, and run every suite
+natively on `ssh pi`.
 
 ### ✅ The wrapper pins the compiler now — the `CYRIUS_HOME` shim is retired
 
@@ -417,12 +424,12 @@ already filed from this port.
 
 | Repo | Version | How it arrives |
 |---|---|---|
-| `agnosai` | **2.1.6** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below at its latest |
-| `libro` | **2.10.6** | direct since 0.1.7 (`modules`, after agnosai) — the audit chain |
-| `bote` / `majra` | **3.3.16** / **2.9.2** | transitive via agnosai 2.1.6 |
-| `ai-hwaccel` / `tyche` / `kavach` | **2.4.1** / **1.1.0** / **3.13.2** | transitive via agnosai 2.1.6 |
-| `sigil` | **3.13.7** | folded into the 6.6.14 stdlib; agnosai and libro declare the same 3.13.7 |
-| `patra` | **1.15.1** | folded into the 6.6.14 stdlib; libro declares the same version |
+| `agnosai` | **2.1.8** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below at its release on the 6.6.20 line |
+| `libro` | **2.10.8** | direct since 0.1.7 (`modules`, after agnosai) — the audit chain |
+| `bote` / `majra` | **3.3.17** / **2.9.3** | transitive via agnosai 2.1.8 |
+| `ai-hwaccel` / `tyche` / `kavach` | **2.4.2** / **1.1.1** / **3.13.3** | transitive via agnosai 2.1.8 |
+| `sigil` | **3.13.10** | folded into the 6.6.20 stdlib; agnosai and libro declare the same 3.13.10 |
+| `patra` | **1.15.2** | folded into the 6.6.20 stdlib; libro declares the same version |
 
 ✅ **All nine carry a commit pin in `cyrius.lock`**, and every tag was confirmed on
 the GitHub remote (API, not `gh`) before its pin moved. The agnosai 2.0.6 episode
@@ -432,8 +439,9 @@ bump: a pushed *commit* is not a pushed *tag*.
 
 ⚠ **To move a dep agnosai owns, release agnosai** — as 2.1.2 did for bote and majra, 2.1.3
 for bote 3.3.16 (which brought libro 2.10.6), and 2.1.4 for kavach 3.13.2 and ai-hwaccel 2.4.1.
-2.1.5 and 2.1.6 moved none (their locks are 2.1.4's byte for byte). The next move is cyrius 6.6.15's chain
-(roadmap, "Moving the cyrius pin to 6.6.15").
+2.1.5 and 2.1.6 moved none (their locks are 2.1.4's byte for byte), and 2.1.8 moved all of them to
+their releases on the 6.6.20 line. Every sibling has newer tags on cyrius 6.7.x, so take a sibling's
+release on the pin's line, not its latest tag.
 A root block "ahead of" agnosai works only if it lists `modules` (§5), and it then has
 to be kept in step by hand; the four that existed through 0.1.6 never took effect.
 
@@ -446,9 +454,8 @@ Do not add it back.
 
 ### ✅ No `[deps.patra]` hold at this pin
 
-6.6.14 folds patra 1.15.1 and sigil 3.13.7, and since 0.1.11 the deps declare exactly those:
-libro 2.10.6 declares patra 1.15.1 and sigil 3.13.7, and agnosai 2.1.6 declares sigil 3.13.7 (so,
-since 0.1.12, does kavach 3.13.2).
+6.6.20 folds patra 1.15.2 and sigil 3.13.10, and the deps declare exactly those: libro 2.10.8
+declares patra 1.15.2 and sigil 3.13.10, and agnosai 2.1.8 and kavach 3.13.3 declare sigil 3.13.10.
 `cyrius deps` refuses to overwrite a folded leaf ("refusing to overwrite stdlib leaf"), so
 `lib/sigil.cyr` and `lib/patra.cyr` are the fold's bytes and `lib/` matches the snapshot with
 **zero** files differing — and the lock's sigil and patra lines now name those same versions. At

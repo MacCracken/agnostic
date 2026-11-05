@@ -223,7 +223,7 @@ Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity")
   like, so a vendor-prefixed id such as Groq's `openai/gpt-oss-120b` reaches hoosh renamed. And a response
   that names no provider is billed by agnosai's guess from the name, which bills `o4-mini` and newer
   families to Ollama. B33 has agnosai choose and attribute from hoosh 2.8.0's `GET /v1/models/catalog`
-  instead. Re-pin when it ships (the pin is `[deps.agnosai]` tag 2.1.7); M9's model picker builds on it.
+  instead. Re-pin when it ships (the pin is `[deps.agnosai]` tag 2.1.8); M9's model picker builds on it.
 
 **What agnostic will hold them to — harness rules, recorded 2026-10-07.** From a comparison with
 [turnstone](https://github.com/turnstonelabs/turnstone), a self-hosted, tool-using agent harness,
@@ -257,30 +257,6 @@ its F1–F3, F5 and F9 rows; each goes into the ADR of the item it names.
   free text. An automatic approval covers a whole batch or none of it, and anything uncertain goes
   to a human (turnstone's Smart Approvals).
 - **F5 — budgets subdivide** down the tree: crew, then task, then delegated worker.
-
-## Moving the cyrius pin to 6.6.15 — found 2026-10-04, siblings first
-
-cyrius **6.6.15** is tagged; its fold carries sigil **3.13.9**. agnostic pins 6.6.14, and so do
-agnosai 2.1.7, kavach 3.13.2, libro 2.10.6 and bote 3.3.16. agnosai's roadmap holds the reading of
-what 6.6.15 fixes; the parts that reach agnostic, which makes outbound HTTPS through sandhi to an
-`https` LLM gateway and, since 0.1.14, to an `https` OTLP collector:
-
-- **CVE-70**: neither TLS 1.3 side zeroised its ephemeral private key or shared secret after use.
-- **CVE-71**: neither TLS 1.3 side refused an all-zero x25519 result (RFC 8446 §7.4.2).
-- **CVE-68 part B**: HMAC and HKDF state left in dead stack — every handshake's key schedule, and
-  agnostic's own HMAC-SHA256 (JWT signing, `src/auth/jwt.cyr`; the audit chain through libro).
-- **CVE-69**: a `secret var` epilogue leaving return registers in dead stack.
-
-Fix it at the source, as 0.1.7 did — agnosai 2.1.2 was released so this manifest could drop its
-override blocks — with no override pin here. The chain, from agnosai's plan:
-
-- [ ] kavach and libro on cyrius 6.6.15 with `[deps.sigil] tag = "3.13.9"`, then bote on 6.6.15
-  with that libro, then agnosai on 6.6.15 with them.
-- [ ] agnostic moves `cyrius = "6.6.15"`, `[deps.agnosai]` and the root `[deps.libro]` together
-  (the lockstep `cyrius.cyml` describes), then certifies in a sibling-free replica with an empty dep
-  cache and reruns every suite natively on `ssh pi`.
-- [ ] ⚠ Check `~/.cyrius/versions/6.6.15/SOURCE_COMMIT` against the 6.6.15 tag before trusting the
-  lib snapshot (agnosai's roadmap found this slot dirty and untagged once).
 
 ## Open — agnostic only
 
@@ -326,6 +302,11 @@ Found while building, grouped by area. H and B numbers in this file are those of
   104 warnings, nearly all long lines (`crew_request` 31, `webgui` 14 and a deferral, `crew_tenancy`
   12), and 9 untracked deferrals (`store_concurrency` 6). Fix: wrap or tag each, then add
   `$(find tests -name "*.tcyr" | sort)` to the lint loop. agnosai has the same gap (its B31).
+- [ ] **`scripts/check-log-lengths.py` miscounts a non-ASCII literal** (from agnosai 2.1.8's fix, whose
+  script was adopted from this one). `byte_len` decodes with `unicode_escape`, which reads UTF-8 bytes
+  as Latin-1, so every non-ASCII byte counts twice and the gate would demand a length past the
+  literal. None of the 88 literals in `src/` and `tests/` is wrong today, checked with
+  `codecs.escape_decode` at 0.1.18. Fix: measure that way, with agnosai's seven-literal self-test.
 - [ ] **Retire the `CYRIUS_PKG_VERSION` setter when cyrius resolves it two includes deep.**
   `src/main.cyr` hands the version to `src/routes/health.cyr` (`agnostic_version_set`) because the
   constant resolves only in the entry file and the files it includes directly; health is two deep.
@@ -339,12 +320,6 @@ Found while building, grouped by area. H and B numbers in this file are those of
 
 Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped here.
 
-- [ ] → **sandhi**: `sandhi_server_send_chunk` discards `sock_send`'s result, so a streaming handler
-  cannot notice its client left. A prerequisite for any SSE here (M9's streaming). Reproduced on
-  cyrius 6.6.14; a fix reaches agnostic only through a cyrius release that refolds sandhi. Filed
-  2026-10-03 as `~/Repos/sandhi/docs/development/issues/2026-10-03-chunked-response-verbs-discard-send-result.md`,
-  but ⚠ that file is still untracked in the sandhi checkout (checked 2026-10-04), so "filed" holds
-  only on this machine until it is committed there.
 - [ ] → **sandhi**, through agnosai: an exporter batch still leaves ~480 B, and an inference call
   ~2.6 KB including the reply it keeps, on the global bump in sandhi's dispatch path (16 B is the
   stdlib's `sockaddr_in`). Recorded on agnosai's roadmap as "To file"; not yet filed with sandhi
@@ -354,7 +329,7 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
   Filed with kavach (`docs/development/issues/2026-10-03-pinned-exec-breaks-uutils-coreutils.md`)
   and recorded in agnosai's roadmap C. It matters to a deployment on such a host.
 - [ ] → **patra**: an over-length STR *query literal* is clamped (found by CNAME-255, 2026-10-04).
-  `_str_hash` and `row_write_str` (`lib/patra.cyr:1706`, `:1758`) cut a literal over 255 bytes to
+  `row_write_str` and `_str_hash64` (`lib/patra.cyr:1719`, `:1771`, 1.15.2) cut a literal over 255 bytes to
   its 255-byte prefix. So a `WHERE` on a STR column given a longer literal hashes and compares as
   that prefix. On a write, patra refuses an over-length value (`PATRA_ERR_ROWSZ`), so the two
   paths disagree.
@@ -363,7 +338,7 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
   - Fix direction: an upstream patra release that refuses an over-length literal the way it
     refuses an over-length value. Fix it at source; do not wrap it here. Then re-pin. Not filed yet.
 - [ ] → **patra**: an INSERT whose page write fails reports success (found 2026-10-07, reading
-  patra for 0.1.15's audit fix). `tbl_insert` (`lib/patra.cyr:4200`, 1.15.1) calls `page_write`
+  patra for 0.1.15's audit fix). `tbl_insert` (`lib/patra.cyr:4216`, 1.15.2) calls `page_write`
   three times and ignores each result, though `page_write` answers `PATRA_ERR_IO` or a WAL refusal;
   it returns `PATRA_OK`, and `_exec_insert` then commits the header. So a full disk or an I/O error
   loses the row while the caller is told it was stored. For agnostic: a crew outcome, a definition
@@ -605,28 +580,9 @@ per-milestone versions (v0.2.0 to v0.9.0) are not used.
   API — and it is built then, against a real requirement, rather than pre-emptively shaping v1.0
   around a client that may never call us.
 
-## Recorded by cyrius 6.6.17 (2026-10-05) — for the next cyrius pin move
+## Available since the 6.6.20 pin — from cyrius 6.6.19
 
-⛔ **Nothing to do until cyrius 6.6.17 is tagged and out.** Docs-only note from the cyrius 6.6.17 lanes; each item
-is this repo's to adopt when it pins ≥ 6.6.17. Nothing here gates a cyrius release.
-
-- **`lib sync` now checks the lock** (cyrius 6.6.17 t1). This repo's CI runs `lib sync` → `deps` →
-  `deps --verify`: no change needed — with a correct committed lock `lib sync` leaves it byte-identical. If the
-  installed snapshot moves under the pin, CI now fails at `lib sync` with a named refusal instead of later at
-  `deps`.
-  ⚠ One agnostic workflow runs `lib sync` → `deps` with NO final `deps --verify`; that one CAN go red: a lock
-  committed after a build-first pin move carries the previous pin's rows, which `lib sync` now refuses — run
-  `cyrius lib sync --full` before committing the lock, or `--relock` if `deps` / `build` already ran.
-- **`[deps] stdlib` now reads as written** (cyrius 6.6.17 m6). A `]` inside a `#` comment within a string
-  array used to END the array; this manifest's `stdlib` comments name `` `[deps.*]` `` and
-  `` `[deps.sigil]` ``, so its "patra" and "sigil" leaves were silently dropped. From 6.6.17 they are vendored
-  and the include order moves (both orders build; +16 B). Nothing to change unless those leaves were meant
-  to be out.
-
-## Recorded by cyrius 6.6.19 (2026-10-06) — for the next cyrius pin move
-
-⛔ **Needs cyrius >= 6.6.19 — do not bump the pin until 6.6.19 is tagged and out.** Docs-only note from the cyrius
-6.6.19 lanes; each item is this repo's to adopt when it pins ≥ 6.6.19. Nothing here gates a cyrius release.
+Optional, and not adopted at 0.1.18.
 
 - **`scripts/gen-presets.sh` retires, and `scripts/gen-webgui.sh` keeps only its CSP half, via `[embed]`**
   (cyrius P2, shipped in 6.6.19).
@@ -654,15 +610,3 @@ is this repo's to adopt when it pins ≥ 6.6.17. Nothing here gates a cyrius rel
     and `:58` `fn agnostic_version_set` — `agnostic_version()` (`:64`) can read the constant itself;
   - `tests/health.tcyr:299-315` (`test_version_threading`, which sets the version by hand) — pin the
     expected version to `VERSION` instead.
-
-## Moved from cyrius's roadmap (2026-10-08) — for the next cyrius pin move
-
-cyrius no longer carries this repo's follow-ups; the items below were moved here from its roadmap. Each
-applies from the cyrius version it names. Everything else that changes between this repo's pin and cyrius
-6.7.6 is in cyrius's `CHANGELOG.md` and `docs/development/ecosystem-migration.md`.
-
-- **Same-arity duplicate fns** — cyrius's 6.6.3 ecosystem sweep (2026-09-12) recorded **22** same-arity
-  duplicate-fn warning(s) in this repo's build (not re-derived since). Since cyrius **6.6.20** every call binds
-  the LAST definition (before, a non-tail call to an already-defined fn bound the first), so a duplicate whose
-  body differs changes what runs at the pin bump. Remove the duplicates or confirm the last definition is the
-  intended one.

@@ -267,7 +267,8 @@ fn tls_native_12_verify_data(cipher, master48, label, label_len, handshake_hash,
 # full 32-byte random (no gmt_unix_time split), empty session_id, the
 # supported 1.2 wire ciphersuites (descending), null compression, and
 # the extensions a 1.2 ECDHE handshake needs: SNI (when the host is a
-# DNS name), supported_groups(x25519), ec_point_formats(uncompressed), and
+# DNS name), supported_groups (by default x25519, secp256r1, secp384r1 — tls_native_set_groups),
+# ec_point_formats(uncompressed), and
 # signature_algorithms. NO supported_versions / key_share (those are
 # 1.3 — and the client's ECDHE share rides ClientKeyExchange, not the
 # hello). Buffers the message into CH_BUF/CH_LEN for the retroactive
@@ -289,7 +290,7 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     var host_len = _tn_sni_len(host, load64(ctx + TLS_CTX_OFF_HOST_LEN));
     var sni_ext = 0;
     if (host_len > 0) { sni_ext = 4 + 2 + 1 + 2 + host_len; }
-    # ext_block = SNI + supported_groups(8, +2 for our certificate's curve) + ec_point_formats(6)
+    # ext_block = SNI + supported_groups(6 + 2 per group) + ec_point_formats(6)
     #           + signature_algorithms(20, seven schemes — .83 added RSA PSS+PKCS1)
     #           + renegotiation_info(5, empty — RFC 5746 §3.4)
     #           + extended_master_secret(4, empty — RFC 7627 §5.1)
@@ -298,24 +299,16 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     var apl = 0;
     var alpn_ext = 0;
     if (alpn != 0) { apl = _tn_be16_r(alpn); alpn_ext = 6 + apl; }
-    # 6.6.14 (CVE-64): a TLS 1.2 server checks that an ECDSA client certificate's curve is one the
-    # client listed in supported_groups (RFC 8422 §5.1.1; OpenSSL refuses it, "wrong curve"), so
-    # with a P-256 / P-384 client certificate installed that curve follows x25519. Our ECDHE stays
-    # x25519 alone: a server that picks the listed curve for the key exchange fails the
-    # ServerKeyExchange (TLS_ERR_HANDSHAKE_FAILED) — ⚠ a server ranking it above X25519 by its own
-    # preference, asked for a certificate or not, which connected before 6.6.14 — and without a
-    # client certificate the hello is unchanged. CHANGELOG [6.6.14]
-    var cgroup = 0;
-    if (load64(ctx + TLS_CTX_OFF_CERT_CHAIN) != 0) {
-        if (load64(ctx + TLS_CTX_OFF_CREDS_LOADED) == 1) {
-            var ks = _tn_key_scheme(ctx);
-            if (ks == TLS_SIG_ECDSA_SECP256R1_SHA256) { cgroup = TLS_GROUP_SECP256R1; }
-            if (ks == TLS_SIG_ECDSA_SECP384R1_SHA384) { cgroup = TLS_GROUP_SECP384R1; }
-        }
-    }
-    var sg_extra = 0;
-    if (cgroup != 0) { sg_extra = 2; }
-    var ext_block = sni_ext + 8 + sg_extra + 6 + 20 + 5 + 4 + alpn_ext;
+    # supported_groups lists every curve the 1.2 client does ECDHE on (RFC 8422 §5.1.1) — by
+    # default x25519 first, then secp256r1 and secp384r1 (sigil's constant-time ECDH; the list
+    # tls_native_set_groups installed, if any), with or without a client certificate — the list is
+    # also the curves a server may accept an ECDSA client certificate on, and the curves an ECDSA
+    # server certificate may use. 6.6.14 listed a P-256 / P-384 client certificate's curve while
+    # the key exchange was x25519 only, so a server ranking that curve first failed the handshake;
+    # without a certificate the hello offered x25519 alone and an OpenSSL server with an ECDSA
+    # certificate answered "no shared cipher". CHANGELOG [6.6.15]
+    var sg_ext = 6 + 2 * _tn_groups_n(_tn_groups(ctx));
+    var ext_block = sni_ext + sg_ext + 6 + 20 + 5 + 4 + alpn_ext;
     # cipher_suites = 2-byte len + six supported suites (12 bytes; .83 added RSA + AES-128)
     var body_len = 2 + 32 + 1 + 2 + 12 + 2 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
@@ -342,11 +335,7 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
         _tn_be16_w(p, host_len); p = p + 2;
         memcpy(p, host, host_len); p = p + host_len;
     }
-    _tn_be16_w(p, TLS_EXT_SUPPORTED_GROUPS); p = p + 2;
-    _tn_be16_w(p, 4 + sg_extra); p = p + 2;
-    _tn_be16_w(p, 2 + sg_extra); p = p + 2;            # named_curve_list length
-    _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
-    if (cgroup != 0) { _tn_be16_w(p, cgroup); p = p + 2; }
+    p = p + _tn_write_supported_groups(ctx, p);
     _tn_be16_w(p, TLS_EXT_EC_POINT_FORMATS); p = p + 2;
     _tn_be16_w(p, 2); p = p + 2;
     store8(p, 1); p = p + 1;                           # ec_point_format_list length (1 BYTE)
@@ -571,7 +560,8 @@ fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
     }
     store64(ctx + TLS_CTX_OFF_CIPHER, identity);
     store64(ctx + TLS_CTX_OFF_VERSION, TLS_VERSION_1_2);
-    store64(ctx + TLS_CTX_OFF_GROUP, TLS_GROUP_X25519);
+    # No group yet: a 1.2 ServerHello names none — the ServerKeyExchange does
+    # (_tn_12_parse_server_kex stores it). CHANGELOG [6.6.15]
     return TLS_OK;
 }
 
@@ -624,85 +614,108 @@ fn _tn_parse_certificate_12(ctx, body, blen): i64 {
     return TLS_OK;
 }
 
-# Sign the ServerKeyExchange ECDHE params. The signed content is the
-# RAW concatenation client_random ‖ server_random ‖ ServerECDHParams
-# (`params36`, the exact 36 wire bytes) = 100 bytes (RFC 8422 §5.4) —
-# NOT a transcript hash and NOT the 1.3 CertificateVerify content (no
-# 0x20*64 prefix, no context string). Dispatches on the loaded private
-# key algorithm (ECDSA → DER sig, sigil hashes internally; Ed25519 →
-# 64-byte PureEdDSA). Writes the TLS SignatureScheme via `scheme_out`;
-# returns the signature length (>0) or a negative TLS_ERR_*.
-fn _tn_12_sign_kex_params(ctx, params36, sig_out, sig_max, scheme_out): i64 {
-    var content = _tn_alloc(ctx, 100);
+# Sign the ServerKeyExchange ECDHE params. The signed content is the RAW concatenation
+# client_random ‖ server_random ‖ ServerECDHParams (`params`, its exact `params_len` wire bytes:
+# 4 + the point — 36 on x25519, 69 / 101 on secp256r1 / secp384r1) (RFC 8422 §5.4) — NOT a
+# transcript hash and NOT the 1.3 CertificateVerify content (no 0x20*64 prefix, no context
+# string). _tn_sign signs with the loaded key (ECDSA → DER, sigil hashes internally; Ed25519 →
+# 64-byte PureEdDSA) and writes the TLS SignatureScheme via `scheme_out`; returns the signature
+# length (>0) or a negative TLS_ERR_*.
+fn _tn_12_sign_kex_params(ctx, params, params_len, sig_out, sig_max, scheme_out): i64 {
+    var content = _tn_alloc(ctx, 64 + params_len);
     if (content == 0) { return TLS_ERR_OOM; }
     memcpy(content,      load64(ctx + TLS_CTX_OFF_CLIENT_RANDOM), 32);
     memcpy(content + 32, load64(ctx + TLS_CTX_OFF_SERVER_RANDOM), 32);
-    memcpy(content + 64, params36, 36);
-    return _tn_sign(ctx, content, 100, sig_out, sig_max, scheme_out);
+    memcpy(content + 64, params, params_len);
+    return _tn_sign(ctx, content, 64 + params_len, sig_out, sig_max, scheme_out);
 }
 
-# Build a TLS 1.2 ECDHE ServerKeyExchange (RFC 8422 §5.4). Body =
-# ServerECDHParams { curve_type=named_curve(3), namedcurve=x25519,
-# ECPoint{ len=32, EPH_PUB } } (36 bytes) ‖ SignatureScheme(2) ‖
-# signature<2-byte len>. Requires EPH_PUB + the randoms + loaded
-# creds. Returns the message length or a negative TLS_ERR_*.
+# Build a TLS 1.2 ECDHE ServerKeyExchange (RFC 8422 §5.4). Body = ServerECDHParams
+# { curve_type=named_curve(3), namedcurve, ECPoint{ len, EPH_PUB } } ‖ SignatureScheme(2) ‖
+# signature<2-byte len>, on the ctx's group (OFF_GROUP — the server picked it from the client's
+# supported_groups, _tn_12_parse_client_hello; 0, never set, is x25519): x25519's raw 32-byte
+# u-coordinate, or the 65 / 97-byte uncompressed point (6.6.15). The group is independent of the
+# certificate: a P-384 certificate signs a secp256r1 exchange as readily as an x25519 one.
+# Requires EPH_PUB on that group + the randoms + loaded creds. Returns the message length or a
+# negative TLS_ERR_*.
 fn _tn_12_build_server_kex(ctx, out, out_max): i64 {
-    # Worst case: 4 (hdr) + 36 (params) + 2 (scheme) + 2 (siglen) + 128 (sig cap).
-    if (TLS_HANDSHAKE_HEADER_LEN + 40 + 128 > out_max) { return TLS_ERR_BUFFER_FULL; }
+    var group = load64(ctx + TLS_CTX_OFF_GROUP);
+    if (group == 0) { group = TLS_GROUP_X25519; }
+    var plen = _tn_group_point_len(group);
+    if (plen == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
+    var params_len = 4 + plen;
+    # Worst case: 4 (hdr) + params + 2 (scheme) + 2 (siglen) + 128 (sig cap).
+    if (TLS_HANDSHAKE_HEADER_LEN + params_len + 4 + 128 > out_max) { return TLS_ERR_BUFFER_FULL; }
     var epub = load64(ctx + TLS_CTX_OFF_EPH_PUB);
     if (epub == 0) { return TLS_ERR_PROTOCOL; }
     var body = out + TLS_HANDSHAKE_HEADER_LEN;
     store8(body, 3);                                   # curve_type named_curve(3)
-    _tn_be16_w(body + 1, TLS_GROUP_X25519);            # namedcurve
-    store8(body + 3, 32);                              # ECPoint length
-    memcpy(body + 4, epub, 32);                        # raw 32-byte u-coord
+    _tn_be16_w(body + 1, group);                       # namedcurve
+    store8(body + 3, plen);                            # ECPoint length (1 byte)
+    memcpy(body + 4, epub, plen);
     var sig = _tn_alloc(ctx, 128);
     if (sig == 0) { return TLS_ERR_OOM; }
     var scheme = 0;
-    var sig_len = _tn_12_sign_kex_params(ctx, body, sig, 128, &scheme);
+    var sig_len = _tn_12_sign_kex_params(ctx, body, params_len, sig, 128, &scheme);
     if (sig_len < 0) { return sig_len; }
-    var body_len = 36 + 2 + 2 + sig_len;
-    _tn_be16_w(body + 36, scheme);
-    _tn_be16_w(body + 38, sig_len);
-    memcpy(body + 40, sig, sig_len);
+    var body_len = params_len + 2 + 2 + sig_len;
+    _tn_be16_w(body + params_len, scheme);
+    _tn_be16_w(body + params_len + 2, sig_len);
+    memcpy(body + params_len + 4, sig, sig_len);
     tls_native_handshake_write_header(out, TLS_HS_SERVER_KEY_EXCHANGE, body_len);
     return TLS_HANDSHAKE_HEADER_LEN + body_len;
 }
 
-# Client: parse + verify a TLS 1.2 ECDHE ServerKeyExchange body
-# (header stripped). Validates curve_type/namedcurve/point_len, copies
-# the server's ephemeral pubkey into OWNED storage at OFF_PEER_PUB
-# (the record buffer is transient), reconstructs the 100-byte signed
-# content, and verifies the signature against the parsed server-cert
-# pubkey (ECDSA-P256 / Ed25519; P-384 verify is a sigil gap — returns
-# TLS_ERR_KEY_UNSUPPORTED, mirroring the 1.3 client). Returns TLS_OK
-# or a negative TLS_ERR_*.
+# Client: parse + verify a TLS 1.2 ECDHE ServerKeyExchange body (header stripped).
+# ServerECDHParams { curve_type=named_curve(3), namedcurve, ECPoint<1-byte len> }: the
+# namedcurve must be one we offered (_tn_groups: x25519, secp256r1, secp384r1 — 6.6.15) and the
+# point exactly that group's length (_tn_group_point_len). The signed content is client_random ‖
+# server_random ‖ the params exactly as sent (RFC 8422 §5.4), verified against the parsed
+# server-cert key per the SKE's SignatureScheme. Once it verifies, the group goes to OFF_GROUP
+# and the point into OWNED storage at OFF_PEER_PUB (the record buffer is transient). An EC
+# point's validity — prefix 0x04, both coordinates below p, on the curve — is sigil's check, in
+# _tn_ecdhe_shared. Returns TLS_OK or a negative TLS_ERR_*.
 fn _tn_12_parse_server_kex(ctx, body, body_len): i64 {
-    if (body_len < 36 + 4) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (body_len < 4) { return TLS_ERR_BAD_HANDSHAKE; }
     if ((load8(body) & 0xFF) != 3) { return TLS_ERR_HANDSHAKE_FAILED; }
-    if (_tn_be16_r(body + 1) != TLS_GROUP_X25519) { return TLS_ERR_HANDSHAKE_FAILED; }
+    var group = _tn_be16_r(body + 1);
+    if (_tn_groups_has(_tn_groups(ctx), group) != 1) { return TLS_ERR_HANDSHAKE_FAILED; }
+    var want = _tn_group_point_len(group);
+    if (want == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
     var point_len = load8(body + 3) & 0xFF;
-    if (point_len != 32) { return TLS_ERR_HANDSHAKE_FAILED; }
-    var peer = _tn_alloc(ctx, 32);
-    if (peer == 0) { return TLS_ERR_OOM; }
-    memcpy(peer, body + 4, 32);
-    store64(ctx + TLS_CTX_OFF_PEER_PUB, peer);
-    var scheme = _tn_be16_r(body + 36);
-    var sig_len = _tn_be16_r(body + 38);
-    if (40 + sig_len > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
-    var sig = body + 40;
-    var content = _tn_alloc(ctx, 100);
+    if (point_len != want) { return TLS_ERR_HANDSHAKE_FAILED; }
+    var plen = 4 + point_len;                          # the params' wire length
+    if (body_len < plen + 4) { return TLS_ERR_BAD_HANDSHAKE; }
+    var scheme = _tn_be16_r(body + plen);
+    var sig_len = _tn_be16_r(body + plen + 2);
+    if (plen + 4 + sig_len > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
+    var sig = body + plen + 4;
+    var content = _tn_alloc(ctx, 64 + plen);
     if (content == 0) { return TLS_ERR_OOM; }
     memcpy(content,      load64(ctx + TLS_CTX_OFF_CLIENT_RANDOM), 32);
     memcpy(content + 32, load64(ctx + TLS_CTX_OFF_SERVER_RANDOM), 32);
-    memcpy(content + 64, body, 36);
+    memcpy(content + 64, body, plen);
     var leaf = load64(ctx + TLS_CTX_OFF_SERVER_CERT);
     if (leaf == 0) { return TLS_ERR_CERT_INVALID; }
     # 1.2 SKE allows ECDSA (P-256/P-384), EdDSA, and RSA (PKCS#1 v1.5 or PSS,
     # per the SKE's SignatureAndHashAlgorithm). See CHANGELOG [6.0.83].
-    var ok = _tn_verify_sig_scheme(scheme, leaf, content, 100, sig, sig_len);
+    # An ECDSA scheme names only the hash in TLS 1.2: a P-384 server key signs SHA-256 when we list
+    # 0x0403 first (OpenSSL's does), and reading the scheme as 1.3 does — curve bound to it — failed
+    # every P-384 server certificate with TLS_ERR_AUTHN (_tn_ecdsa_verify_12). CHANGELOG [6.6.15]
+    var ok = 0;
+    var ecdsa = 0;
+    if (scheme == TLS_SIG_ECDSA_SECP256R1_SHA256) { ecdsa = 1; }
+    if (scheme == TLS_SIG_ECDSA_SECP384R1_SHA384) { ecdsa = 1; }
+    if (ecdsa == 1) { ok = _tn_ecdsa_verify_12(scheme, leaf, content, 64 + plen, sig, sig_len); }
+    else { ok = _tn_verify_sig_scheme(scheme, leaf, content, 64 + plen, sig, sig_len); }
     if (ok < 0) { return TLS_ERR_KEY_UNSUPPORTED; }
     if (ok != 1) { return TLS_ERR_AUTHN; }
+    # Only a signed group and point are recorded.
+    var peer = _tn_alloc(ctx, point_len);
+    if (peer == 0) { return TLS_ERR_OOM; }
+    memcpy(peer, body + 4, point_len);
+    store64(ctx + TLS_CTX_OFF_PEER_PUB, peer);
+    store64(ctx + TLS_CTX_OFF_GROUP, group);
     return TLS_OK;
 }
 
@@ -726,35 +739,53 @@ fn tls_native_12_parse_server_hello_done(msg, msg_len): i64 {
 }
 
 # Build a TLS 1.2 ECDHE ClientKeyExchange (RFC 8422 §5.7): body =
-# ECPoint{ length=32, client_eph_pub } — a 1-BYTE length prefix
-# (not 2) and a raw 32-byte u-coord (no 0x04 prefix). Returns 37 or
-# TLS_ERR_BUFFER_FULL.
-fn tls_native_12_build_client_key_exchange(client_eph_pub, out, out_max): i64 {
-    var body_len = 1 + 32;
+# ECPoint{ length, point } — a 1-BYTE length prefix (not 2). `point_len` bytes of `point`:
+# x25519's raw 32-byte u-coord, or an uncompressed SEC 1 point (65 B secp256r1, 97 B
+# secp384r1). Returns 4 + 1 + point_len, or TLS_ERR_BUFFER_FULL / TLS_ERR_INVALID_PARAM.
+# CHANGELOG [6.6.15]
+fn _tn_12_build_client_kex(point, point_len, out, out_max): i64 {
+    if (point_len <= 0) { return TLS_ERR_INVALID_PARAM; }
+    if (point_len > 255) { return TLS_ERR_INVALID_PARAM; }
+    var body_len = 1 + point_len;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
     if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
     tls_native_handshake_write_header(out, TLS_HS_CLIENT_KEY_EXCHANGE, body_len);
     var p = out + TLS_HANDSHAKE_HEADER_LEN;
-    store8(p, 32); p = p + 1;
-    memcpy(p, client_eph_pub, 32);
+    store8(p, point_len); p = p + 1;
+    memcpy(p, point, point_len);
     return total;
 }
 
-# Server: parse a TLS 1.2 ECDHE ClientKeyExchange. Requires type 16
-# and a body of EXACTLY 1 + 32 = 33 bytes (rejects trailing garbage),
-# with a 32-byte point. Copies the client's ephemeral pubkey to
-# `peer_pub_out32`. Returns TLS_OK or a negative TLS_ERR_*.
-fn tls_native_12_parse_client_key_exchange(msg, msg_len, peer_pub_out32): i64 {
+# Build an x25519 ClientKeyExchange: ECPoint{ length=32, client_eph_pub } — a raw 32-byte
+# u-coord, no 0x04 prefix. Returns 37 or TLS_ERR_BUFFER_FULL. (The 1.2 client builds the
+# ClientKeyExchange of whichever group the server chose through _tn_12_build_client_kex.)
+fn tls_native_12_build_client_key_exchange(client_eph_pub, out, out_max): i64 {
+    return _tn_12_build_client_kex(client_eph_pub, 32, out, out_max);
+}
+
+# Server: parse a TLS 1.2 ECDHE ClientKeyExchange carrying a `point_len`-byte ECPoint (RFC 8422
+# §5.7: a 1-byte length, then the point). Requires type 16 and a body of EXACTLY 1 + point_len
+# bytes (rejects trailing garbage) whose length byte is point_len. Copies the point to `out`.
+# Returns TLS_OK, TLS_ERR_BAD_HANDSHAKE (malformed) or TLS_ERR_HANDSHAKE_FAILED (a point of
+# another length). CHANGELOG [6.6.15]
+fn _tn_12_parse_client_kex(msg, msg_len, point_len, out): i64 {
     var ht = 0;
     var blen = 0;
     if (tls_native_handshake_read_header(msg, msg_len, &ht, &blen) < 0) { return TLS_ERR_BAD_HANDSHAKE; }
     if (ht != TLS_HS_CLIENT_KEY_EXCHANGE) { return TLS_ERR_BAD_HANDSHAKE; }
     if (TLS_HANDSHAKE_HEADER_LEN + blen > msg_len) { return TLS_ERR_BAD_HANDSHAKE; }
-    if (blen != 33) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (blen != 1 + point_len) { return TLS_ERR_BAD_HANDSHAKE; }
     var body = msg + TLS_HANDSHAKE_HEADER_LEN;
-    if ((load8(body) & 0xFF) != 32) { return TLS_ERR_HANDSHAKE_FAILED; }
-    memcpy(peer_pub_out32, body + 1, 32);
+    if ((load8(body) & 0xFF) != point_len) { return TLS_ERR_HANDSHAKE_FAILED; }
+    memcpy(out, body + 1, point_len);
     return TLS_OK;
+}
+
+# Server: parse an x25519 ClientKeyExchange — a body of EXACTLY 1 + 32 = 33 bytes with a 32-byte
+# point, copied to `peer_pub_out32`. Returns TLS_OK or a negative TLS_ERR_*. (The 1.2 server
+# parses the ClientKeyExchange of whichever group it chose through _tn_12_parse_client_kex.)
+fn tls_native_12_parse_client_key_exchange(msg, msg_len, peer_pub_out32): i64 {
+    return _tn_12_parse_client_kex(msg, msg_len, 32, peer_pub_out32);
 }
 
 # ----------------------------------------------------------------
@@ -989,42 +1020,67 @@ fn tls_native_ccs_record_write(out): i64 {
 # TLS 1.2 key-schedule glue (.74)
 # ----------------------------------------------------------------
 
-# Generate an ephemeral x25519 keypair, storing priv + pub in the ctx
-# but computing NO shared secret (unlike _tn_gen_ephemeral_x25519,
-# which eagerly DHs against PEER_PUB). The 1.2 ordering needs this: the
-# server makes its keypair at ServerKeyExchange (before the client's
-# pub is known) and the client at ClientKeyExchange (server pub known
-# but the DH happens later, in compute_premaster). Returns TLS_OK or an error.
+# Generate an ephemeral x25519 keypair, storing priv + pub in the ctx but computing NO shared
+# secret. The 1.2 ordering needs this: the server makes its keypair at ServerKeyExchange (before
+# the client's pub is known) and the client at ClientKeyExchange (server pub known but the DH
+# happens later, in compute_premaster). _tn_ephemeral_keygen on x25519 (6.6.15: every group's key
+# pair comes from there). Returns TLS_OK or an error.
 fn _tn_gen_ephemeral_x25519_pub_only(ctx): i64 {
-    var priv = _tn_alloc(ctx, 32);
-    var epub = _tn_alloc(ctx, 32);
-    if (priv == 0) { return TLS_ERR_OOM; }
-    if (epub == 0) { return TLS_ERR_OOM; }
-    if (_tn_rand_bytes(priv, 32) != 32) { return TLS_ERR_INTERNAL; }
-    x25519_base(priv, epub);
-    store64(ctx + TLS_CTX_OFF_EPH_PRIV, priv);
-    store64(ctx + TLS_CTX_OFF_EPH_PUB, epub);
-    return TLS_OK;
+    return _tn_ephemeral_keygen(ctx, TLS_GROUP_X25519);
 }
 
-# Compute the TLS 1.2 ECDHE pre-master secret: x25519(our EPH_PRIV,
-# peer ephemeral pub) → 32 raw bytes (RFC 8422 §5.11 — used directly,
-# no truncation/hash). MUST reject the all-zero shared secret (sigil's
-# x25519 always returns 0 and never signals a contributory-behavior
-# failure, so the check is ours). Writes 32 bytes to `out32`. Returns
-# TLS_OK or TLS_ERR_HANDSHAKE_FAILED on an all-zero result.
-fn tls_native_12_compute_premaster(ctx, peer_eph_pub32, out32): i64 {
-    var priv = load64(ctx + TLS_CTX_OFF_EPH_PRIV);
-    if (priv == 0) { return TLS_ERR_PROTOCOL; }
-    x25519(priv, peer_eph_pub32, out32);
-    var acc = 0;
-    var i = 0;
-    while (i < 32) {
-        acc = acc | (load8(out32 + i) & 0xFF);
-        i = i + 1;
+# The 1.2 client's side of the key exchange, once the ServerKeyExchange is verified: our
+# ephemeral key on the group it named — x25519, secp256r1 or secp384r1 (6.6.15,
+# _tn_ephemeral_keygen) — and the premaster against its point, in a _TN_EPH_MAX-byte ctx buffer at
+# OFF_SHARED. The private key's only use is then behind us, so it is zeroised whatever the outcome;
+# the caller zeroises the premaster once the master secret is derived (tls_native_connect_12).
+# Returns the premaster's length (32, or 48 on secp384r1) or a negative TLS_ERR_*.
+# CHANGELOG [6.6.15]
+fn _tn_12_client_premaster(ctx): i64 {
+    var group = load64(ctx + TLS_CTX_OFF_GROUP);
+    var er = _tn_ephemeral_keygen(ctx, group);
+    if (er != TLS_OK) {
+        _tn_wipe_priv(ctx);
+        return er;
     }
-    if (acc == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
-    return TLS_OK;
+    var pm = _tn_alloc(ctx, _TN_EPH_MAX);
+    if (pm == 0) {
+        _tn_wipe_priv(ctx);
+        return TLS_ERR_OOM;
+    }
+    store64(ctx + TLS_CTX_OFF_SHARED, pm);
+    var pr = tls_native_12_compute_premaster(ctx, load64(ctx + TLS_CTX_OFF_PEER_PUB), pm);
+    _tn_wipe_priv(ctx);
+    if (pr != TLS_OK) {
+        memset(pm, 0, _TN_EPH_MAX);
+        return pr;
+    }
+    return _tn_group_secret_len(group);
+}
+
+# Fail the ctx with `err` (tls_native_connect_12, between the premaster and the master secret),
+# zeroising the premaster buffer first. Returns `err`.
+fn _tn_12_fail_pm(ctx, pm, err): i64 {
+    memset(pm, 0, _TN_EPH_MAX);
+    return _tn_ctx_fail(ctx, err);
+}
+
+# Compute the TLS 1.2 ECDHE pre-master secret from our EPH_PRIV and the peer's ephemeral public
+# key, on the ctx's group (OFF_GROUP; 0 — never set — is x25519, the group every 1.2 peer used
+# before 6.6.15). Writes _tn_group_secret_len(group) bytes to `out` — 32, or 48 on secp384r1:
+#   x25519     x25519(EPH_PRIV, peer 32 B) used directly, no truncation/hash (RFC 8422 §5.11).
+#              The all-zero shared secret (a low-order point) is refused.
+#   secp256r1  sigil's ecdh_p256_shared / ecdh_p384_shared: `peer` is the 65 / 97-byte
+#   secp384r1  uncompressed point; sigil refuses (and zeroes `out`) a point not 0x04-prefixed,
+#              with a coordinate >= p, off the curve, or a result at infinity. The premaster is
+#              the x-coordinate, leading zeros kept (RFC 8422 §5.10). `out` must hold 48.
+# _tn_ecdhe_shared (6.6.15) is the computation. Returns TLS_OK, TLS_ERR_HANDSHAKE_FAILED (a
+# refused point / an all-zero x25519 result / a group we do not do) or TLS_ERR_PROTOCOL (no
+# ephemeral key).
+fn tls_native_12_compute_premaster(ctx, peer_pub, out): i64 {
+    var group = load64(ctx + TLS_CTX_OFF_GROUP);
+    if (group == 0) { group = TLS_GROUP_X25519; }
+    return _tn_ecdhe_shared(ctx, group, peer_pub, _tn_group_point_len(group), out);
 }
 
 # Derive + install the full TLS 1.2 key material from the pre-master
@@ -1206,13 +1262,14 @@ fn tls_native_12_open(ctx, record, record_len, out, out_max, out_ct): i64 {
 # TLS 1.2 connect/accept drivers (.74)
 # ----------------------------------------------------------------
 
-# Classify a ClientHello as TLS 1.3 vs 1.2 for the accept() dispatcher.
-# Returns 1 (1.3), 0 (1.2), or -1 (malformed). A 1.3 ClientHello always
-# carries a key_share extension (RFC 8446 §4.1.2) and normally also a
-# supported_versions=0x0304; a 1.2 ClientHello carries NEITHER (its
-# ECDHE share rides ClientKeyExchange). So the presence of EITHER
-# signals 1.3 — robust even against a (non-conforming) 1.3 client that
-# omits supported_versions but still sends a key_share.
+# Classify a ClientHello for the accept() dispatcher: 1 (it offers TLS 1.3), 0 (TLS 1.2), or -1
+# (malformed). supported_versions alone decides (RFC 8446 §4.2.1): 1 when it lists 0x0304, 0 when
+# it does not or is absent — a ClientHello without it is TLS 1.2 or earlier, and a server "MUST
+# negotiate TLS 1.2 or prior", whatever else the hello carries. A key_share does not make it 1.3.
+# ⛔ 6.6.15 — WHY. A key_share alone classified a hello as TLS 1.3 before supported_versions was
+# read, so the server negotiated TLS 1.3 with a client whose supported_versions did not list it —
+# in a first ClientHello, and in the second one that answers a HelloRetryRequest, whose check
+# that it "must still offer TLS 1.3" therefore did not hold. CHANGELOG [6.6.15]
 fn _tn_ch_is_tls13(ch_msg, ch_len): i64 {
     var ht = 0;
     var blen = 0;
@@ -1235,9 +1292,6 @@ fn _tn_ch_is_tls13(ch_msg, ch_len): i64 {
     var ext_total = _tn_be16_r(body + pos);
     pos = pos + 2;
     if (pos + ext_total > blen) { return 0 - 1; }
-    var ksp = 0;
-    var ksl = 0;
-    if (_tn_find_ext(body + pos, ext_total, TLS_EXT_KEY_SHARE, &ksp, &ksl) == 1) { return 1; }
     var dp = 0;
     var dl = 0;
     var found = _tn_find_ext(body + pos, ext_total, TLS_EXT_SUPPORTED_VERSIONS, &dp, &dl);
@@ -1254,12 +1308,26 @@ fn _tn_ch_is_tls13(ch_msg, ch_len): i64 {
     return 0;
 }
 
-# Server: parse a TLS 1.2 ClientHello body — capture client_random and
-# pick the first offered ciphersuite we support, storing its AEAD
-# identity at OFF_CIPHER. (x25519 supported_groups is assumed — the
-# only group cyrius offers; a non-x25519-only client surfaces later as
-# an ECDHE failure.) Returns the chosen WIRE ciphersuite (>0) or a
-# negative TLS_ERR_*.
+# Server: parse a TLS 1.2 ClientHello body — capture client_random, pick the first offered
+# ciphersuite we can answer (_tn_12_server_suite_ok; its AEAD identity to OFF_CIPHER) and the
+# ECDHE group (OFF_GROUP): the first of the server's groups (_tn_groups: x25519, then secp256r1,
+# then secp384r1 by default) the client's supported_groups lists (RFC 8422 §5.1.1). A client that
+# sends no supported_groups gets the server's first group — the extension is how a client
+# restricts the curve, and without it the server may choose (RFC 8422 §4); one whose list shares
+# none of ours is refused with handshake_failure. The group never depends on the certificate, but
+# in TLS 1.2 the client's list also bounds an ECDSA certificate's curve (RFC 8422 §5.1: an ECC
+# suite only if the handshake completes within the client's curves), so a list without it leaves
+# no suite to negotiate: handshake_failure. (An Ed25519 certificate is not bound by the list.)
+# Returns the chosen WIRE ciphersuite (>0) or a negative TLS_ERR_* with the alert recorded
+# (_tn_hs_fail).
+# ⛔ 6.6.15 — WHY. The 1.2 server never read supported_groups and sent an x25519
+# ServerKeyExchange to every client, so a client offering only P-256 or P-384 refused it
+# (OpenSSL's s_client: "wrong curve"). It negotiated an ECDHE_ECDSA suite on a certificate whose
+# curve the client had not listed (the client refused it: "wrong curve"); and it took the first
+# suite tls_native_12_cipher_supported knew — an ECDHE_RSA one, on a server with no RSA key,
+# was answered with an ECDHE_ECDSA suite the client never offered ("wrong cipher returned"), and
+# ECDHE_ECDSA_AES128_GCM_SHA256 failed with no alert (the ServerHello cannot name it).
+# CHANGELOG [6.6.15]
 fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     if (blen < 2 + 32 + 1) { return TLS_ERR_BAD_HANDSHAKE; }
     var crand = _tn_alloc(ctx, TLS_RANDOM_LEN);
@@ -1277,7 +1345,7 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     var j = 0;
     while (j + 2 <= cs_len) {
         var w = _tn_be16_r(body + pos + j);
-        if (tls_native_12_cipher_supported(w) == 1) {
+        if (_tn_12_server_suite_ok(w) == 1) {
             chosen = w;
             j = cs_len;
         } else {
@@ -1290,6 +1358,7 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     # block leaves EMS=0 and never fails the handshake. (The cipher loop used
     # pos+j indexing and did not mutate pos, so pos is still at cipher_suites.)
     pos = pos + cs_len;
+    var group = 0;
     if (pos + 1 <= blen) {
         var cm_len = load8(body + pos) & 0xFF;
         pos = pos + 1 + cm_len;
@@ -1304,12 +1373,45 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
                 # ALPN (RFC 7301): negotiate against the server's configured
                 # list; _tn_build_server_hello_12 emits the result. Lenient.
                 _tn_server_negotiate_alpn(ctx, body + pos, ext_total);
+                var sgp = 0;
+                var sgl = 0;
+                if (_tn_find_ext(body + pos, ext_total, TLS_EXT_SUPPORTED_GROUPS, &sgp, &sgl) == 1) {
+                    group = _tn_pick_group(ctx, sgp, sgl);
+                    if (group < 0) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+                    if (group == 0) { return _tn_hs_fail(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_HANDSHAKE_FAILED); }
+                    var kc = _tn_12_key_curve(ctx);
+                    if (kc != 0) {
+                        if (_tn_sg_has(sgp, sgl, kc) != 1) { chosen = 0; }   # no ECDSA suite on this certificate
+                    }
+                }
             }
         }
     }
-    if (chosen == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
+    if (chosen == 0) { return _tn_hs_fail(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_HANDSHAKE_FAILED); }
+    if (group == 0) { group = _tn_groups(ctx) & 0xFFFF; }    # no supported_groups: our first
+    store64(ctx + TLS_CTX_OFF_GROUP, group);
     store64(ctx + TLS_CTX_OFF_CIPHER, tls_native_12_cipher_aead_identity(chosen));
     return chosen;
+}
+
+# 1 if the TLS 1.2 server can negotiate wire suite `w`: an ECDHE suite whose ServerHello it can
+# write back — the server's key is Ed25519 or ECDSA, so an ECDHE_ECDSA suite that
+# tls_native_aead_to_wire_12 maps to itself (AES256-GCM-SHA384, CHACHA20-POLY1305). Never an
+# ECDHE_RSA suite (no RSA server key) nor AES128-GCM (the ServerHello cannot name it).
+# CHANGELOG [6.6.15]
+fn _tn_12_server_suite_ok(w): i64 {
+    if (tls_native_12_cipher_supported(w) != 1) { return 0; }
+    if (tls_native_aead_to_wire_12(tls_native_12_cipher_aead_identity(w), TLS12_AUTH_ECDSA) != w) { return 0; }
+    return 1;
+}
+
+# The NamedGroup of the server's ECDSA key (secp256r1 / secp384r1), 0 for any other key — the
+# curve a TLS 1.2 client's supported_groups must list (RFC 8422 §5.1). CHANGELOG [6.6.15]
+fn _tn_12_key_curve(ctx): i64 {
+    var ka = load64(ctx + TLS_CTX_OFF_KEY_ALGO);
+    if (ka == SIG_PRIVKEY_ECDSA_P256) { return TLS_GROUP_SECP256R1; }
+    if (ka == SIG_PRIVKEY_ECDSA_P384) { return TLS_GROUP_SECP384R1; }
+    return 0;
 }
 
 # Server: build the coalesced flight ServerHello ‖ Certificate ‖
@@ -1467,12 +1569,10 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     }
     var cf = _tn_12_client_consume_flight(ctx, fbuf, flen);
     if (cf < 0) { return _tn_ctx_fail(ctx, cf); }
-    var er = _tn_gen_ephemeral_x25519_pub_only(ctx);
-    if (er != TLS_OK) { return _tn_ctx_fail(ctx, er); }
-    var pm = _tn_alloc(ctx, 32);
-    if (pm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    var pr = tls_native_12_compute_premaster(ctx, load64(ctx + TLS_CTX_OFF_PEER_PUB), pm);
-    if (pr != TLS_OK) { return _tn_ctx_fail(ctx, pr); }
+    var group = load64(ctx + TLS_CTX_OFF_GROUP);
+    var pm_len = _tn_12_client_premaster(ctx);
+    if (pm_len < 0) { return _tn_ctx_fail(ctx, pm_len); }
+    var pm = load64(ctx + TLS_CTX_OFF_SHARED);
     # Our flight before the CCS, as handshake messages in `hm`: [Certificate,] ClientKeyExchange
     # [, CertificateVerify] (RFC 5246 §7.3). The Certificate answers a CertificateRequest
     # (6.6.14, CVE-64): ours when _tn_12_parse_cert_request chose a scheme, else an empty one.
@@ -1481,14 +1581,14 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     var hcap = 512;
     if (cscheme != 0) { hcap = hcap + load64(ctx + TLS_CTX_OFF_CERT_LEN); }
     var hm = _tn_alloc(ctx, hcap);
-    if (hm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    if (hm == 0) { return _tn_12_fail_pm(ctx, pm, TLS_ERR_OOM); }
     var hn = 0;
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
     if (creq == 1) {
         var cmn = 0;
         if (cscheme != 0) { cmn = _tn_build_certificate_12(ctx, hm, hcap); }
         else { cmn = _tn_12_build_empty_certificate(hm, hcap); }
-        if (cmn < 0) { return _tn_ctx_fail(ctx, cmn); }
+        if (cmn < 0) { return _tn_12_fail_pm(ctx, pm, cmn); }
         tls_native_transcript_update(ts, hm, cmn);
         hn = cmn;
     }
@@ -1498,11 +1598,13 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     # record-wrap + socket-send stay below (the wire bytes are order-independent).
     # The server (_tn_12_server_drive) already feeds CKE before deriving — it
     # needs no reorder.
-    var cken = tls_native_12_build_client_key_exchange(load64(ctx + TLS_CTX_OFF_EPH_PUB), hm + hn, hcap - hn);
-    if (cken < 0) { return _tn_ctx_fail(ctx, cken); }
+    var cken = _tn_12_build_client_kex(load64(ctx + TLS_CTX_OFF_EPH_PUB), _tn_group_point_len(group),
+      hm + hn, hcap - hn);
+    if (cken < 0) { return _tn_12_fail_pm(ctx, pm, cken); }
     tls_native_transcript_update(ts, hm + hn, cken);
     hn = hn + cken;
-    var dk = tls_native_12_derive_keys(ctx, pm, 32);
+    var dk = tls_native_12_derive_keys(ctx, pm, pm_len);
+    memset(pm, 0, _TN_EPH_MAX);                        # the master secret replaces it
     if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
     if (creq == 1) {
         if (cscheme != 0) {
@@ -1566,8 +1668,17 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
 # coalesced flight (SH+Cert+SKE+SHD), reads ClientKeyExchange, derives
 # keys, verifies the client's sealed Finished, then sends its own
 # ChangeCipherSpec + sealed Finished → CONNECTED. Returns TLS_OK or a
-# negative TLS_ERR_*.
+# negative TLS_ERR_*. Our ephemeral private key and the premaster are zeroised on the way out,
+# whatever the outcome (_tn_wipe_ephemeral), as well as by the steps that use them.
+# ⛔ 6.6.15 — WHY. Neither was ever zeroised: a server kept every connection's ephemeral key and
+# premaster in its heap or arena until the memory was reused. CHANGELOG [6.6.15]
 fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
+    var rc = _tn_12_server_hs(ctx, sock_fd, ch_msg, ch_len);
+    _tn_wipe_ephemeral(ctx);
+    return rc;
+}
+
+fn _tn_12_server_hs(ctx, sock_fd, ch_msg, ch_len): i64 {
     store64(ctx + TLS_CTX_OFF_SOCK_FD, sock_fd);
     if (load64(ctx + TLS_CTX_OFF_CREDS_LOADED) != 1) {
         var lr = tls_native_server_load_creds(ctx);
@@ -1581,16 +1692,19 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (ht != TLS_HS_CLIENT_HELLO) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
     if (TLS_HANDSHAKE_HEADER_LEN + blen > ch_len) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
     var chosen = _tn_12_parse_client_hello(ctx, ch_msg + TLS_HANDSHAKE_HEADER_LEN, blen);
-    if (chosen < 0) { return _tn_ctx_fail(ctx, chosen); }
+    if (chosen < 0) {
+        _tn_send_hs_alert(ctx, sock_fd);
+        return _tn_ctx_fail(ctx, chosen);
+    }
     store64(ctx + TLS_CTX_OFF_VERSION, TLS_VERSION_1_2);
-    store64(ctx + TLS_CTX_OFF_GROUP, TLS_GROUP_X25519);
+    var group = load64(ctx + TLS_CTX_OFF_GROUP);       # chosen from the client's supported_groups
     var srand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (srand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (_tn_rand_bytes(srand, TLS_RANDOM_LEN) != TLS_RANDOM_LEN) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
     store64(ctx + TLS_CTX_OFF_SERVER_RANDOM, srand);
-    var er = _tn_gen_ephemeral_x25519_pub_only(ctx);
+    var er = _tn_ephemeral_keygen(ctx, group);
     if (er != TLS_OK) { return _tn_ctx_fail(ctx, er); }
     var identity = load64(ctx + TLS_CTX_OFF_CIPHER);
     var ts = tls_native_transcript_init_in(load64(ctx + TLS_CTX_OFF_ALLOC), tls_native_cipher_hash_algo(identity));
@@ -1639,16 +1753,30 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     var cke_len = _tn_12_srv_next_msg(ctx, sock_fd, inbuf, cap, hb, hcap, &hlen, &hpos);
     if (cke_len < 0) { return cke_len; }
     var cke_msg = hb + hpos - cke_len;
-    var client_pub = _tn_alloc(ctx, 32);
+    var cpl = _tn_group_point_len(group);
+    var client_pub = _tn_alloc(ctx, cpl);
     if (client_pub == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    var cr2 = tls_native_12_parse_client_key_exchange(cke_msg, cke_len, client_pub);
-    if (cr2 != TLS_OK) { return _tn_ctx_fail(ctx, cr2); }
+    var cr2 = _tn_12_parse_client_kex(cke_msg, cke_len, cpl, client_pub);
+    if (cr2 != TLS_OK) {
+        var cdesc = TLS_AD_DECODE_ERROR;
+        if (cr2 == TLS_ERR_HANDSHAKE_FAILED) { cdesc = TLS_AD_ILLEGAL_PARAMETER; }
+        _tn_send_fatal_alert(ctx, sock_fd, cdesc);
+        return _tn_ctx_fail(ctx, cr2);
+    }
     tls_native_transcript_update(ts, cke_msg, cke_len);
-    var pm = _tn_alloc(ctx, 32);
+    var pm = _tn_alloc(ctx, _TN_EPH_MAX);
     if (pm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    store64(ctx + TLS_CTX_OFF_SHARED, pm);
     var pr2 = tls_native_12_compute_premaster(ctx, client_pub, pm);
-    if (pr2 != TLS_OK) { return _tn_ctx_fail(ctx, pr2); }
-    var dk = tls_native_12_derive_keys(ctx, pm, 32);
+    _tn_wipe_priv(ctx);                                # its one use is behind us
+    if (pr2 != TLS_OK) {
+        # A point sigil refused (off the curve, a coordinate >= p) or a low-order x25519 key:
+        # illegal_parameter (RFC 8422 §5.7). The premaster buffer was zeroed with the refusal.
+        _tn_send_fatal_alert(ctx, sock_fd, TLS_AD_ILLEGAL_PARAMETER);
+        return _tn_ctx_fail(ctx, pr2);
+    }
+    var dk = tls_native_12_derive_keys(ctx, pm, _tn_group_secret_len(group));
+    memset(pm, 0, _TN_EPH_MAX);                        # the master secret replaces it
     if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
     if (load64(ctx + TLS_CTX_OFF_CLIENT_CERT) != 0) {
         # A presented (and verified) certificate: its CertificateVerify signs every handshake
@@ -2012,54 +2140,82 @@ var _tn_ca_sys_skipped = 0;  # blocks of the bundle the set could not use       
 # not in the bundle, counted into `_tn_ca_sys_skipped`. Always 0 elsewhere.
 # Written by the claim holder only, in _tn_ca_read_win. CHANGELOG [6.6.14]
 var _tn_ca_sys_refused = 0;
+# ⛔ CVE-77 — THE STORE'S PURPOSE IS THE CHAIN'S PURPOSE. The set above is the system roots
+# trusted for SERVER authentication, which a CLIENT ctx anchors a server chain to. A SERVER ctx
+# anchors CLIENT chains (mTLS, _TN_PURPOSE_CLIENT), and Windows records per root which purposes
+# its root program trusts it for (CERT_ENHKEY_USAGE_PROP_ID): tls_native_set_ca_system gave an
+# mTLS server the serverAuth export, so a root Windows trusts for server authentication only
+# anchored client identities — the trust-store half of CVE-75, which enforces a CA CERTIFICATE's
+# own extendedKeyUsage. Windows now exports a second set for a server ctx, filtered for
+# clientAuth by the same rules (_tn_w_policy), cached and published exactly like the first. A
+# POSIX bundle carries no per-root purpose (it is the distro's serverAuth export), so both roles
+# share the set above there. Same publish protocol and validity rules as the five above.
+var _tn_ca_cl_state = 0;
+var _tn_ca_cl_buf = 0;
+var _tn_ca_cl_len = 0;
+var _tn_ca_cl_set = 0;
+var _tn_ca_cl_skipped = 0;
+var _tn_ca_cl_refused = 0;
 
 # Load and parse the bundle once per process: returns TLS_OK once `_tn_ca_buf`/`_tn_ca_len` and
 # the shared root set are published (a cached "none readable" and a cached unusable bundle
 # included), or TLS_ERR_OOM, which is NOT cached — the claim is rolled back to 0 so a later caller
 # tries again. Safe from any thread.
-#
+fn _tn_ca_load(): i64 {
+    return _tn_ca_load_into(&_tn_ca_state, &_tn_ca_buf, &_tn_ca_len, &_tn_ca_sys_set,
+      &_tn_ca_sys_skipped, &_tn_ca_sys_refused, _TN_PURPOSE_SERVER);
+}
+
+# _tn_ca_load for the CLIENT-purpose set a Windows server ctx installs (the `_tn_ca_cl_*` cells).
+fn _tn_ca_load_client(): i64 {
+    return _tn_ca_load_into(&_tn_ca_cl_state, &_tn_ca_cl_buf, &_tn_ca_cl_len, &_tn_ca_cl_set,
+      &_tn_ca_cl_skipped, &_tn_ca_cl_refused, _TN_PURPOSE_CLIENT);
+}
+
+# The once-per-process load behind both: the cells are the state, the bundle bytes and length, the
+# set, its skipped count and the store's refused count, for roots trusted for `purpose`.
 # ⚠ Nothing between the claim and the publish may `return`: the state would stay 1 and every later
 # connect would spin forever. The build lives in `_tn_ca_read` and `_tn_ca_parse_set`; the only
 # exits here are the two OOM rollbacks, each of which releases the claim itself.
-fn _tn_ca_load(): i64 {
-    var s = atomic_load(&_tn_ca_state);
+fn _tn_ca_load_into(st, pbuf, plen, pset, pskip, pref, purpose): i64 {
+    var s = atomic_load(st);
     while (s != 2) {
         if (s == 0) {
-            if (atomic_cas(&_tn_ca_state, 0, 1) == 1) {
+            if (atomic_cas(st, 0, 1) == 1) {
                 var cap = 1048576;              # 1 MiB; system bundles are ~250 KB
                 var buf = alloc(cap);
                 if (buf == 0) {
-                    atomic_store(&_tn_ca_state, 0);
+                    atomic_store(st, 0);
                     return TLS_ERR_OOM;
                 }
-                var total = _tn_ca_read(buf, cap);
+                var total = _tn_ca_read(buf, cap, pref, purpose);
                 var set = 0;
                 var skipped = 0;
                 if (total > 0) {
                     # Global heap (arena 0, allocator 0): the set outlives every ctx that shares it.
                     set = _tn_ca_parse_set(0, 0, buf, total, 0, &skipped);
                     if (set == TLS_ERR_OOM) {
-                        atomic_store(&_tn_ca_state, 0);
+                        atomic_store(st, 0);
                         return TLS_ERR_OOM;
                     }
                 }
-                _tn_ca_buf = buf;
-                _tn_ca_len = total;
-                _tn_ca_sys_set = set;
-                _tn_ca_sys_skipped = skipped + _tn_ca_sys_refused;
+                store64(pbuf, buf);
+                store64(plen, total);
+                store64(pset, set);
+                store64(pskip, skipped + load64(pref));
                 # Release half: the bytes, the set, the pointer and the length before the 2. aarch64 only
                 # — x86 (TSO) keeps store order, so a fence there is pure tax (lib/freelist.cyr).
                 #ifdef CYRIUS_ARCH_AARCH64
                 atomic_fence();
                 #endif
-                atomic_store(&_tn_ca_state, 2);
+                atomic_store(st, 2);
                 return TLS_OK;
             }
         }
-        s = atomic_load(&_tn_ca_state);
+        s = atomic_load(st);
     }
-    # Acquire half: on aarch64 the loads of `_tn_ca_buf`/`_tn_ca_len`, the set and the bytes behind
-    # them must not be satisfied before the state load that saw 2. x86 (TSO) never reorders loads.
+    # Acquire half: on aarch64 the loads of the bundle cells, the set and the bytes behind them must
+    # not be satisfied before the state load that saw 2. x86 (TSO) never reorders loads.
     #ifdef CYRIUS_ARCH_AARCH64
     atomic_fence();
     #endif
@@ -2070,33 +2226,51 @@ fn _tn_ca_load(): i64 {
 # above): after the first call this stores a pointer and allocates nothing, from the global heap or
 # the ctx's allocator. Records the set's skipped count for tls_native_ca_skipped. A bundle with no
 # usable root is TLS_ERR_CERT_INVALID every time (the ctx keeps any set it had), as
-# tls_native_set_ca_bundle answers it.
+# tls_native_set_ca_bundle answers it. A SERVER ctx (it verifies client chains) gets, on Windows,
+# the roots the store trusts for client authentication (CVE-77, above); a client ctx, and
+# every ctx elsewhere, the roots trusted for server authentication.
 fn tls_native_set_ca_system(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    #ifdef CYRIUS_TARGET_WIN
+    if (load64(ctx + TLS_CTX_OFF_ROLE) == TLS_ROLE_SERVER) {
+        var cr = _tn_ca_load_client();
+        if (cr != TLS_OK) { return cr; }
+        return _tn_ca_install(ctx, _tn_ca_cl_len, _tn_ca_cl_set, _tn_ca_cl_skipped);
+    }
+    #endif
     var lr = _tn_ca_load();
     if (lr != TLS_OK) { return lr; }
-    if (_tn_ca_len < 0) {
+    return _tn_ca_install(ctx, _tn_ca_len, _tn_ca_sys_set, _tn_ca_sys_skipped);
+}
+
+# Store a published system set on `ctx`: `len` < 0 is no bundle (TLS_ERR_IO), a negative `set` an
+# unusable one; `skipped` goes to tls_native_ca_skipped either way.
+fn _tn_ca_install(ctx, len, set, skipped): i64 {
+    if (len < 0) {
         # No bundle. On Windows that includes a store whose every TLS root was refused: report those
         # through tls_native_ca_skipped, or the reason the ctx has no roots is invisible. CHANGELOG [6.6.14]
-        if (_tn_ca_sys_skipped > 0) { store64(ctx + TLS_CTX_OFF_CA_SKIPPED, _tn_ca_sys_skipped); }
+        if (skipped > 0) { store64(ctx + TLS_CTX_OFF_CA_SKIPPED, skipped); }
         return TLS_ERR_IO;
     }
-    store64(ctx + TLS_CTX_OFF_CA_SKIPPED, _tn_ca_sys_skipped);
-    if (_tn_ca_sys_set < 0) { return _tn_ca_sys_set; }
-    store64(ctx + TLS_CTX_OFF_CA_ROOT, _tn_ca_sys_set);
+    store64(ctx + TLS_CTX_OFF_CA_SKIPPED, skipped);
+    if (set < 0) { return set; }
+    store64(ctx + TLS_CTX_OFF_CA_ROOT, set);
     return TLS_OK;
 }
 
 # Read the first readable system bundle into `buf` (`cap` bytes). Returns the byte count, or -1
-# when no candidate is readable (the caller caches that). Called only by the claim holder.
+# when no candidate is readable (the caller caches that). Called only by the claim holder. `refused`
+# receives the roots the store refused (Windows; 0 elsewhere), `purpose` the TlsChainPurpose the
+# roots must be trusted for — a POSIX bundle has no per-root purpose, so it is read the same for both.
 # ⛔ CVE-65 (6.6.14) — NEVER THE POSIX PATHS ON WINDOWS. There a rooted path is DRIVE-RELATIVE:
 # "/etc/ssl/cert.pem" is C:\etc\ssl\cert.pem, and any authenticated user may create folders at the
 # root of the system drive, so one local user could plant trust anchors every native TLS client on
 # the box then trusted (measured on cass: a planted cert.pem installed as the only root). Windows
 # reads its own store instead (_tn_ca_read_win) — CVE-54 / CVE-57's class. CHANGELOG [6.6.14]
-fn _tn_ca_read(buf, cap): i64 {
+fn _tn_ca_read(buf, cap, refused, purpose): i64 {
+    store64(refused, 0);
     #ifdef CYRIUS_TARGET_WIN
-    var w = _tn_ca_read_win(buf, cap);
+    var w = _tn_ca_read_win(buf, cap, refused, purpose);
     return w;
     #endif
     #ifndef CYRIUS_TARGET_WIN
@@ -2137,7 +2311,9 @@ fn _tn_ca_read(buf, cap): i64 {
 # (AuthRoot) roots and Group Policy / Enterprise roots (measured on cass: CurrentUser\ROOT 59 ⊇
 # LocalMachine\ROOT 59 ⊇ AuthRoot 47).
 # WHICH ROOTS: the ones the root's own properties and the Disallowed store say Windows trusts for TLS
-# server authentication — the policy only ever REMOVES roots, and anything it cannot judge is refused:
+# server authentication — the policy only ever REMOVES roots, and anything it cannot judge is refused.
+# (A server ctx's set asks the same of CLIENT authentication — every "serverAuth" below reads
+# "clientAuth" for it; CVE-77 at `_tn_ca_cl_state`.)
 #   - a root whose root-program purposes (CERT_ENHKEY_USAGE_PROP_ID) leave out serverAuth is not a
 #     TLS anchor (cass: 6, e.g. Thawte Timestamping CA) — the analogue of the Mozilla trust bits the
 #     POSIX bundles are already filtered by;
@@ -2213,12 +2389,15 @@ fn _tn_w_open(fns, name): i64 {
     return st;
 }
 
-# 1 when the content `o[0..l)` of an OBJECT IDENTIFIER is serverAuth (1.3.6.1.5.5.7.3.1) or
-# anyExtendedKeyUsage (2.5.29.37.0).
-fn _tn_w_oid_server(o, l): i64 {
+# 1 when the content `o[0..l)` of an OBJECT IDENTIFIER names `purpose` (TlsChainPurpose) —
+# serverAuth (1.3.6.1.5.5.7.3.1) for _TN_PURPOSE_SERVER, clientAuth (1.3.6.1.5.5.7.3.2) for
+# _TN_PURPOSE_CLIENT — or is anyExtendedKeyUsage (2.5.29.37.0), which names both.
+fn _tn_w_oid_purpose(o, l, purpose): i64 {
     if (l == 8) {
         if (load32(o) == 0x0501062B) {
-            if (load32(o + 4) == 0x01030705) { return 1; }
+            var want = 0x01030705;                          # 05 07 03 01: serverAuth
+            if (purpose == _TN_PURPOSE_CLIENT) { want = 0x02030705; }   # 05 07 03 02: clientAuth
+            if (load32(o + 4) == want) { return 1; }
         }
     }
     if (l == 4) {
@@ -2228,12 +2407,12 @@ fn _tn_w_oid_server(o, l): i64 {
 }
 
 # The DER SEQUENCE OF OBJECT IDENTIFIER at p[0..n) — a purpose-list property: 1 when it names
-# serverAuth or anyExtendedKeyUsage, 0 when it is well formed and names neither, -1 when it is
+# `purpose` (_tn_w_oid_purpose) or anyExtendedKeyUsage, 0 when it is well formed and names neither, -1 when it is
 # MALFORMED (not one SEQUENCE filling exactly n bytes, or an element that is not a short-form,
 # non-empty OID). Three answers because the callers fail closed in OPPOSITE directions: for the
 # allow-list (prop 9) malformed is "cannot tell it is a TLS root", for a distrust scope (122, 127)
 # it is "cannot tell the distrust spares TLS". CHANGELOG [6.6.14]
-fn _tn_w_eku_server(p, n): i64 {
+fn _tn_w_eku_purpose(p, n, purpose): i64 {
     if (n < 2) { return 0 - 1; }
     if ((load8(p) & 0xFF) != 0x30) { return 0 - 1; }
     var len = load8(p + 1) & 0xFF;
@@ -2261,7 +2440,7 @@ fn _tn_w_eku_server(p, n): i64 {
         if (l == 0) { return 0 - 1; }
         if (l >= 0x80) { return 0 - 1; }
         if (i + 2 + l > end) { return 0 - 1; }
-        if (_tn_w_oid_server(p + i + 2, l) == 1) { found = 1; }
+        if (_tn_w_oid_purpose(p + i + 2, l, purpose) == 1) { found = 1; }
         i = i + 2 + l;
     }
     return found;
@@ -2290,35 +2469,35 @@ fn _tn_w_prop(fns, cc, id, scratch, scap): i64 {
 }
 
 # 1 when the store certificate `cc` carries the dated distrust `date_id` and its purpose scope
-# `eku_id` covers TLS (an absent scope covers every purpose; a malformed one may), or when either
-# cannot be read; 0 when it carries no such distrust.
-fn _tn_w_dated(fns, cc, date_id, eku_id, scratch, scap): i64 {
+# `eku_id` covers `purpose` (an absent scope covers every purpose; a malformed one may), or when
+# either cannot be read; 0 when it carries no such distrust.
+fn _tn_w_dated(fns, cc, date_id, eku_id, scratch, scap, purpose): i64 {
     var n = _tn_w_prop(fns, cc, date_id, scratch, scap);
     if (n == 0 - 1) { return 0; }
     if (n == 0 - 2) { return 1; }
     n = _tn_w_prop(fns, cc, eku_id, scratch, scap);
     if (n < 0) { return 1; }            # absent: the date applies to every purpose
-    if (_tn_w_eku_server(scratch, n) != 0) { return 1; }   # names TLS, or malformed
+    if (_tn_w_eku_purpose(scratch, n, purpose) != 0) { return 1; }   # names it, or malformed
     return 0;
 }
 
-# How Windows trusts the store certificate `cc` (a PCCERT_CONTEXT) for TLS server authentication:
-# 1 = as an anchor, 0 = not at all (its purposes leave serverAuth out), 2 = refused (a dated
-# distrust covers TLS, it carries root-program name constraints, or a property cannot be read or is
-# malformed — it cannot be judged, so it is refused and COUNTED). Any failure other than "property
-# absent" fails closed. Property values are read into scratch[0..scap) — the unused tail of the
-# bundle buffer.
-fn _tn_w_policy(fns, cc, scratch, scap): i64 {
+# How Windows trusts the store certificate `cc` (a PCCERT_CONTEXT) for TLS `purpose` (TlsChainPurpose:
+# server or client authentication): 1 = as an anchor, 0 = not at all (its purposes leave that one
+# out), 2 = refused (a dated distrust covers it, it carries root-program name constraints, or a
+# property cannot be read or is malformed — it cannot be judged, so it is refused and COUNTED). Any
+# failure other than "property absent" fails closed. Property values are read into scratch[0..scap)
+# — the unused tail of the bundle buffer.
+fn _tn_w_policy(fns, cc, scratch, scap, purpose): i64 {
     var n = _tn_w_prop(fns, cc, _TN_W_PROP_EKU, scratch, scap);
     if (n == 0 - 2) { return 2; }
     if (n >= 0) {
-        var e = _tn_w_eku_server(scratch, n);
+        var e = _tn_w_eku_purpose(scratch, n, purpose);
         if (e < 0) { return 2; }
         if (e == 0) { return 0; }
     }
     if (_tn_w_prop(fns, cc, _TN_W_PROP_NAMES, scratch, scap) != 0 - 1) { return 2; }
-    if (_tn_w_dated(fns, cc, _TN_W_PROP_DISABLE, _TN_W_PROP_DISABLE_EKU, scratch, scap) == 1) { return 2; }
-    if (_tn_w_dated(fns, cc, _TN_W_PROP_NOTBEFORE, _TN_W_PROP_NOTBEFORE_EKU, scratch, scap) == 1) { return 2; }
+    if (_tn_w_dated(fns, cc, _TN_W_PROP_DISABLE, _TN_W_PROP_DISABLE_EKU, scratch, scap, purpose) == 1) { return 2; }
+    if (_tn_w_dated(fns, cc, _TN_W_PROP_NOTBEFORE, _TN_W_PROP_NOTBEFORE_EKU, scratch, scap, purpose) == 1) { return 2; }
     return 1;
 }
 
@@ -2376,12 +2555,12 @@ fn _tn_w_pem_put(buf, pos, cap, der, dlen): i64 {
     return o + 26;
 }
 
-# Walk the store `root` and write every certificate the policy takes — and `dis` (the Disallowed
-# store) does not hold — into buf[0..cap) as PEM. The byte count (0 when none qualified); the
-# number refused (policy 2, or a block that did not fit) is stored at `refused`. Takes the two
-# store handles so the policy can be exercised on stores built in memory
+# Walk the store `root` and write every certificate the policy takes for `purpose` — and `dis` (the
+# Disallowed store) does not hold — into buf[0..cap) as PEM. The byte count (0 when none
+# qualified); the number refused (policy 2, or a block that did not fit) is stored at `refused`.
+# Takes the two store handles so the policy can be exercised on stores built in memory
 # (tests/tcyr/crossos/tls_system_trust_store.tcyr). CHANGELOG [6.6.14]
-fn _tn_w_export(fns, root, dis, buf, cap, refused): i64 {
+fn _tn_w_export(fns, root, dis, buf, cap, refused, purpose): i64 {
     var en = load64(fns + 8);
     var total = 0;
     var nref = 0;
@@ -2389,7 +2568,7 @@ fn _tn_w_export(fns, root, dis, buf, cap, refused): i64 {
     while (c != 0) {
         var der = load64(c + 8);
         var dlen = load32(c + 16);
-        var pol = _tn_w_policy(fns, c, buf + total, cap - total);
+        var pol = _tn_w_policy(fns, c, buf + total, cap - total, purpose);
         if (pol != 0) {
             if (_tn_w_in_store(fns, dis, der, dlen) == 1) { pol = 0; }
         }
@@ -2405,11 +2584,12 @@ fn _tn_w_export(fns, root, dis, buf, cap, refused): i64 {
     return total;
 }
 
-# The Windows system store for _tn_ca_read: every root Windows trusts as a TLS anchor, as a PEM
-# bundle in buf[0..cap). The byte count, or -1 for no store (crypt32 or a store would not open, or
-# no root qualified) — the caller caches that as TLS_ERR_IO. Sets `_tn_ca_sys_refused`.
-fn _tn_ca_read_win(buf, cap): i64 {
-    _tn_ca_sys_refused = 0;
+# The Windows system store for _tn_ca_read: every root Windows trusts as an anchor for `purpose`, as
+# a PEM bundle in buf[0..cap). The byte count, or -1 for no store (crypt32 or a store would not
+# open, or no root qualified) — the caller caches that as TLS_ERR_IO. Writes the refused count
+# through `refused`.
+fn _tn_ca_read_win(buf, cap, refused, purpose): i64 {
+    store64(refused, 0);
     var fns[32];
     if (_tn_w_crypt32(&fns) == 0) { return 0 - 1; }
     var root = _tn_w_open(&fns, "ROOT");
@@ -2420,7 +2600,7 @@ fn _tn_ca_read_win(buf, cap): i64 {
         callptr(cl, root, 0);
         return 0 - 1;
     }
-    var total = _tn_w_export(&fns, root, dis, buf, cap, &_tn_ca_sys_refused);
+    var total = _tn_w_export(&fns, root, dis, buf, cap, refused, purpose);
     callptr(cl, dis, 0);
     callptr(cl, root, 0);
     if (total <= 0) { return 0 - 1; }
@@ -2485,7 +2665,14 @@ fn tls_native_set_client_key(ctx, key, key_len): i64 {
 # set, != -1) must permit `below` intermediate CAs beneath it toward the leaf.
 # `below` is the path-build depth at which this CA signs (0 = it directly signs
 # the leaf). Uses the sigil 3.7.12 keyUsage/pathLen fields. Returns 1 if OK.
-fn _tn_ca_signer_ok(ca, below): i64 {
+# ⛔ 6.6.16 (CVE-75) — WHY `purpose`: a CA's extendedKeyUsage confines what it may vouch
+# for, and this never looked at it. A CA limited to clientAuth / codeSigning / S/MIME could issue
+# a leaf the native client took as a TLS server, and a serverAuth-only CA in an mTLS server's
+# trust set could issue a client identity; OpenSSL refuses both. The check sits HERE, inside the
+# conjunction _tn_verify_chain uses to SELECT a candidate (intermediate and trust anchor alike),
+# so a wrongly purposed CA is skipped and path building goes on to the next one — never fatal.
+# CHANGELOG [6.6.16]
+fn _tn_ca_signer_ok(ca, below, purpose): i64 {
     var ku = x509_cert_key_usage(ca);
     if (ku != 0) {                          # keyUsage present
         if ((ku & 0x04) == 0) { return 0; } # keyCertSign required to sign certs
@@ -2494,6 +2681,7 @@ fn _tn_ca_signer_ok(ca, below): i64 {
     if (pl != (0 - 1)) {                     # pathLenConstraint set
         if (below > pl) { return 0; }
     }
+    if (_tn_eku_purpose_ok(ca, purpose) != 1) { return 0; }
     return 1;
 }
 
@@ -2504,6 +2692,8 @@ fn _tn_ca_signer_ok(ca, below): i64 {
 #   _TN_PURPOSE_CLIENT  a TLS client: keyUsage allows digitalSignature | keyAgreement (0x88, the
 #                       mask of OpenSSL's ssl_client purpose); extendedKeyUsage lists clientAuth or
 #                       anyExtendedKeyUsage
+# The extendedKeyUsage half binds every CA on the path too, intermediates and the trust anchor
+# (_tn_eku_purpose_ok, 6.6.16); keyUsage on a CA is keyCertSign (_tn_ca_signer_ok).
 enum TlsChainPurpose {
     _TN_PURPOSE_SERVER = 0;
     _TN_PURPOSE_CLIENT = 1;
@@ -2581,6 +2771,21 @@ fn _tn_cert_eku_client_auth(der, der_len): i64 {
     return 0;
 }
 
+# 1 if `cert`'s extendedKeyUsage permits `purpose` (see TlsChainPurpose), else 0 — the ONE EKU
+# rule, applied at every depth: the leaf (_tn_leaf_purpose_ok) and every CA, intermediate or trust
+# anchor (_tn_ca_signer_ok). An absent extension imposes no restriction (RFC 5280 §4.2.1.12).
+# anyExtendedKeyUsage satisfies either purpose at every depth, as RFC 5280 reads it and as the leaf
+# rule always did; OpenSSL 3.6.5 honours it at NO depth (measured) — going strict is this one
+# function, and it moves the leaf rule too. `cert`'s DER (load64(cert)) must be live: sigil
+# records the serverAuth bit only, so the client purpose reads the extension from the DER.
+# CHANGELOG [6.6.16]
+fn _tn_eku_purpose_ok(cert, purpose): i64 {
+    var eku = x509_cert_eku(cert);
+    if (eku == 0) { return 1; }
+    if (purpose == _TN_PURPOSE_SERVER) { return eku & 0x01; }
+    return _tn_cert_eku_client_auth(load64(cert), load64(cert + 8));
+}
+
 # 1 if `leaf`'s keyUsage and extendedKeyUsage permit `purpose` (see TlsChainPurpose), else 0.
 fn _tn_leaf_purpose_ok(leaf, purpose): i64 {
     var kmask = 0xA8;
@@ -2589,10 +2794,7 @@ fn _tn_leaf_purpose_ok(leaf, purpose): i64 {
     if (lku != 0) {
         if ((lku & kmask) == 0) { return 0; }
     }
-    var leku = x509_cert_eku(leaf);
-    if (leku == 0) { return 1; }
-    if (purpose == _TN_PURPOSE_SERVER) { return leku & 0x01; }
-    return _tn_cert_eku_client_auth(load64(leaf), load64(leaf + 8));
+    return _tn_eku_purpose_ok(leaf, purpose);
 }
 
 # The chain verifier both roles share (6.6.14): `leaf` (a parsed x509 cert, or 0), `inters` (the
@@ -2624,7 +2826,7 @@ fn _tn_leaf_purpose_ok(leaf, purpose): i64 {
 # we only anchor at a trusted, in-window CA root — same security floor as the old
 # rigid path, just tolerant of real-world chains. The `ni + 1` iteration bound
 # terminates any cross-sign cycle. See
-# docs/development/issues/2026-06-09-native-tls-handshake-gap-public-servers.md,
+# docs/development/issues/archived/2026-06-09-native-tls-handshake-gap-public-servers.md,
 # CHANGELOG [6.1.19].
 # ⛔ 6.6.14 (CVE-64) — WHY. This was the client's verifier only, and the server checked a client
 # certificate's POSSESSION (its CertificateVerify) and never its chain: any self-signed leaf was
@@ -2651,8 +2853,9 @@ fn _tn_verify_chain(ctx, leaf, inters, now_unix, purpose): i64 {
                     if (x509_cert_is_ca(R) == 1) {
                         if (_x509_verify_link(cur, R) == 1) {
                             # CVE-17: the anchoring root must assert keyCertSign
-                            # (if it has keyUsage) + honor pathLen for `depth`.
-                            if (_tn_ca_signer_ok(R, depth) == 1) { return TLS_OK; }
+                            # (if it has keyUsage) + honor pathLen for `depth`;
+                            # 6.6.16: and its EKU must permit `purpose`.
+                            if (_tn_ca_signer_ok(R, depth, purpose) == 1) { return TLS_OK; }
                         }
                     }
                 }
@@ -2670,8 +2873,9 @@ fn _tn_verify_chain(ctx, leaf, inters, now_unix, purpose): i64 {
                         if (_x509_in_window(P, now_unix) == 1) {
                             if (_x509_verify_link(cur, P) == 1) {
                                 # CVE-17: signing intermediate must assert
-                                # keyCertSign + honor pathLen for `depth`.
-                                if (_tn_ca_signer_ok(P, depth) == 1) { nextp = P; ii = ni; }
+                                # keyCertSign + honor pathLen for `depth`;
+                                # 6.6.16: and its EKU must permit `purpose`.
+                                if (_tn_ca_signer_ok(P, depth, purpose) == 1) { nextp = P; ii = ni; }
                             }
                         }
                     }

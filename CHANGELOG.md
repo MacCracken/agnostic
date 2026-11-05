@@ -4,6 +4,115 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.18] — 2026-11-05
+
+**Cyrius 6.6.20, with every dependency on its release for that toolchain.** This is the pin move the
+roadmap has carried since 2026-10-04: Cyrius 6.6.14 → 6.6.20, agnosai 2.1.7 → 2.1.8 and libro 2.10.6
+→ 2.10.8, with no override pin and no line of `src/` changed. `cyrius.cyml` is configuration only
+now.
+
+⚠ **Wire-visible**, from the toolchain: the server answers **408** to a connection that has not sent
+a complete request within 60 s of accept (below).
+
+**33 suites, 2,806 assertions, 0 failed** — on x86_64 and natively on aarch64 (the Raspberry Pi), with
+the same per-suite counts — plus **80 JavaScript tests**; the same totals as 0.1.17. A sibling-free
+replica with an empty dep cache reproduced `lib/`, the lock and the x86_64 binary byte for byte, every
+CI gate passed there in CI's order, and the 6.6.20 release tarball's stdlib matches `lib/`. Both
+binaries served a crew end to end and answered a dribbled request 408 at 60.0 s, on x86_64 and on the
+Pi. A `cyrius bench` run sits within noise of the 0.1.16 table or below it; `BENCHMARKS.md` is recorded
+at a tag.
+
+### Changed
+
+- **Cyrius pin `6.6.14` → `6.6.20`.** `lib/` holds 113 stdlib files, up from 112 (`poison.cyr` is new),
+  and each is byte-identical to `git show 6.6.20:lib/<mod>`. The folds move: sigil 3.13.7 → 3.13.10,
+  patra 1.15.1 → 1.15.2, sandhi 1.10.4 → 1.10.8, sakshi 2.5.6 → 2.5.7, bayan 1.5.11 → 1.5.12 and
+  sankoch 2.8.0 → 2.8.1.
+- **Each dep moves to its release on the 6.6.20 line, not its latest tag.** Every sibling has newer
+  tags on cyrius 6.7.x. Each dist in `lib/` is byte-identical to `dist/` at its tag, and every tag
+  was confirmed on the GitHub remote first.
+
+  | dep | from | to | how it arrives |
+  |---|---|---|---|
+  | `agnosai` | 2.1.7 | **2.1.8** | root `[deps.agnosai]` |
+  | `libro` | 2.10.6 | **2.10.8** | root `[deps.libro]` |
+  | `bote` | 3.3.16 | **3.3.17** | through agnosai 2.1.8 |
+  | `majra` | 2.9.2 | **2.9.3** | through agnosai 2.1.8 |
+  | `kavach` | 3.13.2 | **3.13.3** | through agnosai 2.1.8 |
+  | `ai-hwaccel` | 2.4.1 | **2.4.2** | through agnosai 2.1.8 |
+  | `tyche` | 1.1.0 | **1.1.1** | through agnosai 2.1.8 |
+  | `sigil` | 3.13.7 | **3.13.10** | the 6.6.20 fold; agnosai and libro declare the same |
+  | `patra` | 1.15.1 | **1.15.2** | the 6.6.20 fold; libro declares the same |
+
+- **`cyrius.cyml` is a manifest again.** It had grown to 133 lines, most of them comments: pin history,
+  fold notes and what each dep watched for. It is 39 lines of configuration now. The constraints that
+  still hold moved to [`docs/architecture/002-the-dependency-pins.md`](docs/architecture/002-the-dependency-pins.md),
+  and the history was already in this file. `scripts/check-clean.sh` and `scripts/check-lib-symbols.py`
+  each pointed at one of those comments, and each claim was stale (a `[deps.sakshi]` pin removed long
+  ago; aarch64 still "withheld"). Both are corrected.
+- **`cyrius.lock` was regenerated from empty: 120 files, 9 commit pins.** `lib sync` carries commit
+  pins forward, so `lib/` and the lock were removed before `lib sync --full` + `deps`. The pins are
+  sorted by name now. The procedure is in `handoff.md` §2.
+- **The symbol gate's compile set is 50 modules, down from 53.** Since cyrius 6.6.18 a dep's sidecar
+  names only what its bundle needs. `regex`, `test` and `ws` left the set, and nothing here includes
+  them.
+- The x86_64 binary grows 46,528 B to 6,303,728 B under `CYRIUS_DCE=1`.
+
+### What the pin brings
+
+Each item is traced to the agnostic code that reaches it. Nothing else in cyrius's migration notes
+for 6.6.15–6.6.20 applies: `src/`, `tests/` and `benches/` have no struct, no typed pointer and no
+newly reserved name, and no seccomp filter.
+
+- ⚠ **A 60 s whole-request budget on the server** (sandhi 1.10.7, a Slowloris bound).
+  `agnostic_serve_options` (`src/server/serve.cyr:341`) sets no `request_ms`, so sandhi's default
+  applies: from accept to a complete request, a connection gets 60 s, then a 408 and a close. Handler
+  time is not counted. A body at the default 1 MiB cap must arrive at about 17.5 KB/s or faster, and
+  one at the 256 MiB limit of `AGNOSTIC_MAX_BODY_BYTES` at about 4.5 MB/s.
+- **The pooled server cannot deadlock on its channel** (6.6.16). The Linux channel could wake the
+  wrong kind of waiter, and one producer feeding workers through a cap-1 channel is the shape of
+  `sandhi_server_run_pooled` (`src/server/serve.cyr:669`). The channel is an eventcount now.
+- **Outbound TLS**, which agnostic makes through agnosai to an `https` LLM gateway or OTLP collector:
+  ephemeral keys and shared secrets are zeroised (CVE-70), an all-zero x25519 result is refused
+  (CVE-71), and a CA's extendedKeyUsage is checked at every depth (CVE-75).
+- **HMAC and HKDF state is wiped** (sigil 3.13.8, CVE-68 part B). That reaches every TLS key schedule,
+  JWT signing (`src/auth/jwt.cyr`) and the audit chain through libro. CVE-69's `secret var` epilogue
+  fix covers every handshake.
+- **`lib/hashmap.cyr` counts tombstones and rebuilds in place** (6.6.20). A map under delete and insert
+  churn turned every miss into a full-table scan. The ledger's retention eviction
+  (`src/engine/ledger.cyr:245`) and the definition cache (`src/engine/definitions.cyr:422`) are that
+  shape. Every map's entry table is 8 B larger.
+- **`[deps] stdlib` reads as written** (6.6.17). A `]` inside a `#` comment within the array used to
+  end it, and the manifest's comments named `` `[deps.*]` ``, so its `patra` and `sigil` entries were
+  silently dropped. They are read now, and the manifest has no such comment.
+- **libro's PatraStore fails cleanly** (2.10.8): a 0 handle from a failed open no longer kills the
+  process at its next store call.
+- **An agent built in an arena keeps nothing on the global heap** (agnosai 2.1.8). agnosai's default
+  `complexity` is interned, which is the fix the 0.1.17 notes were waiting for.
+
+### Fixed
+
+- **A streaming handler can tell that its client left.** `sandhi_server_send_chunk` returns the send
+  result since sandhi 1.10.8, which closes the roadmap's upstream item and removes a prerequisite of
+  M9's streaming. agnostic has no chunked route yet, so nothing changes today.
+
+### Closed without a change
+
+- **The roadmap's same-arity duplicate-fn sweep.** Since 6.6.20 every call binds a duplicate's last
+  definition, so a duplicate whose body differs changes what runs. cyrius's 6.6.3 sweep recorded 22
+  warnings here. There are none now: the compiler prints no duplicate warning, and a scan of the
+  compile set finds 9 repeated names, every one in mutually exclusive `#ifdef` arms of `fs`, `sync`
+  and `thread_local`.
+
+### Known
+
+- ⚠ `cyrius test` now ends `34 passed`. Bare `cyrius test` runs the `[build].test` entry since 6.6.17,
+  so `src/test.cyr`, an empty stub, is counted. There are 33 suites.
+- `scripts/check-log-lengths.py` has the byte-length bug agnosai 2.1.8 fixed in its copy. None of the
+  88 literals is wrong today. It is on the roadmap.
+- kavach's pinned exec still cannot run uutils coreutils on Ubuntu 25.10 and later. It is on the
+  roadmap.
+
 ## [0.1.17] — 2026-10-08
 
 **A crew or definition body refused part-way keeps nothing on the global heap.** The roadmap's
