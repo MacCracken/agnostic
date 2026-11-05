@@ -215,6 +215,8 @@ Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity")
 - **F4 — durable crew log:** turns an `interrupted` crew (ADR 0013) into a resumable one.
 - **F5 — budgets and caps:** brings back an `AGNOSTIC_CREW_MAX_CONCURRENT_TASKS` that is actually
   enforced.
+- **bote 3.8.15:** agnosai 2.2.3 pins 3.8.11. Nothing reaches agnostic, because neither repo calls a
+  bote function, so it moves with the next agnosai release and not by an override pin here.
 - **B33 — models from hoosh's catalog (recorded 2026-10-09):** a crew whose agents name no model is
   sent a model agnosai names itself: `llama3:70b`, or `llama3:405b` for a complex agent. That covers every
   preset, since none sets `llm_model`, and every agent whose *LLM model* field is left empty in the Library
@@ -223,7 +225,7 @@ Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity")
   like, so a vendor-prefixed id such as Groq's `openai/gpt-oss-120b` reaches hoosh renamed. And a response
   that names no provider is billed by agnosai's guess from the name, which bills `o4-mini` and newer
   families to Ollama. B33 has agnosai choose and attribute from hoosh 2.8.0's `GET /v1/models/catalog`
-  instead. Re-pin when it ships (the pin is `[deps.agnosai]` tag 2.2.0); M9's model picker builds on it.
+  instead. Re-pin when it ships (the pin is `[deps.agnosai]` tag 2.2.3); M9's model picker builds on it.
 
 **What agnostic will hold them to — harness rules, recorded 2026-10-07.** From a comparison with
 [turnstone](https://github.com/turnstonelabs/turnstone), a self-hosted, tool-using agent harness,
@@ -285,6 +287,14 @@ Found while building, grouped by area. H and B numbers in this file are those of
 - The outbound calls' remaining bytes (an exporter batch, an inference call) are in sandhi's
   dispatch path; see "Upstream".
 
+### Server
+
+- [ ] **A server that cannot bind says nothing about why** (found 2026-11-05, at 0.2.1).
+  `agnostic_serve` logs `listening` before `sandhi_server_run_pooled` binds, so a port already in use
+  prints that line and exits 1 with no other output. agnosai 2.2.3 fixed the same defect in itself.
+  Fix: on a non-zero `rc`, read the failing step and errno back with `sandhi_server_last_failure`
+  (needs the options block `o`) and log them, and pin the step names in a suite.
+
 ### Telemetry
 
 - [ ] **OTel variables not read** (ADR 0018): `OTEL_SDK_DISABLED` and the sampler variables
@@ -302,6 +312,9 @@ Found while building, grouped by area. H and B numbers in this file are those of
   104 warnings, nearly all long lines (`crew_request` 31, `webgui` 14 and a deferral, `crew_tenancy`
   12), and 9 untracked deferrals (`store_concurrency` 6). Fix: wrap or tag each, then add
   `$(find tests -name "*.tcyr" | sort)` to the lint loop. agnosai has the same gap (its B31).
+- [ ] **No benchmark times bayan's JSON parser** (found 2026-11-05, at 0.2.1). `crew_decode_4a_8t`
+  parses once, outside its loop, so a parser change cannot show in it: bayan 1.11.1 is 38–66% slower by
+  agnosai's benches, and every row here stayed flat. Add a row that parses a crew body.
 - [ ] **`scripts/check-log-lengths.py` miscounts a non-ASCII literal** (from agnosai 2.1.8's fix, whose
   script was adopted from this one). `byte_len` decodes with `unicode_escape`, which reads UTF-8 bytes
   as Latin-1, so every non-ASCII byte counts twice and the gate would demand a length past the
@@ -317,7 +330,7 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
   stdlib's `sockaddr_in`). Recorded on agnosai's roadmap as "To file"; not yet filed with sandhi
   (CHANGELOG 0.1.14, Known).
 - [ ] → **patra**: an over-length STR *query literal* is clamped (found by CNAME-255, 2026-10-04).
-  `row_write_str` and `_str_hash64` (`lib/patra.cyr:1786`, `:1838`, 1.16.0) cut a literal over 255 bytes to
+  `row_write_str` and `_str_hash64` (`lib/patra.cyr:2128`, `:2180`, 1.16.6) cut a literal over 255 bytes to
   its 255-byte prefix. So a `WHERE` on a STR column given a longer literal hashes and compares as
   that prefix. On a write, patra refuses an over-length value (`PATRA_ERR_ROWSZ`), so the two
   paths disagree.
@@ -326,7 +339,7 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
   - Fix direction: an upstream patra release that refuses an over-length literal the way it
     refuses an over-length value. Fix it at source; do not wrap it here. Then re-pin. Not filed yet.
 - [ ] → **patra**: an INSERT whose page write fails reports success (found 2026-10-07, reading
-  patra for 0.1.15's audit fix). `tbl_insert` (`lib/patra.cyr:4316`, 1.16.0) calls `page_write`
+  patra for 0.1.15's audit fix). `tbl_insert` (`lib/patra.cyr:4989`, 1.16.6) calls `page_write`
   three times and ignores each result, though `page_write` answers `PATRA_ERR_IO` or a WAL refusal;
   it returns `PATRA_OK`, and `_exec_insert` then commits the header. So a full disk or an I/O error
   loses the row while the caller is told it was stored. For agnostic: a crew outcome, a definition

@@ -4,6 +4,105 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-11-05
+
+**Cyrius 6.7.18 and the latest release of both direct dependencies.** Cyrius 6.7.9 → 6.7.18, agnosai
+2.2.0 → 2.2.3 and libro 2.11.0 → 2.11.3, with no override pin and no line of `src/` changed. Every pin
+inside these tags names a 6.7.18 fold, so unlike 0.2.0 nothing is off its fold.
+
+⚠ **Wire-visible**, from bayan 1.11.1: a JSON body that repeats a key, or holds a number with a leading
+zero, is now **400 "malformed JSON body"** (below).
+
+**33 suites, 2,806 assertions, 0 failed** — on x86_64 and natively on aarch64 (the Raspberry Pi), with
+the same per-suite counts — plus **80 JavaScript tests**; the same totals as 0.2.0. A sibling-free replica
+with an empty dep cache reproduced `lib/`, the lock and both binaries byte for byte, every CI gate passed
+there in CI's order, and the 6.7.18 release tarball's stdlib matches `lib/`. Both binaries served a crew
+end to end and answered a dribbled request 408 at 60.0 s. A database and audit chain written by a 0.2.0
+binary opened under 0.2.1, including a crew and a definition sent with repeated keys, and the chain
+verified `intact`.
+
+### Changed
+
+- **Cyrius pin `6.7.9` → `6.7.18`.** `lib/` holds 113 stdlib files, each byte-identical to
+  `git show 6.7.18:lib/<mod>`. The folds move: sigil 3.13.11 → 3.13.15, patra 1.16.0 → 1.16.6, sandhi
+  1.10.9 → 1.13.7, sakshi 2.5.8 → 2.5.10, bayan 1.5.13 → 1.11.1 and sankoch 2.8.3 → 2.8.9.
+- **Every dep moves with its tag.** Each dist in `lib/` is byte-identical to `dist/` at its tag, and
+  every commit pin in the lock matches its tag on the GitHub remote.
+
+  | dep | from | to | how it arrives |
+  |---|---|---|---|
+  | `agnosai` | 2.2.0 | **2.2.3** (latest) | root `[deps.agnosai]` |
+  | `libro` | 2.11.0 | **2.11.3** (latest) | root `[deps.libro]` |
+  | `bote` | 3.4.10 | **3.8.11** | through agnosai 2.2.3; bote's latest is 3.8.15 (*Known*) |
+  | `majra` | 2.12.0 | **2.13.0** (latest) | through agnosai 2.2.3 |
+  | `kavach` | 3.14.0 | **3.14.2** (latest) | through agnosai 2.2.3 |
+  | `ai-hwaccel` | 2.4.2 | **2.5.6** (latest) | through agnosai 2.2.3 |
+  | `tyche` | 1.2.0 | **1.2.2** (latest) | through agnosai 2.2.3 |
+  | `sigil` | 3.13.11 | **3.13.15** (latest) | the 6.7.18 fold; agnosai and libro declare the same |
+  | `patra` | 1.16.0 | **1.16.6** (latest) | the 6.7.18 fold; libro declares the same |
+
+- **`cyrius.lock` was regenerated from empty: 120 files, 9 commit pins.**
+- **The x86_64 binary is 6,347,560 → 4,086,360 B under `CYRIUS_DCE=1`.** Dead code is removed there now,
+  2,704,970 B of it, not NOP-filled. aarch64 has no compaction yet, so it grows 536,408 B to 7,661,696 B.
+  sigil's static-array warning is gone, so a build prints no warning from `lib/` but the static-data
+  note.
+- The symbol gate's compile set is 51 modules, up from 50.
+
+### What the pin brings
+
+The 6.7.10–6.7.18 language work is about struct values, inline `Str`, vectors, generics, closures and
+traits, and agnostic has no struct, no typed `Str` local, no `match` and no `impl`. cyrius's migration
+notes for these releases hold about 2,000 entries. They were filtered to the 192 that name one of the
+365 outside functions agnostic calls, and the fold entries were read in full. The rest of those 192 are
+Windows, macOS, agnos or cx behaviour, or forms this tree does not use. What reaches agnostic:
+
+- ⚠ **bayan 1.11.1's JSON parser refuses a duplicate key and a leading zero.** Every JSON route parses
+  its body with it. Measured against a 0.2.0 binary on `POST /api/v1/crews`: a body repeating a key was
+  202 and is 400, at the top level or nested, and `01` now fails as malformed where it parsed before.
+  An integer out of range was already 400. Anything that sends such JSON has to stop.
+  - **Stored documents are safe.** `GET /crews/{id}` and agent definitions re-parse what they stored,
+    with this parser, but agnostic stores what its own serializer wrote, not the body it received. A
+    crew and a definition sent to a 0.2.0 binary with repeated keys read back whole under 0.2.1. A
+    plugin document is stored as sent and served without being parsed again.
+  - JWT claims go through the same parser. Only a token agnostic signed reaches it, so nothing changes.
+- **Outbound TLS** (an `https` LLM gateway or OTLP collector): nameConstraints are enforced
+  (CYRIUS-2026-0042), the TLS 1.2 client keeps the server's intermediates, so a chain that failed may now
+  verify, and secrets are wiped on close.
+- **sandhi's server** (1.13.7): `sandhi_server_run_pooled` waits up to 5 s for its workers before it
+  accepts, and logs WARN `worker pool degraded` if fewer start. Request framing allocates nothing on the
+  global heap. No status, timeout or default changes.
+- **sigil's crypto lanes are a pool of 64, held only while used** (3.13.15, CYRIUS-2026-0040). A 65th
+  concurrent ECDSA verify is refused, not queued, which only outbound TLS can reach here.
+  `agnostic_crypto_main_init` still does what it did.
+- **patra 1.16.1–1.16.6:** a commit that cannot be made whole and durable rolls back, and `patra_close`
+  can report a failure. ⚠ An autocommit statement that fails its sync *has* been applied, so a retry
+  would insert twice. agnostic retries no statement. `tbl_insert` still ignores `page_write`'s result
+  (the roadmap's patra item stands).
+- **ai-hwaccel 2.5.6 returns different numbers** for training memory and sharding plans. agnostic calls
+  none of those wrappers.
+- **agnosai 2.2.1–2.2.3:** a WASM tool's input over 64 KiB is refused rather than left able to hang its
+  worker. The fleet fixes reach no route, and agnostic calls none of them.
+
+### Performance
+
+Flat on every row agnostic's benchmarks time. Built from the 0.2.0 tree on 6.7.9 and from this tree on
+6.7.18, the two bench binaries ran interleaved for five rounds: 17 of 19 rows sit within ±4%.
+`rlock_enter_exit` is 5.3% faster. `crew_inflight_mark_clear` read +5.8%, then +0.7% over seven more
+rounds, with the two ranges overlapping, so it is noise.
+
+⚠ **No benchmark here times bayan's parser**, because `crew_decode_4a_8t` parses outside its loop.
+agnosai measured the same parser 38–66% slower (`crew_from_json_10x10`, 171 → 251 µs), so expect a
+crew body to cost that much more. It is on the roadmap.
+
+### Known
+
+- ⚠ **A server that cannot bind says nothing about why.** `agnostic_serve` logs `listening` before
+  sandhi binds, so a port in use prints that line and exits 1. This predates the move, and agnosai
+  2.2.3 fixed the same defect. It is on the roadmap.
+- **bote is 3.8.11, not its latest 3.8.15.** agnosai 2.2.3 pins it, and this manifest carries no
+  override pin. 3.8.12–3.8.15 change JSON Schema validation, and neither agnostic nor agnosai calls a
+  bote function, so nothing reaches this binary. It moves with the next agnosai release.
+
 ## [0.2.0] — 2026-11-05
 
 **Cyrius 6.7.9, the first pin on the 6.7 language minor, with every dependency on its release for

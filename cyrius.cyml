@@ -7,7 +7,7 @@ version = "${file:VERSION}"
 description = "agnostic — TODO"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.7.9"
+cyrius = "6.7.18"
 
 [build]
 entry = "src/main.cyr"
@@ -26,12 +26,12 @@ stdlib = [
 
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
-tag = "2.2.0"
+tag = "2.2.3"
 modules = ["dist/agnosai.cyr"]
 
 [deps.libro]
 git = "https://github.com/MacCracken/libro.git"
-tag = "2.11.0"
+tag = "2.11.3"
 modules = ["dist/libro.cyr"]
 
 [release]

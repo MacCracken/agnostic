@@ -57,11 +57,11 @@ What a newcomer must not miss, wherever they start:
 
 This has bitten repeatedly and is the single most important operational fact here.
 
-**The pin is `6.7.9`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
+**The pin is `6.7.18`.** A `cyrius build`, `cyrius deps` or `cyrius lib sync` run
 under a toolchain other than the pin rewrites `lib/` and `cyrius.lock` with content
 CI — which installs the pin — cannot reproduce. CI has a fatal drift gate precisely
 for this. Read `cyrius --version` before provisioning: it must print
-`manifest-pin: 6.7.9` with **no** `drift` on the line.
+`manifest-pin: 6.7.18` with **no** `drift` on the line.
 
 ⚠ **Your editor may be building too.** The cyrius language server runs a build on save,
 and a build re-provisions `lib/` and rewrites the lock (below). During 0.1.7 it did so
@@ -418,13 +418,13 @@ already filed from this port.
 
 | Repo | Version | How it arrives |
 |---|---|---|
-| `agnosai` | **2.2.0** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below at its release on the 6.7.9 line |
-| `libro` | **2.11.0** | direct since 0.1.7 (`modules`, after agnosai) — the audit chain |
-| `bote` / `majra` | **3.4.10** / **2.12.0** | transitive via agnosai 2.2.0 |
-| `kavach` / `tyche` | **3.14.0** / **1.2.0** | transitive via agnosai 2.2.0 |
-| `ai-hwaccel` | **2.4.2** | transitive via agnosai 2.2.0; on 6.6.20, with no release on 6.7.9 |
-| `sigil` | **3.13.11** | folded into the 6.7.9 stdlib; agnosai declares it first, libro's 3.13.12 is not used |
-| `patra` | **1.16.0** | folded into the 6.7.9 stdlib; libro declares the same version |
+| `agnosai` | **2.2.3** | direct, `git` + `tag` + `modules` — **no `path`**; pins everything below |
+| `libro` | **2.11.3** | direct since 0.1.7 (`modules`, after agnosai) — the audit chain |
+| `bote` / `majra` | **3.8.11** / **2.13.0** | transitive via agnosai 2.2.3 |
+| `kavach` / `tyche` | **3.14.2** / **1.2.2** | transitive via agnosai 2.2.3 |
+| `ai-hwaccel` | **2.5.6** | transitive via agnosai 2.2.3 |
+| `sigil` | **3.13.15** | folded into the 6.7.18 stdlib; agnosai and libro declare the same version |
+| `patra` | **1.16.6** | folded into the 6.7.18 stdlib; libro declares the same version |
 
 ✅ **All nine carry a commit pin in `cyrius.lock`**, and every tag was confirmed on
 the GitHub remote (API, not `gh`) before its pin moved. The agnosai 2.0.6 episode
@@ -434,9 +434,9 @@ bump: a pushed *commit* is not a pushed *tag*.
 
 ⚠ **To move a dep agnosai owns, release agnosai** — as 2.1.2 did for bote and majra, 2.1.3
 for bote 3.3.16 (which brought libro 2.10.6), and 2.1.4 for kavach 3.13.2 and ai-hwaccel 2.4.1.
-2.1.5 and 2.1.6 moved none (their locks are 2.1.4's byte for byte), and 2.1.8 and 2.2.0 moved them
-to their releases on the 6.6.20 and 6.7.9 lines. Siblings have newer tags on later toolchains, so take
-a sibling's release on the pin's line, not its latest tag.
+2.1.5 and 2.1.6 moved none (their locks are 2.1.4's byte for byte), and 2.1.8, 2.2.0 and 2.2.1 moved
+them to their releases on the 6.6.20, 6.7.9 and 6.7.18 lines. Siblings can have newer tags on later
+toolchains, so take a sibling's release on the pin's line, not its latest tag.
 A root block "ahead of" agnosai works only if it lists `modules` (§5), and it then has
 to be kept in step by hand; the four that existed through 0.1.6 never took effect.
 
@@ -448,9 +448,8 @@ mode (`--local`, `CYRIUS_LOCAL`), and a default build builds the tag. See
 
 ### ✅ No `[deps.patra]` hold at this pin
 
-6.7.9 folds patra 1.16.0 and sigil 3.13.11. libro 2.11.0 declares patra 1.16.0, and agnosai 2.2.0 and
-kavach 3.14.0 declare sigil 3.13.11. libro declares sigil 3.13.12, one patch past the fold, but agnosai
-is listed first, so `cyrius deps` reports that one as not used.
+6.7.18 folds patra 1.16.6 and sigil 3.13.15, and the deps declare exactly those: libro 2.11.3 declares
+both, and agnosai 2.2.3 and kavach 3.14.2 declare that sigil.
 `cyrius deps` refuses to overwrite a folded leaf ("refusing to overwrite stdlib leaf"), so
 `lib/sigil.cyr` and `lib/patra.cyr` are the fold's bytes and `lib/` matches the snapshot with
 **zero** files differing — and the lock's sigil and patra lines now name those same versions. At
