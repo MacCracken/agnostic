@@ -31,7 +31,7 @@ cyrius test tests
 
 # 5. Benchmarks and the coverage gate (its own CI step): functions a suite entered, not named
 cyrius bench
-cyrius coverage --exec --min 90
+cyrius coverage --exec --min 95
 
 # 6. Everything else CI runs
 ./scripts/check-clean.sh && ./scripts/check-symbols.sh

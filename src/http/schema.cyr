@@ -405,7 +405,7 @@ fn _agnostic_sch_keys_a(a, id): i64 {
     if (id == AGNOSTIC_ROUTE_CREW_GET) {
         # An outcome, plus what was known about the crew where it was known: the ledger for
         # a crew this process holds or stored (`agnostic_ledger_describe_a`), the in-flight
-        # row for one a restart interrupted (`agnostic_crew_interrupted_doc_a`).
+        # row for one a restart interrupted (`agnostic_crew_interrupted_doc_with_a`).
         k = _agnostic_sch_words_a(a, k, "crew_id status task_count results usage error? engine_mode?");
         k = _agnostic_sch_words_a(a, k, "name? scope? process? tasks_submitted? submitted_at?");
         return _agnostic_sch_words_a(a, k, "started_at? finished_at? interrupted_at?");

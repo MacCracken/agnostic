@@ -807,10 +807,10 @@ own section below.
 - **2026-11-05 — ADR 0015 reviewed and accepted, and its gaps scheduled.** The design stands. M7's tools
   mirror the routes and need JSON input schemas, and a change to a type or a nested shape does not show
   in the snapshot diff, so field types land on 0.4.x and the rest before the freeze.
-- **2026-11-05 — The coverage gate is execution coverage at 90%**, and a CI step. `cyrius coverage --exec`
+- **2026-11-05 — The coverage gate is execution coverage at 95%**, and a CI step. `cyrius coverage --exec`
   builds each suite instrumented and counts a function once a run enters it: 93% against 70% for
   reference coverage, which counted the route handlers as untested because the suites reach them
-  through the dispatcher. It is a floor: it says nothing of branches, and `main` and real signals are
+  through the dispatcher, and 98% once the 25 functions nothing called were gone. It is a floor: it says nothing of branches, and `main` and real signals are
   the boot probe's and the load test's.
 - **2026-11-05 — Reports have a PDF form in 1.0, on bayan**, replacing the 2026-08-20 decision. bayan
   handles accents and tables. It cannot show text outside WinAnsi, so `✓`, `→` and non-Latin text need

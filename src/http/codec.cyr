@@ -35,20 +35,9 @@ fn agnostic_fields_a(a): i64 {
     return vec_new_a(a);
 }
 
-# A new, empty allow-list from the global allocator. Not for request paths.
-fn agnostic_fields(): i64 {
-    return vec_new();
-}
-
 # Add a permitted field name to an allow-list, returning the list for chaining.
 fn agnostic_field_a(a, allowed, name): i64 {
     vec_push_a(a, allowed, str_from_a(a, name));
-    return allowed;
-}
-
-# Add a permitted field name, global allocator. Not for request paths.
-fn agnostic_field(allowed, name): i64 {
-    vec_push(allowed, str_from(name));
     return allowed;
 }
 
@@ -459,12 +448,6 @@ fn agnostic_json_top_str(body: Str, key, out_at, out_len): i64 {
 fn _agnostic_jv_tail(d, n, i, answer): i64 {
     if (_agnostic_jv_ws(d, n, i) != n) { return 0 - 1; }
     return answer;
-}
-
-# Whether `body` is exactly one well-formed JSON object. 1 or 0. Allocates nothing.
-fn agnostic_json_is_object(body: Str): i64 {
-    if (agnostic_json_kind(body) == AGNOSTIC_JSON_OBJECT) { return 1; }
-    return 0;
 }
 
 # ## Query strings (0.1.9)

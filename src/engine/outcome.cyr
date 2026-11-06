@@ -207,11 +207,6 @@ fn agnostic_outcome_new_a(a, crew_id, status, error, results): i64 {
     return o;
 }
 
-# Build an outcome from the global allocator. Not for request paths.
-fn agnostic_outcome_new(crew_id, status, error, results): i64 {
-    return agnostic_outcome_new_a(default_alloc(), crew_id, status, error, results);
-}
-
 # The engine-assigned crew id. 0 for a null outcome.
 #
 # ⚠ **This is the engine's id, never one Agnostic minted.** §3.2 is the oracle
@@ -352,13 +347,6 @@ fn agnostic_outcome_from_state_a(a, s): i64 {
       0,
       agnosai_crew_state_results(s));
     return _agnostic_outcome_normalise(o);
-}
-
-# Build a normalised outcome from an engine crew state, global allocator.
-#
-# ⚠ Not for request paths — `lib/alloc.cyr` has no `free()`.
-fn agnostic_outcome_from_state(s): i64 {
-    return agnostic_outcome_from_state_a(default_alloc(), s);
 }
 
 # Render an outcome as the bayan JSON value Agnostic puts on the wire.

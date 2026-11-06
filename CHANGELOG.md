@@ -19,15 +19,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Reports gain a PDF form in 1.0, on bayan**, replacing "HTML, CSV and JSON only". bayan handles accents
   and tables, and the roadmap's M8 says what agnostic does about text it cannot show.
 
+### Removed
+
+- **25 functions nothing called**, in `src/` or `tests/`: global-allocator wrappers marked "Not for request
+  paths", one-line wrappers of the form callers use, two checks the doors make inline, four test helpers
+  no test used, and seven accessors. The binary is 184 bytes smaller, from the collector's sweep counter,
+  which only one of those accessors read. Execution coverage goes from 93% to 98%.
+
 ### Fixed
 
 - **`scripts/bench-history.sh` writes a dirty tree into the CSV**, as `<sha>-dirty`. The flag reached only
   `BENCHMARKS.md`, so a dirty run read as clean history, and a staged change did not count as dirty.
 - **`SKILL.md` no longer says it describes "the agnostic 0.1 line".**
+- **Eight comments that named functions nothing called.** `src/engine/plugindata.cyr` said the route
+  checked its body with one of them; it uses `agnostic_json_kind`.
 
 ### Added
 
-- **A coverage gate in CI:** `cyrius coverage --exec --min 90`, at 93% today. `CONTRIBUTING.md` called it
+- **A coverage gate in CI:** `cyrius coverage --exec --min 95`, at 98% today. `CONTRIBUTING.md` called it
   a CI step and there was none, and the gate it named measured references, not execution, and failed
   at 70%.
 - **A filing with bayan**, uncommitted in its `docs/development/issues/`, with a repro: what its PDF writer

@@ -80,11 +80,6 @@ fn _agnostic_grow_for(sandhi_arena): i64 {
     return sandhi_arena;
 }
 
-# 1 once a shutdown signal has been seen.
-fn agnostic_serve_stop_requested(): i64 {
-    return _agnostic_serve_stop;
-}
-
 # Blocks on the signal fd and sets the stop flag. One read is enough — the flag
 # is one-way, and a second signal should not be swallowed by this thread.
 fn _agnostic_serve_signal_thread(arg): i64 {

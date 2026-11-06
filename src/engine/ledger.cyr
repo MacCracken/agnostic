@@ -415,12 +415,6 @@ fn agnostic_ledger_entry_in(crew_id: Str, scope: Str): i64 {
     return e;
 }
 
-# The `Idempotency-Key` an entry was submitted with, or 0.
-fn agnostic_ledger_idem(e): i64 {
-    if (e == 0) { return 0; }
-    return load64(e + AGNOSTIC_LE_IDEM);
-}
-
 # The hex SHA-256 of the body that key came with, or 0.
 fn agnostic_ledger_fprint(e): i64 {
     if (e == 0) { return 0; }
@@ -908,23 +902,19 @@ fn agnostic_ledger_mark_inflight(e): i64 {
 }
 
 # The stored document for a crew a restart interrupted, in `a` (0.1.13, ADR 0013): `row`
-# is the crew as its in-flight row recorded it, `at_ms` when it was declared interrupted.
+# is the crew as its in-flight row recorded it, `at_ms` when it was declared interrupted, and
+# `results` the engine task results of the tasks that had finished, or 0 for none (0.1.15,
+# ADR 0019).
 #
-# An outcome like any other — `crew_id`, status `interrupted`, the results of the tasks
-# that had finished (none here; see `_with_a`), zero `usage`, and an `error` saying the
-# server restarted before the outcome was recorded — plus what was known at submit: `name`,
+# An outcome like any other — `crew_id`, status `interrupted`, those results, zero `usage`, and an
+# `error` saying the server restarted before the outcome was recorded — plus what was known at
+# submit: `name`,
 # `scope`, `engine_mode`, `process`, `tasks_submitted` and `submitted_at` (each only when
 # recorded), and `interrupted_at`. ⚠ **No `started_at` and no `finished_at`**: when it
 # stopped is not known, and a finishing time of "when the server came back" would show the
 # downtime as run time.
 #
 # Returns the encoded document, or 0 on exhaustion.
-fn agnostic_crew_interrupted_doc_a(a, row, at_ms): i64 {
-    return agnostic_crew_interrupted_doc_with_a(a, row, at_ms, 0);
-}
-
-# `agnostic_crew_interrupted_doc_a`, with `results` — the engine task results of the tasks
-# that had finished, or 0 for none (0.1.15, ADR 0019).
 fn agnostic_crew_interrupted_doc_with_a(a, row, at_ms, results): i64 {
     if (row == 0) { return 0; }
     var o = agnostic_outcome_new_a(a, agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID),
@@ -1103,16 +1093,6 @@ fn agnostic_ledger_drain_a(a, e, finals): i64 {
     if (closed == 1) { store64(e + AGNOSTIC_LE_SUB, 0); }
     mutex_unlock(_agnostic_ledger_mutex);
     return taken;
-}
-
-# 1 while the entry's event subscription is open.
-fn agnostic_ledger_sub_open(e): i64 {
-    if (e == 0) { return 0; }
-    mutex_lock(_agnostic_ledger_mutex);
-    var open = 0;
-    if (load64(e + AGNOSTIC_LE_SUB) != 0) { open = 1; }
-    mutex_unlock(_agnostic_ledger_mutex);
-    return open;
 }
 
 # 1 the first time the entry is finished with the engine: terminal, with its subscription closed,

@@ -50,9 +50,6 @@ var AGNOSTIC_COLLECTOR_ARENA_BYTES = 262144;
 # 1 once the thread is running.
 var _agnostic_collector_started = 0;
 
-# How many sweeps have completed. Read by the suites and the bench.
-var _agnostic_collector_sweeps = 0;
-
 # How long one sweep spends writing outcomes. Each is about 11.5 ms of fsync, so a backlog could
 # otherwise hold the next sweep off for seconds while finished crews pile up in the engine.
 var AGNOSTIC_COLLECTOR_WRITE_MS = 150;
@@ -98,11 +95,6 @@ fn agnostic_collector_finish_a(a): i64 {
     return n;
 }
 
-# How many sweeps the collector thread has completed.
-fn agnostic_collector_sweeps(): i64 {
-    return atomic_load(&_agnostic_collector_sweeps);
-}
-
 # The thread body: sweep, rewind, sleep, until `stop_flag` (a pointer to the server's
 # stop word) reads non-zero.
 fn _agnostic_collector_thread(stop_flag): i64 {
@@ -116,7 +108,6 @@ fn _agnostic_collector_thread(stop_flag): i64 {
     while (load64(stop_flag) == 0) {
         agnostic_collector_sweep_a(a);
         reset_via(a);
-        atomic_fetch_add(&_agnostic_collector_sweeps, 1);
         sleep_ms(AGNOSTIC_COLLECTOR_INTERVAL_MS);
     }
     return 0;

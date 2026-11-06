@@ -188,10 +188,11 @@ jobs:
         # reach the route handlers through the dispatcher.
         #
         # ⚠ A floor. A function entered says nothing of its branches, and `main` and real signals
-        # are what `Boot and probe` and `Load test` are for. 90 sits under the 93% measured when
-        # the gate went in, so it catches a slide without failing on a few new functions.
+        # are what `Boot and probe` and `Load test` are for, and the 9 functions no suite enters
+        # are those. 95 sits under the 98% measured when the gate went in, so it catches a slide
+        # without failing on a few new functions.
         timeout-minutes: 15
-        run: cyrius coverage --exec --min 90
+        run: cyrius coverage --exec --min 95
 
       - name: Benchmarks
         # continue-on-error per first-party-standards.md:372 — bench numbers

@@ -213,11 +213,6 @@ fn agnostic_authn_set_mode(m): i64 {
     return _agnostic_authn_mode;
 }
 
-# The current mode.
-fn agnostic_authn_mode(): i64 {
-    return _agnostic_authn_mode;
-}
-
 # Whether identity is enforced right now.
 fn agnostic_authn_required(): i64 {
     if (_agnostic_authn_mode == AGNOSTIC_AUTH_REQUIRED) { return 1; }

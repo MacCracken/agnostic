@@ -17,7 +17,7 @@
 #
 # ## ⚠ The submit ordering is load-bearing in two places
 #
-# `agnostic_crew_submit` does: **build spec (joined to the request's trace) → subscribe →
+# `agnostic_crew_submit_owned` does: **build spec (joined to the request's trace) → subscribe →
 # submit → record → mark in flight.** None of the middle three may move:
 #
 #   * **Subscribe before submit.** `agnosai_event_bus_subscribe` creates the
@@ -50,7 +50,7 @@
 # in `AGNOSTIC_OC_CREW_ID` and the ledger key. There is no second id to confuse
 # it with, so the substitution that defect turns on cannot be written.
 
-# What `agnostic_crew_submit` reports.
+# What `agnostic_crew_submit_owned` reports.
 enum AgnosticSubmitResult {
     AGNOSTIC_SUBMIT_OK            = 0;
     AGNOSTIC_SUBMIT_NO_ENGINE     = 1;
@@ -275,11 +275,6 @@ fn agnostic_engine_orchestrator(): i64 {
     return _agnostic_orchestrator;
 }
 
-# The event bus, or 0.
-fn agnostic_engine_bus(): i64 {
-    return _agnostic_event_bus;
-}
-
 # The readiness check registered for the engine: 1 when it can accept crews.
 #
 # ⚠ **Liveness is not readiness.** This answers only "is the orchestrator
@@ -309,7 +304,9 @@ fn agnostic_engine_crew_count(): i64 {
     return agnosai_orchestrator_crew_count(_agnostic_orchestrator);
 }
 
-# Submit a decoded crew request for asynchronous execution.
+# Submit a decoded crew request for asynchronous execution, for a crew that belongs to tenant
+# scope `scope`, submitted with `Idempotency-Key` `idem` over a body whose hex SHA-256 is `fprint`
+# (both 0 without a key) — 0.1.9. The ledger entry carries all three from the moment it exists.
 #
 # Returns an `AGNOSTIC_SUBMIT_*` code and stores the ledger entry through
 # `out_entry` whenever one was created — including on `START_FAILED`, so the
@@ -317,13 +314,6 @@ fn agnostic_engine_crew_count(): i64 {
 # started.
 #
 # See the module header for why the four steps are in this order.
-fn agnostic_crew_submit(r, out_entry): i64 {
-    return agnostic_crew_submit_owned(r, out_entry, AGNOSTIC_SCOPE_DEFAULT, 0, 0);
-}
-
-# `agnostic_crew_submit` for a crew that belongs to tenant scope `scope`, submitted with
-# `Idempotency-Key` `idem` over a body whose hex SHA-256 is `fprint` (both 0 without a
-# key) — 0.1.9. The ledger entry carries all three from the moment it exists.
 fn agnostic_crew_submit_owned(r, out_entry, scope: Str, idem: Str, fprint: Str): i64 {
     if (out_entry != 0) { store64(out_entry, 0); }
     if (_agnostic_orchestrator == 0) { return AGNOSTIC_SUBMIT_NO_ENGINE; }

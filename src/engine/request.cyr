@@ -133,23 +133,15 @@ fn agnostic_complexity_from_wire(s: Str): i64 {
     return 0 - 1;
 }
 
-# 1 when definition `d`'s own `complexity` is one the selector tells apart — `low`, `medium` or
-# `high` — or is unset; 0 for anything else (0.1.15, ADR 0017).
+# The refusal for an agent whose `complexity` is not one of the three, as `index`'s agent
+# (0.1.15, ADR 0017).
 #
-# ⚠ **Checked at the door, not in the decoder.** A task's hint has been refused outside the three
-# since 0.1.14, but an agent's `complexity` stayed free text, which the engine reads as medium
-# without a word. The doors — a crew's `agents` and a definition's `POST` and `PUT` — refuse
-# anything else now. The decoder still accepts it, because stored definitions are decoded by the
-# same path: one written before 0.1.15 with another value is read as it is, and must be given one
-# of the three before it can be saved again or sent in a crew.
-fn agnostic_agent_def_complexity_ok(d): i64 {
-    var c = agnosai_agent_complexity(agnostic_agent_def_engine(d));
-    if (c == 0) { return 1; }
-    if (agnostic_complexity_from_wire(c) < 0) { return 0; }
-    return 1;
-}
-
-# The refusal for an agent whose `complexity` is not one of the three, as `index`'s agent.
+# ⚠ **Checked at the door, not in the decoder** (`agnostic_agent_def_check_a`). A task's hint has
+# been refused outside the three since 0.1.14, but an agent's `complexity` stayed free text, which
+# the engine reads as medium without a word. The doors — a crew's `agents` and a definition's `POST`
+# and `PUT` — refuse anything else now. The decoder still accepts it, because stored definitions are
+# decoded by the same path: one written before 0.1.15 with another value is read as it is, and must
+# be given one of the three before it can be saved again or sent in a crew.
 fn agnostic_agent_def_complexity_reject_a(a, out, index): i64 {
     return _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
       str_from_a(a, "'complexity' must be one of low, medium, high"));
@@ -494,15 +486,6 @@ fn _agnostic_task_req_hints_rendered_len_a(a, t): i64 {
     return str_len(s);
 }
 
-# Decode one task object.
-#
-# Global allocator for the same reason `agnostic_agent_def_decode_a` uses it:
-# the description and expected output are handed to engine tasks that outlive
-# the request.
-fn agnostic_task_req_decode_a(a, v, index, count, out): i64 {
-    return agnostic_task_req_decode_in_a(a, default_alloc(), v, index, count, out);
-}
-
 # A copy of task `t` on the global heap, whatever `t` was decoded into, with every Str and vec
 # it holds copied too, so nothing of it points into the request's arena (0.1.17). 0 if an
 # allocation failed. What a door builds an accepted crew's tasks with: decoding the body a
@@ -553,7 +536,7 @@ fn _agnostic_task_req_oom_a(a, out, index): i64 {
     return 0;
 }
 
-# `agnostic_task_req_decode_a`, building the task in `al` (0.1.17). A door decodes each task
+# Decode one task object, building it in `al` (0.1.17). A door decodes each task
 # into the request's arena first, so every refusal — this decoder's and the crew's cycle
 # check — is made before anything reaches the global heap; only a body that passed is decoded
 # again into the global heap, which the engine's tasks outlive the request in. `a` holds the

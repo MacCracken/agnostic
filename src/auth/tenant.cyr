@@ -223,15 +223,6 @@ fn _agnostic_tenants_count_locked(): i64 {
     return n;
 }
 
-# Drop every tenant. For tests.
-fn agnostic_tenants_reset(): i64 {
-    agnostic_store_lock();
-    var db = agnostic_store_db();
-    if (db != 0) { patra_exec(db, "DELETE FROM agnostic_tenants"); }
-    agnostic_store_unlock();
-    return 0;
-}
-
 # --- key prefixing --------------------------------------------------------
 
 # `"<tenant>:<key>"` in arena `a`, or 0 when the tenant key is not legal.

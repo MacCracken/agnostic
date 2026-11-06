@@ -82,11 +82,6 @@ fn agnostic_route_health_a(a): i64 {
     return agnostic_response_json_a(a, HTTP_OK, obj);
 }
 
-# GET /health from the global allocator. Not for request paths.
-fn agnostic_route_health(): i64 {
-    return agnostic_route_health_a(default_alloc());
-}
-
 # GET /ready — readiness. Runs every registered check.
 #
 # Answers 200 `{"status":"ready", ...}` when all pass, or 503
@@ -131,9 +126,4 @@ fn agnostic_route_ready_a(a): i64 {
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_VERSION, ver);
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CHECKS, checks);
     return agnostic_response_json_a(a, status, obj);
-}
-
-# GET /ready from the global allocator. Not for request paths.
-fn agnostic_route_ready(): i64 {
-    return agnostic_route_ready_a(default_alloc());
 }

@@ -12,14 +12,13 @@
 # they existed. Every constructor leaves `headers` 0 unless it takes them; since 0.1.15
 # `agnostic_response_set_headers` adds them to any response — a 405's `Allow` is JSON.
 #
-# ## Every constructor has an `_a` twin
+# ## Every constructor takes an allocator
 #
-# The bare forms allocate from the process-wide bump allocator, which has no
-# `free()`. Anything on a request path must use the `_a` form against the
-# per-request arena or the server leaks for its whole lifetime, in proportion to
-# requests served.
+# The process-wide bump allocator has no `free()`. Anything on a request path must
+# build against the per-request arena or the server leaks for its whole lifetime, in
+# proportion to requests served.
 #
-# ⚠ Including the error arms. It is tempting to let `agnostic_response_error`
+# ⚠ Including the error arms. It is tempting to let an error response
 # skip the arena "because errors are rare" — but the 404 arm is what an
 # unauthenticated scanner hits hardest, so it is the single least affordable
 # leak in the process.
@@ -49,11 +48,6 @@ fn agnostic_response_json_a(a, status, body): i64 {
     return r;
 }
 
-# A JSON response from the global allocator. Not for request paths.
-fn agnostic_response_json(status, body): i64 {
-    return agnostic_response_json_a(default_alloc(), status, body);
-}
-
 # A plain-text response, allocated in `a`. Returns 0 when the arena is exhausted.
 fn agnostic_response_text_a(a, status, body: Str): i64 {
     var r = alloc_via(a, AGNOSTIC_RESP_SIZE);
@@ -81,11 +75,6 @@ fn agnostic_response_bytes_a(a, status, ctype, body: Str, headers): i64 {
     store64(r + AGNOSTIC_RESP_CTYPE, ctype);
     store64(r + AGNOSTIC_RESP_HEADERS, headers);
     return r;
-}
-
-# A plain-text response from the global allocator. Not for request paths.
-fn agnostic_response_text(status, body: Str): i64 {
-    return agnostic_response_text_a(default_alloc(), status, body);
 }
 
 # An error response shaped `{"error": "<message>"}`, allocated in `a`.
@@ -219,11 +208,6 @@ fn agnostic_response_error_code_a(a, ec, message: Str): i64 {
     if (cv == 0) { return 0; }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CODE, cv);
     return agnostic_response_json_a(a, load64(row + AGNOSTIC_ECROW_STATUS), obj);
-}
-
-# An error response from the global allocator. Not for request paths.
-fn agnostic_response_error(status, message: Str): i64 {
-    return agnostic_response_error_a(default_alloc(), status, message);
 }
 
 # The HTTP status of a response, or 500 for a null response.

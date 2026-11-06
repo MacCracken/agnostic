@@ -157,12 +157,3 @@ fn _agnostic_settings_count_locked(): i64 {
     patra_result_free(rs);
     return n;
 }
-
-# Drop every setting. For tests.
-fn agnostic_settings_reset(): i64 {
-    agnostic_store_lock();
-    var db = agnostic_store_db();
-    if (db != 0) { patra_exec(db, "DELETE FROM agnostic_settings"); }
-    agnostic_store_unlock();
-    return 0;
-}

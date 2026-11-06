@@ -21,7 +21,7 @@
 #
 # The bytes a client PUTs are the bytes it GETs back — no re-encoding, so a plugin's
 # formatting and key order survive. The route checks the body is one well-formed JSON
-# object first (`agnostic_json_is_object`, which allocates nothing). What is inside is
+# object first (`agnostic_json_kind`, which allocates nothing). What is inside is
 # the plugin's own business: the server cannot know a plugin's schema, and pretending
 # to would be worse than not. A plugin validates what it reads.
 #

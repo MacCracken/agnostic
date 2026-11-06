@@ -374,9 +374,6 @@ fn agnostic_plugin_find(id: Str): i64 {
     return 0;
 }
 
-# The plugin's id as a `Str`.
-fn agnostic_plugin_id(p): i64 { return load64(p + AGNOSTIC_PLUGIN_ID); }
-
 # The plugin's display name as a `Str`.
 fn agnostic_plugin_name(p): i64 { return load64(p + AGNOSTIC_PLUGIN_NAME); }
 
