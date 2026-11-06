@@ -385,6 +385,72 @@ fn test_one_address_has_exactly_one_user() {
     assert_eq(agnostic_users_count(), 1, "and exactly one row exists");
 }
 
+# Every worker demotes a super administrator of its own. The check that there is another and the
+# write are one critical section, so the last of them is refused, however they interleave.
+var _t_supers = 0;
+var _t_refused = 0;
+
+fn _t_demote_worker(t): i64 {
+    _t_wait_for_go();
+    var rc = agnostic_users_set_role(vec_get(_t_supers, t), AGNOSTIC_ROLE_VIEWER);
+    if (rc == AGNOSTIC_USER_LAST_SUPER) { atomic_fetch_add(&_t_refused, 1); }
+    return 0;
+}
+
+fn _t_delete_worker(t): i64 {
+    _t_wait_for_go();
+    var rc = agnostic_users_delete(vec_get(_t_supers, t));
+    if (rc == AGNOSTIC_USER_LAST_SUPER) { atomic_fetch_add(&_t_refused, 1); }
+    return 0;
+}
+
+# `_T_THREADS` super administrators, inserted directly: an Argon2 each would only slow the suite.
+fn _t_many_supers(a) {
+    _t_supers = vec_new();
+    var rec = agnostic_auth_decoy_record_a(a);
+    var i = 0;
+    while (i < _T_THREADS) {
+        var email = agnostic_str_lower_a(a, _t_name("root", i, 0));
+        var uid = agnostic_users_uid_a(a, email);
+        agnostic_store_lock();
+        _agnostic_users_insert_locked_a(a, uid, email, rec, AGNOSTIC_ROLE_SUPER_ADMIN, str_from(""));
+        agnostic_store_unlock();
+        vec_push(_t_supers, uid);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _t_supers_left() {
+    var left = 0;
+    var i = 0;
+    while (i < _T_THREADS) {
+        if (agnostic_users_role(vec_get(_t_supers, i)) == AGNOSTIC_ROLE_SUPER_ADMIN) { left = left + 1; }
+        i = i + 1;
+    }
+    return left;
+}
+
+fn test_the_last_super_survives_a_race() {
+    test_group("store/last-super-race");
+
+    _t_open();
+    var a = arena_allocator(1048576);
+    _t_many_supers(a);
+    atomic_store(&_t_refused, 0);
+    _t_run_n(&_t_demote_worker, _T_THREADS);
+    assert_eq(_t_supers_left(), 1, "racing demotions leave exactly one super administrator");
+    assert_eq(atomic_load(&_t_refused), 1, "and exactly one of them is refused");
+
+    _t_open();
+    _t_many_supers(a);
+    atomic_store(&_t_refused, 0);
+    _t_run_n(&_t_delete_worker, _T_THREADS);
+    assert_eq(_t_supers_left(), 1, "racing deletes leave exactly one too");
+    assert_eq(atomic_load(&_t_refused), 1, "and refuse exactly one");
+    assert_eq(agnostic_users_count(), 1, "with one row left");
+}
+
 # --- 3. the audit chain ----------------------------------------------------
 
 # An append reads the chain head, links the new entry to it, then persists it.
@@ -432,6 +498,7 @@ fn main() {
     test_mixed_operations_on_the_shared_handle();
     test_one_key_has_exactly_one_winner();
     test_one_address_has_exactly_one_user();
+    test_the_last_super_survives_a_race();
     test_the_audit_chain_survives_concurrent_appends();
     agnostic_store_close();
     _tt_unlink_store(_T_CDB);

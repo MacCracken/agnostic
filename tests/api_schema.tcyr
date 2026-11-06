@@ -372,7 +372,7 @@ fn test_routes() {
     assert_eq(bayan_json_v_int(_t_get(doc, "schema")), 1, "it is format 1");
     var routes = _t_get(doc, "routes");
     var n = bayan_json_v_arr_len(routes);
-    assert_eq(n, 27, "27 routes: one per method each of the router's 21 rows answers");
+    assert_eq(n, 44, "44 routes: one per method each of the router's 32 rows answers");
 
     var shape = 0;
     var unresolved = 0;
@@ -435,10 +435,10 @@ fn test_routes() {
     assert_eq(named, 6, "and they are those six");
     assert_eq(bayan_json_v_bool(_t_get(_t_route(routes, "POST", "/api/v1/auth/login"), "auth")), 0,
       "login is public: it is how a caller obtains a credential");
-    assert_eq(_t_is(_t_route(routes, "GET", "/api/v1/audit"), "min_role", "admin"), 1,
-      "the audit trail is admin: it records every user's actions");
-    assert_eq(_t_is(_t_route(routes, "PUT", "/api/v1/plugins/:id"), "min_role", "admin"), 1,
-      "switching a plugin is admin: it changes every user's view");
+    assert_eq(_t_is(_t_route(routes, "GET", "/api/v1/audit"), "min_role", "super_admin"), 1,
+      "the audit trail is super_admin: it records every tenant's actions");
+    assert_eq(_t_is(_t_route(routes, "PUT", "/api/v1/plugins/:id"), "min_role", "super_admin"), 1,
+      "switching a plugin is super_admin: it changes every tenant's view");
     assert_eq(_t_is(_t_route(routes, "POST", "/api/v1/crews"), "min_role", "operator"), 1,
       "submitting a crew is operator");
     assert_eq(_t_is(_t_route(routes, "GET", "/api/v1/crews"), "min_role", "viewer"), 1,
@@ -607,6 +607,18 @@ fn test_bodies() {
       "login: the login route's");
     assert_eq(_t_same_list(_t_get(_t_get(b, "plugin_switch"), "fields"), agnostic_plugin_fields_a(a)), 1,
       "plugin_switch: the switch route's");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "password_change"), "fields"), agnostic_password_change_fields_a(a)), 1,
+      "password_change: its route's");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "api_key"), "fields"), agnostic_apikey_fields_a(a)), 1,
+      "api_key: its route's");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "user"), "fields"), agnostic_user_create_fields_a(a)), 1,
+      "user: its route's");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "user_role"), "fields"), agnostic_user_role_fields_a(a)), 1,
+      "user_role: its route's");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "user_password"), "fields"), agnostic_user_password_fields_a(a)), 1,
+      "user_password: its route's");
+    assert_eq(_t_same_list(_t_get(_t_get(b, "tenant"), "fields"), agnostic_tenant_fields_a(a)), 1,
+      "tenant: its route's");
 
     var refused = _t_get(_t_get(b, "agent_definition"), "refused");
     assert_eq(bayan_json_v_arr_len(refused), 12, "twelve refused agent fields");
@@ -909,6 +921,14 @@ fn test_cli() {
     assert_eq(agnostic_cli_command_of(2, "api", 0), AGNOSTIC_CLI_USAGE_ERROR, "api alone is a usage error");
     assert_eq(agnostic_cli_command_of(3, "api", "schemas"), AGNOSTIC_CLI_USAGE_ERROR, "so is a misspelling");
     assert_eq(agnostic_cli_command_of(4, "api", "schema"), AGNOSTIC_CLI_USAGE_ERROR, "and an extra argument");
+    assert_eq(agnostic_cli_command_of(4, "admin", "reset-password"), AGNOSTIC_CLI_RESET_PASSWORD,
+      "admin reset-password, with its email");
+    assert_eq(agnostic_cli_command_of(3, "admin", "reset-password"), AGNOSTIC_CLI_USAGE_ERROR,
+      "without one is a usage error");
+    assert_eq(agnostic_cli_command_of(5, "admin", "reset-password"), AGNOSTIC_CLI_USAGE_ERROR,
+      "and so is a password on the command line, which `ps` would show");
+    assert_eq(agnostic_cli_command_of(4, "admin", "delete-user"), AGNOSTIC_CLI_USAGE_ERROR,
+      "and it is the only admin command");
     assert_eq(agnostic_cli_command_of(2, "help", 0), AGNOSTIC_CLI_HELP, "help");
     assert_eq(agnostic_cli_command_of(2, "--help", 0), AGNOSTIC_CLI_HELP, "--help");
     assert_eq(agnostic_cli_command_of(2, "-h", 0), AGNOSTIC_CLI_HELP, "-h");
@@ -1053,7 +1073,7 @@ fn test_probes() {
         }
         i = i + 1;
     }
-    assert_eq(takers, 5, "five routes take an allow-listed body");
+    assert_eq(takers, 11, "eleven routes take an allow-listed body");
     assert_eq(probe_bad, 0, "each refuses an unknown key as unknown (422)");
     assert_eq(field_bad, 0, "and accepts every field its declared body lists as known");
 
@@ -1286,6 +1306,7 @@ var _T_CREW = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester
 var _T_CREW_PAR = "{\"name\":\"fan out\",\"process\":\"parallel\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\"}]}"; #skip-lint
 var _T_DEF = "{\"key\":\"schema-sweep\",\"role\":\"reviewer\",\"goal\":\"read the diff\"}";
 var _T_LOGIN = "{\"email\":\"schema-sweep@agnostic.test\",\"password\":\"the sweep's bootstrap password\"}";
+var _T_PASSWORD = "{\"current_password\":\"the sweep's bootstrap password\",\"new_password\":\"a new sweep password\"}";
 
 # A crew the last process accepted and never finished, seeded before mount so mount's start-up
 # sweep interrupts it (ADR 0013) — the one source of a crew's `interrupted_at`.
@@ -1682,6 +1703,42 @@ fn test_responses() {
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/:key", dpath, "", cx);
     _t_go(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/:key", dpath, _T_DEF, cx);
     _t_go(a, AGNOSTIC_METHOD_DELETE, "/api/v1/agents/definitions/:key", dpath, "", cx);
+
+    # Provisioning (0.3.0): yourself, then a tenant and a user in it, then undoing both.
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "/api/v1/auth/me", "", cx);
+    var made_key = _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/auth/api-keys", "/api/v1/auth/api-keys",
+      "{\"label\":\"sweep\"}", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/api-keys", "/api/v1/auth/api-keys", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_DELETE, "/api/v1/auth/api-keys/:id",
+      _t_body("/api/v1/auth/api-keys/", _t_s(agnostic_response_body(made_key), "id"), ""), "", cx);
+
+    _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/tenants", "/api/v1/tenants",
+      "{\"key\":\"sweep\",\"name\":\"Sweep\"}", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/tenants", "/api/v1/tenants", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/tenants/:key", "/api/v1/tenants/sweep", "", cx);
+
+    var made_user = _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/users", "/api/v1/users",
+      "{\"email\":\"u@agnostic.test\",\"password\":\"sweep-password-1\",\"role\":\"viewer\",\"tenant\":\"sweep\"}", cx);
+    var uid_s = _t_s(_t_get(agnostic_response_body(made_user), "user"), "id");
+    var upath = _t_body("/api/v1/users/", uid_s, "");
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/users", "/api/v1/users", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/users/:id", upath, "", cx);
+    _t_go(a, AGNOSTIC_METHOD_PUT, "/api/v1/users/:id", upath, "{\"role\":\"operator\"}", cx);
+    _t_go(a, AGNOSTIC_METHOD_PUT, "/api/v1/users/:id/password", _t_body("/api/v1/users/", uid_s, "/password"),
+      "{\"password\":\"sweep-password-2\"}", cx);
+    var ukey = agnostic_apikey_issue_a(a, agnostic_id_parse(uid_s), 0);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/users/:id/api-keys", _t_body("/api/v1/users/", uid_s, "/api-keys"), "", cx);
+    _t_go(a, AGNOSTIC_METHOD_DELETE, "/api/v1/users/:id/api-keys/:key",
+      _t_body(_t_body("/api/v1/users/", uid_s, "/api-keys/"), agnostic_id_hex_a(a, agnostic_apikey_id(ukey)),
+        ""), "", cx);
+    _t_go(a, AGNOSTIC_METHOD_DELETE, "/api/v1/users/:id", upath, "", cx);
+    _t_go(a, AGNOSTIC_METHOD_DELETE, "/api/v1/tenants/:key", "/api/v1/tenants/sweep", "", cx);
+
+    # Last, because it ends the token every route above used, and answers the one the rest use.
+    var changed = _t_go(a, AGNOSTIC_METHOD_PUT, "/api/v1/auth/password", "/api/v1/auth/password", _T_PASSWORD, cx);
+    token = _t_s(agnostic_response_body(changed), "token");
+    assert_neq(token, 0, "a password change answers a new token");
+    cx = _t_ctx_as(a, token, 0, 0);
 
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit", "/api/v1/audit", "", cx);
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "/api/v1/audit/entries", "", cx);

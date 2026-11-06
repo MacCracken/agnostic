@@ -142,7 +142,7 @@ server enforces it, and the shell reads it from `GET /api/v1/plugins` (`catalogu
 | `definitions:write` | `POST /api/v1/agents/definitions` · `PUT`, `DELETE /api/v1/agents/definitions/<key>` |
 | `crews:read` | `GET /api/v1/crews` · `GET /api/v1/crews/<uuid>` · `…/events` · `…/plan` |
 | `crews:write` | `POST /api/v1/crews` · `POST /api/v1/crews/<uuid>/cancel` |
-| `audit:read` | `GET /api/v1/audit` · `GET /api/v1/audit/entries` — ADMIN routes: the user must be an administrator too |
+| `audit:read` | `GET /api/v1/audit` · `GET /api/v1/audit/entries` — SUPER routes: the user must be a super administrator too |
 
 Anything else is answered **403 by the shell** without reaching the network; a malformed path (`..`,
 `//`, characters outside `[A-Za-z0-9/._-]`, or a query string outside `[A-Za-z0-9._~=&%-]`) or a body
@@ -287,5 +287,5 @@ Whether the hash-linked trail **verified when the server started**, how many ent
 many appends **failed** — the one gap verification cannot see. Below, its newest entries (the server
 keeps the newest 1024 for reading — [ADR 0011](../adr/0011-audit-entries-are-read-from-a-bounded-copy.md)),
 filterable by severity and text, with each entry's hash and whether it names the entry before it. The
-routes are ADMIN: the trail records every user's actions, so other roles are told it is for
-administrators.
+routes are SUPER: the trail records every tenant's actions, so other roles are told it is for
+super administrators.

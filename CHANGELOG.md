@@ -4,6 +4,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-06
+
+**A deployment can have more than one user.** Until now nothing could add anyone after the bootstrap
+account, issue a key or change a password, and a restart logged everyone out. Provisioning is 17 routes
+on a running server plus one recovery command, a password change ends older tokens, and agent
+definitions and the deployment-wide routes are scoped the way crews always were
+([ADR 0023](docs/adr/0023-provisioning-is-routes-and-one-recovery-command.md)). This closes audit S3, S4
+and S12b, and parity gaps G1 and G2.
+
+### Breaking
+
+- **The audit trail and the plugin switch need `super_admin`.** An `admin` now runs a tenant, not the
+  deployment. Only the bootstrap account is `super_admin` on an existing deployment, and it was the only
+  account there could be, so nothing needs migrating. The WebGUI says so where it refuses.
+- **Agent definitions belong to the caller's tenant.** A row from before 0.3.0 stays in the default scope,
+  `_`, with no migration.
+- **A route nobody classified needs `super_admin`**, up from `admin`.
+
+### Added
+
+- **Provisioning routes.** `GET /api/v1/auth/me`, `PUT /api/v1/auth/password`, and listing, minting and
+  revoking your own API keys. `/api/v1/users` for an admin, in their tenant: list, create, read, change
+  a role, delete, set a password, and list and revoke a user's keys. `/api/v1/tenants` for a super
+  administrator. Another tenant's user answers 404. Nobody grants a role above their own or changes a user
+  above their own, the last super administrator stays, and an admin's route does not set their own
+  password. See [Users and tenants](docs/guides/users-and-tenants.md).
+- **`agnostic admin reset-password <email>`**, for a locked-out deployment. It refuses while a server runs,
+  reads the password from stdin and records the reset in the audit trail.
+- **`AGNOSTIC_JWT_SECRET`**, at least 32 bytes, so tokens survive a restart. A short one refuses to start.
+- **A password change ends older tokens**, through a `tokens_from` column added on start. A store from before
+  0.3.0 gains it with every token still good. API keys are separate, and a key cannot mint a key.
+- **`tests/identity.tcyr`**, 148 assertions, and `scripts/boot-probe.sh` now covers a restart on the same and
+  on another secret, and the recovery command beside a running server and with it stopped.
+- **Benchmark rows:** `users_list_1k` and `user_get`.
+
 ### Changed
 
 - **The parity review's four forms are settled** (roadmap, *Settled decisions*). Provisioning is routes

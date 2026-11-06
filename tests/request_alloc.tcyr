@@ -120,6 +120,17 @@ fn test_authenticated_requests_keep_nothing() {
       "⭐ an authenticated GET keeps nothing");
     assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/presets", "", 1, 0), 0, "nor does reading the presets");
     assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/audit", "", 1, 0), 0, "nor the audit verdict");
+    # The identity routes (0.3.0): reads and refusals, which anyone holding a token can repeat.
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", 2, 0), 0, "nor asking who you are");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/auth/api-keys", "", 2, 0), 0, "nor listing your keys");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/users", "", 1, 0), 0, "nor listing a tenant's users");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/users/0000000000000001", "", 1, 0), 0,
+      "nor a user who is not there");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_PUT, "/api/v1/users/0000000000000001", "{\"role\":\"viewer\"}", 1, 0), 0,
+      "nor changing one");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/users", "{\"email\":\"x\",\"password\":\"s\",\"role\":\"viewer\"}",
+        1, 0), 0, "nor a refused user");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/users", "", 2, 0), 0, "nor a viewer's 403");
 }
 
 # What one audit record keeps on the global heap that is not agnostic's: libro's `chain_append`
@@ -209,7 +220,7 @@ fn test_refused_bodies_keep_nothing() {
       "⭐ a definition refused for its complexity keeps nothing (392 B)");
     var taken = "{\"key\":\"taken\",\"role\":\"r\",\"goal\":\"g\"}";
     _t_cost_once(AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", taken, 1, 0);
-    assert_neq(agnostic_definitions_get(str_from("taken")), 0, "precondition: `taken` is stored");
+    assert_neq(agnostic_definitions_get(str_from("acme:taken")), 0, "precondition: `taken` is stored");
     assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", taken, 1, 0), 0,
       "⭐ nor does a 409 for a taken key, refused before it is built");
     assert_eq(_t_cost(AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/absent",

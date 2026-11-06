@@ -111,7 +111,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
   <section class="view" id="view-overview" hidden>
     <h1>Overview</h1>
     <p class="lede">This server's state, and the views it can show. Views are plugins built into
-      the binary; an administrator switches them on in Settings.</p>
+      the binary; a super administrator switches them on in Settings.</p>
     <div class="cards">
       <div class="card">
         <h2>Server</h2>
@@ -127,7 +127,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
   <section class="view" id="view-settings" hidden>
     <h1>Settings</h1>
     <p class="lede">Settings apply to the whole deployment and are kept in its database, so they
-      survive a restart. Changing one needs the administrator role and is recorded in the audit trail.</p>
+      survive a restart. Changing one needs the super administrator role and is recorded in the audit trail.</p>
     <div class="card">
       <h2>Plugins</h2>
       <div id="plugin-rows"></div>
@@ -580,7 +580,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
         rows.append(el('p', 'muted', 'Could not list plugins: ' + state.pluginsError));
       } else {
         const role = store.get(ROLE_KEY);
-        const mayChange = state.auth === 'off' || role === 'admin' || role === 'super_admin';
+        const mayChange = state.auth === 'off' || role === 'super_admin';
         for (const p of state.plugins || []) {
           const row = el('div', 'plugin-row');
           const title = el('div', 'title');
@@ -591,7 +591,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
           sw.setAttribute('role', 'switch');
           sw.setAttribute('aria-checked', p.enabled ? 'true' : 'false');
           sw.setAttribute('aria-label', (p.enabled ? 'Turn off ' : 'Turn on ') + p.name);
-          if (!mayChange) { sw.disabled = true; sw.title = 'Changing a plugin needs the administrator role'; }
+          if (!mayChange) { sw.disabled = true; sw.title = 'Changing a plugin needs the super administrator role'; }
           sw.addEventListener('click', () => togglePlugin(p, sw));
           row.append(title, sw, el('div', 'desc', p.description));
           const perms = (p.permissions || []).map(permissionWords);
@@ -709,9 +709,9 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
         Object.assign(p, r.data.plugin);
         toast(p.name + (p.enabled ? ' is on.' : ' is off.'));
       } else if (r.status === 401) {
-        openSignin('Sign in as an administrator to change plugins.');
+        openSignin('Sign in as a super administrator to change plugins.');
       } else if (r.status === 403) {
-        toast('Changing a plugin needs the administrator role.', true);
+        toast('Changing a plugin needs the super administrator role.', true);
       } else {
         toast('Could not change ' + p.name + ': ' + errText(r), true);
       }

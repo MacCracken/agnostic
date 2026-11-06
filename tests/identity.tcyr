@@ -1,0 +1,628 @@
+# agnostic/routes/identity — provisioning, through the real dispatcher (0.3.0, ADR 0023).
+#
+# What this suite holds, past what `api/responses` drives:
+#
+#   1. Three tiers: yourself, a tenant's users, the deployment's tenants.
+#   2. Another tenant's user does not exist: every route answers 404, as ADR 0008 has it for crews.
+#   3. Nobody grants a role above their own, or touches a user above their own.
+#   4. The last super administrator stays.
+#   5. A password change ends older tokens, and an API key is a separate thing to revoke.
+#   6. No password and no raw key reaches the trail, the store or a later answer.
+include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
+
+var _T_DB = _tt_tmp_path("identity-suite");
+var _T_AUDIT = _tt_tmp_path("identity-suite-audit");
+var _T_MAXB = 1048576;
+var _T_PW = "correct-horse-battery";
+
+fn _t_open() {
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    _tt_unlink_store(_T_AUDIT);
+    patra_init();
+    agnostic_store_open(str_from(_T_DB));
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_audit_open(str_from(_T_AUDIT));
+    agnostic_rl_reset();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    return 0;
+}
+
+# A context for a bearer token, a raw `Authorization` value, or nobody.
+fn _t_ctx_hdr(a, scheme, cred: Str) {
+    var n = strlen(scheme);
+    var h = alloc_via(a, n + 1 + str_len(cred));
+    memcpy(h, scheme, n);
+    store8(h + n, 32);
+    memcpy(h + n + 1, str_data(cred), str_len(cred));
+    return agnostic_reqctx_new_a(a, str_new_a(a, h, n + 1 + str_len(cred)), 0);
+}
+
+fn _t_as(a, uid) {
+    var role = agnostic_users_role(uid);
+    return _t_ctx_hdr(a, "Bearer", agnostic_jwt_issue_a(a, uid, role, 0, 600));
+}
+
+fn _t_req(a, method, path: Str, body, ctx) {
+    return agnostic_route_dispatch_a(a, method, path, str_from(body), _T_MAXB, ctx);
+}
+
+fn _t_st(a, method, path, body, ctx) {
+    return agnostic_response_status(_t_req(a, method, str_from(path), body, ctx));
+}
+
+fn _t_url(prefix, id: Str, tail) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add(sb, id);
+    str_builder_add_cstr(sb, tail);
+    return str_builder_build(sb);
+}
+
+# The status of `method` on `/api/v1/users/<uid><tail>`.
+fn _t_on(a, method, uid, tail, body, ctx) {
+    return agnostic_response_status(_t_req(a, method,
+        _t_url("/api/v1/users/", agnostic_id_hex_a(a, uid), tail), body, ctx));
+}
+
+fn _t_user(a, email, role, tenant) {
+    var t = 0;
+    if (tenant != 0) { t = str_from(tenant); }
+    return agnostic_users_create_a(a, str_from(email), str_from(_T_PW), role, t);
+}
+
+fn _t_field(a, r, name) {
+    return agnostic_req_str(agnostic_response_body(r), str_from_a(a, name));
+}
+
+fn _t_total(r) {
+    return bayan_json_v_int(bayan_json_v_obj_get_by_cstr(agnostic_response_body(r), "total"));
+}
+
+# The JSON body `{"<k>":"<v>"}`, for bodies a value is spliced into.
+fn _t_kv(k, v: Str) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"");
+    str_builder_add_cstr(sb, k);
+    str_builder_add_cstr(sb, "\":\"");
+    str_builder_add(sb, v);
+    str_builder_add_cstr(sb, "\"}");
+    return str_data(str_builder_build(sb));
+}
+
+# `<prefix><id>/api-keys/`, as a C string: the prefix `_t_url` takes for one key's path.
+fn _t_cat(a, prefix, id: Str) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add(sb, id);
+    str_builder_add_cstr(sb, "/api-keys/");
+    return str_data(str_builder_build(sb));
+}
+
+# Whether the `n` bytes at `needle` occur in the `size` bytes at `hay`. 1 or 0.
+fn _t_contains(hay, size, needle, n) {
+    var i = 0;
+    while (i + n <= size) {
+        if (memeq(hay + i, needle, n) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Whether file `path` holds the `n` bytes at `needle`. 1 or 0.
+fn _t_file_has(path, needle, n) {
+    var fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) { return 0; }
+    var size = xlseek(fd, 0, 2);
+    var buf = alloc(size + 1);
+    xlseek(fd, 0, 0);
+    sys_read(fd, buf, size);
+    sys_close(fd);
+    return _t_contains(buf, size, needle, n);
+}
+
+fn test_tiers() {
+    test_group("identity/tiers");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var viewer = _t_user(a, "v@x.example", AGNOSTIC_ROLE_VIEWER, "acme");
+    var admin = _t_user(a, "a@x.example", AGNOSTIC_ROLE_ADMIN, "acme");
+    var root = _t_user(a, "r@x.example", AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var cv = _t_as(a, viewer);
+    var ca = _t_as(a, admin);
+    var cr = _t_as(a, root);
+
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", 0), HTTP_UNAUTHORIZED, "nobody is nobody");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", cv), HTTP_OK, "a viewer can ask who they are");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/api-keys", "", cv), HTTP_OK, "and hold keys");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/users", "", cv), HTTP_FORBIDDEN, "but not run users");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/users", "", ca), HTTP_OK, "an admin can");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/tenants", "", ca), HTTP_FORBIDDEN, "but not run tenants");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, "/api/v1/tenants", "{not json", ca), HTTP_FORBIDDEN,
+      "refused before its body is read");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/tenants", "", cr), HTTP_OK, "a super administrator can");
+
+    var me = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/auth/me"), "", ca);
+    assert_eq(str_eq_cstr(_t_field(a, me, "email"), "a@x.example"), 1, "me is the caller");
+    assert_eq(str_eq_cstr(_t_field(a, me, "role"), "admin"), 1, "with their role");
+    assert_eq(str_eq_cstr(_t_field(a, me, "scope"), "acme"), 1, "and the scope they act in");
+    assert_eq(str_eq(_t_field(a, me, "id"), agnostic_id_hex_a(a, admin)), 1, "and an id as a string");
+}
+
+fn test_create_rules() {
+    test_group("identity/create");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var admin = _t_user(a, "a@x.example", AGNOSTIC_ROLE_ADMIN, "acme");
+    var root = _t_user(a, "r@x.example", AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    agnostic_tenant_create_a(a, str_from("acme"), 0);
+    var ca = _t_as(a, admin);
+    var cr = _t_as(a, root);
+    var url = "/api/v1/users";
+
+    var made = _t_req(a, AGNOSTIC_METHOD_POST, str_from(url),
+      "{\"email\":\"NEW@x.example\",\"password\":\"twelve-chars\",\"role\":\"operator\"}", ca);
+    assert_eq(agnostic_response_status(made), AGNOSTIC_HTTP_CREATED, "an admin creates a user");
+    var u = bayan_json_v_obj_get_by_cstr(agnostic_response_body(made), "user");
+    assert_eq(str_eq_cstr(agnostic_req_str(u, str_from_a(a, "tenant")), "acme"), 1, "in their own tenant");
+    assert_eq(str_eq_cstr(agnostic_req_str(u, str_from_a(a, "email")), "new@x.example"), 1, "folded");
+    assert_eq(str_eq_cstr(agnostic_req_str(u, str_from_a(a, "role")), "operator"), 1, "with the role asked for");
+    var shed: i64[1];
+    store64(&shed, 0);
+    assert_neq(agnostic_users_verify_a(a, str_from("new@x.example"), str_from("twelve-chars"), &shed), 0,
+      "who can log in");
+
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"s@x.example\",\"password\":\"twelve-chars\",\"role\":\"super_admin\"}", ca),
+      HTTP_FORBIDDEN, "an admin cannot grant a role above their own");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"p@x.example\",\"password\":\"twelve-chars\",\"role\":\"admin\"}", ca),
+      AGNOSTIC_HTTP_CREATED, "their own role is within it");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"t@x.example\",\"password\":\"twelve-chars\",\"role\":\"viewer\",\"tenant\":\"globex\"}", ca),
+      HTTP_FORBIDDEN, "nor name another tenant");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"own@x.example\",\"password\":\"twelve-chars\",\"role\":\"viewer\",\"tenant\":\"acme\"}", ca),
+      AGNOSTIC_HTTP_CREATED, "naming their own is fine");
+
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"s@x.example\",\"password\":\"twelve-chars\",\"role\":\"super_admin\"}", cr),
+      AGNOSTIC_HTTP_CREATED, "a super administrator can grant anything");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"t2@x.example\",\"password\":\"twelve-chars\",\"role\":\"viewer\",\"tenant\":\"acme\"}", cr),
+      AGNOSTIC_HTTP_CREATED, "in any tenant that exists");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"t3@x.example\",\"password\":\"twelve-chars\",\"role\":\"viewer\",\"tenant\":\"nope\"}", cr),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "and in none that does not");
+
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"new@x.example\",\"password\":\"twelve-chars\",\"role\":\"viewer\"}", ca),
+      AGNOSTIC_HTTP_CONFLICT, "an address is taken once");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"x@x.example\",\"password\":\"short\",\"role\":\"viewer\"}", ca),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a short password is refused");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"x@x.example\",\"password\":\"twelve-chars\",\"role\":\"owner\"}", ca),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "and a role nobody defined, rather than defaulting it");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"no-at-sign\",\"password\":\"twelve-chars\",\"role\":\"viewer\"}", ca),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "and something that is no address");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"sp ace@x.example\",\"password\":\"twelve-chars\",\"role\":\"viewer\"}", ca),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "or holds a space");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url,
+        "{\"email\":\"x@x.example\",\"password\":\"twelve-chars\",\"role\":\"viewer\",\"admin\":true}", ca),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "and an unknown field is not ignored");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{\"email\":\"x@x.example\"}", ca),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "and a missing one is named");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{broken", ca), HTTP_BAD_REQUEST, "malformed JSON is a 400");
+}
+
+# ADR 0008's rule, for users: to another tenant, a user does not exist.
+fn test_tenant_isolation() {
+    test_group("identity/isolation");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var aa = _t_user(a, "a@acme.example", AGNOSTIC_ROLE_ADMIN, "acme");
+    var ab = _t_user(a, "a@globex.example", AGNOSTIC_ROLE_ADMIN, "globex");
+    var theirs = _t_user(a, "v@globex.example", AGNOSTIC_ROLE_VIEWER, "globex");
+    var key = agnostic_apikey_issue_a(a, theirs, str_from("ci"));
+    var kid = agnostic_id_hex_a(a, agnostic_apikey_id(key));
+    var ca = _t_as(a, aa);
+    var cb = _t_as(a, ab);
+
+    var listed = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/users"), "", ca);
+    assert_eq(_t_total(listed), 1, "a tenant's admin lists their own tenant");
+    assert_eq(_t_total(_t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/users"), "", cb)), 2, "each of them");
+
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_GET, theirs, "", "", ca), HTTP_NOT_FOUND, "GET: 404, not 403");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, theirs, "", "{\"role\":\"admin\"}", ca), HTTP_NOT_FOUND, "PUT");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_DELETE, theirs, "", "", ca), HTTP_NOT_FOUND, "DELETE");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, theirs, "/password", "{\"password\":\"twelve-chars\"}", ca),
+      HTTP_NOT_FOUND, "the password");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_GET, theirs, "/api-keys", "", ca), HTTP_NOT_FOUND, "their keys");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_DELETE,
+          _t_url(_t_cat(a, "/api/v1/users/", agnostic_id_hex_a(a, theirs)), kid, ""), "", ca)),
+      HTTP_NOT_FOUND, "or one key");
+    assert_eq(agnostic_apikey_resolve_a(a, key), theirs, "and the key still works");
+    assert_eq(agnostic_users_role(theirs), AGNOSTIC_ROLE_VIEWER, "and the user is as they were");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_GET, theirs, "", "", cb), HTTP_OK, "their own admin sees them");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_GET, 12345, "", "", cb), HTTP_NOT_FOUND, "an unknown id reads the same");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET,
+          str_from("/api/v1/users/not-an-id"), "", cb)), HTTP_NOT_FOUND, "and so does a malformed one");
+}
+
+fn test_above_your_role() {
+    test_group("identity/above");
+    _t_open();
+    var a = arena_allocator(8388608);
+    # All in the default scope, so tenancy is not what stops anything here.
+    var root = _t_user(a, "r@x.example", AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var root2 = _t_user(a, "r2@x.example", AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var admin = _t_user(a, "a@x.example", AGNOSTIC_ROLE_ADMIN, 0);
+    var op = _t_user(a, "o@x.example", AGNOSTIC_ROLE_OPERATOR, 0);
+    var key = agnostic_apikey_issue_a(a, root, str_from("ci"));
+    var kid = agnostic_id_hex_a(a, agnostic_apikey_id(key));
+    var ca = _t_as(a, admin);
+
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_GET, root, "", "", ca), HTTP_OK, "an admin can see a super administrator");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, root, "", "{\"role\":\"viewer\"}", ca), HTTP_FORBIDDEN,
+      "but not demote one");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_DELETE, root, "", "", ca), HTTP_FORBIDDEN, "or delete one");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, root, "/password", "{\"password\":\"twelve-chars\"}", ca),
+      HTTP_FORBIDDEN, "or take their account");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_DELETE,
+          _t_url(_t_cat(a, "/api/v1/users/", agnostic_id_hex_a(a, root)), kid, ""), "", ca)),
+      HTTP_FORBIDDEN, "or revoke their key");
+    assert_eq(agnostic_apikey_resolve_a(a, key), root, "which still works");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, op, "", "{\"role\":\"super_admin\"}", ca), HTTP_FORBIDDEN,
+      "nor raise someone past themselves");
+    assert_eq(agnostic_users_role(op), AGNOSTIC_ROLE_OPERATOR, "who stays as they were");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, op, "", "{\"role\":\"admin\"}", ca), HTTP_OK, "up to their own role");
+    assert_eq(agnostic_users_role(op), AGNOSTIC_ROLE_ADMIN, "which the row holds");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, op, "", "{\"role\":\"nonsense\"}", ca),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a role nobody defined is refused");
+
+    var cr = _t_as(a, root);
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, root2, "", "{\"role\":\"viewer\"}", cr), HTTP_OK,
+      "a super administrator can demote another");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, root, "", "{\"role\":\"viewer\"}", cr), AGNOSTIC_HTTP_CONFLICT,
+      "but not the last one");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_DELETE, root, "", "", cr), AGNOSTIC_HTTP_CONFLICT, "nor delete them");
+    assert_eq(agnostic_users_role(root), AGNOSTIC_ROLE_SUPER_ADMIN, "so the deployment keeps a way in");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, root, "/password", "{\"password\":\"twelve-chars\"}", cr),
+      HTTP_FORBIDDEN, "and this route does not set your own password");
+}
+
+# Role and existence are read from the row on every request, so a change lands on the next one.
+fn test_changes_land_at_once() {
+    test_group("identity/at-once");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var root = _t_user(a, "r@x.example", AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var u = _t_user(a, "u@x.example", AGNOSTIC_ROLE_ADMIN, 0);
+    var cu = _t_as(a, u);
+    var cr = _t_as(a, root);
+    var key = agnostic_apikey_issue_a(a, u, 0);
+    var ck = _t_ctx_hdr(a, "ApiKey", key);
+
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/users", "", cu), HTTP_OK, "an admin's token reaches users");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/users", "", ck), HTTP_OK, "and so does their key");
+    _t_on(a, AGNOSTIC_METHOD_PUT, u, "", "{\"role\":\"viewer\"}", cr);
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/users", "", cu), HTTP_FORBIDDEN,
+      "the same token is refused on the next request");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/users", "", ck), HTTP_FORBIDDEN, "and the key");
+
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_DELETE, u, "", "", cr), HTTP_OK, "the user is deleted");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", cu), HTTP_UNAUTHORIZED, "their token stops");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", ck), HTTP_UNAUTHORIZED, "and their key");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_GET, u, "", "", cr), HTTP_NOT_FOUND, "and they are gone");
+}
+
+fn test_your_password() {
+    test_group("identity/password");
+    _t_open();
+    var a = arena_allocator(16777216);
+    var u = _t_user(a, "p@x.example", AGNOSTIC_ROLE_OPERATOR, "acme");
+    var root = _t_user(a, "r@x.example", AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var key = agnostic_apikey_issue_a(a, u, str_from("ci"));
+    var url = "/api/v1/auth/password";
+    var old_tok = _t_as(a, u);
+
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_PUT, url,
+        "{\"current_password\":\"wrong-password\",\"new_password\":\"a-new-password\"}", old_tok),
+      HTTP_FORBIDDEN, "the wrong current password is refused");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", old_tok), HTTP_OK,
+      "and costs the caller nothing else");
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"current_password\":\"");
+    str_builder_add_cstr(sb, _T_PW);
+    str_builder_add_cstr(sb, "\",\"new_password\":\"short\"}");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_PUT, url, str_data(str_builder_build(sb)), old_tok),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a short new one is refused");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_PUT, url, "{\"new_password\":\"a-new-password\"}", old_tok),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "and a missing current one");
+
+    # Seconds are what a token's `iat` holds, so the change has to land in a later second to
+    # show older tokens stopping.
+    sleep_ms(1100);
+    var sb2 = str_builder_new();
+    str_builder_add_cstr(sb2, "{\"current_password\":\"");
+    str_builder_add_cstr(sb2, _T_PW);
+    str_builder_add_cstr(sb2, "\",\"new_password\":\"a-new-password\"}");
+    var done = _t_req(a, AGNOSTIC_METHOD_PUT, str_from(url), str_data(str_builder_build(sb2)), old_tok);
+    assert_eq(agnostic_response_status(done), HTTP_OK, "the right one changes it");
+    var tok = _t_field(a, done, "token");
+    assert_neq(tok, 0, "and answers a new token");
+
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", old_tok), HTTP_UNAUTHORIZED,
+      "⭐ the older token stops at once");
+    var fresh = _t_ctx_hdr(a, "Bearer", tok);
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", fresh), HTTP_OK,
+      "the new one works, so the client stays signed in");
+    assert_eq(agnostic_apikey_resolve_a(a, key), u, "and an API key is a separate thing to revoke");
+
+    var shed: i64[1];
+    store64(&shed, 0);
+    assert_eq(agnostic_users_verify_a(a, str_from("p@x.example"), str_from(_T_PW), &shed), 0,
+      "the old password is dead");
+    assert_neq(agnostic_users_verify_a(a, str_from("p@x.example"), str_from("a-new-password"), &shed), 0,
+      "the new one logs in");
+
+    # An administrator sets someone else's, and it ends that user's tokens the same way.
+    sleep_ms(1100);
+    var cr = _t_as(a, root);
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, u, "/password", "{\"password\":\"short\"}", cr),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "an administrator's short password is refused too");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_PUT, u, "/password", "{\"password\":\"set-by-an-admin\"}", cr), HTTP_OK,
+      "a super administrator sets another user's password");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", fresh), HTTP_UNAUTHORIZED,
+      "which ends that user's tokens");
+}
+
+fn test_your_keys() {
+    test_group("identity/keys");
+    _t_open();
+    var a = arena_allocator(16777216);
+    var u = _t_user(a, "k@x.example", AGNOSTIC_ROLE_OPERATOR, 0);
+    var other = _t_user(a, "o@x.example", AGNOSTIC_ROLE_OPERATOR, 0);
+    var admin = _t_user(a, "a@x.example", AGNOSTIC_ROLE_ADMIN, 0);
+    var cu = _t_as(a, u);
+    var co = _t_as(a, other);
+    var ca = _t_as(a, admin);
+    var url = "/api/v1/auth/api-keys";
+
+    var made = _t_req(a, AGNOSTIC_METHOD_POST, str_from(url), "{\"label\":\"ci\"}", cu);
+    assert_eq(agnostic_response_status(made), AGNOSTIC_HTTP_CREATED, "a key is minted");
+    var raw = _t_field(a, made, "api_key");
+    var id = _t_field(a, made, "id");
+    assert_neq(raw, 0, "and handed over once");
+    assert_eq(str_eq_cstr(_t_field(a, made, "label"), "ci"), 1, "with its label");
+    var ck = _t_ctx_hdr(a, "ApiKey", raw);
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", ck), HTTP_OK, "it authenticates");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{}", ck), HTTP_FORBIDDEN,
+      "⭐ but cannot mint another, which would outlive revoking it");
+
+    var list = _t_req(a, AGNOSTIC_METHOD_GET, str_from(url), "", cu);
+    assert_eq(_t_total(list), 1, "and is listed");
+    var text = agnostic_encode_a(a, agnostic_response_body(list));
+    assert_eq(_t_contains(str_data(text), str_len(text), str_data(raw), str_len(raw)), 0,
+      "⭐ never with its value");
+    assert_eq(_t_total(_t_req(a, AGNOSTIC_METHOD_GET, str_from(url), "", co)), 0, "and not to anyone else");
+
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{\"secret\":\"x\"}", cu), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "an unknown field is refused");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{\"label\":7}", cu), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "and a label that is no string");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{}", cu), AGNOSTIC_HTTP_CREATED, "a label is optional");
+
+    var del = _t_url("/api/v1/auth/api-keys/", id, "");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_DELETE, del, "", co)), HTTP_NOT_FOUND,
+      "another user cannot revoke it");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_DELETE, del, "", cu)), HTTP_OK, "its owner can");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", ck), HTTP_UNAUTHORIZED, "and it stops");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_DELETE, del, "", cu)), HTTP_NOT_FOUND, "once");
+
+    # An administrator sees and revokes a user's keys without ever holding one.
+    var second = _t_req(a, AGNOSTIC_METHOD_POST, str_from(url), "{\"label\":\"two\"}", cu);
+    var sid = _t_field(a, second, "id");
+    assert_eq(_t_on(a, AGNOSTIC_METHOD_GET, u, "/api-keys", "", ca), HTTP_OK, "an admin lists a user's keys");
+    var path = _t_url(_t_cat(a, "/api/v1/users/", agnostic_id_hex_a(a, u)), sid, "");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_DELETE, path, "", ca)), HTTP_OK,
+      "and revokes one by id");
+    assert_eq(agnostic_apikey_resolve_a(a, _t_field(a, second, "api_key")), 0, "which stops working");
+
+    var n = agnostic_apikeys_of(u);
+    while (n < AGNOSTIC_APIKEYS_PER_USER) {
+        agnostic_apikey_issue_a(a, u, 0);
+        n = n + 1;
+    }
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{}", cu), AGNOSTIC_HTTP_CONFLICT, "the cap is a 409");
+}
+
+fn test_tenants() {
+    test_group("identity/tenants");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var root = _t_user(a, "r@x.example", AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var cr = _t_as(a, root);
+    var url = "/api/v1/tenants";
+
+    var made = _t_req(a, AGNOSTIC_METHOD_POST, str_from(url), "{\"key\":\"acme\",\"name\":\"Acme Corp\"}", cr);
+    assert_eq(agnostic_response_status(made), AGNOSTIC_HTTP_CREATED, "a tenant is created");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{\"key\":\"acme\"}", cr), AGNOSTIC_HTTP_CONFLICT, "once");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{\"key\":\"Not_Legal\"}", cr), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "a key outside the charset is refused, since a scope is built from it");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{\"key\":\"a:b\"}", cr), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "above all one with a colon");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, url, "{}", cr), AGNOSTIC_HTTP_UNPROCESSABLE, "a key is required");
+    assert_eq(_t_total(_t_req(a, AGNOSTIC_METHOD_GET, str_from(url), "", cr)), 1, "it is listed");
+    var one = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/tenants/acme"), "", cr);
+    assert_eq(agnostic_response_status(one), HTTP_OK, "and reads by key");
+    assert_eq(str_eq_cstr(agnostic_req_str(bayan_json_v_obj_get_by_cstr(agnostic_response_body(one), "tenant"),
+          str_from_a(a, "name")), "Acme Corp"), 1, "with its name");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/tenants/nope", "", cr), HTTP_NOT_FOUND, "an unknown one is 404");
+
+    var u = _t_user(a, "u@acme.example", AGNOSTIC_ROLE_VIEWER, "acme");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_DELETE, "/api/v1/tenants/acme", "", cr), AGNOSTIC_HTTP_CONFLICT,
+      "a tenant with users stays");
+    agnostic_users_delete(u);
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_DELETE, "/api/v1/tenants/acme", "", cr), HTTP_OK, "an empty one goes");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_DELETE, "/api/v1/tenants/acme", "", cr), HTTP_NOT_FOUND, "once");
+}
+
+# With authentication off there is no principal, and no route here has anyone to act for.
+fn test_authentication_off() {
+    test_group("identity/off");
+    _t_open();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var a = arena_allocator(1048576);
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/auth/me", "", 0), AGNOSTIC_HTTP_CONFLICT, "me");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/users", "", 0), AGNOSTIC_HTTP_CONFLICT, "users");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_POST, "/api/v1/users", "{}", 0), AGNOSTIC_HTTP_CONFLICT, "creating one");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/users/0000000000000001", "", 0), AGNOSTIC_HTTP_CONFLICT, "one");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_GET, "/api/v1/tenants", "", 0), AGNOSTIC_HTTP_CONFLICT, "tenants");
+    assert_eq(_t_st(a, AGNOSTIC_METHOD_DELETE, "/api/v1/tenants/x", "", 0), AGNOSTIC_HTTP_CONFLICT, "deleting one");
+    assert_eq(agnostic_users_count(), 0, "and nothing was created");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+}
+
+# ⭐ A trail that stores a password is a credential store. Both files are searched as bytes.
+fn test_no_secret_is_kept() {
+    test_group("identity/secrets");
+    _t_open();
+    var a = arena_allocator(16777216);
+    var root = _t_user(a, "r@x.example", AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var cr = _t_as(a, root);
+    var pw = "needle-password-one";
+    var pw2 = "needle-password-two";
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"email\":\"s@x.example\",\"password\":\"");
+    str_builder_add_cstr(sb, pw);
+    str_builder_add_cstr(sb, "\",\"role\":\"viewer\"}");
+    var made = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/users"), str_data(str_builder_build(sb)), cr);
+    assert_eq(agnostic_response_status(made), AGNOSTIC_HTTP_CREATED, "a user is created");
+    var text = agnostic_encode_a(a, agnostic_response_body(made));
+    assert_eq(_t_contains(str_data(text), str_len(text), pw, strlen(pw)), 0, "the answer does not hold the password");
+    assert_eq(_t_contains(str_data(text), str_len(text), "pwhash", 6), 0, "nor its hash");
+
+    var uid = agnostic_users_find_a(a, str_from("s@x.example"));
+    _t_on(a, AGNOSTIC_METHOD_PUT, uid, "/password", _t_kv("password", str_from(pw2)), cr);
+    var key = _t_field(a, _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/auth/api-keys"), "{}", cr), "api_key");
+    assert_neq(key, 0, "a key is minted");
+
+    agnostic_audit_close();
+    agnostic_store_close();
+    assert_eq(_t_file_has(_T_AUDIT, pw, strlen(pw)), 0, "the trail holds no password");
+    assert_eq(_t_file_has(_T_AUDIT, pw2, strlen(pw2)), 0, "nor the one set after it");
+    assert_eq(_t_file_has(_T_AUDIT, str_data(key), str_len(key)), 0, "nor a raw key");
+    assert_eq(_t_file_has(_T_DB, pw, strlen(pw)), 0, "the store holds no password");
+    assert_eq(_t_file_has(_T_DB, pw2, strlen(pw2)), 0, "nor the second");
+    assert_eq(_t_file_has(_T_DB, str_data(key), str_len(key)), 0, "nor a raw key");
+    assert_eq(_t_file_has(_T_AUDIT, "user.create", 11), 1, "while the trail does hold what happened");
+    assert_eq(_t_file_has(_T_AUDIT, "user.password", 13), 1, "each of it");
+    assert_eq(_t_file_has(_T_AUDIT, "apikey.issue", 12), 1, "by id");
+}
+
+# `agnostic admin reset-password`, with its streams and paths passed in. The real binary, a held
+# claim and a signal-free restart are `scripts/boot-probe.sh`'s.
+fn _t_stdin(text) {
+    var path = _tt_tmp_file("identity-stdin", ".txt");
+    var w = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+    sys_write(w, text, strlen(text));
+    sys_close(w);
+    var fd = sys_open(path, O_RDONLY, 0);
+    sys_unlink(path);
+    return fd;
+}
+
+fn _t_reset(email, text, sink) {
+    var fd = _t_stdin(text);
+    var rc = agnostic_cli_reset_password_at(str_from(_T_DB), str_from(_T_AUDIT), str_from(email), fd, sink, sink);
+    sys_close(fd);
+    return rc;
+}
+
+fn test_recovery_command() {
+    test_group("identity/reset-password");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var root = _t_user(a, "root@x.example", AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var key = agnostic_apikey_issue_a(a, root, 0);
+    agnostic_audit_close();
+    agnostic_store_close();
+    var sink = sys_open("/dev/null", O_WRONLY, 0);
+    var shed: i64[1];
+    store64(&shed, 0);
+
+    assert_eq(_t_reset("nobody@x.example", "new-password-one\n", sink), AGNOSTIC_EXIT_FAILURE,
+      "an unknown email fails");
+    assert_eq(_t_reset("root@x.example", "short\n", sink), AGNOSTIC_EXIT_FAILURE, "so does a short password");
+    assert_eq(_t_reset("root@x.example", "", sink), AGNOSTIC_EXIT_FAILURE, "and nothing at all on stdin");
+    agnostic_store_open(str_from(_T_DB));
+    assert_eq(agnostic_users_verify_a(a, str_from("root@x.example"), str_from(_T_PW), &shed), root,
+      "and none of that touched the password");
+    agnostic_store_close();
+
+    assert_eq(_t_reset("ROOT@x.example", "new-password-one\n", sink), AGNOSTIC_EXIT_OK,
+      "a good line sets it, the address folded as login folds it");
+    agnostic_store_open(str_from(_T_DB));
+    assert_eq(agnostic_users_verify_a(a, str_from("root@x.example"), str_from("new-password-one"), &shed), root,
+      "the line ending is not part of the password");
+    assert_eq(agnostic_users_verify_a(a, str_from("root@x.example"), str_from(_T_PW), &shed), 0,
+      "and the old one is dead");
+    assert_eq(agnostic_apikey_resolve_a(a, key), root, "an API key stands");
+    agnostic_store_close();
+
+    assert_eq(_t_reset("root@x.example", "crlf-password-two\r\nand the rest\n", sink), AGNOSTIC_EXIT_OK,
+      "one line is read, and a CRLF ending goes too");
+    agnostic_store_open(str_from(_T_DB));
+    assert_eq(agnostic_users_verify_a(a, str_from("root@x.example"), str_from("crlf-password-two"), &shed), root,
+      "so a file edited on Windows works");
+    agnostic_store_close();
+
+    assert_eq(agnostic_cli_reset_password_at(str_from("/no/such/agnostic.patra"), str_from(_T_AUDIT),
+        str_from("root@x.example"), 0, sink, sink), AGNOSTIC_EXIT_FAILURE,
+      "a mistyped path fails, and makes no empty database");
+    assert_eq(file_exists("/no/such/agnostic.patra"), 0, "nothing was created");
+    assert_eq(_t_file_has(_T_AUDIT, "auth.password.reset", 19), 1, "⭐ the trail holds every reset");
+    assert_eq(_t_file_has(_T_AUDIT, "new-password-one", 16), 0, "and no password");
+    sys_close(sink);
+    agnostic_store_open(str_from(_T_DB));
+    agnostic_auth_ensure();
+    agnostic_audit_open(str_from(_T_AUDIT));
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    agnostic_crypto_main_init();
+    agnostic_argon_pool_init();
+    agnostic_rl_init();
+    agnostic_jwt_init_random();
+    test_tiers();
+    test_create_rules();
+    test_tenant_isolation();
+    test_above_your_role();
+    test_changes_land_at_once();
+    test_your_password();
+    test_your_keys();
+    test_tenants();
+    test_authentication_off();
+    test_no_secret_is_kept();
+    test_recovery_command();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    _tt_unlink_store(_T_AUDIT);
+    return assert_summary();
+}
+
+var _agnostic_identity_test_exit = main();
+if (_agnostic_identity_test_exit > 0) { _agnostic_identity_test_exit = 1; }
+sys_exit_group(_agnostic_identity_test_exit);

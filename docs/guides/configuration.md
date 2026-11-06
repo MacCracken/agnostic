@@ -27,9 +27,8 @@ for about 70 KB/s.
 |---|---|---|
 | `AGNOSTIC_AUTH` | `off` | `off` or `required`. Anything else is refused. With `off`, any bind but loopback is refused too. |
 | `AGNOSTIC_BOOTSTRAP_EMAIL` | none | The first administrator, created once, on an empty store with `AGNOSTIC_AUTH=required`. |
-| `AGNOSTIC_BOOTSTRAP_PASSWORD` | none | At least 12 characters. It is read, never logged, and has no effect once any user exists. |
-
-The JWT signing secret is random per process, so a restart ends every session.
+| `AGNOSTIC_BOOTSTRAP_PASSWORD` | none | At least 12 characters. It is read, never logged, and has no effect once any user exists. Change it with `PUT /api/v1/auth/password` and unset it ([Users and tenants](users-and-tenants.md)). |
+| `AGNOSTIC_JWT_SECRET` | random per process | At least 32 bytes, or the server refuses to start. It is read and never logged. Unset, a restart ends every session. Set it, and tokens survive a restart. Anyone who holds it can forge a token for any user. Changing it ends every session. |
 
 ## Storage
 

@@ -460,6 +460,15 @@ fn agnostic_serve_mount(cfg): i64 {
             sakshi_error("could not allocate the login rate table; refusing to start", 58);
             return 0;
         }
+        var jwt_secret = agnostic_config_jwt_secret(cfg);
+        if (jwt_secret != 0) {
+            # Length-checked with the rest of the configuration, so this cannot refuse today. It
+            # is checked anyway: a server that thinks it has a secret and has none signs nothing.
+            if (agnostic_jwt_set_secret(str_data(jwt_secret), str_len(jwt_secret)) == 0) {
+                sakshi_error("AGNOSTIC_JWT_SECRET was refused; refusing to start", 50);
+                return 0;
+            }
+        }
         if (agnostic_jwt_ready() == 0) {
             if (agnostic_jwt_init_random() == 0) {
                 sakshi_error("could not generate a JWT secret; refusing to start", 50);

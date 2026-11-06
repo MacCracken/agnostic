@@ -51,12 +51,27 @@ var AGNOSTIC_USERS_TABLE_SQL =
 var AGNOSTIC_APIKEYS_TABLE_SQL =
 "CREATE TABLE agnostic_apikeys (kid INT, khash STR, kuid INT, label STR, created INT)";
 
+# ## ⚠ `tokens_from`: a password change ends the sessions it should end (0.3.0)
+#
+# A token holds no state here and there is no revocation list, but the role is re-read from the
+# user row on every request anyway, so that read can carry one more column. A bearer token issued
+# before `tokens_from` is refused. Setting a password sets it to now, so whoever held a stolen
+# token loses it at once and not up to an hour later.
+#
+# Seconds, because `iat` is: a token issued in the very second of the change survives it.
+#
+# Added to existing tables with `ADD COLUMN`, on every start: a store from before 0.3.0 gains it,
+# its rows read 0, so every token is still good, and a store that has it answers EXISTS, which
+# `agnostic_store_ensure` tolerates.
+var AGNOSTIC_USERS_TOKENS_SQL = "ALTER TABLE agnostic_users ADD COLUMN tokens_from INT";
+
 # Ensure both tables. Mount time only. Returns 1 when the schema is in place.
 #
 # ⚠ No `CREATE INDEX` — see the module header. Adding one would be a second
 # index on the same table, which patra cannot hold.
 fn agnostic_auth_ensure(): i64 {
     if (agnostic_store_ensure(AGNOSTIC_USERS_TABLE_SQL) == 0) { return 0; }
+    if (agnostic_store_ensure(AGNOSTIC_USERS_TOKENS_SQL) == 0) { return 0; }
     if (agnostic_store_ensure(AGNOSTIC_APIKEYS_TABLE_SQL) == 0) { return 0; }
     return 1;
 }
@@ -291,22 +306,23 @@ fn agnostic_users_tenant_a(a, uid): i64 {
       "SELECT tenant FROM agnostic_users WHERE uid = ?", 0);
 }
 
-# The role for a uid, with its tenant through `out_tenant` (0 when unset), or -1 when there is no
-# such user. One statement: the request's identity is read at one instant, and an authenticated
-# request pays for one lookup.
-fn agnostic_users_identity_a(a, uid, out_tenant): i64 {
+# The role for a uid, with its tenant through `out_tenant` (0 when unset) and its `tokens_from`
+# through `out_from`, or -1 when there is no such user. One statement: the request's identity is
+# read at one instant, and an authenticated request pays for one lookup.
+fn agnostic_users_identity_a(a, uid, out_tenant, out_from): i64 {
     agnostic_store_lock();
-    var r = _agnostic_users_identity_locked_a(a, uid, out_tenant);
+    var r = _agnostic_users_identity_locked_a(a, uid, out_tenant, out_from);
     agnostic_store_unlock();
     return r;
 }
 
 # `agnostic_users_identity_a`'s body. The caller holds the store lock.
-fn _agnostic_users_identity_locked_a(a, uid, out_tenant): i64 {
+fn _agnostic_users_identity_locked_a(a, uid, out_tenant, out_from): i64 {
     store64(out_tenant, 0);
+    store64(out_from, 0);
     var db = agnostic_store_db();
     if (db == 0 || uid == 0) { return 0 - 1; }
-    var st = patra_prepare(db, "SELECT urole, tenant FROM agnostic_users WHERE uid = ?");
+    var st = patra_prepare(db, "SELECT urole, tenant, tokens_from FROM agnostic_users WHERE uid = ?");
     if (st == 0) { return 0 - 1; }
     patra_bind_int(st, 0, uid);
     var rs = patra_query_prepared(db, st);
@@ -315,6 +331,7 @@ fn _agnostic_users_identity_locked_a(a, uid, out_tenant): i64 {
     if (patra_result_count(rs) == 0) { patra_result_free(rs); return 0 - 1; }
     var role = patra_result_get_int(rs, 0, 0);
     store64(out_tenant, _agnostic_auth_str_a(a, rs, 0, 1));
+    store64(out_from, patra_result_get_int(rs, 0, 2));
     patra_result_free(rs);
     if (agnostic_role_is_valid(role) == 0) { return 0 - 1; }
     return role;
@@ -428,11 +445,302 @@ fn agnostic_users_reset(): i64 {
     return 0;
 }
 
+# --- provisioning (0.3.0) --------------------------------------------------
+
+# A user as a listing shows it. No password record: nothing reads one out of this module.
+enum AgnosticUserRowOff {
+    AGNOSTIC_UR_UID     = 0;
+    AGNOSTIC_UR_EMAIL   = 8;
+    AGNOSTIC_UR_ROLE    = 16;
+    AGNOSTIC_UR_TENANT  = 24;   # a Str, 0 for the default scope
+    AGNOSTIC_UR_CREATED = 32;
+    AGNOSTIC_UR_SIZE    = 40;
+}
+
+# What a change to a user reports.
+enum AgnosticUserResult {
+    AGNOSTIC_USER_OK         = 0;
+    AGNOSTIC_USER_MISSING    = 1;
+    AGNOSTIC_USER_LAST_SUPER = 2;   # it would leave the deployment with no super administrator
+    AGNOSTIC_USER_FAILED     = 3;
+}
+
+# The row's uid.
+fn agnostic_user_row_uid(r): i64 { return load64(r + AGNOSTIC_UR_UID); }
+# The row's email, folded.
+fn agnostic_user_row_email(r): i64 { return load64(r + AGNOSTIC_UR_EMAIL); }
+# The row's role.
+fn agnostic_user_row_role(r): i64 { return load64(r + AGNOSTIC_UR_ROLE); }
+# The row's tenant as a Str, 0 for the default scope.
+fn agnostic_user_row_tenant(r): i64 { return load64(r + AGNOSTIC_UR_TENANT); }
+# When the row was created, in epoch seconds.
+fn agnostic_user_row_created(r): i64 { return load64(r + AGNOSTIC_UR_CREATED); }
+
+# Row `i` of `SELECT uid, email, urole, tenant, created`, in `a`. 0 on exhaustion.
+fn _agnostic_users_row_a(a, rs, i): i64 {
+    var r = alloc_via(a, AGNOSTIC_UR_SIZE);
+    if (r == 0) { return 0; }
+    store64(r + AGNOSTIC_UR_UID, patra_result_get_int(rs, i, 0));
+    store64(r + AGNOSTIC_UR_EMAIL, _agnostic_auth_str_a(a, rs, i, 1));
+    store64(r + AGNOSTIC_UR_ROLE, patra_result_get_int(rs, i, 2));
+    store64(r + AGNOSTIC_UR_TENANT, _agnostic_auth_str_a(a, rs, i, 3));
+    store64(r + AGNOSTIC_UR_CREATED, patra_result_get_int(rs, i, 4));
+    return r;
+}
+
+# Every user, or those of `tenant` ("" for the default scope) when it is not 0, by email, as a
+# vec of rows in `a`. 0 when `a` is exhausted or the store cannot answer.
+fn agnostic_users_list_a(a, tenant: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_users_list_locked_a(a, tenant);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_users_list_a`'s body. The caller holds the store lock.
+fn _agnostic_users_list_locked_a(a, tenant: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = 0;
+    if (tenant == 0) {
+        st = patra_prepare(db,
+          "SELECT uid, email, urole, tenant, created FROM agnostic_users ORDER BY email");
+    } else {
+        st = patra_prepare(db,
+          "SELECT uid, email, urole, tenant, created FROM agnostic_users WHERE tenant = ? ORDER BY email");
+    }
+    if (st == 0) { return 0; }
+    if (tenant != 0) { patra_bind_text(st, 0, str_data(tenant), str_len(tenant)); }
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var out = vec_new_a(a);
+    var i = 0;
+    while (out != 0 && i < patra_result_count(rs)) {
+        var row = _agnostic_users_row_a(a, rs, i);
+        if (row == 0) { out = 0; }
+        else { vec_push_a(a, out, row); }
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return out;
+}
+
+# One user as a row in `a`, or 0.
+fn agnostic_users_get_a(a, uid): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_users_get_locked_a(a, uid);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_users_get_a`'s body. The caller holds the store lock.
+fn _agnostic_users_get_locked_a(a, uid): i64 {
+    var db = agnostic_store_db();
+    if (db == 0 || uid == 0) { return 0; }
+    var st = patra_prepare(db,
+      "SELECT uid, email, urole, tenant, created FROM agnostic_users WHERE uid = ?");
+    if (st == 0) { return 0; }
+    patra_bind_int(st, 0, uid);
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var out = 0;
+    if (patra_result_count(rs) > 0) { out = _agnostic_users_row_a(a, rs, 0); }
+    patra_result_free(rs);
+    return out;
+}
+
+# Whether `uid` is the deployment's only super administrator. The caller holds the store lock.
+#
+# ⚠ **The check that counts runs in the same critical section as the write.** Two requests
+# demoting the last two super administrators must not both pass it.
+fn _agnostic_users_is_last_super_locked(uid): i64 {
+    if (_agnostic_users_role_locked(uid) != AGNOSTIC_ROLE_SUPER_ADMIN) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return 1; }
+    var st = patra_prepare(db, "SELECT uid FROM agnostic_users WHERE urole = ?");
+    if (st == 0) { return 1; }
+    patra_bind_int(st, 0, AGNOSTIC_ROLE_SUPER_ADMIN);
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    # Unknown fails closed: it refuses a change, and never removes the last way in.
+    if (rs == 0) { return 1; }
+    var n = patra_result_count(rs);
+    patra_result_free(rs);
+    if (n <= 1) { return 1; }
+    return 0;
+}
+
+# Give `uid` role `role`: an `AGNOSTIC_USER_*`. The next request it makes reads the new role.
+fn agnostic_users_set_role(uid, role): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_users_set_role_locked(uid, role);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_users_set_role`'s body. The caller holds the store lock.
+fn _agnostic_users_set_role_locked(uid, role): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return AGNOSTIC_USER_FAILED; }
+    if (agnostic_role_is_valid(role) == 0) { return AGNOSTIC_USER_FAILED; }
+    if (_agnostic_users_role_locked(uid) < 0) { return AGNOSTIC_USER_MISSING; }
+    if (role != AGNOSTIC_ROLE_SUPER_ADMIN && _agnostic_users_is_last_super_locked(uid) == 1) {
+        return AGNOSTIC_USER_LAST_SUPER;
+    }
+    var st = patra_prepare(db, "UPDATE agnostic_users SET urole = ? WHERE uid = ?");
+    if (st == 0) { return AGNOSTIC_USER_FAILED; }
+    patra_bind_int(st, 0, role);
+    patra_bind_int(st, 1, uid);
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    if (rc != PATRA_OK) { return AGNOSTIC_USER_FAILED; }
+    return AGNOSTIC_USER_OK;
+}
+
+# Set `uid`'s password: an `AGNOSTIC_USER_*`. Ends the user's bearer tokens (`tokens_from`, above).
+# Its API keys stand: revoking one is a separate act.
+#
+# ⚠ Hashed OUTSIDE the store lock, as in `agnostic_users_create_a`, and with the same shape of
+# failure: a shed hash answers FAILED, and the caller tells it apart by
+# `agnostic_argon_shed_count`.
+fn agnostic_users_set_password_a(a, uid, password: Str): i64 {
+    if (agnostic_store_is_open() == 0 || password == 0) { return AGNOSTIC_USER_FAILED; }
+    var rec = agnostic_password_hash_a(a, password);
+    if (rec == 0) { return AGNOSTIC_USER_FAILED; }
+    agnostic_store_lock();
+    var r = _agnostic_users_set_password_locked(uid, rec);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_users_set_password_a`'s write. The caller holds the store lock.
+fn _agnostic_users_set_password_locked(uid, rec: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return AGNOSTIC_USER_FAILED; }
+    if (_agnostic_users_role_locked(uid) < 0) { return AGNOSTIC_USER_MISSING; }
+    var st = patra_prepare(db, "UPDATE agnostic_users SET pwhash = ?, tokens_from = ? WHERE uid = ?");
+    if (st == 0) { return AGNOSTIC_USER_FAILED; }
+    patra_bind_text(st, 0, str_data(rec), str_len(rec));
+    patra_bind_int(st, 1, clock_epoch_secs());
+    patra_bind_int(st, 2, uid);
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    if (rc != PATRA_OK) { return AGNOSTIC_USER_FAILED; }
+    return AGNOSTIC_USER_OK;
+}
+
+# Delete `uid` and its API keys: an `AGNOSTIC_USER_*`. Its tokens stop resolving at once.
+#
+# ⚠ **Keys first.** A crash between the two statements leaves a user who has lost their keys,
+# which is visible and fixable. The other order would leave keys for nobody, which nothing lists.
+fn agnostic_users_delete(uid): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_users_delete_locked(uid);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_users_delete`'s body. The caller holds the store lock.
+fn _agnostic_users_delete_locked(uid): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return AGNOSTIC_USER_FAILED; }
+    if (_agnostic_users_role_locked(uid) < 0) { return AGNOSTIC_USER_MISSING; }
+    if (_agnostic_users_is_last_super_locked(uid) == 1) { return AGNOSTIC_USER_LAST_SUPER; }
+
+    var sk = patra_prepare(db, "DELETE FROM agnostic_apikeys WHERE kuid = ?");
+    if (sk == 0) { return AGNOSTIC_USER_FAILED; }
+    patra_bind_int(sk, 0, uid);
+    var rk = patra_exec_prepared(db, sk);
+    patra_finalize(sk);
+    if (rk != PATRA_OK) { return AGNOSTIC_USER_FAILED; }
+
+    var su = patra_prepare(db, "DELETE FROM agnostic_users WHERE uid = ?");
+    if (su == 0) { return AGNOSTIC_USER_FAILED; }
+    patra_bind_int(su, 0, uid);
+    var ru = patra_exec_prepared(db, su);
+    patra_finalize(su);
+    if (ru != PATRA_OK) { return AGNOSTIC_USER_FAILED; }
+    return AGNOSTIC_USER_OK;
+}
+
+# How many users belong to `tenant`.
+fn agnostic_users_in_tenant(tenant: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_users_in_tenant_locked(tenant);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_users_in_tenant`'s body. The caller holds the store lock.
+fn _agnostic_users_in_tenant_locked(tenant: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0 || tenant == 0) { return 0; }
+    var st = patra_prepare(db, "SELECT uid FROM agnostic_users WHERE tenant = ?");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(tenant), str_len(tenant));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var n = patra_result_count(rs);
+    patra_result_free(rs);
+    return n;
+}
+
+# ## Ids on the wire are strings
+#
+# A uid and a key id are 63-bit integers. As a JSON number a browser rounds one to 53 bits and
+# silently names somebody else, so the API writes them as 16 lowercase hex digits.
+
+# `id` as 16 lowercase hex digits, in `a`. 0 on exhaustion.
+fn agnostic_id_hex_a(a, id): i64 {
+    var buf = alloc_via(a, 17);
+    if (buf == 0) { return 0; }
+    var digits = "0123456789abcdef";
+    var i = 0;
+    while (i < 16) {
+        store8(buf + i, load8(digits + ((id >> (60 - i * 4)) & 15)));
+        i = i + 1;
+    }
+    store8(buf + 16, 0);
+    return str_new_a(a, buf, 16);
+}
+
+# The id `s` spells, or 0: exactly 16 lowercase hex digits, naming a positive 63-bit value.
+fn agnostic_id_parse(s: Str): i64 {
+    if (s == 0 || str_len(s) != 16) { return 0; }
+    var p = str_data(s);
+    var v = 0;
+    var i = 0;
+    while (i < 16) {
+        var c = load8(p + i) & 255;
+        var d = 0 - 1;
+        if (c >= 48 && c <= 57) { d = c - 48; }
+        if (c >= 97 && c <= 102) { d = c - 87; }
+        if (d < 0) { return 0; }
+        v = (v << 4) | d;
+        i = i + 1;
+    }
+    if (v <= 0) { return 0; }
+    return v;
+}
+
 # --- bootstrap ------------------------------------------------------------
 
-# The shortest bootstrap password. No route can rotate it yet, so what is set here is what
-# guards the deployment until someone replaces the database.
-var AGNOSTIC_BOOTSTRAP_PASSWORD_MIN = 12;
+# The shortest password, for the bootstrap credential and for every password set after it.
+var AGNOSTIC_PASSWORD_MIN = 12;
+
+# The longest. Argon2 reads every byte, and an administrator's request should not choose how much.
+var AGNOSTIC_PASSWORD_MAX = 1024;
+
+# Whether `password` is a length the store takes. 1 or 0.
+fn agnostic_password_length_ok(password: Str): i64 {
+    if (password == 0) { return 0; }
+    if (str_len(password) < AGNOSTIC_PASSWORD_MIN) { return 0; }
+    if (str_len(password) > AGNOSTIC_PASSWORD_MAX) { return 0; }
+    return 1;
+}
 
 # Create the first administrator. Returns the new `uid`, or 0.
 #
@@ -455,7 +763,7 @@ var AGNOSTIC_BOOTSTRAP_PASSWORD_MIN = 12;
 fn agnostic_auth_bootstrap_a(a, email: Str, password: Str): i64 {
     if (agnostic_store_is_open() == 0) { return 0; }
     if (email == 0 || password == 0) { return 0; }
-    if (str_len(email) == 0 || str_len(password) < AGNOSTIC_BOOTSTRAP_PASSWORD_MIN) { return 0; }
+    if (str_len(email) == 0 || agnostic_password_length_ok(password) == 0) { return 0; }
 
     # The guard. Not "no admin exists" — ANY user. A deployment that already has
     # identities has already been bootstrapped, whoever those identities are.
@@ -465,6 +773,126 @@ fn agnostic_auth_bootstrap_a(a, email: Str, password: Str): i64 {
 }
 
 # --- API keys -------------------------------------------------------------
+
+# How many API keys one user can hold. Each is a row and an fsync, and a viewer can mint them.
+var AGNOSTIC_APIKEYS_PER_USER = 32;
+
+# An API key as a listing shows it. No digest: nothing reads one out of this module.
+enum AgnosticKeyRowOff {
+    AGNOSTIC_KR_ID      = 0;
+    AGNOSTIC_KR_LABEL   = 8;    # a Str, 0 for none
+    AGNOSTIC_KR_CREATED = 16;
+    AGNOSTIC_KR_SIZE    = 24;
+}
+
+# The key's id, `agnostic_apikey_id` of its raw value.
+fn agnostic_key_row_id(r): i64 { return load64(r + AGNOSTIC_KR_ID); }
+# The key's label as a Str, 0 for none.
+fn agnostic_key_row_label(r): i64 { return load64(r + AGNOSTIC_KR_LABEL); }
+# When the key was minted, in epoch seconds.
+fn agnostic_key_row_created(r): i64 { return load64(r + AGNOSTIC_KR_CREATED); }
+
+# The id of raw key `raw`: the bucket it is stored under. It says nothing of the key: it is
+# 63 bits of a hash of 256 random ones.
+fn agnostic_apikey_id(raw: Str): i64 {
+    var kid = agnostic_key64(raw);
+    if (kid == 0) { return 1; }
+    return kid;
+}
+
+# `uid`'s API keys, as a vec of rows in `a`. 0 when `a` is exhausted or the store cannot answer.
+fn agnostic_apikeys_list_a(a, uid): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_apikeys_list_locked_a(a, uid);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_apikeys_list_a`'s body. The caller holds the store lock.
+fn _agnostic_apikeys_list_locked_a(a, uid): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db, "SELECT kid, label, created FROM agnostic_apikeys WHERE kuid = ?");
+    if (st == 0) { return 0; }
+    patra_bind_int(st, 0, uid);
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var out = vec_new_a(a);
+    var i = 0;
+    while (out != 0 && i < patra_result_count(rs)) {
+        var row = alloc_via(a, AGNOSTIC_KR_SIZE);
+        if (row == 0) { out = 0; }
+        else {
+            store64(row + AGNOSTIC_KR_ID, patra_result_get_int(rs, i, 0));
+            store64(row + AGNOSTIC_KR_LABEL, _agnostic_auth_str_a(a, rs, i, 1));
+            store64(row + AGNOSTIC_KR_CREATED, patra_result_get_int(rs, i, 2));
+            vec_push_a(a, out, row);
+        }
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return out;
+}
+
+# How many API keys `uid` holds. The caller holds the store lock.
+fn _agnostic_apikeys_of_locked(uid): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db, "SELECT kid FROM agnostic_apikeys WHERE kuid = ?");
+    if (st == 0) { return 0; }
+    patra_bind_int(st, 0, uid);
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var n = patra_result_count(rs);
+    patra_result_free(rs);
+    return n;
+}
+
+# How many API keys `uid` holds.
+fn agnostic_apikeys_of(uid): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_apikeys_of_locked(uid);
+    agnostic_store_unlock();
+    return r;
+}
+
+# Revoke `uid`'s key `kid`. 1 when it went, 0 when `uid` holds no such key.
+#
+# ⚠ **By owner and id, so the raw key is not needed**: `agnostic_apikey_revoke_a` takes the raw
+# key, which an administrator never sees and a user may have lost.
+fn agnostic_apikey_revoke_id(uid, kid): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_apikey_revoke_id_locked(uid, kid);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_apikey_revoke_id`'s body. The caller holds the store lock.
+fn _agnostic_apikey_revoke_id_locked(uid, kid): i64 {
+    var db = agnostic_store_db();
+    if (db == 0 || uid == 0 || kid == 0) { return 0; }
+    var sq = patra_prepare(db, "SELECT kid FROM agnostic_apikeys WHERE kid = ? AND kuid = ?");
+    if (sq == 0) { return 0; }
+    patra_bind_int(sq, 0, kid);
+    patra_bind_int(sq, 1, uid);
+    var rs = patra_query_prepared(db, sq);
+    patra_finalize(sq);
+    if (rs == 0) { return 0; }
+    var n = patra_result_count(rs);
+    patra_result_free(rs);
+    if (n == 0) { return 0; }
+
+    var sd = patra_prepare(db, "DELETE FROM agnostic_apikeys WHERE kid = ? AND kuid = ?");
+    if (sd == 0) { return 0; }
+    patra_bind_int(sd, 0, kid);
+    patra_bind_int(sd, 1, uid);
+    var rc = patra_exec_prepared(db, sd);
+    patra_finalize(sd);
+    if (rc != PATRA_OK) { return 0; }
+    return 1;
+}
 
 # Mint an API key for `uid`. Returns the raw key as hex, in `a`, or 0.
 #
@@ -484,14 +912,14 @@ fn _agnostic_apikey_issue_locked_a(a, uid, label: Str): i64 {
     var db = agnostic_store_db();
     if (db == 0 || uid == 0) { return 0; }
     if (agnostic_users_role(uid) < 0) { return 0; }
+    if (_agnostic_apikeys_of_locked(uid) >= AGNOSTIC_APIKEYS_PER_USER) { return 0; }
 
     var raw = agnostic_apikey_generate_a(a);
     if (raw == 0) { return 0; }
     var digest = agnostic_sha256_hex_a(a, raw);
     if (digest == 0) { return 0; }
 
-    var kid = agnostic_key64(raw);
-    if (kid == 0) { kid = 1; }
+    var kid = agnostic_apikey_id(raw);
 
     var lb = label;
     if (lb == 0) { lb = str_from(""); }

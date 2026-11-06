@@ -19,7 +19,7 @@ var AGNOSTIC_WEBGUI_ASSET_COUNT = 5;
 # How many plugin manifests are embedded.
 var AGNOSTIC_WEBGUI_PLUGIN_COUNT = 4;
 
-# --- src/webgui/index.html — 39975 bytes -------------------------------------
+# --- src/webgui/index.html — 39983 bytes -------------------------------------
 var _AGNOSTIC_WEBGUI_ASSET_00 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -133,7 +133,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
   <section class=\"view\" id=\"view-overview\" hidden>
     <h1>Overview</h1>
     <p class=\"lede\">This server's state, and the views it can show. Views are plugins built into
-      the binary; an administrator switches them on in Settings.</p>
+      the binary; a super administrator switches them on in Settings.</p>
     <div class=\"cards\">
       <div class=\"card\">
         <h2>Server</h2>
@@ -149,7 +149,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
   <section class=\"view\" id=\"view-settings\" hidden>
     <h1>Settings</h1>
     <p class=\"lede\">Settings apply to the whole deployment and are kept in its database, so they
-      survive a restart. Changing one needs the administrator role and is recorded in the audit trail.</p>
+      survive a restart. Changing one needs the super administrator role and is recorded in the audit trail.</p>
     <div class=\"card\">
       <h2>Plugins</h2>
       <div id=\"plugin-rows\"></div>
@@ -602,7 +602,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
         rows.append(el('p', 'muted', 'Could not list plugins: ' + state.pluginsError));
       } else {
         const role = store.get(ROLE_KEY);
-        const mayChange = state.auth === 'off' || role === 'admin' || role === 'super_admin';
+        const mayChange = state.auth === 'off' || role === 'super_admin';
         for (const p of state.plugins || []) {
           const row = el('div', 'plugin-row');
           const title = el('div', 'title');
@@ -613,7 +613,7 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
           sw.setAttribute('role', 'switch');
           sw.setAttribute('aria-checked', p.enabled ? 'true' : 'false');
           sw.setAttribute('aria-label', (p.enabled ? 'Turn off ' : 'Turn on ') + p.name);
-          if (!mayChange) { sw.disabled = true; sw.title = 'Changing a plugin needs the administrator role'; }
+          if (!mayChange) { sw.disabled = true; sw.title = 'Changing a plugin needs the super administrator role'; }
           sw.addEventListener('click', () => togglePlugin(p, sw));
           row.append(title, sw, el('div', 'desc', p.description));
           const perms = (p.permissions || []).map(permissionWords);
@@ -731,9 +731,9 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
         Object.assign(p, r.data.plugin);
         toast(p.name + (p.enabled ? ' is on.' : ' is off.'));
       } else if (r.status === 401) {
-        openSignin('Sign in as an administrator to change plugins.');
+        openSignin('Sign in as a super administrator to change plugins.');
       } else if (r.status === 403) {
-        toast('Changing a plugin needs the administrator role.', true);
+        toast('Changing a plugin needs the super administrator role.', true);
       } else {
         toast('Could not change ' + p.name + ': ' + errText(r), true);
       }
@@ -10314,7 +10314,7 @@ if (typeof document !== 'undefined' && document.getElementById('detail')) {
 </html>
 ";
 
-# --- src/webgui/plugins/audit/index.html — 28182 bytes -----------------------
+# --- src/webgui/plugins/audit/index.html — 28195 bytes -----------------------
 var _AGNOSTIC_WEBGUI_ASSET_04 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -10553,7 +10553,7 @@ function errOf(r) {
  *  server started (`verified: \"open\"` — not a moment ago), and how many appends were DROPPED,
  *  which verification cannot see. GET /api/v1/audit/entries pages the newest entries by index
  *  (`next` → `?before=`); the server keeps the newest 1024 for reading (`oldest_held`). Both are
- *  ADMIN routes: the trail records every user's actions.
+ *  SUPER routes: the trail records every tenant's actions.
  *
  *  The \"Chain\" column checks, for the entries on screen, that each one's `prev_hash` is the
  *  hash of the entry before it. That is a reading aid, not the verification — the server's
@@ -10652,8 +10652,8 @@ class AuditTrail {
   onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   emit() { for (const fn of this.listeners) fn(this); }
   errorText(r, what) {
-    if (r.status === 401) return 'Sign in as an administrator to read the audit trail.';
-    if (r.status === 403 && !(r.data && typeof r.data.code === 'string' && r.data.code.startsWith('plugin_'))) return 'The audit trail is for administrators: it records every user’s actions.';
+    if (r.status === 401) return 'Sign in as a super administrator to read the audit trail.';
+    if (r.status === 403 && !(r.data && typeof r.data.code === 'string' && r.data.code.startsWith('plugin_'))) return 'The audit trail is for super administrators: it records every user’s actions.';
     return 'Could not read ' + what + ': ' + errOf(r);
   }
   page(r) {
@@ -10847,21 +10847,21 @@ fn agnostic_webgui_asset_bytes(i): i64 {
 
 # The `i`th page's length in bytes, as the generator counted it, or 0.
 fn agnostic_webgui_asset_len(i): i64 {
-    if (i == 0) { return 39975; }
+    if (i == 0) { return 39983; }
     if (i == 1) { return 452787; }
     if (i == 2) { return 49422; }
     if (i == 3) { return 40065; }
-    if (i == 4) { return 28182; }
+    if (i == 4) { return 28195; }
     return 0;
 }
 
 # The SHA-256 of the `i`th page's source file, lowercase hex, or 0.
 fn agnostic_webgui_asset_sha256(i): i64 {
-    if (i == 0) { return "358334c4778debf41f8c885da22b150ac072a3d4a176e5f959125ec18a2e7723"; }
+    if (i == 0) { return "dc913347dc4792f23cf53933435b28e45ecb9cd6143a62656e6b57bcb853daa3"; }
     if (i == 1) { return "411669d9469395104380f00c572f29a2777104126e4efd3aa441ab4e0df83409"; }
     if (i == 2) { return "c2200c085910f796d5535a15a0dd405808cb327feab8ac14ab3786a541ea1797"; }
     if (i == 3) { return "a950f9468c64f6ba5b3fab044283395e20c4fc79b607735f105332b847a8a339"; }
-    if (i == 4) { return "8f222b196fd4a6f9dfe9e389347c58bc6c7b99cb9a8bbe88499508b0be8ae88a"; }
+    if (i == 4) { return "217bcba94e6358660d18422b83a9719d35c536f3b04e76bf3a3e466b177f3783"; }
     return 0;
 }
 
@@ -10877,11 +10877,11 @@ fn agnostic_webgui_asset_path(i): i64 {
 
 # The Content-Security-Policy the `i`th page is served with, or 0.
 fn agnostic_webgui_asset_csp(i): i64 {
-    if (i == 0) { return "default-src 'none'; script-src 'sha256-bYYKB5LjVZ9/bMt48VUA0ybhegZ34CAu8JB5qDsSeh0=' 'sha256-1LIlsweLwnMLN0Blz/VSWK30Mab987Pelq3BS+FAr+M='; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"; }
+    if (i == 0) { return "default-src 'none'; script-src 'sha256-bYYKB5LjVZ9/bMt48VUA0ybhegZ34CAu8JB5qDsSeh0=' 'sha256-dyhYShGgsIUjrvKxTR1+2p/XFwXvirrew4+7gYf+K4c='; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"; }
     if (i == 1) { return "default-src 'none'; script-src 'sha256-T3C81vESEyEVff9yhaaRS1UkhRRM7amk1ZHTXmA27Xc='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 2) { return "default-src 'none'; script-src 'sha256-hk+5dtT8fds4ZJG3YGyOPNwKB4TREhZ1uzyb3QtBSxw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 3) { return "default-src 'none'; script-src 'sha256-wbYQVCh7XgC++N8NdS6axkB+bC4t9m5Vlq/EHlHuFQo='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
-    if (i == 4) { return "default-src 'none'; script-src 'sha256-Ia6SOA2Yw0/U5w3AcS3qo7YRNRqFf57r7xl9+mYvZYU='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 4) { return "default-src 'none'; script-src 'sha256-ygOLjo69VvU6TJuRQrR+k8WSexF9CTmT6UOafnBBeWw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     return 0;
 }
 

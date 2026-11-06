@@ -15,8 +15,8 @@ Status words: **PORTED** (a `src/` file and a test), **DELEGATED** (an agnosai o
 | QA tools (M6) | `src/engine/tools.cyr` resolves the preset vocabulary. 36 of 38 names have no tool behind them, and agnosai F1 means a tool would not be called | 0.4.x |
 | MCP and A2A (M7) | Nothing | 0.5.x |
 | Reports (M8) | Crew outcomes, stored and listed | 0.5.x |
-| Issuing users, API keys and tenants (G1) | The store functions and `Authorization: ApiKey`. No route or command calls them, so a deployment has one user | 0.3.x |
-| An operator-set JWT secret (G2) | `agnostic_jwt_set_secret`, with no caller, so tokens die on restart | 0.3.x |
+| Issuing users, API keys and tenants (G1) | Done at 0.3.0 ([ADR 0023](../../adr/0023-provisioning-is-routes-and-one-recovery-command.md)) | 0.3.0 |
+| An operator-set JWT secret (G2) | Done at 0.3.0: `AGNOSTIC_JWT_SECRET` | 0.3.0 |
 
 §3 lists everything else, and the [release plan](../roadmap.md#release-plan) carries all of it.
 
@@ -61,7 +61,7 @@ Nothing to port.
 
 | Item | agnostic today | Release |
 |---|---|---|
-| Identity provisioning (G1) and the JWT secret (G2) | See §1 | 0.3.x |
+| Identity provisioning (G1) and the JWT secret (G2) | Done at 0.3.0, see §1 | 0.3.0 |
 | The rest of the audit vocabulary (G12) | A 401, a 403 and a rate-limit hit leave no entry | 0.3.x |
 | Deployment guide (G14) | `SECURITY.md` and the configuration guide say TLS belongs to a proxy. Nothing covers the binary, the proxy and a unit file together | 0.3.x |
 | A crew's target (G4) | A QA tool needs one, and the crew body is `name`, `process`, `max_concurrency`, `agents`, `tasks` | 0.4.x |

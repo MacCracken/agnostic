@@ -5,7 +5,7 @@
 # | `GET /api/v1/plugins` | 200 — every compiled-in plugin, switched on or not |
 # | `PUT /api/v1/plugins/{id}` | 200 · 400 · **404** · 422 · 500 |
 #
-# Listing is READ; switching is **ADMIN** (`src/auth/perm.cyr`) — turning a view on
+# Listing is READ; switching is **SUPER** (`src/auth/perm.cyr`) — turning a view on
 # changes what every user of the deployment sees.
 #
 # ## `PUT {"enabled": true}` — the body is the whole state, and nothing else

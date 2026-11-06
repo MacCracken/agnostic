@@ -242,10 +242,10 @@ fn test_route_table() {
 
     var rows = 0;
     while (agnostic_route_row_pattern(rows) != 0) { rows = rows + 1; }
-    assert_eq(rows, 21, "21 rows: 20 paths, `/ui` listed with and without its slash");
-    assert_eq(agnostic_route_row_pattern(21), 0, "past the last row there is no pattern");
+    assert_eq(rows, 32, "32 rows: 31 paths, `/ui` listed with and without its slash");
+    assert_eq(agnostic_route_row_pattern(32), 0, "past the last row there is no pattern");
     assert_eq(agnostic_route_row_pattern(0 - 1), 0, "nor before the first");
-    assert_eq(agnostic_route_row_id(21, AGNOSTIC_METHOD_GET), AGNOSTIC_ROUTE_NONE, "nor an id");
+    assert_eq(agnostic_route_row_id(32, AGNOSTIC_METHOD_GET), AGNOSTIC_ROUTE_NONE, "nor an id");
     # ⚠ A row that would not fit is refused rather than written past the storage, so
     # a full table may have dropped one: the build must leave room for another.
     assert_eq((rows + 1) * AGNOSTIC_RR_SIZE <= AGNOSTIC_RR_TABLE_BYTES, 1,
@@ -277,7 +277,7 @@ fn test_route_table() {
         }
         i = i + 1;
     }
-    assert_eq(arms, 27, "27 arms: 26 route ids, the shell's twice");
+    assert_eq(arms, 44, "44 arms: 43 route ids, the shell's twice");
     # ⭐ 0.1.16 (ADR 0020): and names its own row's pattern — the server span's `http.route`.
     # A failure prints the first row at fault as `got`.
     assert_eq(unnamed, 0 - 1, "every hit names the pattern of the row that answered");
@@ -287,13 +287,13 @@ fn test_route_table() {
     var missing = 0;
     var doubled = 0;
     var id2 = AGNOSTIC_ROUTE_HEALTH;
-    while (id2 <= AGNOSTIC_ROUTE_AUDIT_ENTRIES) {
+    while (id2 <= AGNOSTIC_ROUTE_TENANT_DELETE) {
         var n = _t_arms_of(id2);
         if (n == 0 && missing == 0) { missing = id2; }
         if (n > 1 && id2 != AGNOSTIC_ROUTE_UI_SHELL && doubled == 0) { doubled = id2; }
         id2 = id2 + 1;
     }
-    assert_eq(missing, 0, "every route id from HEALTH to AUDIT_ENTRIES has an arm");
+    assert_eq(missing, 0, "every route id from HEALTH to TENANT_DELETE has an arm");
     assert_eq(doubled, 0, "no id but the shell's has two arms");
     assert_eq(_t_arms_of(AGNOSTIC_ROUTE_UI_SHELL), 2, "the shell has two: /ui and /ui/");
 
@@ -337,7 +337,7 @@ fn test_route_table() {
         i = i + 1;
     }
     assert_eq(wrong, 0 - 1, "every row's path, sent a method it lacks, allows exactly its arms");
-    assert_eq(probes, 21 * 5 - 27, "one probe for each method a row lacks, and the unknown verb");
+    assert_eq(probes, 32 * 5 - 44, "one probe for each method a row lacks, and the unknown verb");
     var hit = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, str_from("/health"));
     assert_eq(agnostic_route_match_allow(hit), 0, "a hit allows nothing: only a 405 reads it");
     var miss = agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, str_from("/nope"));

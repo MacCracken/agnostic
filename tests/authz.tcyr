@@ -89,13 +89,13 @@ fn test_route_permissions() {
 
     # ⚠ The audit trail spans the deployment, so a viewer holding it would read
     # activity from tenants they cannot otherwise see.
-    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_AUDIT), AGNOSTIC_PERM_ADMIN,
-      "the audit trail is ADMIN, not READ");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_AUDIT), AGNOSTIC_PERM_SUPER,
+      "the audit trail is SUPER, not READ");
 
-    # ⭐ An id nobody classified falls through to ADMIN — the same fail-safe
+    # ⭐ An id nobody classified falls through to SUPER — the same fail-safe
     # default `agnostic_route_needs_auth` uses.
-    assert_eq(agnostic_perm_for_route(99), AGNOSTIC_PERM_ADMIN,
-      "an unclassified route requires ADMIN rather than being readable");
+    assert_eq(agnostic_perm_for_route(99), AGNOSTIC_PERM_SUPER,
+      "an unclassified route requires SUPER rather than being readable");
 
     # And a viewer really is refused by that default.
     assert_eq(agnostic_role_can(AGNOSTIC_ROLE_VIEWER, agnostic_perm_for_route(99)), 0,

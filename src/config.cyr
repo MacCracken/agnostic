@@ -49,7 +49,8 @@ enum AgnosticConfigOff {
     AGNOSTIC_CFG_OTLP_AS_IS = 152;  # 1 when the endpoint is the per-signal traces URL (0.1.14)
     AGNOSTIC_CFG_LLM_SECS  = 160;   # the inference call's ceiling, s; 0 = agnosai's own (0.1.14)
     AGNOSTIC_CFG_REQUEST_MS = 168;  # accept to a complete request, ms (0.2.2)
-    AGNOSTIC_CFG_SIZE      = 176;
+    AGNOSTIC_CFG_JWT_SECRET = 176;  # the operator's signing secret, a Str, 0 unset, -1 refused
+    AGNOSTIC_CFG_SIZE      = 184;
 }
 
 # The service name agnostic's spans are exported under when `OTEL_SERVICE_NAME` is unset or
@@ -255,6 +256,18 @@ fn agnostic_config_parse_auth(v: Str): i64 {
     return 0 - 1;
 }
 
+# The shortest `AGNOSTIC_JWT_SECRET`. This module is included on its own by `tests/config.tcyr`, so
+# it cannot read `AGNOSTIC_JWT_SECRET_MIN`; `tests/authn.tcyr` holds the two equal.
+var AGNOSTIC_CONFIG_JWT_SECRET_MIN = 32;
+
+# `AGNOSTIC_JWT_SECRET` as a secret: the value itself, 0 when it is empty, or -1 when it is
+# shorter than `agnostic_jwt_set_secret` takes. Measured in bytes, as the HMAC reads it.
+fn agnostic_config_parse_jwt_secret(v: Str): i64 {
+    if (str_len(v) == 0) { return 0; }
+    if (str_len(v) < AGNOSTIC_CONFIG_JWT_SECRET_MIN) { return 0 - 1; }
+    return v;
+}
+
 # `AGNOSTIC_ADDR` as an address: `any`, or loopback spelled `loopback`, `localhost`,
 # `127.0.0.1` or left empty. -1 for anything else, which the caller refuses.
 fn agnostic_config_parse_addr(v: Str): i64 {
@@ -453,6 +466,17 @@ fn agnostic_config_from_env(): i64 {
     }
     store64(c + AGNOSTIC_CFG_BOOT_PW, boot_pw);
 
+    # The JWT signing secret (0.3.0). Unset, every process signs with a random one and a restart
+    # ends every session. Too short refuses to start rather than falling back to that: an operator
+    # who set one expects tokens to survive a restart, and one who set a weak one must be told.
+    #
+    # ⚠ **Read here and never logged**, like `AGNOSTIC_BOOTSTRAP_PASSWORD`. Anyone who holds it can
+    # forge a token for any user.
+    var jwt_secret = 0;
+    var raw_js = getenv("AGNOSTIC_JWT_SECRET");
+    if (raw_js != 0) { jwt_secret = agnostic_config_parse_jwt_secret(str_from(raw_js)); }
+    store64(c + AGNOSTIC_CFG_JWT_SECRET, jwt_secret);
+
     # OTLP span export (0.1.14, ADR 0018) — the OpenTelemetry SDK's own variables, so a
     # deployment configures agnostic as it configures everything else it runs. Unset or
     # empty means off, as the OTel specification reads an empty variable. A malformed
@@ -530,6 +554,14 @@ fn agnostic_config_bootstrap_email(c): i64 {
 fn agnostic_config_bootstrap_password(c): i64 {
     if (c == 0) { return 0; }
     return load64(c + AGNOSTIC_CFG_BOOT_PW);
+}
+
+# The operator's JWT signing secret, or 0 when unset.
+#
+# ⚠ Never log this value. Anyone holding it can forge a token for any user.
+fn agnostic_config_jwt_secret(c): i64 {
+    if (c == 0) { return 0; }
+    return load64(c + AGNOSTIC_CFG_JWT_SECRET);
 }
 
 # The bind address as a network-order packed IPv4 word, not a string.
@@ -644,6 +676,7 @@ fn agnostic_config_invalid(c): i64 {
     if (load64(c + AGNOSTIC_CFG_LLM_SECS) < 0) { return 1; }
     if (load64(c + AGNOSTIC_CFG_REQUEST_MS) < 0) { return 1; }
     if (load64(c + AGNOSTIC_CFG_AUTH_MODE) < 0) { return 1; }
+    if (load64(c + AGNOSTIC_CFG_JWT_SECRET) == 0 - 1) { return 1; }
     if (load64(c + AGNOSTIC_CFG_ADDR) == 0 - 1) { return 1; }
     if (load64(c + AGNOSTIC_CFG_LLM_URL) == 0 - 1) { return 1; }
     return 0;

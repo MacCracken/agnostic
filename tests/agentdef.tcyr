@@ -469,7 +469,7 @@ fn test_listing_a_large_store() {
     assert_eq(intact, n, "every key is still its own bytes after the result set is freed");
     assert_eq(answer, n, "and every key still resolves");
 
-    var resp = agnostic_route_definitions_list_a(a);
+    var resp = agnostic_route_definitions_list_a(a, 0);
     assert_neq(resp, 0, "the listing renders");
     assert_eq(agnostic_response_status(resp), HTTP_OK, "200");
     assert_eq(_t_has(agnostic_encode_a(a, agnostic_response_body(resp)), "\"total\":300"), 1,

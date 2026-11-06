@@ -25,6 +25,29 @@
 
 var AGNOSTIC_TENANT_KEY_MAX = 64;
 
+# A tenant as a listing shows it.
+enum AgnosticTenantRowOff {
+    AGNOSTIC_TR_KEY     = 0;
+    AGNOSTIC_TR_NAME    = 8;
+    AGNOSTIC_TR_CREATED = 16;
+    AGNOSTIC_TR_SIZE    = 24;
+}
+
+# What deleting a tenant reports.
+enum AgnosticTenantResult {
+    AGNOSTIC_TENANT_OK      = 0;
+    AGNOSTIC_TENANT_MISSING = 1;
+    AGNOSTIC_TENANT_IN_USE  = 2;   # it still has users
+    AGNOSTIC_TENANT_FAILED  = 3;
+}
+
+# The tenant's key.
+fn agnostic_tenant_row_key(r): i64 { return load64(r + AGNOSTIC_TR_KEY); }
+# The tenant's display name.
+fn agnostic_tenant_row_name(r): i64 { return load64(r + AGNOSTIC_TR_NAME); }
+# When the tenant was created, in epoch seconds.
+fn agnostic_tenant_row_created(r): i64 { return load64(r + AGNOSTIC_TR_CREATED); }
+
 var AGNOSTIC_TENANTS_TABLE_SQL =
 "CREATE TABLE agnostic_tenants (tid INT, tkey STR, tname STR, created INT)";
 
@@ -202,6 +225,93 @@ fn _agnostic_tenant_delete_locked_a(a, key: Str): i64 {
     patra_finalize(st);
     if (rc != PATRA_OK) { return 0; }
     return 1;
+}
+
+# Delete tenant `key` if no user belongs to it: an `AGNOSTIC_TENANT_*`.
+#
+# ⚠ **Refused while it has users, in one critical section with the delete.** A user whose tenant
+# is gone would keep a scope nobody can administer. Its stored objects stay, as above, and a tenant
+# created later with the same key reads them.
+fn agnostic_tenant_delete_empty_a(a, key: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_tenant_delete_empty_locked_a(a, key);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_tenant_delete_empty_a`'s body. The caller holds the store lock.
+fn _agnostic_tenant_delete_empty_locked_a(a, key: Str): i64 {
+    if (agnostic_tenant_find_a(a, key) == 0) { return AGNOSTIC_TENANT_MISSING; }
+    if (_agnostic_users_in_tenant_locked(key) > 0) { return AGNOSTIC_TENANT_IN_USE; }
+    if (_agnostic_tenant_delete_locked_a(a, key) == 0) { return AGNOSTIC_TENANT_FAILED; }
+    return AGNOSTIC_TENANT_OK;
+}
+
+# Row `i` of `SELECT tkey, tname, created`, in `a`. 0 on exhaustion.
+fn _agnostic_tenants_row_a(a, rs, i): i64 {
+    var r = alloc_via(a, AGNOSTIC_TR_SIZE);
+    if (r == 0) { return 0; }
+    store64(r + AGNOSTIC_TR_KEY, _agnostic_auth_str_a(a, rs, i, 0));
+    store64(r + AGNOSTIC_TR_NAME, _agnostic_auth_str_a(a, rs, i, 1));
+    store64(r + AGNOSTIC_TR_CREATED, patra_result_get_int(rs, i, 2));
+    return r;
+}
+
+# Every tenant, by key, as a vec of rows in `a`. 0 when `a` is exhausted or the store cannot answer.
+fn agnostic_tenants_list_a(a): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_tenants_list_locked_a(a);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_tenants_list_a`'s body. The caller holds the store lock.
+fn _agnostic_tenants_list_locked_a(a): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var rs = patra_query(db, "SELECT tkey, tname, created FROM agnostic_tenants ORDER BY tkey");
+    if (rs == 0) { return 0; }
+    var out = vec_new_a(a);
+    var i = 0;
+    while (out != 0 && i < patra_result_count(rs)) {
+        var row = _agnostic_tenants_row_a(a, rs, i);
+        if (row == 0) { out = 0; }
+        else { vec_push_a(a, out, row); }
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return out;
+}
+
+# One tenant as a row in `a`, or 0. Its key is checked in full, as `agnostic_tenant_find_a` does.
+fn agnostic_tenant_get_a(a, key: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_tenant_get_locked_a(a, key);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_tenant_get_a`'s body. The caller holds the store lock.
+fn _agnostic_tenant_get_locked_a(a, key: Str): i64 {
+    var tid = agnostic_tenant_find_a(a, key);
+    if (tid == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db, "SELECT tkey, tname, created FROM agnostic_tenants WHERE tid = ?");
+    if (st == 0) { return 0; }
+    patra_bind_int(st, 0, tid);
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var out = 0;
+    var i = 0;
+    while (i < patra_result_count(rs)) {
+        var row = _agnostic_tenants_row_a(a, rs, i);
+        if (row != 0 && str_eq(agnostic_tenant_row_key(row), key) == 1) { out = row; }
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return out;
 }
 
 # How many tenants exist.

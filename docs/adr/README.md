@@ -43,3 +43,4 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0020](0020-each-request-records-an-http-server-span.md) | Each request records an HTTP SERVER span through agnosai's exporter, and an inbound traceparent gets a child, so crews nest under the request |
 | [0021](0021-request-arenas-grow-and-do-not-spill.md) | Request arenas grow, and do not spill |
 | [0022](0022-a-finished-crew-leaves-the-engines-registry.md) | A finished crew leaves the engine's registry |
+| [0023](0023-provisioning-is-routes-and-one-recovery-command.md) | Provisioning is routes and one recovery command, and ADMIN runs a tenant |

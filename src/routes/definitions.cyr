@@ -39,6 +39,12 @@
 # placeholder mode. **M4 flips the literal to `"patra"` and nothing else on the
 # wire moves.**
 #
+# ## A definition belongs to the caller's tenant (0.3.0, audit S3)
+#
+# Every handler reads the scope from `ctx` and turns the key into a row key with
+# `agnostic_definition_dkey_a`. To every other scope a definition does not exist: 404, not 403,
+# as ADR 0008 has it for crews. The same key can be taken in two tenants.
+#
 # This module reaches the store only through `agnostic_definitions_*`, never
 # through `_agnostic_definitions`, so M4 can replace the storage without touching
 # a handler.
@@ -186,14 +192,19 @@ fn _agnostic_def_exists_a(a): i64 {
       str_from_a(a, "an agent definition with this key already exists; use PUT to replace it"));
 }
 
-# `GET /api/v1/agents/definitions` — every stored definition, as summaries.
-fn agnostic_route_definitions_list_a(a): i64 {
+# The row key for `key` in the caller's scope, or 0 for a scope that holds nothing.
+fn _agnostic_def_dkey_a(a, key: Str, ctx): i64 {
+    return agnostic_definition_dkey_a(a, agnostic_reqctx_scope(ctx), key);
+}
+
+# `GET /api/v1/agents/definitions` — the caller's tenant's definitions, as summaries.
+fn agnostic_route_definitions_list_a(a, ctx): i64 {
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }
     var arr = bayan_json_v_arr_new_a(a);
     if (arr == 0) { return 0; }
 
-    var keys = agnostic_definitions_keys_a(a);
+    var keys = agnostic_definitions_keys_in_a(a, agnostic_reqctx_scope(ctx));
     if (keys == 0) { return 0; }
     var shown = 0;
     var i = 0;
@@ -215,18 +226,22 @@ fn agnostic_route_definitions_list_a(a): i64 {
 }
 
 # `POST /api/v1/agents/definitions` — create one. 201, or 409 if the key is taken.
-fn agnostic_route_definition_create_a(a, body: Str): i64 {
+fn agnostic_route_definition_create_a(a, body: Str, ctx): i64 {
     var resp: i64[1];
     var v = _agnostic_def_check_a(a, body, &resp);
     if (v == 0) { return load64(&resp); }
     # A taken key is refused before anything is built. The store checks again under its lock
     # with the write: only two creates of one key racing each other build one to refuse.
-    if (agnostic_definitions_get_a(a, agnostic_req_str(v, AGNOSTIC_JK_KEY)) != 0) { return _agnostic_def_exists_a(a); }
+    var dkey = _agnostic_def_dkey_a(a, agnostic_req_str(v, AGNOSTIC_JK_KEY), ctx);
+    if (dkey == 0) {
+        return agnostic_response_error_a(a, HTTP_FORBIDDEN,
+          str_from_a(a, "this account's tenant cannot hold a definition"));
+    }
+    if (agnostic_definitions_get_a(a, dkey) != 0) { return _agnostic_def_exists_a(a); }
     var d = _agnostic_def_build_a(a, v, &resp);
     if (d == 0) { return load64(&resp); }
 
-    var key = agnostic_agent_def_key(d);
-    var rc = agnostic_definitions_create(key, d);
+    var rc = agnostic_definitions_create(dkey, d);
 
     if (rc == AGNOSTIC_DEF_EXISTS) { return _agnostic_def_exists_a(a); }
     if (rc == AGNOSTIC_DEF_FULL) {
@@ -242,15 +257,17 @@ fn agnostic_route_definition_create_a(a, body: Str): i64 {
     }
 
     agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from_a(a, "definition.create"),
-      agnostic_audit_detail_a(a, "key", key));
+      agnostic_audit_detail_a(a, "key", dkey));
 
     return _agnostic_def_answer_a(a, AGNOSTIC_HTTP_CREATED, d);
 }
 
 # `GET /api/v1/agents/definitions/{key}` — one definition.
-fn agnostic_route_definition_get_a(a, key: Str): i64 {
+fn agnostic_route_definition_get_a(a, key: Str, ctx): i64 {
     if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
-    var d = agnostic_definitions_get_a(a, key);
+    var dkey = _agnostic_def_dkey_a(a, key, ctx);
+    if (dkey == 0) { return _agnostic_def_not_found_a(a); }
+    var d = agnostic_definitions_get_a(a, dkey);
     if (d == 0) { return _agnostic_def_not_found_a(a); }
     return _agnostic_def_answer_a(a, HTTP_OK, d);
 }
@@ -268,9 +285,11 @@ fn agnostic_route_definition_get_a(a, key: Str): i64 {
 # write, so nothing lands between them.
 fn agnostic_route_definition_replace_a(a, key: Str, body: Str, ctx): i64 {
     if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
+    var dkey = _agnostic_def_dkey_a(a, key, ctx);
+    if (dkey == 0) { return _agnostic_def_not_found_a(a); }
     var if_match = agnostic_reqctx_if_match(ctx);
     if (if_match != 0) {
-        var cur = agnostic_definitions_get_a(a, key);
+        var cur = agnostic_definitions_get_a(a, dkey);
         if (cur == 0) { return _agnostic_def_not_found_a(a); }
         if (agnostic_definition_precondition_a(a, cur, if_match) == 0) { return _agnostic_def_stale_a(a); }
     }
@@ -284,11 +303,11 @@ fn agnostic_route_definition_replace_a(a, key: Str, body: Str, ctx): i64 {
     }
     # An absent definition is refused before anything is built, as a taken key is on create;
     # the store checks again under its lock with the write.
-    if (if_match == 0 && agnostic_definitions_get_a(a, key) == 0) { return _agnostic_def_not_found_a(a); }
+    if (if_match == 0 && agnostic_definitions_get_a(a, dkey) == 0) { return _agnostic_def_not_found_a(a); }
     var d = _agnostic_def_build_a(a, v, &resp);
     if (d == 0) { return load64(&resp); }
 
-    var rc = agnostic_definitions_replace_if_a(a, key, d, if_match);
+    var rc = agnostic_definitions_replace_if_a(a, dkey, d, if_match);
     if (rc == AGNOSTIC_DEF_MISSING) { return _agnostic_def_not_found_a(a); }
     if (rc == AGNOSTIC_DEF_PRECONDITION) { return _agnostic_def_stale_a(a); }
     if (rc != AGNOSTIC_DEF_OK) {
@@ -297,7 +316,7 @@ fn agnostic_route_definition_replace_a(a, key: Str, body: Str, ctx): i64 {
     }
 
     agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from_a(a, "definition.replace"),
-      agnostic_audit_detail_a(a, "key", key));
+      agnostic_audit_detail_a(a, "key", dkey));
 
     return _agnostic_def_answer_a(a, HTTP_OK, d);
 }
@@ -306,7 +325,9 @@ fn agnostic_route_definition_replace_a(a, key: Str, body: Str, ctx): i64 {
 # is still that revision: 412 with code `revision` otherwise, and an absent one is 404.
 fn agnostic_route_definition_delete_a(a, key: Str, ctx): i64 {
     if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
-    var rc = agnostic_definitions_remove_if_a(a, key, agnostic_reqctx_if_match(ctx));
+    var dkey = _agnostic_def_dkey_a(a, key, ctx);
+    if (dkey == 0) { return _agnostic_def_not_found_a(a); }
+    var rc = agnostic_definitions_remove_if_a(a, dkey, agnostic_reqctx_if_match(ctx));
     if (rc == AGNOSTIC_DEF_PRECONDITION) { return _agnostic_def_stale_a(a); }
     if (rc != AGNOSTIC_DEF_OK) {
         return _agnostic_def_not_found_a(a);
@@ -314,7 +335,7 @@ fn agnostic_route_definition_delete_a(a, key: Str, ctx): i64 {
     # ⚠ Recorded at WARNING, not INFO. A deletion is the entry an operator goes
     # looking for, and severity is what `chain_by_severity` filters on.
     agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, "definition.delete"),
-      agnostic_audit_detail_a(a, "key", key));
+      agnostic_audit_detail_a(a, "key", dkey));
 
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }

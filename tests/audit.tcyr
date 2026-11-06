@@ -480,8 +480,8 @@ fn test_the_entries_route() {
     assert_eq(agnostic_route_match_id(m), AGNOSTIC_ROUTE_AUDIT_ENTRIES, "the router finds it");
     assert_eq(agnostic_route_match_id(agnostic_route_resolve_a(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/audit"))),
       AGNOSTIC_ROUTE_AUDIT, "beside the summary, unchanged");
-    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_AUDIT_ENTRIES), AGNOSTIC_PERM_ADMIN,
-      "and it is ADMIN: the trail records every user's actions");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_AUDIT_ENTRIES), AGNOSTIC_PERM_SUPER,
+      "and it is SUPER: the trail records every tenant's actions");
 }
 
 # A field too long for its slot is cut at a character boundary, never inside one.

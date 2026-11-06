@@ -76,6 +76,18 @@ fn agnostic_role_perms(role): i64 {
     return 0;
 }
 
+# Whether `role` is within `ceiling`: every permission it holds, `ceiling` holds too. 1 or 0, and
+# 0 for an unknown role on either side. What "nobody grants a role above their own" means.
+#
+# ⚠ **Masks, not `role <= ceiling`**, for the reason at the top of this module: comparing the
+# numbers would make the enum's order load-bearing.
+fn agnostic_role_within(role, ceiling): i64 {
+    var held = agnostic_role_perms(role);
+    if (held == 0) { return 0; }
+    if ((held & agnostic_role_perms(ceiling)) == held) { return 1; }
+    return 0;
+}
+
 # Whether `role` holds `perm`. 0 for an unknown role, an unknown permission, or
 # a request for more than one bit at a time.
 #
@@ -92,15 +104,21 @@ fn agnostic_role_can(role, perm): i64 {
 
 # The permission a route id requires, or 0 when the route needs no auth.
 #
-# ⚠ **Anything unclassified falls through to ADMIN**, mirroring
+# ⚠ **Anything unclassified falls through to SUPER**, mirroring
 # `agnostic_route_needs_auth`'s reasoning (`src/http/router.cyr`): the
 # default is what protects a route someone forgets to classify. A new route
-# nobody listed here is refused to everyone below an admin rather than served
-# on a READ check.
+# nobody listed here is refused to everyone below a super administrator rather
+# than served on a READ check. It was ADMIN until 0.3.0, when a tenant's own
+# administrator became a thing that can exist.
 #
-# ⚠ The audit trail is **ADMIN**, not READ. It records who did what across the
-# whole deployment, so a viewer holding it would read activity they cannot
-# otherwise see — including in other tenants.
+# ⚠ **ADMIN runs a tenant; SUPER runs the deployment** (0.3.0). Audit S4 found a
+# tenant-c ADMIN reading tenant-a's entries from the trail and switching a plugin
+# for everyone, against ADR 0008.
+#
+# ⚠ The audit trail is **SUPER**, not READ or ADMIN. It records who did what across
+# the whole deployment and its entries carry no scope to filter by, so anyone below
+# SUPER holding it would read activity they cannot otherwise see, including in other
+# tenants.
 fn agnostic_perm_for_route(id): i64 {
     if (agnostic_route_needs_auth(id) == 0) { return 0; }
 
@@ -120,14 +138,14 @@ fn agnostic_perm_for_route(id): i64 {
     if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { return AGNOSTIC_PERM_WRITE; }
     if (id == AGNOSTIC_ROUTE_DEF_DELETE) { return AGNOSTIC_PERM_WRITE; }
 
-    if (id == AGNOSTIC_ROUTE_AUDIT) { return AGNOSTIC_PERM_ADMIN; }
-    if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) { return AGNOSTIC_PERM_ADMIN; }
+    if (id == AGNOSTIC_ROUTE_AUDIT) { return AGNOSTIC_PERM_SUPER; }
+    if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) { return AGNOSTIC_PERM_SUPER; }
 
-    # ⚠ Switching a plugin is ADMIN, not WRITE. It is a setting of the DEPLOYMENT —
-    # turning a view on adds its tab for every user, in every tenant — and an
-    # operator's WRITE covers their own work, not what everyone else is shown.
+    # ⚠ Switching a plugin is SUPER, not WRITE or ADMIN. It is a setting of the
+    # DEPLOYMENT — turning a view on adds its tab for every user, in every tenant — and
+    # a tenant's administrator runs their own tenant, not what everyone else is shown.
     if (id == AGNOSTIC_ROUTE_PLUGIN_LIST) { return AGNOSTIC_PERM_READ; }
-    if (id == AGNOSTIC_ROUTE_PLUGIN_SET) { return AGNOSTIC_PERM_ADMIN; }
+    if (id == AGNOSTIC_ROUTE_PLUGIN_SET) { return AGNOSTIC_PERM_SUPER; }
 
     # A plugin's documents live in the caller's own tenant, so they are ordinary
     # READ and WRITE — unlike the switch above, which changes everyone's view.
@@ -141,5 +159,31 @@ fn agnostic_perm_for_route(id): i64 {
     # route in this table finds it rather than assuming an omission.
     if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return 0; }
 
-    return AGNOSTIC_PERM_ADMIN;
+    # ⚠ READ here means "any user": your own credentials are yours whatever your role, and a
+    # viewer can reach nothing else through these. They are never a plugin's to ask for.
+    if (id == AGNOSTIC_ROUTE_AUTH_ME) { return AGNOSTIC_PERM_READ; }
+    if (id == AGNOSTIC_ROUTE_AUTH_PASSWORD) { return AGNOSTIC_PERM_READ; }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEYS) { return AGNOSTIC_PERM_READ; }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEY_NEW) { return AGNOSTIC_PERM_READ; }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEY_DEL) { return AGNOSTIC_PERM_READ; }
+
+    # An ADMIN runs a tenant's users. Which users is the handler's to decide: the ladder sees a
+    # role, and the rule depends on the target (`src/routes/identity.cyr`).
+    if (id == AGNOSTIC_ROUTE_USER_LIST) { return AGNOSTIC_PERM_ADMIN; }
+    if (id == AGNOSTIC_ROUTE_USER_CREATE) { return AGNOSTIC_PERM_ADMIN; }
+    if (id == AGNOSTIC_ROUTE_USER_GET) { return AGNOSTIC_PERM_ADMIN; }
+    if (id == AGNOSTIC_ROUTE_USER_UPDATE) { return AGNOSTIC_PERM_ADMIN; }
+    if (id == AGNOSTIC_ROUTE_USER_DELETE) { return AGNOSTIC_PERM_ADMIN; }
+    if (id == AGNOSTIC_ROUTE_USER_PASSWORD) { return AGNOSTIC_PERM_ADMIN; }
+    if (id == AGNOSTIC_ROUTE_USER_KEYS) { return AGNOSTIC_PERM_ADMIN; }
+    if (id == AGNOSTIC_ROUTE_USER_KEY_DEL) { return AGNOSTIC_PERM_ADMIN; }
+
+    # Tenants are the deployment's. These four fall through to SUPER as well, and are listed so a
+    # reader looking for them finds them.
+    if (id == AGNOSTIC_ROUTE_TENANT_LIST) { return AGNOSTIC_PERM_SUPER; }
+    if (id == AGNOSTIC_ROUTE_TENANT_CREATE) { return AGNOSTIC_PERM_SUPER; }
+    if (id == AGNOSTIC_ROUTE_TENANT_GET) { return AGNOSTIC_PERM_SUPER; }
+    if (id == AGNOSTIC_ROUTE_TENANT_DELETE) { return AGNOSTIC_PERM_SUPER; }
+
+    return AGNOSTIC_PERM_SUPER;
 }

@@ -7,7 +7,7 @@
 #      `scripts/gen-webgui.sh` fails here, not in a browser.
 #   2. A plugin is OFF until switched on, the switch survives a store reopen, and an
 #      unrecognised stored value reads as OFF.
-#   3. The pages are public and the API is not: listing is READ, switching is ADMIN —
+#   3. The pages are public and the API is not: listing is READ, switching is SUPER —
 #      an operator's WRITE is not enough.
 #   4. Only a real change is audited.
 include "src/app.cyr"
@@ -336,8 +336,8 @@ fn test_plugin_api() {
 fn test_permissions() {
     test_group("plugins/permissions");
     assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_PLUGIN_LIST), AGNOSTIC_PERM_READ, "listing is READ");
-    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_PLUGIN_SET), AGNOSTIC_PERM_ADMIN,
-      "⭐ switching is ADMIN, not WRITE");
+    assert_eq(agnostic_perm_for_route(AGNOSTIC_ROUTE_PLUGIN_SET), AGNOSTIC_PERM_SUPER,
+      "⭐ switching is SUPER, not WRITE or ADMIN");
     assert_eq(agnostic_route_needs_auth(AGNOSTIC_ROUTE_UI_SHELL), 0, "the shell is public");
     assert_eq(agnostic_route_needs_auth(AGNOSTIC_ROUTE_UI_PLUGIN), 0, "and so is a plugin page");
     assert_eq(agnostic_route_needs_auth(AGNOSTIC_ROUTE_PLUGIN_LIST), 1, "but the API is not");
@@ -374,7 +374,11 @@ fn test_permissions() {
     assert_eq(agnostic_plugin_enabled(agnostic_plugin_find(str_from("swarm"))), 0,
       "and nothing was switched by either");
     assert_eq(agnostic_response_status(_t_req_as(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", on, atok)),
-      HTTP_OK, "an admin may");
+      HTTP_FORBIDDEN, "⭐ nor a tenant's admin: it changes every tenant's view");
+    var sup = agnostic_users_create_a(a, str_from("s@example.com"), str_from("pw"), AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var stok = agnostic_jwt_issue_a(a, sup, AGNOSTIC_ROLE_SUPER_ADMIN, 0, 600);
+    assert_eq(agnostic_response_status(_t_req_as(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", on, stok)),
+      HTTP_OK, "a super administrator may");
     assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/ui/plugins/swarm", "")), HTTP_OK,
       "and the page it switched on needs no credential either");
     agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);

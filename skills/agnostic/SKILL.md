@@ -29,8 +29,8 @@ Read these first. The rest of this file is how to keep them.
    asks for approval once it is running. Resubmitting an `interrupted` crew spends again: ask first.
 7. **Keep credentials out of output and out of tasks.** Never print a token or password, and never
    put one in a task description: task text goes to the model and is stored.
-8. **Stay on the crew surface.** Writing agent definitions, switching WebGUI plugins and reading the
-   audit trail affect every user; do them only when asked. Never send an `X-Agnostic-Plugin`
+8. **Stay on the crew surface.** Writing agent definitions affects your whole tenant, and switching
+   WebGUI plugins and reading the audit trail affect every tenant; do them only when asked. Never send an `X-Agnostic-Plugin`
    header, which is for WebGUI plugins only.
 
 ## 1. Find the server and check it
@@ -79,23 +79,28 @@ Send one of these on every `/api/v1` request:
   {"token":"…","token_type":"Bearer","expires_in":3600,"role":"operator"}
   ```
 
-  A token lasts an hour and does not survive a server restart. A 401 with a token that used to work
-  means log in again, once. Login allows 5 quick attempts per address, failed or not, and then one
+  A token lasts an hour, and ends sooner if the password changes or, on a deployment with no
+  `AGNOSTIC_JWT_SECRET`, if the server restarts. A 401 with a token that used to work means log in
+  again, once. Login allows 5 quick attempts per address, failed or not, and then one
   every 12 seconds; beyond that it answers **429** "too many attempts; retry later" with no
   `Retry-After`. Wait instead of retrying.
-- `Authorization: ApiKey …` (64 hex characters), only if an operator gave you one. No HTTP route
-  issues keys.
+- `Authorization: ApiKey …` (64 hex characters), if you have one. It takes the role of the user who
+  minted it and lasts until it is revoked, so it suits a script. To mint one you need a token from
+  login, since a key cannot mint a key. Send `POST /api/v1/auth/api-keys` with `{"label":"ci"}`: the `api_key` in the 201 is
+  the only time it is shown, so hand it to the user and do not print it again.
+
+`GET /api/v1/auth/me` says who a credential is: its `id`, `email`, `role`, `tenant` and `scope`.
 
 <!-- schema: vocabularies.roles -->
 Roles: `viewer` reads; `operator` also submits and cancels crews and writes agent definitions;
-`admin` and `super_admin` also read the audit trail and switch plugins. **401** means the
-credential is missing or bad. **403** "insufficient permissions" means your role is too low: do not
+`admin` also manages the users of its tenant; `super_admin` also manages tenants, reads the audit
+trail and switches plugins. **401** means the credential is missing or bad. **403** "insufficient permissions" means your role is too low: do not
 retry, tell the user.
 
 With authentication off an `Authorization` header is ignored, so the examples below work either way.
 
-Crews belong to your tenant. Another tenant's crew answers **404** on every route, exactly like a
-crew that never existed. With authentication off, everyone shares one tenant, `_`.
+Crews and agent definitions belong to your tenant. Another tenant's answers **404** on every route,
+exactly like one that never existed. With authentication off, everyone shares one tenant, `_`.
 
 ## 3. Rules for every request
 
@@ -412,7 +417,15 @@ means someone changed it since — read it again rather than overwrite their cha
 The server answers these as well. None is part of driving a crew, so leave them alone unless the
 user asks:
 
-- **The audit trail**, for an administrator: `GET /api/v1/audit`, `GET /api/v1/audit/entries`.
+- **Your own password and keys**, past minting one: `PUT /api/v1/auth/password`,
+  `GET /api/v1/auth/api-keys`, `DELETE /api/v1/auth/api-keys/{id}`.
+- **Users**, for an administrator: `GET /api/v1/users`, `POST /api/v1/users`,
+  `GET /api/v1/users/{id}`, `PUT /api/v1/users/{id}`, `DELETE /api/v1/users/{id}`,
+  `PUT /api/v1/users/{id}/password`, `GET /api/v1/users/{id}/api-keys`,
+  `DELETE /api/v1/users/{id}/api-keys/{key}`.
+- **Tenants**, for a super administrator: `GET /api/v1/tenants`, `POST /api/v1/tenants`,
+  `GET /api/v1/tenants/{key}`, `DELETE /api/v1/tenants/{key}`.
+- **The audit trail**, for a super administrator: `GET /api/v1/audit`, `GET /api/v1/audit/entries`.
 - **WebGUI plugins and their documents:** `GET /api/v1/plugins`, `PUT /api/v1/plugins/{id}`,
   `GET /api/v1/plugins/{id}/data`, `GET /api/v1/plugins/{id}/data/{key}`,
   `PUT /api/v1/plugins/{id}/data/{key}`, `DELETE /api/v1/plugins/{id}/data/{key}`.

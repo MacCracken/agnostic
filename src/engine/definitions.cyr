@@ -42,6 +42,19 @@
 # process and `patra_open` is called once at mount; if that ever stops being
 # true, the cache has to go — not be patched.
 
+# ## ⚠ A definition belongs to a tenant, and the row's key says which (0.3.0)
+#
+# Audit S3: a tenant-b OPERATOR listed, read, replaced and deleted tenant-a's definition. The
+# store functions below stay key-agnostic. The routes turn `(scope, key)` into a row key with
+# `agnostic_definition_dkey_a`, as plugin documents do, and pass that:
+#
+#   * In the default scope `_` the row key is the key itself.
+#   * In a tenant it is `<tenant>:<key>`. Neither a tenant key nor a definition key can contain
+#     `:` (`agnostic_tenant_key_valid`, `agnostic_key_is_valid`), so the two cannot collide.
+#
+# So **a row written before 0.3.0 needed no migration**: it has no colon, and it belongs to `_`,
+# as a crew stored before 0.1.9 does (ADR 0008). The stored document still holds the bare key.
+
 # What a store operation reports. Unchanged from M3, so no caller moved.
 enum AgnosticDefResult {
     AGNOSTIC_DEF_OK           = 0;
@@ -167,6 +180,29 @@ fn _agnostic_def_row_exists_locked(key: Str): i64 {
     var n = patra_result_count(rs);
     patra_result_free(rs);
     if (n > 0) { return 1; }
+    return 0;
+}
+
+# The row key for definition `key` in `scope`, in `a` — see the module header. 0 for a scope
+# that holds nothing (`AGNOSTIC_SCOPE_NONE`), or when `a` is exhausted.
+fn agnostic_definition_dkey_a(a, scope: Str, key: Str): i64 {
+    if (scope == 0 || key == 0) { return 0; }
+    if (str_eq(scope, AGNOSTIC_SCOPE_DEFAULT) == 1) { return key; }
+    if (agnostic_tenant_key_valid(scope) == 0) { return 0; }
+    return agnostic_tenant_scope_a(a, scope, key);
+}
+
+# Whether row key `dkey` is in `scope`. 1 or 0.
+fn _agnostic_definition_in_scope_a(a, dkey: Str, scope: Str): i64 {
+    if (str_eq(scope, AGNOSTIC_SCOPE_DEFAULT) == 1) {
+        var i = 0;
+        while (i < str_len(dkey)) {
+            if ((load8(str_data(dkey) + i) & 255) == 58) { return 0; }
+            i = i + 1;
+        }
+        return 1;
+    }
+    if (agnostic_tenant_unscope_a(a, scope, dkey) != 0) { return 1; }
     return 0;
 }
 
@@ -453,6 +489,24 @@ fn agnostic_definitions_keys_a(a): i64 {
     var r = _agnostic_definitions_keys_locked_a(a);
     agnostic_store_unlock();
     return r;
+}
+
+# The row keys of `scope`'s definitions, in `a`. 0 when `a` is exhausted.
+#
+# Filtered here: patra has one index on the table, and a tenant's keys share a prefix it cannot
+# seek to. The whole key list is short, and only this listing reads it.
+fn agnostic_definitions_keys_in_a(a, scope: Str): i64 {
+    var all = agnostic_definitions_keys_a(a);
+    if (all == 0) { return 0; }
+    var out = vec_new_a(a);
+    if (out == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(all)) {
+        var k = vec_get(all, i);
+        if (_agnostic_definition_in_scope_a(a, k, scope) == 1) { vec_push_a(a, out, k); }
+        i = i + 1;
+    }
+    return out;
 }
 
 # `agnostic_definitions_keys_a`'s body. The caller holds the store lock.

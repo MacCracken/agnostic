@@ -1,0 +1,709 @@
+# agnostic/routes/identity — users, API keys and tenants (0.3.0, ADR 0023).
+#
+# ## The status contract
+#
+# | Route | Needs | Codes |
+# |---|---|---|
+# | `GET /api/v1/auth/me` | any user | 200 |
+# | `PUT /api/v1/auth/password` | any user | 200 · 400 · 403 · 413 · 422 · 429 |
+# | `GET /api/v1/auth/api-keys` | any user | 200 |
+# | `POST /api/v1/auth/api-keys` | any user | **201** · 400 · 409 · 413 · 422 |
+# | `DELETE /api/v1/auth/api-keys/{id}` | any user | 200 · 404 |
+# | `GET /api/v1/users` | ADMIN | 200 |
+# | `POST /api/v1/users` | ADMIN | **201** · 400 · 403 · 409 · 413 · 422 · 429 |
+# | `GET /api/v1/users/{id}` | ADMIN | 200 · 404 |
+# | `PUT /api/v1/users/{id}` | ADMIN | 200 · 400 · 403 · 404 · 409 · 413 · 422 |
+# | `DELETE /api/v1/users/{id}` | ADMIN | 200 · 403 · 404 · 409 |
+# | `PUT /api/v1/users/{id}/password` | ADMIN | 200 · 400 · 403 · 404 · 413 · 422 · 429 |
+# | `GET /api/v1/users/{id}/api-keys` | ADMIN | 200 · 404 |
+# | `DELETE /api/v1/users/{id}/api-keys/{key}` | ADMIN | 200 · 403 · 404 |
+# | `GET /api/v1/tenants` | SUPER | 200 |
+# | `POST /api/v1/tenants` | SUPER | **201** · 400 · 409 · 413 · 422 |
+# | `GET /api/v1/tenants/{key}` | SUPER | 200 · 404 |
+# | `DELETE /api/v1/tenants/{key}` | SUPER | 200 · 404 · 409 |
+#
+# Every route also answers 409 with authentication off: there is nobody to provision.
+#
+# ## Three tiers, and the ladder enforces the first cut
+#
+# Everyone manages their own password and keys. An ADMIN manages the users of their own tenant. A
+# SUPER manages tenants, and the users of any of them. `agnostic_perm_for_route` holds that split,
+# so a viewer never reaches a handler under `/users`.
+#
+# ## ⚠ What the ladder cannot see, the handlers below check
+#
+#   * **Another tenant's user does not exist.** 404, not 403, as ADR 0008 has it for crews. An ADMIN
+#     holds the permission and the only thing wrong is the target.
+#   * **Nobody grants a role above their own, or touches a user above their own.** 403, because
+#     that user is one the caller can already see. `agnostic_role_within` decides, by permissions
+#     and never by comparing role numbers (`src/auth/perm.cyr`).
+#   * **The last super administrator stays.** 409, decided under the store lock with the write. A
+#     deployment without one has no route back; `agnostic admin reset-password` needs a user.
+#   * **An administrator's route does not set their own password.** It takes no current password,
+#     so a stolen token would keep the account. `PUT /api/v1/auth/password` is the way.
+#
+# ## ⚠ Secrets
+#
+# A password is read, hashed and dropped, and a raw API key goes out once, in the 201 that mints
+# it. Neither reaches a log, an audit entry or a later response. The audit trail names ids.
+
+# The longest body any route here takes. An email, a password and a role fit in far less.
+var AGNOSTIC_IDENTITY_MAX_BODY = 4096;
+
+# The fields of `PUT /api/v1/auth/password`. These allow-lists are public, like
+# `agnostic_login_fields_a`: the API schema lists each body from them (`src/http/schema.cyr`).
+fn agnostic_password_change_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_a(a, f, "current_password");
+    agnostic_field_a(a, f, "new_password");
+    return f;
+}
+
+# The fields of `POST /api/v1/auth/api-keys`.
+fn agnostic_apikey_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_a(a, f, "label");
+    return f;
+}
+
+# The fields of `POST /api/v1/users`.
+fn agnostic_user_create_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_a(a, f, "email");
+    agnostic_field_a(a, f, "password");
+    agnostic_field_a(a, f, "role");
+    agnostic_field_a(a, f, "tenant");
+    return f;
+}
+
+# The fields of `PUT /api/v1/users/{id}`.
+fn agnostic_user_role_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_a(a, f, "role");
+    return f;
+}
+
+# The fields of `PUT /api/v1/users/{id}/password`.
+fn agnostic_user_password_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_a(a, f, "password");
+    return f;
+}
+
+# The fields of `POST /api/v1/tenants`.
+fn agnostic_tenant_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_a(a, f, "key");
+    agnostic_field_a(a, f, "name");
+    return f;
+}
+
+# Decode a body against `allowed`: the value, or 0 with a ready-made error through `out_resp`.
+fn _agnostic_idn_decode_a(a, body: Str, allowed, out_resp): i64 {
+    store64(out_resp, 0);
+    if (str_len(body) > AGNOSTIC_IDENTITY_MAX_BODY) {
+        store64(out_resp, agnostic_response_error_a(a, HTTP_PAYLOAD_TOO_LARGE,
+            str_from_a(a, "request body too large")));
+        return 0;
+    }
+    var v = agnostic_decode_a(a, body);
+    if (v == 0) {
+        store64(out_resp, agnostic_response_error_a(a, HTTP_BAD_REQUEST,
+            str_from_a(a, "malformed JSON body")));
+        return 0;
+    }
+    if (agnostic_no_unknown_fields(v, allowed) == 0) {
+        store64(out_resp, agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+            str_from_a(a, "unknown field in request body")));
+        return 0;
+    }
+    return v;
+}
+
+# The answer with authentication off, when there is no principal and no one to provision.
+fn _agnostic_idn_off_a(a): i64 {
+    return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
+      str_from_a(a, "authentication is off, so there are no users; set AGNOSTIC_AUTH=required"));
+}
+
+fn _agnostic_idn_user_missing_a(a): i64 {
+    return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "user not found"));
+}
+
+fn _agnostic_idn_key_missing_a(a): i64 {
+    return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "API key not found"));
+}
+
+fn _agnostic_idn_tenant_missing_a(a): i64 {
+    return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "tenant not found"));
+}
+
+fn _agnostic_idn_above_a(a): i64 {
+    return agnostic_response_error_a(a, HTTP_FORBIDDEN,
+      str_from_a(a, "this user's role is above yours"));
+}
+
+fn _agnostic_idn_last_super_a(a): i64 {
+    return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
+      str_from_a(a, "this is the last super administrator; make another first"));
+}
+
+fn _agnostic_idn_short_password_a(a): i64 {
+    return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+      str_from_a(a, "a password must be 12 to 1024 bytes"));
+}
+
+fn _agnostic_idn_busy_a(a): i64 {
+    return agnostic_response_error_a(a, AGNOSTIC_HTTP_TOO_MANY_REQUESTS,
+      str_from_a(a, "too many attempts; retry later"));
+}
+
+fn _agnostic_idn_failed_a(a, what): i64 {
+    return agnostic_response_error_a(a, HTTP_INTERNAL, str_from_a(a, what));
+}
+
+fn _agnostic_idn_put_str_a(a, obj, key, v: Str): i64 {
+    var s = v;
+    if (s == 0) { s = str_from_a(a, ""); }
+    bayan_json_v_obj_set_a(a, obj, str_from_a(a, key), bayan_json_v_str_new_a(a, s));
+    return obj;
+}
+
+fn _agnostic_idn_put_int_a(a, obj, key, v): i64 {
+    bayan_json_v_obj_set_a(a, obj, str_from_a(a, key), bayan_json_v_int_new_a(a, v));
+    return obj;
+}
+
+# A user as the API shows one. The password record is not in the row, so it cannot be here.
+fn _agnostic_idn_user_a(a, row): i64 {
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    _agnostic_idn_put_str_a(a, o, "id", agnostic_id_hex_a(a, agnostic_user_row_uid(row)));
+    _agnostic_idn_put_str_a(a, o, "email", agnostic_user_row_email(row));
+    _agnostic_idn_put_str_a(a, o, "role", str_from_a(a, agnostic_role_name(agnostic_user_row_role(row))));
+    _agnostic_idn_put_str_a(a, o, "tenant", agnostic_user_row_tenant(row));
+    _agnostic_idn_put_int_a(a, o, "created_at", agnostic_user_row_created(row) * 1000);
+    return o;
+}
+
+# An API key as the API shows one: never the key.
+fn _agnostic_idn_key_a(a, row): i64 {
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    _agnostic_idn_put_str_a(a, o, "id", agnostic_id_hex_a(a, agnostic_key_row_id(row)));
+    _agnostic_idn_put_str_a(a, o, "label", agnostic_key_row_label(row));
+    _agnostic_idn_put_int_a(a, o, "created_at", agnostic_key_row_created(row) * 1000);
+    return o;
+}
+
+fn _agnostic_idn_tenant_a(a, row): i64 {
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    _agnostic_idn_put_str_a(a, o, "key", agnostic_tenant_row_key(row));
+    _agnostic_idn_put_str_a(a, o, "name", agnostic_tenant_row_name(row));
+    _agnostic_idn_put_int_a(a, o, "created_at", agnostic_tenant_row_created(row) * 1000);
+    return o;
+}
+
+# `{"<key>": <value>}`, the shape every single-object answer takes.
+fn _agnostic_idn_one_a(a, status, key, value): i64 {
+    if (value == 0) { return 0; }
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, o, str_from_a(a, key), value);
+    return agnostic_response_json_a(a, status, o);
+}
+
+# `{"<key>": [...], "total": n}`, built from `rows` by `render(a, row)`.
+fn _agnostic_idn_list_a(a, key, rows, render): i64 {
+    if (rows == 0) { return _agnostic_idn_failed_a(a, "could not read the store"); }
+    var arr = bayan_json_v_arr_new_a(a);
+    var o = bayan_json_v_obj_new_a(a);
+    if (arr == 0 || o == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(rows)) {
+        bayan_json_v_arr_push_a(a, arr, fncall2(render, a, vec_get(rows, i)));
+        i = i + 1;
+    }
+    bayan_json_v_obj_set_a(a, o, str_from_a(a, key), arr);
+    _agnostic_idn_put_int_a(a, o, "total", vec_len(rows));
+    return agnostic_response_json_a(a, HTTP_OK, o);
+}
+
+# `{"<key>": <id>, "status": <what happened>}`.
+fn _agnostic_idn_done_a(a, key, id: Str, status): i64 {
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    _agnostic_idn_put_str_a(a, o, key, id);
+    _agnostic_idn_put_str_a(a, o, "status", str_from_a(a, status));
+    return agnostic_response_json_a(a, HTTP_OK, o);
+}
+
+# `key=<value> by=<caller>` for an audit entry, in `a`. Ids only: see the module header.
+fn _agnostic_idn_detail_a(a, key, value: Str, caller): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_cstr_a(a, sb, key);
+    str_builder_add_cstr_a(a, sb, "=");
+    if (value != 0) { str_builder_add_a(a, sb, value); }
+    str_builder_add_cstr_a(a, sb, " by=");
+    str_builder_add_a(a, sb, agnostic_id_hex_a(a, agnostic_principal_uid(caller)));
+    return str_builder_build_a(a, sb);
+}
+
+fn _agnostic_idn_audit(a, severity, action, key, value: Str, caller): i64 {
+    return agnostic_audit_record(severity, AGNOSTIC_AUDIT_SRC, str_from_a(a, action),
+      _agnostic_idn_detail_a(a, key, value, caller));
+}
+
+# Whether the principal is a super administrator. 1 or 0.
+fn _agnostic_idn_is_super(p): i64 {
+    return agnostic_role_can(agnostic_principal_role(p), AGNOSTIC_PERM_SUPER);
+}
+
+# Whether two tenants, each a Str or 0, are the same. "" and 0 are both the default scope.
+fn _agnostic_idn_same_tenant(x: Str, y: Str): i64 {
+    var xn = 0;
+    var yn = 0;
+    if (x != 0) { xn = str_len(x); }
+    if (y != 0) { yn = str_len(y); }
+    if (xn == 0 && yn == 0) { return 1; }
+    if (xn != yn) { return 0; }
+    return str_eq(x, y);
+}
+
+# The user path parameter `id` names, as a row the caller may see, or 0 with a ready-made error
+# through `out_resp`. An unknown id, a malformed one and another tenant's user all answer the same.
+fn _agnostic_idn_target_a(a, ctx, id: Str, out_resp): i64 {
+    store64(out_resp, 0);
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) {
+        store64(out_resp, _agnostic_idn_off_a(a));
+        return 0;
+    }
+    var row = agnostic_users_get_a(a, agnostic_id_parse(id));
+    if (row != 0) {
+        if (_agnostic_idn_is_super(p) == 1) { return row; }
+        if (_agnostic_idn_same_tenant(agnostic_principal_tenant(p), agnostic_user_row_tenant(row)) == 1) {
+            return row;
+        }
+    }
+    store64(out_resp, _agnostic_idn_user_missing_a(a));
+    return 0;
+}
+
+# Whether the caller may change user `row`: its role is not above theirs. 1 or 0.
+fn _agnostic_idn_may_touch(p, row): i64 {
+    return agnostic_role_within(agnostic_user_row_role(row), agnostic_principal_role(p));
+}
+
+# Whether `email` looks like an address: 3 to 255 bytes, no space or control byte, and an `@` that
+# is neither first nor last. It is an identifier here, not a mailbox anything sends to.
+fn _agnostic_idn_email_ok(email: Str): i64 {
+    if (email == 0) { return 0; }
+    var n = str_len(email);
+    if (n < 3 || n > AGNOSTIC_EMAIL_MAX) { return 0; }
+    var p = str_data(email);
+    var at = 0 - 1;
+    var i = 0;
+    while (i < n) {
+        var c = load8(p + i) & 255;
+        if (c <= 32 || c == 127) { return 0; }
+        if (c == 64) { at = i; }
+        i = i + 1;
+    }
+    if (at <= 0 || at == n - 1) { return 0; }
+    return 1;
+}
+
+# --- yourself --------------------------------------------------------------
+
+# `GET /api/v1/auth/me` — who this credential is. Read from the row, like everything else.
+fn agnostic_route_auth_me_a(a, ctx): i64 {
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) { return _agnostic_idn_off_a(a); }
+    var row = agnostic_users_get_a(a, agnostic_principal_uid(p));
+    if (row == 0) { return _agnostic_idn_user_missing_a(a); }
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    _agnostic_idn_put_str_a(a, o, "id", agnostic_id_hex_a(a, agnostic_user_row_uid(row)));
+    _agnostic_idn_put_str_a(a, o, "email", agnostic_user_row_email(row));
+    _agnostic_idn_put_str_a(a, o, "role", str_from_a(a, agnostic_role_name(agnostic_user_row_role(row))));
+    _agnostic_idn_put_str_a(a, o, "tenant", agnostic_user_row_tenant(row));
+    _agnostic_idn_put_str_a(a, o, "scope", agnostic_principal_scope(p));
+    return agnostic_response_json_a(a, HTTP_OK, o);
+}
+
+# `PUT /api/v1/auth/password` — change your own password.
+#
+# ⚠ **The current password is checked through `agnostic_login_a`**, so this route spends what login
+# spends and no more: the per-IP bucket and the Argon2 cap come first, and a stolen token cannot
+# guess the password any faster than an anonymous caller can.
+#
+# ⚠ **It answers a new token.** Setting a password ends every older token, the caller's included,
+# so a client that changed its password would otherwise be logged out by doing so. The new one is
+# issued after the cut-off, in the same second or later.
+fn agnostic_route_auth_password_a(a, body: Str, ctx): i64 {
+    var resp: i64[1];
+    var v = _agnostic_idn_decode_a(a, body, agnostic_password_change_fields_a(a), &resp);
+    if (v == 0) { return load64(&resp); }
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) { return _agnostic_idn_off_a(a); }
+
+    var cur = agnostic_req_str(v, str_from_a(a, "current_password"));
+    var nxt = agnostic_req_str(v, str_from_a(a, "new_password"));
+    if (cur == 0 || nxt == 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "current_password and new_password are required"));
+    }
+    if (agnostic_password_length_ok(nxt) == 0) { return _agnostic_idn_short_password_a(a); }
+
+    var uid = agnostic_principal_uid(p);
+    var email = agnostic_users_email_a(a, uid);
+    if (email == 0) { return _agnostic_idn_user_missing_a(a); }
+    var status: i64[1];
+    store64(&status, 0);
+    var ok = agnostic_login_a(a, agnostic_reqctx_peer(ctx), email, cur, &status);
+    if (load64(&status) == AGNOSTIC_LOGIN_THROTTLED) { return _agnostic_idn_busy_a(a); }
+    if (ok != uid) {
+        _agnostic_idn_audit(a, SEV_WARNING, "auth.password.failed", "uid", agnostic_id_hex_a(a, uid), p);
+        # 403, not 401: the token is good and this request is what failed.
+        return agnostic_response_error_a(a, HTTP_FORBIDDEN, str_from_a(a, "current password is wrong"));
+    }
+
+    var shed = agnostic_argon_shed_count();
+    var rc = agnostic_users_set_password_a(a, uid, nxt);
+    if (rc == AGNOSTIC_USER_MISSING) { return _agnostic_idn_user_missing_a(a); }
+    if (rc != AGNOSTIC_USER_OK) {
+        if (agnostic_argon_shed_count() != shed) { return _agnostic_idn_busy_a(a); }
+        return _agnostic_idn_failed_a(a, "could not set the password");
+    }
+    _agnostic_idn_audit(a, SEV_WARNING, "auth.password.changed", "uid", agnostic_id_hex_a(a, uid), p);
+
+    var role = agnostic_principal_role(p);
+    var token = agnostic_jwt_issue_a(a, uid, role, agnostic_principal_tenant(p), AGNOSTIC_TOKEN_TTL_SECS);
+    if (token == 0) { return _agnostic_idn_failed_a(a, "could not issue a token"); }
+    return agnostic_response_json_a(a, HTTP_OK, agnostic_login_body_a(a, token, role));
+}
+
+# `GET /api/v1/auth/api-keys` — your keys, never their values.
+fn agnostic_route_auth_keys_list_a(a, ctx): i64 {
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) { return _agnostic_idn_off_a(a); }
+    return _agnostic_idn_list_a(a, "keys", agnostic_apikeys_list_a(a, agnostic_principal_uid(p)),
+      &_agnostic_idn_key_a);
+}
+
+# `POST /api/v1/auth/api-keys` — mint a key. **The 201 is the only time it exists**: only its
+# digest is stored, so a lost key is revoked and replaced, never recovered.
+#
+# ⚠ **A key cannot mint a key.** Otherwise a stolen one could make another, and revoking the one
+# that was stolen would leave the thief holding the second. Minting takes a login, which a stolen
+# key does not have. It says so rather than answering 401: the key is good, for everything else.
+fn agnostic_route_auth_key_create_a(a, body: Str, ctx): i64 {
+    var resp: i64[1];
+    var v = _agnostic_idn_decode_a(a, body, agnostic_apikey_fields_a(a), &resp);
+    if (v == 0) { return load64(&resp); }
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) { return _agnostic_idn_off_a(a); }
+    if (_agnostic_authn_scheme_is(agnostic_reqctx_authz(ctx), "ApiKey") == 1) {
+        return agnostic_response_error_a(a, HTTP_FORBIDDEN,
+          str_from_a(a, "an API key cannot mint a key; log in to mint one"));
+    }
+    var label = agnostic_opt_str(v, str_from_a(a, "label"), str_from_a(a, ""));
+    if (label == 0 || str_len(label) > AGNOSTIC_EMAIL_MAX) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'label' must be a string of at most 255 bytes"));
+    }
+    var uid = agnostic_principal_uid(p);
+    if (agnostic_apikeys_of(uid) >= AGNOSTIC_APIKEYS_PER_USER) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
+          str_from_a(a, "this user holds as many API keys as it can; revoke one first"));
+    }
+    var raw = agnostic_apikey_issue_a(a, uid, label);
+    if (raw == 0) { return _agnostic_idn_failed_a(a, "could not issue an API key"); }
+    var id = agnostic_id_hex_a(a, agnostic_apikey_id(raw));
+    _agnostic_idn_audit(a, SEV_INFO, "apikey.issue", "key", id, p);
+
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    _agnostic_idn_put_str_a(a, o, "id", id);
+    _agnostic_idn_put_str_a(a, o, "label", label);
+    _agnostic_idn_put_str_a(a, o, "api_key", raw);
+    _agnostic_idn_put_int_a(a, o, "created_at", clock_epoch_secs() * 1000);
+    return agnostic_response_json_a(a, AGNOSTIC_HTTP_CREATED, o);
+}
+
+# Revoke `owner`'s key `id` and answer: shared by the two routes that do it.
+fn _agnostic_idn_revoke_a(a, p, owner, id: Str): i64 {
+    if (agnostic_apikey_revoke_id(owner, agnostic_id_parse(id)) == 0) {
+        return _agnostic_idn_key_missing_a(a);
+    }
+    _agnostic_idn_audit(a, SEV_WARNING, "apikey.revoke", "key", id, p);
+    return _agnostic_idn_done_a(a, "id", id, "revoked");
+}
+
+# `DELETE /api/v1/auth/api-keys/{id}` — revoke one of your keys.
+fn agnostic_route_auth_key_revoke_a(a, id: Str, ctx): i64 {
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) { return _agnostic_idn_off_a(a); }
+    return _agnostic_idn_revoke_a(a, p, agnostic_principal_uid(p), id);
+}
+
+# --- users -----------------------------------------------------------------
+
+# `GET /api/v1/users` — the caller's tenant's users, or everyone for a super administrator.
+fn agnostic_route_users_list_a(a, ctx): i64 {
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) { return _agnostic_idn_off_a(a); }
+    var rows = 0;
+    if (_agnostic_idn_is_super(p) == 1) { rows = agnostic_users_list_a(a, 0); }
+    else {
+        var t = agnostic_principal_tenant(p);
+        if (t == 0) { t = str_from_a(a, ""); }
+        rows = agnostic_users_list_a(a, t);
+    }
+    return _agnostic_idn_list_a(a, "users", rows, &_agnostic_idn_user_a);
+}
+
+# The tenant a new user goes in, or 0 with a ready-made error through `out_resp`. An ADMIN's users
+# are their own tenant's, so one who names another is refused and one who names none is defaulted.
+# A super administrator's are whatever they name, which must exist; naming none is the default scope.
+fn _agnostic_idn_new_user_tenant_a(a, v, p, out_resp): i64 {
+    store64(out_resp, 0);
+    var empty = str_from_a(a, "");
+    var named = agnostic_opt_str(v, str_from_a(a, "tenant"), empty);
+    if (named == 0) {
+        store64(out_resp, agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+            str_from_a(a, "'tenant' must be a string")));
+        return 0;
+    }
+    if (_agnostic_idn_is_super(p) == 0) {
+        var own = agnostic_principal_tenant(p);
+        if (str_len(named) != 0 && _agnostic_idn_same_tenant(named, own) == 0) {
+            store64(out_resp, agnostic_response_error_a(a, HTTP_FORBIDDEN,
+                str_from_a(a, "an administrator's users are in their own tenant")));
+            return 0;
+        }
+        if (own == 0) { return empty; }
+        return own;
+    }
+    if (str_len(named) != 0 && agnostic_tenant_find_a(a, named) == 0) {
+        store64(out_resp, agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+            str_from_a(a, "no such tenant")));
+        return 0;
+    }
+    return named;
+}
+
+# `POST /api/v1/users` — create a user.
+#
+# ⚠ The address is unique across the deployment, so a 409 tells an ADMIN that it is taken somewhere,
+# perhaps in another tenant. Login needs one address to mean one user, so that is the price.
+fn agnostic_route_user_create_a(a, body: Str, ctx): i64 {
+    var resp: i64[1];
+    var v = _agnostic_idn_decode_a(a, body, agnostic_user_create_fields_a(a), &resp);
+    if (v == 0) { return load64(&resp); }
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) { return _agnostic_idn_off_a(a); }
+
+    var email = agnostic_req_str(v, str_from_a(a, "email"));
+    var password = agnostic_req_str(v, str_from_a(a, "password"));
+    var role_name = agnostic_req_str(v, str_from_a(a, "role"));
+    if (email == 0 || password == 0 || role_name == 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "email, password and role are required"));
+    }
+    if (_agnostic_idn_email_ok(email) == 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'email' must be an address of at most 255 bytes"));
+    }
+    if (agnostic_password_length_ok(password) == 0) { return _agnostic_idn_short_password_a(a); }
+    var role = agnostic_role_parse(role_name);
+    if (role < 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'role' must be viewer, operator, admin or super_admin"));
+    }
+    if (agnostic_role_within(role, agnostic_principal_role(p)) == 0) {
+        return agnostic_response_error_a(a, HTTP_FORBIDDEN,
+          str_from_a(a, "nobody grants a role above their own"));
+    }
+    var tenant = _agnostic_idn_new_user_tenant_a(a, v, p, &resp);
+    if (tenant == 0) { return load64(&resp); }
+
+    var taken = "a user with this email already exists";
+    if (agnostic_users_find_a(a, email) != 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT, str_from_a(a, taken));
+    }
+    var shed = agnostic_argon_shed_count();
+    var uid = agnostic_users_create_a(a, email, password, role, tenant);
+    if (uid == 0) {
+        if (agnostic_argon_shed_count() != shed) { return _agnostic_idn_busy_a(a); }
+        # Two creates of one address can both pass the check above; the store's refuses one.
+        if (agnostic_users_find_a(a, email) != 0) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT, str_from_a(a, taken));
+        }
+        return _agnostic_idn_failed_a(a, "could not store the user");
+    }
+    _agnostic_idn_audit(a, SEV_INFO, "user.create", "uid", agnostic_id_hex_a(a, uid), p);
+    return _agnostic_idn_one_a(a, AGNOSTIC_HTTP_CREATED, "user",
+      _agnostic_idn_user_a(a, agnostic_users_get_a(a, uid)));
+}
+
+# `GET /api/v1/users/{id}`.
+fn agnostic_route_user_get_a(a, id: Str, ctx): i64 {
+    var resp: i64[1];
+    var row = _agnostic_idn_target_a(a, ctx, id, &resp);
+    if (row == 0) { return load64(&resp); }
+    return _agnostic_idn_one_a(a, HTTP_OK, "user", _agnostic_idn_user_a(a, row));
+}
+
+# `PUT /api/v1/users/{id}` — change a user's role. Their next request reads the new one.
+fn agnostic_route_user_update_a(a, id: Str, body: Str, ctx): i64 {
+    var resp: i64[1];
+    var v = _agnostic_idn_decode_a(a, body, agnostic_user_role_fields_a(a), &resp);
+    if (v == 0) { return load64(&resp); }
+    var row = _agnostic_idn_target_a(a, ctx, id, &resp);
+    if (row == 0) { return load64(&resp); }
+    var p = agnostic_reqctx_principal(ctx);
+    var role = agnostic_role_parse(agnostic_req_str(v, str_from_a(a, "role")));
+    if (role < 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'role' must be viewer, operator, admin or super_admin"));
+    }
+    if (_agnostic_idn_may_touch(p, row) == 0) { return _agnostic_idn_above_a(a); }
+    if (agnostic_role_within(role, agnostic_principal_role(p)) == 0) {
+        return agnostic_response_error_a(a, HTTP_FORBIDDEN,
+          str_from_a(a, "nobody grants a role above their own"));
+    }
+    var uid = agnostic_user_row_uid(row);
+    var rc = agnostic_users_set_role(uid, role);
+    if (rc == AGNOSTIC_USER_LAST_SUPER) { return _agnostic_idn_last_super_a(a); }
+    if (rc == AGNOSTIC_USER_MISSING) { return _agnostic_idn_user_missing_a(a); }
+    if (rc != AGNOSTIC_USER_OK) { return _agnostic_idn_failed_a(a, "could not store the role"); }
+    _agnostic_idn_audit(a, SEV_WARNING, "user.role", "uid", id, p);
+    return _agnostic_idn_one_a(a, HTTP_OK, "user", _agnostic_idn_user_a(a, agnostic_users_get_a(a, uid)));
+}
+
+# `DELETE /api/v1/users/{id}` — delete a user and their API keys. Their tokens stop at once.
+fn agnostic_route_user_delete_a(a, id: Str, ctx): i64 {
+    var resp: i64[1];
+    var row = _agnostic_idn_target_a(a, ctx, id, &resp);
+    if (row == 0) { return load64(&resp); }
+    var p = agnostic_reqctx_principal(ctx);
+    if (_agnostic_idn_may_touch(p, row) == 0) { return _agnostic_idn_above_a(a); }
+    var rc = agnostic_users_delete(agnostic_user_row_uid(row));
+    if (rc == AGNOSTIC_USER_LAST_SUPER) { return _agnostic_idn_last_super_a(a); }
+    if (rc == AGNOSTIC_USER_MISSING) { return _agnostic_idn_user_missing_a(a); }
+    if (rc != AGNOSTIC_USER_OK) { return _agnostic_idn_failed_a(a, "could not delete the user"); }
+    _agnostic_idn_audit(a, SEV_WARNING, "user.delete", "uid", id, p);
+    return _agnostic_idn_done_a(a, "id", id, "deleted");
+}
+
+# `PUT /api/v1/users/{id}/password` — set another user's password. Their tokens end, and their API
+# keys stand: revoke those separately if the account is compromised.
+fn agnostic_route_user_password_a(a, id: Str, body: Str, ctx): i64 {
+    var resp: i64[1];
+    var v = _agnostic_idn_decode_a(a, body, agnostic_user_password_fields_a(a), &resp);
+    if (v == 0) { return load64(&resp); }
+    var row = _agnostic_idn_target_a(a, ctx, id, &resp);
+    if (row == 0) { return load64(&resp); }
+    var p = agnostic_reqctx_principal(ctx);
+    var password = agnostic_req_str(v, str_from_a(a, "password"));
+    if (agnostic_password_length_ok(password) == 0) { return _agnostic_idn_short_password_a(a); }
+    if (_agnostic_idn_may_touch(p, row) == 0) { return _agnostic_idn_above_a(a); }
+    var uid = agnostic_user_row_uid(row);
+    if (uid == agnostic_principal_uid(p)) {
+        return agnostic_response_error_a(a, HTTP_FORBIDDEN,
+          str_from_a(a, "change your own password with PUT /api/v1/auth/password"));
+    }
+    var shed = agnostic_argon_shed_count();
+    var rc = agnostic_users_set_password_a(a, uid, password);
+    if (rc == AGNOSTIC_USER_MISSING) { return _agnostic_idn_user_missing_a(a); }
+    if (rc != AGNOSTIC_USER_OK) {
+        if (agnostic_argon_shed_count() != shed) { return _agnostic_idn_busy_a(a); }
+        return _agnostic_idn_failed_a(a, "could not set the password");
+    }
+    _agnostic_idn_audit(a, SEV_WARNING, "user.password", "uid", id, p);
+    return _agnostic_idn_done_a(a, "id", id, "changed");
+}
+
+# `GET /api/v1/users/{id}/api-keys` — a user's keys, never their values.
+fn agnostic_route_user_keys_list_a(a, id: Str, ctx): i64 {
+    var resp: i64[1];
+    var row = _agnostic_idn_target_a(a, ctx, id, &resp);
+    if (row == 0) { return load64(&resp); }
+    return _agnostic_idn_list_a(a, "keys", agnostic_apikeys_list_a(a, agnostic_user_row_uid(row)),
+      &_agnostic_idn_key_a);
+}
+
+# `DELETE /api/v1/users/{id}/api-keys/{key}` — revoke a user's key.
+fn agnostic_route_user_key_revoke_a(a, id: Str, key: Str, ctx): i64 {
+    var resp: i64[1];
+    var row = _agnostic_idn_target_a(a, ctx, id, &resp);
+    if (row == 0) { return load64(&resp); }
+    var p = agnostic_reqctx_principal(ctx);
+    if (_agnostic_idn_may_touch(p, row) == 0) { return _agnostic_idn_above_a(a); }
+    return _agnostic_idn_revoke_a(a, p, agnostic_user_row_uid(row), key);
+}
+
+# --- tenants ---------------------------------------------------------------
+
+# `GET /api/v1/tenants`.
+fn agnostic_route_tenants_list_a(a, ctx): i64 {
+    if (agnostic_reqctx_principal(ctx) == 0) { return _agnostic_idn_off_a(a); }
+    return _agnostic_idn_list_a(a, "tenants", agnostic_tenants_list_a(a), &_agnostic_idn_tenant_a);
+}
+
+# `POST /api/v1/tenants` — create a tenant.
+fn agnostic_route_tenant_create_a(a, body: Str, ctx): i64 {
+    var resp: i64[1];
+    var v = _agnostic_idn_decode_a(a, body, agnostic_tenant_fields_a(a), &resp);
+    if (v == 0) { return load64(&resp); }
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) { return _agnostic_idn_off_a(a); }
+    var key = agnostic_req_str(v, str_from_a(a, "key"));
+    if (agnostic_tenant_key_valid(key) == 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "key must match [a-z0-9][a-z0-9-]* and be at most 64 characters"));
+    }
+    var name = agnostic_opt_str(v, str_from_a(a, "name"), key);
+    if (name == 0 || str_len(name) > AGNOSTIC_EMAIL_MAX) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'name' must be a string of at most 255 bytes"));
+    }
+    if (agnostic_tenant_create_a(a, key, name) == 0) {
+        if (agnostic_tenant_find_a(a, key) != 0) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
+              str_from_a(a, "a tenant with this key already exists"));
+        }
+        return _agnostic_idn_failed_a(a, "could not store the tenant");
+    }
+    _agnostic_idn_audit(a, SEV_INFO, "tenant.create", "tenant", key, p);
+    return _agnostic_idn_one_a(a, AGNOSTIC_HTTP_CREATED, "tenant",
+      _agnostic_idn_tenant_a(a, agnostic_tenant_get_a(a, key)));
+}
+
+# `GET /api/v1/tenants/{key}`.
+fn agnostic_route_tenant_get_a(a, key: Str, ctx): i64 {
+    if (agnostic_reqctx_principal(ctx) == 0) { return _agnostic_idn_off_a(a); }
+    var row = agnostic_tenant_get_a(a, key);
+    if (row == 0) { return _agnostic_idn_tenant_missing_a(a); }
+    return _agnostic_idn_one_a(a, HTTP_OK, "tenant", _agnostic_idn_tenant_a(a, row));
+}
+
+# `DELETE /api/v1/tenants/{key}` — delete an empty tenant. What is stored under it stays, as
+# `agnostic_tenant_delete_a` explains, and a tenant created later with this key reads it.
+fn agnostic_route_tenant_delete_a(a, key: Str, ctx): i64 {
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) { return _agnostic_idn_off_a(a); }
+    var rc = agnostic_tenant_delete_empty_a(a, key);
+    if (rc == AGNOSTIC_TENANT_MISSING) { return _agnostic_idn_tenant_missing_a(a); }
+    if (rc == AGNOSTIC_TENANT_IN_USE) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
+          str_from_a(a, "this tenant still has users"));
+    }
+    if (rc != AGNOSTIC_TENANT_OK) { return _agnostic_idn_failed_a(a, "could not delete the tenant"); }
+    _agnostic_idn_audit(a, SEV_WARNING, "tenant.delete", "tenant", key, p);
+    return _agnostic_idn_done_a(a, "key", key, "deleted");
+}

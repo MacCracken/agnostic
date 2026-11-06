@@ -545,6 +545,62 @@ fn _agnostic_bench_authn(): i64 {
 
 # 0.2.3 — the audit's P3: a start reads and verifies the whole trail. 589 B and about 16 µs
 # per entry, for the life of the process.
+# What an administrator's listing costs at 1,000 users, under the store lock, and one user by id
+# (0.3.0). Rows go in directly: an Argon2 each would make this a benchmark of that.
+fn _agnostic_bench_identity(): i64 {
+    var path = _tt_tmp_path("bench-identity");
+    sys_unlink(path);
+    patra_init();
+    if (agnostic_store_open(str_from(path)) == 0) { return 0; }
+    agnostic_auth_ensure();
+    var a = arena_allocator(8388608);
+    var rec = agnostic_auth_decoy_record_a(a);
+    agnostic_store_lock();
+    patra_set_sync_mode(agnostic_store_db(), PATRA_SYNC_BATCH);
+    agnostic_store_unlock();
+    var i = 0;
+    var uid = 0;
+    while (i < 1000) {
+        var sb = str_builder_new_a(a);
+        str_builder_add_cstr_a(a, sb, "user-");
+        str_builder_add_int_a(a, sb, i);
+        str_builder_add_cstr_a(a, sb, "@example.com");
+        var email = str_builder_build_a(a, sb);
+        uid = agnostic_users_uid_a(a, email);
+        agnostic_store_lock();
+        _agnostic_users_insert_locked_a(a, uid, email, rec, AGNOSTIC_ROLE_VIEWER, str_from_a(a, "acme"));
+        agnostic_store_unlock();
+        i = i + 1;
+    }
+    agnostic_store_lock();
+    patra_set_sync_mode(agnostic_store_db(), PATRA_SYNC_FULL);
+    agnostic_store_unlock();
+    var n = 0;
+    var bl = bench_new("users_list_1k");
+    bench_batch_start(bl);
+    var j = 0;
+    while (j < 20) {
+        reset_via(a);
+        n = n + vec_len(agnostic_users_list_a(a, str_from_a(a, "acme")));
+        j = j + 1;
+    }
+    bench_batch_stop(bl, 20);
+    bench_report(bl);
+    var bg = bench_new("user_get");
+    bench_batch_start(bg);
+    var k = 0;
+    while (k < 5000) {
+        if (agnostic_users_get_a(a, uid) != 0) { n = n + 1; }
+        reset_via(a);
+        k = k + 1;
+    }
+    bench_batch_stop(bg, 5000);
+    bench_report(bg);
+    agnostic_store_close();
+    sys_unlink(path);
+    return n;
+}
+
 fn _agnostic_bench_audit_open(): i64 {
     var path = _tt_tmp_path("bench-audit-open");
     var p = str_from(path);
@@ -673,6 +729,7 @@ fn main(): i64 {
     _agnostic_bench_json_build();
     _agnostic_bench_crews();
     _agnostic_bench_authn();
+    _agnostic_bench_identity();
     _agnostic_bench_audit_open();
     _agnostic_bench_serve_handler();
     return 0;

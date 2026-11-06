@@ -102,6 +102,7 @@ include "src/engine/definitions.cyr"
 include "src/webgui/plugins.cyr"
 
 include "src/routes/auth.cyr"
+include "src/routes/identity.cyr"
 include "src/routes/health.cyr"
 include "src/routes/crews.cyr"
 include "src/routes/definitions.cyr"

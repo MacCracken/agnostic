@@ -268,6 +268,365 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/auth/me",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "id",
+          "email",
+          "role",
+          "tenant",
+          "scope"
+        ]
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/auth/password",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": "password_change",
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "token",
+          "token_type",
+          "expires_in",
+          "role"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/api-keys",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "keys",
+          "total"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/api-keys",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": "api_key",
+      "query": [],
+      "headers": [],
+      "ok": [
+        201
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "id",
+          "label",
+          "api_key",
+          "created_at"
+        ]
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/auth/api-keys/:id",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "id",
+          "status"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "users",
+          "total"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [],
+      "body": "user",
+      "query": [],
+      "headers": [],
+      "ok": [
+        201
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "user"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/:id",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "user"
+        ]
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/users/:id",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [],
+      "body": "user_role",
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "user"
+        ]
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/users/:id",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "id",
+          "status"
+        ]
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/users/:id/password",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [],
+      "body": "user_password",
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "id",
+          "status"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/:id/api-keys",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "keys",
+          "total"
+        ]
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/users/:id/api-keys/:key",
+      "auth": true,
+      "permission": "admin",
+      "min_role": "admin",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "id",
+          "status"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tenants",
+      "auth": true,
+      "permission": "super",
+      "min_role": "super_admin",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "tenants",
+          "total"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tenants",
+      "auth": true,
+      "permission": "super",
+      "min_role": "super_admin",
+      "plugin_permissions": [],
+      "body": "tenant",
+      "query": [],
+      "headers": [],
+      "ok": [
+        201
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "tenant"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tenants/:key",
+      "auth": true,
+      "permission": "super",
+      "min_role": "super_admin",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "tenant"
+        ]
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/tenants/:key",
+      "auth": true,
+      "permission": "super",
+      "min_role": "super_admin",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "key",
+          "status"
+        ]
+      }
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/presets",
       "auth": true,
       "permission": "read",
@@ -469,8 +828,8 @@
       "method": "GET",
       "path": "/api/v1/audit",
       "auth": true,
-      "permission": "admin",
-      "min_role": "admin",
+      "permission": "super",
+      "min_role": "super_admin",
       "plugin_permissions": [
         {
           "name": "audit:read",
@@ -504,8 +863,8 @@
       "method": "GET",
       "path": "/api/v1/audit/entries",
       "auth": true,
-      "permission": "admin",
-      "min_role": "admin",
+      "permission": "super",
+      "min_role": "super_admin",
       "plugin_permissions": [
         {
           "name": "audit:read",
@@ -557,8 +916,8 @@
       "method": "PUT",
       "path": "/api/v1/plugins/:id",
       "auth": true,
-      "permission": "admin",
-      "min_role": "admin",
+      "permission": "super",
+      "min_role": "super_admin",
       "plugin_permissions": [],
       "body": "plugin_switch",
       "query": [],
@@ -811,6 +1170,41 @@
       "fields": [
         "email",
         "password"
+      ]
+    },
+    "password_change": {
+      "fields": [
+        "current_password",
+        "new_password"
+      ]
+    },
+    "api_key": {
+      "fields": [
+        "label"
+      ]
+    },
+    "user": {
+      "fields": [
+        "email",
+        "password",
+        "role",
+        "tenant"
+      ]
+    },
+    "user_role": {
+      "fields": [
+        "role"
+      ]
+    },
+    "user_password": {
+      "fields": [
+        "password"
+      ]
+    },
+    "tenant": {
+      "fields": [
+        "key",
+        "name"
       ]
     },
     "plugin_switch": {

@@ -2,11 +2,15 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-06, at **0.2.3** — every gap the parity review found is on the release plan,
+> Last refreshed: 2026-11-06, at **0.3.0** — a deployment can have more than one user: 17 provisioning
+> routes, one recovery command, `AGNOSTIC_JWT_SECRET`, and a password change that ends older tokens
+> ([ADR 0023](../adr/0023-provisioning-is-routes-and-one-recovery-command.md)). Agent definitions and the
+> deployment-wide routes are scoped, closing audit S3, S4 and S12b. No dependency moved. Version, Source,
+> Tests, Hardening and Next were refreshed then.
+> Before that, 2026-11-06, at **0.2.3** — every gap the parity review found is on the release plan,
 > and `python-port/` comes out once that plan is finished and tagged. The two slow reads are faster
 > (`GET /crews` 82 to 55 ms at 10,000 crews, a stored crew 6.8 to 2.8 ms for 422 KB), and CI boots the
-> real binary and loads it. No dependency moved. Version, Source, Tests, Hardening and Next were
-> refreshed then.
+> real binary and loads it. No dependency moved.
 > Before that, 2026-11-06, at **0.2.2** — the P(-1) audit ([`2026-11-05-audit.md`](../audit/2026-11-05-audit.md))
 > and its repairs: memory exhaustion without credentials (arenas grow, ADR 0021), completed crews lost
 > under load (reading a crew is apart from writing it, ADR 0022), and everything else the record lists.
@@ -81,7 +85,7 @@
 
 ## Version
 
-**0.2.3** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.3.0** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -147,14 +151,14 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 50 files, 30,007 lines, 1,242 top-level definitions (0.2.3; 29,860 at 0.2.2; 29,256
-lines and 1,189 at 0.2.1), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
+the real surface (0.1.10)** — 51 files, 31,488 lines, 1,331 top-level definitions (0.3.0; 30,007 and 1,242 at
+0.2.3), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
 `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,903 — five embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 33 suites, 2,961 assertions, 0 failed** (`cyrius test`, 0.2.3; 2,920 at 0.2.2), plus
+**Tests: 34 suites, 3,273 assertions, 0 failed** (`cyrius test`, 0.3.0; 2,961 at 0.2.3), plus
 **80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.2.1) — **and the
-same 33 suites natively on aarch64, with the same per-suite counts** (Raspberry Pi 4). Gates
+same 34 suites natively on aarch64, with the same per-suite counts** (Raspberry Pi 4). Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
 shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
 which since 0.1.10 verifies every plugin's copy of the bridge client; the WebGUI's JavaScript; and,
@@ -308,8 +312,8 @@ list in it to the API schema. Its prose (statuses, limits, behaviour) is not mac
 CHANGELOG (0.1.13, Verified) records the live run that confirmed it, and a change to this surface
 should re-read the skill.
 
-The table is a flat scan of 20 paths (21 patterns). Since 0.1.13 (H5) it is literally a table
-— 21 rows of a pattern and the route id per method, built once at load, which the resolver walks
+The table is a flat scan of 31 paths (32 patterns; 21 until 0.3.0). Since 0.1.13 (H5) it is literally a table
+— 32 rows of a pattern and the route id per method, built once at load, which the resolver walks
 in the old order and `agnostic_route_row_pattern` / `agnostic_route_row_id` expose. Re-measured then,
 in interleaved runs against a copy of the tree with the if-chain restored: 0.107 / 0.87 / 0.72 /
 2.15 µs against 0.108 / 0.92 / 0.78 / 2.19 µs — no slower, a miss ~7% faster, because the walk calls
@@ -384,7 +388,7 @@ and carries query strings, revisions and idempotency keys. Plugin documents have
   changed the definition.
 - **Audit trail 0.1.1** (`audit`, 28,182 B, `data: live`, `audit:read`) — the chain's verdict at
   start-up, its count and dropped appends, and its newest entries by index (severity and text
-  filters; each entry's hash and whether it names the one before it, as sent). ADMIN routes.
+  filters; each entry's hash and whether it names the one before it, as sent). SUPER routes.
   0.1.1 (with agnostic 0.1.15): the verdict as found — RESTART BREAKS (a warning, no alteration),
   BROKEN naming the first altered entry, UNVERIFIED — read as before from an older server.
 - **Swarm Command 0.5.1** (`swarm`, 452,787 B, `data: mixed`, permissions `storage`,
@@ -468,9 +472,13 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**33 suites, 2,961 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.2.3, 2026-11-06),
-with `CYRIUS_DCE=1` as CI runs them. 0.2.3's additions, each mutation-checked: `tenancy/list-read-cut`,
-`tenancy/stored-bytes` and `codec/top-str`.
+**34 suites, 3,273 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.3.0, 2026-11-06),
+with `CYRIUS_DCE=1` as CI runs them. 0.3.0's additions, the rules mutation-checked: `tests/identity.tcyr`
+(148), `tenancy/definitions`, `store/last-super-race`, `authstore/tokens-from-migration` and the rest of
+`authstore`, `ladder/deployment-routes`, `alloc/authenticated`, and the sweep over all 44 routes.
+`cyrius coverage --exec` is a CI gate at 95%, and reads 98%.
+At 0.2.3: **33 suites, 2,961 assertions, 0 failed**. Its additions, each mutation-checked:
+`tenancy/list-read-cut`, `tenancy/stored-bytes` and `codec/top-str`.
 At 0.2.2: **33 suites, 2,920 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 2026-11-06),
 and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). The run ends `34 passed`, because bare
 `cyrius test` also runs the empty `[build].test` entry since cyrius 6.6.17. The suites are under the lint
@@ -637,8 +645,9 @@ Agnostic is built to stand on its own, not as a required layer.
 
 **P(-1) complete — 2026-08-20**, re-audited at M1, and **re-run in full on 2026-11-05 for 0.2.2**:
 [`2026-11-05-audit.md`](../audit/2026-11-05-audit.md) — 1 CRITICAL, 3 HIGH, 11 MEDIUM and 17 LOW, no
-authentication bypass and no memory corruption. All repaired but the listed open items: three latent
-or waiting on 0.3.x, one mitigated (idle sockets), and the rest upstream.
+authentication bypass and no memory corruption. All repaired but the listed open items: one waiting on
+0.3.x (S7, the trusted proxy), one mitigated (idle sockets), and the rest upstream. S3, S4 and S12b
+closed at 0.3.0.
 
 | Criterion | Status |
 |---|---|

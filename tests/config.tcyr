@@ -186,6 +186,16 @@ fn test_parse_auth() {
     assert_eq(agnostic_config_parse_auth(str_from("true")), 0 - 1, "and so is a boolean");
 }
 
+fn test_parse_jwt_secret() {
+    test_group("config/jwt-secret");
+    var at_min = str_from("0123456789abcdef0123456789abcdef");
+    assert_eq(str_len(at_min), AGNOSTIC_CONFIG_JWT_SECRET_MIN, "the boundary, spelled out");
+    assert_eq(agnostic_config_parse_jwt_secret(at_min), at_min, "32 bytes are taken as they are");
+    assert_eq(agnostic_config_parse_jwt_secret(str_from("0123456789abcdef0123456789abcde")), 0 - 1,
+      "31 are refused, not stretched");
+    assert_eq(agnostic_config_parse_jwt_secret(str_from("")), 0, "empty is unset");
+}
+
 fn test_parse_addr() {
     test_group("config/parse-addr");
     assert_eq(agnostic_config_parse_addr(str_from("any")), INADDR_ANY(), "any");
@@ -209,6 +219,7 @@ fn test_url_userinfo() {
 fn main() {
     alloc_init();
     test_parse_auth();
+    test_parse_jwt_secret();
     test_parse_addr();
     test_url_userinfo();
     test_parse_port();

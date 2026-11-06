@@ -127,4 +127,90 @@ expect 200 "GET /api/v1/audit" "$BASE/api/v1/audit"
 grep -q '"intact"' "$WORK/body" || fail "the audit chain is not intact: $(head -c 200 "$WORK/body")"
 stop
 
+# Authentication on: what a signing secret does across a restart, which no suite can see.
+SECRET_A=0123456789abcdef0123456789abcdef
+SECRET_B=fedcba9876543210fedcba9876543210
+
+# start_auth <log name> <jwt secret>
+start_auth() {
+  AGNOSTIC_ADDR=127.0.0.1 AGNOSTIC_PORT="$PORT" AGNOSTIC_AUTH=required \
+    AGNOSTIC_BOOTSTRAP_EMAIL=probe@example.com AGNOSTIC_BOOTSTRAP_PASSWORD=probe-password-12 \
+    AGNOSTIC_JWT_SECRET="$2" \
+    AGNOSTIC_DB_PATH="$WORK/auth.patra" AGNOSTIC_AUDIT_PATH="$WORK/auth-audit.patra" \
+    "$BIN" > "$WORK/$1.log" 2>&1 &
+  PID=$!
+}
+
+SHORT=0
+AGNOSTIC_ADDR=127.0.0.1 AGNOSTIC_PORT="$PORT" AGNOSTIC_AUTH=required \
+  AGNOSTIC_JWT_SECRET=too-short \
+  AGNOSTIC_DB_PATH="$WORK/short.patra" AGNOSTIC_AUDIT_PATH="$WORK/short-audit.patra" \
+  timeout -k 5 30 "$BIN" > "$WORK/short.log" 2>&1 || SHORT=$?
+[ "$SHORT" -ne 0 ] || fail "a short AGNOSTIC_JWT_SECRET exited 0"
+[ "$SHORT" -ne 124 ] || fail "a short AGNOSTIC_JWT_SECRET started a server"
+grep -q 'invalid configuration' "$WORK/short.log" || fail "a short secret was not named as configuration"
+grep -q 'too-short' "$WORK/short.log" && fail "the refused secret reached the log"
+echo "  ok: a short secret is refused, exit $SHORT"
+
+start_auth auth-first "$SECRET_A"
+wait_up
+expect 401 "a route without a token" "$BASE/api/v1/presets"
+expect 200 "login" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"probe@example.com","password":"probe-password-12"}' "$BASE/api/v1/auth/login"
+TOKEN="$(sed -E 's/.*"token":"([^"]+)".*/\1/' "$WORK/body")"
+[ "${#TOKEN}" -gt 40 ] || fail "no token in the reply: $(head -c 200 "$WORK/body")"
+expect 200 "a route with it" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/presets"
+stop
+grep -q "$SECRET_A" "$WORK"/auth-first.log && fail "the signing secret reached the log"
+
+start_auth auth-second "$SECRET_A"
+wait_up
+expect 200 "the token, after a restart on the same secret" -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/v1/presets"
+stop
+
+start_auth auth-third "$SECRET_B"
+wait_up
+expect 401 "the token, after a restart on another secret" -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/v1/presets"
+expect 200 "login, for the recovery below" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"probe@example.com","password":"probe-password-12"}' "$BASE/api/v1/auth/login"
+TOKEN="$(sed -E 's/.*"token":"([^"]+)".*/\1/' "$WORK/body")"
+
+# Recovery: it needs the server stopped, reads the password from stdin, and what it sets is what
+# login then takes. Only a real second process can meet the first's claim on the database.
+recover() {
+  printf '%s\n' "$1" | AGNOSTIC_DB_PATH="$WORK/auth.patra" AGNOSTIC_AUDIT_PATH="$WORK/auth-audit.patra" \
+    "$BIN" admin reset-password "$2" > "$WORK/recover.log" 2>&1
+}
+NEW_PW=recovered-password-34
+HELD=0
+recover "$NEW_PW" probe@example.com || HELD=$?
+[ "$HELD" -eq 1 ] || fail "a reset beside a running server exited $HELD, not 1"
+grep -q 'a server is running' "$WORK/recover.log" || fail "the reset did not say a server is running"
+echo "  ok: a reset refuses beside a running server"
+stop
+
+# A token's `iat` is in seconds, so the reset has to land in a later one to end it.
+sleep 1
+UNKNOWN=0
+recover "$NEW_PW" nobody@example.com || UNKNOWN=$?
+[ "$UNKNOWN" -eq 1 ] || fail "a reset for an unknown email exited $UNKNOWN, not 1"
+recover "$NEW_PW" probe@example.com || fail "the reset failed: $(cat "$WORK/recover.log")"
+grep -q "$NEW_PW" "$WORK/recover.log" && fail "the password reached the command's output"
+echo "  ok: the reset set a password, stopped server"
+
+start_auth auth-fourth "$SECRET_B"
+wait_up
+expect 401 "the old password" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"probe@example.com","password":"probe-password-12"}' "$BASE/api/v1/auth/login"
+expect 401 "a token from before the reset" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/presets"
+expect 200 "the new password" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"probe@example.com\",\"password\":\"$NEW_PW\"}" "$BASE/api/v1/auth/login"
+TOKEN="$(sed -E 's/.*"token":"([^"]+)".*/\1/' "$WORK/body")"
+expect 200 "the trail" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/audit/entries"
+grep -q 'auth.password.reset' "$WORK/body" || fail "the trail does not hold the reset"
+grep -q "$NEW_PW" "$WORK/body" && fail "the trail holds the password"
+stop
+
 echo "boot-probe: OK"

@@ -5,6 +5,8 @@
 #
 #   agnostic                 serve, configured by AGNOSTIC_* — exactly as before
 #   agnostic api schema      print the HTTP API as JSON (`src/http/schema.cyr`), exit 0
+#   agnostic admin reset-password <email>
+#                            set a password from stdin, with the server stopped (0.3.0, ADR 0023)
 #   agnostic help            print usage, exit 0 (`--help` and `-h` too)
 #   anything else            usage on stderr, exit 2
 #
@@ -24,6 +26,7 @@ enum AgnosticCliCmd {
     AGNOSTIC_CLI_API_SCHEMA  = 1;
     AGNOSTIC_CLI_HELP        = 2;
     AGNOSTIC_CLI_USAGE_ERROR = 3;
+    AGNOSTIC_CLI_RESET_PASSWORD = 4;
 }
 
 enum AgnosticCliExit {
@@ -48,6 +51,12 @@ fn agnostic_cli_command_of(n, a1, a2): i64 {
     }
     if (n == 3 && a2 != 0) {
         if (streq(a1, "api") == 1 && streq(a2, "schema") == 1) { return AGNOSTIC_CLI_API_SCHEMA; }
+    }
+    # The email is the third argument, which `agnostic_cli_run` reads with `argv(3)`.
+    if (n == 4 && a2 != 0) {
+        if (streq(a1, "admin") == 1 && streq(a2, "reset-password") == 1) {
+            return AGNOSTIC_CLI_RESET_PASSWORD;
+        }
     }
     return AGNOSTIC_CLI_USAGE_ERROR;
 }
@@ -89,6 +98,8 @@ fn _agnostic_cli_put(fd, s): i64 {
 fn agnostic_cli_usage(fd): i64 {
     var rc = _agnostic_cli_put(fd, "usage: agnostic               serve the HTTP API, configured by AGNOSTIC_*\n");
     rc = rc | _agnostic_cli_put(fd, "       agnostic api schema    print the HTTP API as JSON\n");
+    rc = rc | _agnostic_cli_put(fd, "       agnostic admin reset-password <email>\n");
+    rc = rc | _agnostic_cli_put(fd, "                              set a password read from stdin, server stopped\n");
     rc = rc | _agnostic_cli_put(fd, "       agnostic help          print this\n");
     return rc;
 }
@@ -110,11 +121,126 @@ fn agnostic_cli_api_schema(out, err): i64 {
     return AGNOSTIC_EXIT_OK;
 }
 
+# ## `agnostic admin reset-password` (0.3.0, ADR 0023)
+#
+# Every other change to a user is a route on a running server. This one is for when no route can
+# help: `agnostic_auth_bootstrap_a` acts only on an empty store, so a lost password on the last super
+# administrator has no way back. It does that and nothing else.
+#
+# ⚠ **It takes the database claim, so it refuses while a server runs.** `src/engine/store.cyr` says
+# why one file has one process: this one would write under a server's definition cache and ledger.
+# Being able to reach the file is the authority here, as it is for anything else on that disk.
+#
+# ⚠ **The password comes from stdin, never an argument.** `/proc/<pid>/cmdline` is world-readable,
+# so an argument is on show to every user of the machine and in a shell's history.
+#
+# ⚠ **It audits.** The trail records it, because a reset nobody can see is the point of attack.
+#
+# It ends the user's bearer tokens, as any password change does. Their API keys stand.
+
+# One line from `fd`, without its line ending, in `a`: 0 when it is empty, longer than `max` or
+# unreadable. Read a byte at a time so a pipe that holds more is left where it was.
+fn agnostic_cli_read_line_a(a, fd, max): i64 {
+    var buf = alloc_via(a, max + 2);
+    if (buf == 0) { return 0; }
+    var n = 0;
+    while (1 == 1) {
+        var r = sys_read(fd, buf + n, 1);
+        if (r == 0 - EINTR) { continue; }
+        if (r < 0) { return 0; }
+        if (r == 0) { break; }
+        if ((load8(buf + n) & 255) == 10) { break; }
+        n = n + 1;
+        if (n > max) { return 0; }
+    }
+    if (n > 0 && (load8(buf + n - 1) & 255) == 13) { n = n - 1; }
+    if (n == 0) { return 0; }
+    return str_new_a(a, buf, n);
+}
+
+# `agnostic admin reset-password <email>` against store `db` and trail `audit`: the exit code.
+# Separate from the environment so a suite can drive it: `lib/` has no `setenv`.
+fn agnostic_cli_reset_password_at(db: Str, audit: Str, email: Str, input, out, err): i64 {
+    if (file_exists(str_cstr(db)) != 1) {
+        _agnostic_cli_put(err, "agnostic: no database at this path; check AGNOSTIC_DB_PATH\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    agnostic_crypto_main_init();
+    var claim = agnostic_store_claim(db);
+    if (claim == AGNOSTIC_CLAIM_HELD) {
+        _agnostic_cli_put(err, "agnostic: a server is running on this database; stop it first\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    if (claim != AGNOSTIC_CLAIM_OK) {
+        _agnostic_cli_put(err, "agnostic: could not claim the database\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    if (agnostic_store_open(db) == 0 || agnostic_auth_ensure() == 0) {
+        _agnostic_cli_put(err, "agnostic: could not open the database\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    if (agnostic_audit_open(audit) == 0) {
+        _agnostic_cli_put(err, "agnostic: could not open the audit trail; a reset is not done unrecorded\n");
+        agnostic_store_close();
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    var rc = _agnostic_cli_reset_password_open(email, input, out, err);
+    agnostic_audit_close();
+    agnostic_store_close();
+    return rc;
+}
+
+# `agnostic_cli_reset_password_at`'s work, with the store and the trail open.
+fn _agnostic_cli_reset_password_open(email: Str, input, out, err): i64 {
+    var a = arena_allocator(4194304);
+    if (a == 0 || agnostic_argon_pool_init() == 0) {
+        _agnostic_cli_put(err, "agnostic: could not allocate\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    var uid = agnostic_users_find_a(a, email);
+    if (uid == 0) {
+        _agnostic_cli_put(err, "agnostic: no user has this email\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    var password = agnostic_cli_read_line_a(a, input, AGNOSTIC_PASSWORD_MAX);
+    if (agnostic_password_length_ok(password) == 0) {
+        _agnostic_cli_put(err, "agnostic: a password is one line on stdin, of 12 to 1024 bytes\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    if (agnostic_users_set_password_a(a, uid, password) != AGNOSTIC_USER_OK) {
+        _agnostic_cli_put(err, "agnostic: could not set the password\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    var sb = str_builder_new_a(a);
+    str_builder_add_cstr_a(a, sb, "uid=");
+    str_builder_add_a(a, sb, agnostic_id_hex_a(a, uid));
+    str_builder_add_cstr_a(a, sb, " by=cli");
+    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, "auth.password.reset"),
+      str_builder_build_a(a, sb));
+    _agnostic_cli_put(out, "password set; the user's bearer tokens have ended and their API keys stand\n");
+    return AGNOSTIC_EXIT_OK;
+}
+
+# `agnostic admin reset-password <email>`, configured from the environment like the server, so it
+# finds the same store. An invalid environment refuses here as it does there.
+fn agnostic_cli_reset_password(email: Str, input, out, err): i64 {
+    var cfg = agnostic_config_from_env();
+    if (cfg == 0 || agnostic_config_invalid(cfg) == 1) {
+        _agnostic_cli_put(err, "agnostic: invalid configuration — check AGNOSTIC_* values\n");
+        return AGNOSTIC_EXIT_FAILURE;
+    }
+    return agnostic_cli_reset_password_at(agnostic_config_db_path(cfg), agnostic_config_audit_path(cfg),
+      email, input, out, err);
+}
+
 # Run command `cmd` — anything but AGNOSTIC_CLI_SERVE, which is `src/main.cyr`'s — with its
 # output on `out` and its complaints on `err`, and answer the process exit code. The process
 # passes 1 and 2 (`agnostic_cli_run`); `api/cli` passes files, so it can read what went where.
 fn agnostic_cli_run_on(cmd, out, err): i64 {
     if (cmd == AGNOSTIC_CLI_API_SCHEMA) { return agnostic_cli_api_schema(out, err); }
+    if (cmd == AGNOSTIC_CLI_RESET_PASSWORD) {
+        return agnostic_cli_reset_password(str_from(argv(3)), 0, out, err);
+    }
     if (cmd == AGNOSTIC_CLI_HELP) {
         if (agnostic_cli_usage(out) != 0) { return AGNOSTIC_EXIT_FAILURE; }
         return AGNOSTIC_EXIT_OK;

@@ -72,7 +72,11 @@ patch release; anything actively exploitable gets an out-of-band release.
   networked deployment.** A default-open configuration reachable from a network
   is a deployment error, not a product default to rely on.
 - Provide credentials through the environment, never in a job definition or a
-  committed file.
+  committed file. That includes `AGNOSTIC_JWT_SECRET`: anyone who holds it can
+  forge a token for any user.
+- Whoever can write the database file can reset any password with
+  `agnostic admin reset-password`, as they could anything else in that file.
+  It is 0600 for that reason, and the reset is recorded in the audit trail.
 - Terminate TLS in front of Agnostic, or configure it explicitly. Do not assume
   a plain-HTTP listener is private because it binds a private address.
 - Treat every job definition as untrusted input, including ones that arrive from

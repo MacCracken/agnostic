@@ -12,6 +12,7 @@
 #   4. `Idempotency-Key`: the same key and body answers the same crew; the same key with
 #      another body is refused; keys do not cross scopes.
 #   5. A crew a restart interrupted (0.1.13) is still scoped, listed and filtered.
+#   6. An agent definition belongs to its tenant the way a crew does (0.3.0, audit S3).
 include "src/app.cyr"
 include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
@@ -606,6 +607,86 @@ fn test_stored_bytes() {
     return 0;
 }
 
+fn _t_def_url(key) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/agents/definitions/");
+    str_builder_add_cstr(sb, key);
+    return str_builder_build(sb);
+}
+
+fn _t_def_total(a, ctx) {
+    var r = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/agents/definitions"), "", ctx);
+    return bayan_json_v_int(bayan_json_v_obj_get_by_cstr(agnostic_response_body(r), "total"));
+}
+
+# Audit S3, as reproduced: a tenant-b OPERATOR listed, read, replaced and deleted tenant-a's
+# definition through the real dispatcher.
+fn test_definitions_are_per_tenant() {
+    test_group("tenancy/definitions");
+
+    _t_open();
+    agnostic_store_ensure(AGNOSTIC_DEF_TABLE_SQL);
+    agnostic_store_ensure(AGNOSTIC_DEF_INDEX_SQL);
+    agnostic_definitions_reset();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    agnostic_jwt_init_random();
+    agnostic_argon_pool_init();
+
+    var a = arena_allocator(4194304);
+    var ua = agnostic_users_create_a(a, str_from("d-a@example.com"), str_from("pw"),
+      AGNOSTIC_ROLE_OPERATOR, str_from("tenant-a"));
+    var ub = agnostic_users_create_a(a, str_from("d-b@example.com"), str_from("pw"),
+      AGNOSTIC_ROLE_OPERATOR, str_from("tenant-b"));
+    var ud = agnostic_users_create_a(a, str_from("d-d@example.com"), str_from("pw"),
+      AGNOSTIC_ROLE_OPERATOR, 0);
+    var ca = _t_ctx(a, agnostic_jwt_issue_a(a, ua, AGNOSTIC_ROLE_OPERATOR, 0, 600), 0);
+    var cb = _t_ctx(a, agnostic_jwt_issue_a(a, ub, AGNOSTIC_ROLE_OPERATOR, 0, 600), 0);
+    var cd = _t_ctx(a, agnostic_jwt_issue_a(a, ud, AGNOSTIC_ROLE_OPERATOR, 0, 600), 0);
+
+    var doc = "{\"key\":\"shared\",\"name\":\"A\",\"role\":\"r\",\"goal\":\"g\"}";
+    var edit = "{\"key\":\"shared\",\"name\":\"B\",\"role\":\"r\",\"goal\":\"g\"}";
+    var url = _t_def_url("shared");
+    var coll = str_from("/api/v1/agents/definitions");
+
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_POST, coll, doc, ca)),
+      AGNOSTIC_HTTP_CREATED, "tenant-a creates a definition");
+    assert_eq(_t_def_total(a, ca), 1, "and lists it");
+
+    assert_eq(_t_def_total(a, cb), 0, "tenant-b's listing does not hold it");
+    assert_eq(_t_def_total(a, cd), 0, "nor does the default scope's");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, url, "", cb)), HTTP_NOT_FOUND,
+      "tenant-b reads 404, not 403");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_PUT, url, edit, cb)), HTTP_NOT_FOUND,
+      "tenant-b cannot replace it");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_DELETE, url, "", cb)), HTTP_NOT_FOUND,
+      "tenant-b cannot delete it");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, url, "", ca)), HTTP_OK,
+      "and it is still tenant-a's");
+
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_POST, coll, edit, cb)),
+      AGNOSTIC_HTTP_CREATED, "the same key is free in tenant-b");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_POST, coll, doc, ca)),
+      AGNOSTIC_HTTP_CONFLICT, "and still taken in tenant-a");
+    var got = agnostic_response_body(_t_req(a, AGNOSTIC_METHOD_GET, url, "", ca));
+    assert_eq(str_eq_cstr(agnostic_req_str(bayan_json_v_obj_get_by_cstr(got, "definition"),
+          AGNOSTIC_JK_NAME), "A"), 1, "tenant-b's write did not touch tenant-a's document");
+
+    # A row written before 0.3.0 has no colon: it needs no migration, and it is the default
+    # scope's, as a crew stored before 0.1.9 is.
+    var rej: i64[1];
+    store64(&rej, 0);
+    var old_row = agnostic_agent_def_decode_a(a, agnostic_decode_a(a,
+        str_from("{\"key\":\"older\",\"name\":\"O\",\"role\":\"r\",\"goal\":\"g\"}")), 0 - 1, &rej);
+    agnostic_definitions_create(str_from("older"), old_row);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_def_url("older"), "", cd)),
+      HTTP_OK, "a row from before 0.3.0 reads in the default scope");
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_def_url("older"), "", ca)),
+      HTTP_NOT_FOUND, "and in no tenant");
+    assert_eq(_t_def_total(a, cd), 1, "and is listed there");
+
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -619,6 +700,7 @@ fn main() {
     test_request_limits();
     test_list_read_is_cut();
     test_stored_bytes();
+    test_definitions_are_per_tenant();
     agnostic_store_close();
     _tt_unlink_store(_T_DB);
     return assert_summary();

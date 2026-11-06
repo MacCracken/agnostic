@@ -71,6 +71,23 @@ enum AgnosticRouteId {
     AGNOSTIC_ROUTE_CREW_PLAN    = 24;
     AGNOSTIC_ROUTE_CREW_LIST    = 25;
     AGNOSTIC_ROUTE_AUDIT_ENTRIES = 26;
+    AGNOSTIC_ROUTE_AUTH_ME       = 27;   # identity (0.3.0, ADR 0023), from here to the end
+    AGNOSTIC_ROUTE_AUTH_PASSWORD = 28;
+    AGNOSTIC_ROUTE_AUTH_KEYS     = 29;
+    AGNOSTIC_ROUTE_AUTH_KEY_NEW  = 30;
+    AGNOSTIC_ROUTE_AUTH_KEY_DEL  = 31;
+    AGNOSTIC_ROUTE_USER_LIST     = 32;
+    AGNOSTIC_ROUTE_USER_CREATE   = 33;
+    AGNOSTIC_ROUTE_USER_GET      = 34;
+    AGNOSTIC_ROUTE_USER_UPDATE   = 35;
+    AGNOSTIC_ROUTE_USER_DELETE   = 36;
+    AGNOSTIC_ROUTE_USER_PASSWORD = 37;
+    AGNOSTIC_ROUTE_USER_KEYS     = 38;
+    AGNOSTIC_ROUTE_USER_KEY_DEL  = 39;
+    AGNOSTIC_ROUTE_TENANT_LIST   = 40;
+    AGNOSTIC_ROUTE_TENANT_CREATE = 41;
+    AGNOSTIC_ROUTE_TENANT_GET    = 42;
+    AGNOSTIC_ROUTE_TENANT_DELETE = 43;
 }
 
 var AGNOSTIC_METHOD_NONE   = 0;
@@ -306,7 +323,7 @@ enum AgnosticRouteRowOff {
     AGNOSTIC_RR_PUT         = 24;
     AGNOSTIC_RR_DELETE      = 32;
     AGNOSTIC_RR_SIZE        = 40;
-    AGNOSTIC_RR_TABLE_BYTES = 1280; # the table's storage: 32 rows, 21 used
+    AGNOSTIC_RR_TABLE_BYTES = 1920; # the table's storage: 48 rows, 32 used
 }
 
 # The rows, AGNOSTIC_RR_SIZE bytes each, in resolution order.
@@ -353,6 +370,22 @@ fn _agnostic_route_table_build(): i64 {
     # Identity (M5). POST only: a GET earns a 405 naming the mismatch rather than a
     # 404, because the endpoint exists — it just is not readable.
     n = _agnostic_route_add(n, "/api/v1/auth/login", none, AGNOSTIC_ROUTE_AUTH_LOGIN, none, none);
+
+    # Provisioning (0.3.0, ADR 0023): yourself, then the users you run, then the tenants.
+    n = _agnostic_route_add(n, "/api/v1/auth/me", AGNOSTIC_ROUTE_AUTH_ME, none, none, none);
+    n = _agnostic_route_add(n, "/api/v1/auth/password", none, none, AGNOSTIC_ROUTE_AUTH_PASSWORD, none);
+    n = _agnostic_route_add(n, "/api/v1/auth/api-keys",
+      AGNOSTIC_ROUTE_AUTH_KEYS, AGNOSTIC_ROUTE_AUTH_KEY_NEW, none, none);
+    n = _agnostic_route_add(n, "/api/v1/auth/api-keys/:id", none, none, none, AGNOSTIC_ROUTE_AUTH_KEY_DEL);
+    n = _agnostic_route_add(n, "/api/v1/users", AGNOSTIC_ROUTE_USER_LIST, AGNOSTIC_ROUTE_USER_CREATE, none, none);
+    n = _agnostic_route_add(n, "/api/v1/users/:id",
+      AGNOSTIC_ROUTE_USER_GET, none, AGNOSTIC_ROUTE_USER_UPDATE, AGNOSTIC_ROUTE_USER_DELETE);
+    n = _agnostic_route_add(n, "/api/v1/users/:id/password", none, none, AGNOSTIC_ROUTE_USER_PASSWORD, none);
+    n = _agnostic_route_add(n, "/api/v1/users/:id/api-keys", AGNOSTIC_ROUTE_USER_KEYS, none, none, none);
+    n = _agnostic_route_add(n, "/api/v1/users/:id/api-keys/:key", none, none, none, AGNOSTIC_ROUTE_USER_KEY_DEL);
+    n = _agnostic_route_add(n, "/api/v1/tenants", AGNOSTIC_ROUTE_TENANT_LIST, AGNOSTIC_ROUTE_TENANT_CREATE, none, none);
+    n = _agnostic_route_add(n, "/api/v1/tenants/:key",
+      AGNOSTIC_ROUTE_TENANT_GET, none, none, AGNOSTIC_ROUTE_TENANT_DELETE);
 
     # The preset library (M3) — read-only. A POST to either path earns a 405 naming
     # the mismatch rather than a 404: the collection exists, the write surface does
@@ -618,7 +651,7 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     #
     # `agnostic_perm_for_route` answers 0 for the routes that need nothing, so
     # health and readiness fall straight through without a special case here.
-    # A route nobody classified answers ADMIN, so forgetting one fails closed.
+    # A route nobody classified answers SUPER, so forgetting one fails closed.
     if (agnostic_authn_required() == 1) {
         var need = agnostic_perm_for_route(id);
         if (need != 0) {
@@ -674,10 +707,11 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
         return agnostic_route_crew_plan_a(a, agnostic_route_match_param(m), path, ctx);
     }
 
-    if (id == AGNOSTIC_ROUTE_DEF_LIST) { return agnostic_route_definitions_list_a(a); }
-    if (id == AGNOSTIC_ROUTE_DEF_CREATE) { return agnostic_route_definition_create_a(a, body); }
+    # The definition handlers take `ctx`: a definition belongs to the caller's tenant (0.3.0).
+    if (id == AGNOSTIC_ROUTE_DEF_LIST) { return agnostic_route_definitions_list_a(a, ctx); }
+    if (id == AGNOSTIC_ROUTE_DEF_CREATE) { return agnostic_route_definition_create_a(a, body, ctx); }
     if (id == AGNOSTIC_ROUTE_DEF_GET) {
-        return agnostic_route_definition_get_a(a, agnostic_route_match_param(m));
+        return agnostic_route_definition_get_a(a, agnostic_route_match_param(m), ctx);
     }
     if (id == AGNOSTIC_ROUTE_DEF_REPLACE) {
         return agnostic_route_definition_replace_a(a, agnostic_route_match_param(m), body, ctx);
@@ -687,6 +721,27 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     }
 
     if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return agnostic_route_login_a(a, body, ctx); }
+
+    # Identity (0.3.0): each handler reads the principal from `ctx`.
+    var p1 = agnostic_route_match_param(m);
+    var p2 = agnostic_route_match_param2(m);
+    if (id == AGNOSTIC_ROUTE_AUTH_ME) { return agnostic_route_auth_me_a(a, ctx); }
+    if (id == AGNOSTIC_ROUTE_AUTH_PASSWORD) { return agnostic_route_auth_password_a(a, body, ctx); }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEYS) { return agnostic_route_auth_keys_list_a(a, ctx); }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEY_NEW) { return agnostic_route_auth_key_create_a(a, body, ctx); }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEY_DEL) { return agnostic_route_auth_key_revoke_a(a, p1, ctx); }
+    if (id == AGNOSTIC_ROUTE_USER_LIST) { return agnostic_route_users_list_a(a, ctx); }
+    if (id == AGNOSTIC_ROUTE_USER_CREATE) { return agnostic_route_user_create_a(a, body, ctx); }
+    if (id == AGNOSTIC_ROUTE_USER_GET) { return agnostic_route_user_get_a(a, p1, ctx); }
+    if (id == AGNOSTIC_ROUTE_USER_UPDATE) { return agnostic_route_user_update_a(a, p1, body, ctx); }
+    if (id == AGNOSTIC_ROUTE_USER_DELETE) { return agnostic_route_user_delete_a(a, p1, ctx); }
+    if (id == AGNOSTIC_ROUTE_USER_PASSWORD) { return agnostic_route_user_password_a(a, p1, body, ctx); }
+    if (id == AGNOSTIC_ROUTE_USER_KEYS) { return agnostic_route_user_keys_list_a(a, p1, ctx); }
+    if (id == AGNOSTIC_ROUTE_USER_KEY_DEL) { return agnostic_route_user_key_revoke_a(a, p1, p2, ctx); }
+    if (id == AGNOSTIC_ROUTE_TENANT_LIST) { return agnostic_route_tenants_list_a(a, ctx); }
+    if (id == AGNOSTIC_ROUTE_TENANT_CREATE) { return agnostic_route_tenant_create_a(a, body, ctx); }
+    if (id == AGNOSTIC_ROUTE_TENANT_GET) { return agnostic_route_tenant_get_a(a, p1, ctx); }
+    if (id == AGNOSTIC_ROUTE_TENANT_DELETE) { return agnostic_route_tenant_delete_a(a, p1, ctx); }
 
     if (id == AGNOSTIC_ROUTE_AUDIT) { return agnostic_route_audit_a(a); }
     if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) {

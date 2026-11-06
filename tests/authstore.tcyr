@@ -295,6 +295,213 @@ fn test_row_strings_are_copies() {
     assert_eq(str_eq_cstr(ea, "ada@example.com"), 1, "and the first is still its own");
 }
 
+# Ids go out as strings, because a JSON number loses a 63-bit value in a browser.
+fn test_ids_on_the_wire() {
+    test_group("authstore/ids");
+    var a = arena_allocator(262144);
+    var top = 0x7FFFFFFFFFFFFFFF;
+    assert_eq(str_eq_cstr(agnostic_id_hex_a(a, top), "7fffffffffffffff"), 1, "the largest id spells out");
+    assert_eq(str_eq_cstr(agnostic_id_hex_a(a, 1), "0000000000000001"), 1, "a small one keeps its width");
+    assert_eq(agnostic_id_parse(agnostic_id_hex_a(a, top)), top, "and the round trip is exact");
+    assert_eq(agnostic_id_parse(agnostic_id_hex_a(a, 0x123456789ABCDEF)), 0x123456789ABCDEF, "for any id");
+    assert_eq(agnostic_id_parse(str_from("000000000000000")), 0, "15 digits are refused");
+    assert_eq(agnostic_id_parse(str_from("00000000000000001")), 0, "17 are too");
+    assert_eq(agnostic_id_parse(str_from("00000000000000AB")), 0, "upper case is not the same id");
+    assert_eq(agnostic_id_parse(str_from("000000000000000g")), 0, "a letter past f is refused");
+    assert_eq(agnostic_id_parse(str_from("0000000000000000")), 0, "0 is no id");
+    assert_eq(agnostic_id_parse(str_from("8000000000000000")), 0, "and no id has the top bit");
+    assert_eq(agnostic_id_parse(0), 0, "and nothing is no id");
+}
+
+fn test_user_rows() {
+    test_group("authstore/user-rows");
+    _t_auth_open();
+    var a = arena_allocator(1048576);
+    var b = agnostic_users_create_a(a, str_from("b@a.example"), str_from("pw"), AGNOSTIC_ROLE_VIEWER,
+      str_from("acme"));
+    agnostic_users_create_a(a, str_from("a@a.example"), str_from("pw"), AGNOSTIC_ROLE_ADMIN, str_from("acme"));
+    agnostic_users_create_a(a, str_from("c@g.example"), str_from("pw"), AGNOSTIC_ROLE_ADMIN, str_from("globex"));
+    agnostic_users_create_a(a, str_from("r@x.example"), str_from("pw"), AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+
+    var all = agnostic_users_list_a(a, 0);
+    assert_eq(vec_len(all), 4, "0 lists everyone");
+    assert_eq(str_eq_cstr(agnostic_user_row_email(vec_get(all, 0)), "a@a.example"), 1, "by email");
+    var acme = agnostic_users_list_a(a, str_from("acme"));
+    assert_eq(vec_len(acme), 2, "a tenant lists its own");
+    assert_eq(agnostic_user_row_uid(vec_get(acme, 1)), b, "with their uids");
+    assert_eq(agnostic_user_row_role(vec_get(acme, 1)), AGNOSTIC_ROLE_VIEWER, "and roles");
+    assert_eq(str_eq_cstr(agnostic_user_row_tenant(vec_get(acme, 1)), "acme"), 1, "and tenants");
+    var none = agnostic_users_list_a(a, str_from(""));
+    assert_eq(vec_len(none), 1, "the empty string is the default scope");
+    assert_eq(agnostic_user_row_tenant(vec_get(none, 0)), 0, "whose row has no tenant");
+    assert_eq(agnostic_users_in_tenant(str_from("acme")), 2, "and the count agrees");
+
+    var one = agnostic_users_get_a(a, b);
+    assert_eq(str_eq_cstr(agnostic_user_row_email(one), "b@a.example"), 1, "one user by uid");
+    assert_eq(agnostic_users_get_a(a, 12345), 0, "and no row for an unknown one");
+}
+
+# The last super administrator is the only one who can make another.
+fn test_last_super_stays() {
+    test_group("authstore/last-super");
+    _t_auth_open();
+    var a = arena_allocator(1048576);
+    var r1 = agnostic_users_create_a(a, str_from("r1@x.example"), str_from("pw"), AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    assert_eq(agnostic_users_set_role(r1, AGNOSTIC_ROLE_ADMIN), AGNOSTIC_USER_LAST_SUPER, "the last cannot be demoted");
+    assert_eq(agnostic_users_role(r1), AGNOSTIC_ROLE_SUPER_ADMIN, "and is not");
+    assert_eq(agnostic_users_delete(r1), AGNOSTIC_USER_LAST_SUPER, "nor deleted");
+    assert_eq(agnostic_users_count(), 1, "and is still there");
+    assert_eq(agnostic_users_set_role(r1, AGNOSTIC_ROLE_SUPER_ADMIN), AGNOSTIC_USER_OK,
+      "keeping the role is no demotion");
+
+    var r2 = agnostic_users_create_a(a, str_from("r2@x.example"), str_from("pw"), AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    assert_eq(agnostic_users_set_role(r1, AGNOSTIC_ROLE_VIEWER), AGNOSTIC_USER_OK, "with a second, one can go");
+    assert_eq(agnostic_users_role(r1), AGNOSTIC_ROLE_VIEWER, "and the row says so");
+    assert_eq(agnostic_users_delete(r2), AGNOSTIC_USER_LAST_SUPER, "and the other is now the last");
+    assert_eq(agnostic_users_delete(r1), AGNOSTIC_USER_OK, "a user who is not the last goes");
+    assert_eq(agnostic_users_delete(r1), AGNOSTIC_USER_MISSING, "once");
+    assert_eq(agnostic_users_set_role(99, AGNOSTIC_ROLE_VIEWER), AGNOSTIC_USER_MISSING, "an unknown uid is missing");
+    assert_eq(agnostic_users_set_role(r2, 7), AGNOSTIC_USER_FAILED, "and a role nobody defined is never stored");
+}
+
+fn test_set_password() {
+    test_group("authstore/set-password");
+    _t_auth_open();
+    var a = arena_allocator(4194304);
+    var uid = agnostic_users_create_a(a, str_from("p@x.example"), str_from("first-password"), AGNOSTIC_ROLE_VIEWER, 0);
+    var key = agnostic_apikey_issue_a(a, uid, str_from("ci"));
+
+    var found: i64[1];
+    var from: i64[1];
+    agnostic_users_identity_a(a, uid, &found, &from);
+    assert_eq(load64(&from), 0, "a new user has no cut-off");
+
+    assert_eq(agnostic_users_set_password_a(a, uid, str_from("second-password")), AGNOSTIC_USER_OK, "it is set");
+    var shed: i64[1];
+    store64(&shed, 0);
+    assert_eq(agnostic_users_verify_a(a, str_from("p@x.example"), str_from("first-password"), &shed), 0,
+      "the old password stops working");
+    assert_eq(agnostic_users_verify_a(a, str_from("p@x.example"), str_from("second-password"), &shed), uid,
+      "the new one works");
+    agnostic_users_identity_a(a, uid, &found, &from);
+    assert_neq(load64(&from), 0, "older tokens are cut off");
+    assert_eq(agnostic_apikey_resolve_a(a, key), uid, "and an API key stands");
+    assert_eq(agnostic_users_set_password_a(a, 12345, str_from("third-password")), AGNOSTIC_USER_MISSING,
+      "an unknown uid is missing");
+
+    assert_eq(agnostic_password_length_ok(str_from("elevenchars")), 0, "11 characters are refused");
+    assert_eq(agnostic_password_length_ok(str_from("twelve-chars")), 1, "12 are taken");
+    assert_eq(agnostic_password_length_ok(str_new_a(a, alloc_via(a, 1025), 1025)), 0, "and 1025 are refused");
+    assert_eq(agnostic_password_length_ok(0), 0, "and no password is refused");
+}
+
+# A store from before 0.3.0: the table has no `tokens_from`, and its rows must keep working.
+fn test_tokens_from_reaches_an_older_store() {
+    test_group("authstore/tokens-from-migration");
+    agnostic_store_close();
+    sys_unlink(_T_AUTHDB);
+    patra_init();
+    agnostic_store_open(str_from(_T_AUTHDB));
+    var a = arena_allocator(4194304);
+
+    assert_eq(agnostic_store_ensure(AGNOSTIC_USERS_TABLE_SQL), 1, "the old table");
+    assert_eq(agnostic_store_ensure(AGNOSTIC_APIKEYS_TABLE_SQL), 1, "and its keys");
+    agnostic_argon_pool_init();
+    var lower = str_from("old@x.example");
+    var uid = agnostic_users_uid_a(a, lower);
+    var rec = agnostic_password_hash_a(a, str_from("older-password"));
+    agnostic_store_lock();
+    _agnostic_users_insert_locked_a(a, uid, lower, rec, AGNOSTIC_ROLE_ADMIN, str_from("acme"));
+    agnostic_store_unlock();
+
+    assert_eq(agnostic_auth_ensure(), 1, "a start adds the column");
+    assert_eq(agnostic_auth_ensure(), 1, "and the next start finds it there");
+    var found: i64[1];
+    var from: i64[1];
+    assert_eq(agnostic_users_identity_a(a, uid, &found, &from), AGNOSTIC_ROLE_ADMIN, "the row still reads");
+    assert_eq(load64(&from), 0, "with no cut-off, so its tokens stand");
+    assert_eq(str_eq_cstr(load64(&found), "acme"), 1, "and its columns stay where they were");
+    var shed: i64[1];
+    store64(&shed, 0);
+    assert_eq(agnostic_users_verify_a(a, lower, str_from("older-password"), &shed), uid, "and it can log in");
+    assert_eq(agnostic_users_set_password_a(a, uid, str_from("newer-password")), AGNOSTIC_USER_OK,
+      "and the new column takes a value");
+    agnostic_users_identity_a(a, uid, &found, &from);
+    assert_neq(load64(&from), 0, "which reads back");
+    assert_eq(agnostic_users_create_a(a, str_from("new@x.example"), str_from("pw"), AGNOSTIC_ROLE_VIEWER, 0) != 0, 1,
+      "and a new row is written around it");
+}
+
+fn test_keys_by_id() {
+    test_group("authstore/keys-by-id");
+    _t_auth_open();
+    var a = arena_allocator(4194304);
+    var u1 = agnostic_users_create_a(a, str_from("k1@x.example"), str_from("pw"), AGNOSTIC_ROLE_VIEWER, 0);
+    var u2 = agnostic_users_create_a(a, str_from("k2@x.example"), str_from("pw"), AGNOSTIC_ROLE_ADMIN, 0);
+    var raw = agnostic_apikey_issue_a(a, u1, str_from("ci"));
+    var other = agnostic_apikey_issue_a(a, u1, 0);
+    var theirs = agnostic_apikey_issue_a(a, u2, str_from("mine"));
+
+    var rows = agnostic_apikeys_list_a(a, u1);
+    assert_eq(vec_len(rows), 2, "a user's keys are listed");
+    assert_eq(agnostic_apikeys_of(u1), 2, "and counted");
+    var hits = 0;
+    var i = 0;
+    while (i < vec_len(rows)) {
+        var r = vec_get(rows, i);
+        if (agnostic_key_row_id(r) == agnostic_apikey_id(raw)) {
+            hits = hits + 1;
+            assert_eq(str_eq_cstr(agnostic_key_row_label(r), "ci"), 1, "with the label it was given");
+            assert_neq(agnostic_key_row_created(r), 0, "and when");
+        }
+        i = i + 1;
+    }
+    assert_eq(hits, 1, "the id names the key");
+
+    assert_eq(agnostic_apikey_revoke_id(u2, agnostic_apikey_id(raw)), 0, "another user cannot revoke it");
+    assert_eq(agnostic_apikey_resolve_a(a, raw), u1, "and it still works");
+    assert_eq(agnostic_apikey_revoke_id(u1, agnostic_apikey_id(raw)), 1, "its owner can, by id alone");
+    assert_eq(agnostic_apikey_resolve_a(a, raw), 0, "and it stops working");
+    assert_eq(agnostic_apikey_resolve_a(a, other), u1, "the other key stands");
+    assert_eq(agnostic_apikey_revoke_id(u1, agnostic_apikey_id(raw)), 0, "and a second revoke finds nothing");
+
+    assert_eq(agnostic_users_delete(u1), AGNOSTIC_USER_OK, "deleting a user");
+    assert_eq(agnostic_apikey_resolve_a(a, other), 0, "ends the keys");
+    assert_eq(agnostic_apikeys_of(u1), 0, "and leaves no row for nobody");
+    assert_eq(agnostic_apikey_resolve_a(a, theirs), u2, "and no one else's");
+
+    var made = 0;
+    var tries = 0;
+    while (tries < AGNOSTIC_APIKEYS_PER_USER + 3) {
+        if (agnostic_apikey_issue_a(a, u2, 0) != 0) { made = made + 1; }
+        tries = tries + 1;
+    }
+    assert_eq(made, AGNOSTIC_APIKEYS_PER_USER - 1, "a user cannot mint past the cap");
+}
+
+fn test_tenant_rows() {
+    test_group("authstore/tenant-rows");
+    _t_auth_open();
+    agnostic_tenants_ensure();
+    var a = arena_allocator(1048576);
+    agnostic_tenant_create_a(a, str_from("globex"), str_from("Globex Corp"));
+    agnostic_tenant_create_a(a, str_from("acme"), 0);
+    var rows = agnostic_tenants_list_a(a);
+    assert_eq(vec_len(rows), 2, "tenants are listed");
+    assert_eq(str_eq_cstr(agnostic_tenant_row_key(vec_get(rows, 0)), "acme"), 1, "by key");
+    assert_eq(str_eq_cstr(agnostic_tenant_row_name(vec_get(rows, 0)), "acme"), 1, "with the key as a name by default");
+    assert_eq(str_eq_cstr(agnostic_tenant_row_name(agnostic_tenant_get_a(a, str_from("globex"))), "Globex Corp"), 1,
+      "one tenant reads by key");
+    assert_eq(agnostic_tenant_get_a(a, str_from("nope")), 0, "and an unknown one does not");
+
+    var u = agnostic_users_create_a(a, str_from("t@x.example"), str_from("pw"), AGNOSTIC_ROLE_VIEWER, str_from("acme"));
+    assert_eq(agnostic_tenant_delete_empty_a(a, str_from("acme")), AGNOSTIC_TENANT_IN_USE, "a tenant with users stays");
+    assert_neq(agnostic_tenant_get_a(a, str_from("acme")), 0, "and is still there");
+    agnostic_users_delete(u);
+    assert_eq(agnostic_tenant_delete_empty_a(a, str_from("acme")), AGNOSTIC_TENANT_OK, "an empty one goes");
+    assert_eq(agnostic_tenant_delete_empty_a(a, str_from("acme")), AGNOSTIC_TENANT_MISSING, "once");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -307,6 +514,13 @@ fn main() {
     test_apikeys();
     test_apikey_bucket_is_rechecked();
     test_row_strings_are_copies();
+    test_ids_on_the_wire();
+    test_user_rows();
+    test_last_super_stays();
+    test_set_password();
+    test_tokens_from_reaches_an_older_store();
+    test_keys_by_id();
+    test_tenant_rows();
     _tt_unlink_store(_T_AUTHDB);
     return assert_summary();
 }

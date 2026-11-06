@@ -236,7 +236,7 @@ function errOf(r) {
  *  server started (`verified: "open"` — not a moment ago), and how many appends were DROPPED,
  *  which verification cannot see. GET /api/v1/audit/entries pages the newest entries by index
  *  (`next` → `?before=`); the server keeps the newest 1024 for reading (`oldest_held`). Both are
- *  ADMIN routes: the trail records every user's actions.
+ *  SUPER routes: the trail records every tenant's actions.
  *
  *  The "Chain" column checks, for the entries on screen, that each one's `prev_hash` is the
  *  hash of the entry before it. That is a reading aid, not the verification — the server's
@@ -335,8 +335,8 @@ class AuditTrail {
   onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   emit() { for (const fn of this.listeners) fn(this); }
   errorText(r, what) {
-    if (r.status === 401) return 'Sign in as an administrator to read the audit trail.';
-    if (r.status === 403 && !(r.data && typeof r.data.code === 'string' && r.data.code.startsWith('plugin_'))) return 'The audit trail is for administrators: it records every user’s actions.';
+    if (r.status === 401) return 'Sign in as a super administrator to read the audit trail.';
+    if (r.status === 403 && !(r.data && typeof r.data.code === 'string' && r.data.code.startsWith('plugin_'))) return 'The audit trail is for super administrators: it records every user’s actions.';
     return 'Could not read ' + what + ': ' + errOf(r);
   }
   page(r) {

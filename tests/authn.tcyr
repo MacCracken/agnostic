@@ -27,6 +27,16 @@ fn _t_authn_open() {
     return 0;
 }
 
+# `src/config.cyr` keeps its own copy of the floor, because `tests/config.tcyr` includes it alone.
+fn test_jwt_secret_floor() {
+    test_group("authn/jwt-secret-floor");
+    assert_eq(AGNOSTIC_CONFIG_JWT_SECRET_MIN, AGNOSTIC_JWT_SECRET_MIN,
+      "the configuration refuses what the signer would refuse");
+    var k = str_from("0123456789abcdef0123456789abcdef");
+    assert_eq(agnostic_config_parse_jwt_secret(k), k, "a secret the configuration takes");
+    assert_eq(agnostic_jwt_set_secret(str_data(k), str_len(k)), 1, "the signer takes too");
+}
+
 fn test_scheme_parsing() {
     test_group("authn/scheme");
 
@@ -186,13 +196,49 @@ fn test_unclassified_route_fails_closed() {
     var viewer = agnostic_users_create_a(a, str_from("fc@example.com"), str_from("pw"),
       AGNOSTIC_ROLE_VIEWER, 0);
 
-    # An id nobody classified requires ADMIN, so a viewer cannot reach it. This
+    # An id nobody classified requires SUPER, so a viewer cannot reach it. This
     # is asserted at the permission layer because the ladder cannot be handed an
     # unroutable id — but it is the property that protects a route someone adds
     # and forgets to classify.
-    assert_eq(agnostic_perm_for_route(99), AGNOSTIC_PERM_ADMIN, "unclassified means ADMIN");
+    assert_eq(agnostic_perm_for_route(99), AGNOSTIC_PERM_SUPER, "unclassified means SUPER");
     assert_eq(agnostic_role_can(agnostic_users_role(viewer), agnostic_perm_for_route(99)), 0,
       "so a viewer is refused it");
+
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
+# ADMIN runs a tenant; SUPER runs the deployment (audit S4, 0.3.0). The audit found a tenant-c
+# ADMIN reading tenant-a's entries and switching a plugin for every tenant.
+fn test_deployment_routes_need_super() {
+    test_group("ladder/deployment-routes");
+
+    _t_authn_open();
+    var a = arena_allocator(262144);
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    var empty = str_from("");
+
+    var admin = agnostic_users_create_a(a, str_from("c-admin@example.com"), str_from("pw"),
+      AGNOSTIC_ROLE_ADMIN, str_from("tenant-c"));
+    var super = agnostic_users_create_a(a, str_from("root@example.com"), str_from("pw"),
+      AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var ah = _t_hdr_a(a, "Bearer", agnostic_jwt_issue_a(a, admin, AGNOSTIC_ROLE_ADMIN, 0, 600));
+    var sh = _t_hdr_a(a, "Bearer", agnostic_jwt_issue_a(a, super, AGNOSTIC_ROLE_SUPER_ADMIN, 0, 600));
+
+    assert_eq(agnostic_response_status(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+          str_from("/api/v1/audit"), empty, 1048576, agnostic_reqctx_new_a(a, ah, 0))),
+      HTTP_FORBIDDEN, "a tenant's admin cannot read the deployment's audit summary");
+    assert_eq(agnostic_response_status(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+          str_from("/api/v1/audit/entries"), empty, 1048576, agnostic_reqctx_new_a(a, ah, 0))),
+      HTTP_FORBIDDEN, "nor its entries");
+    # An unparseable body: a 400 would mean the request reached the handler.
+    assert_eq(agnostic_response_status(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_PUT,
+          str_from("/api/v1/plugins/swarm"), str_from("{not json"), 1048576,
+          agnostic_reqctx_new_a(a, ah, 0))),
+      HTTP_FORBIDDEN, "nor switch a plugin for every tenant");
+
+    assert_neq(agnostic_response_status(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+          str_from("/api/v1/audit"), empty, 1048576, agnostic_reqctx_new_a(a, sh, 0))),
+      HTTP_FORBIDDEN, "a super administrator can");
 
     agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
 }
@@ -200,10 +246,12 @@ fn test_unclassified_route_fails_closed() {
 fn main() {
     alloc_init();
     thread_local_init();
+    test_jwt_secret_floor();
     test_scheme_parsing();
     test_role_comes_from_the_row_not_the_token();
     test_ladder_enforcement();
     test_unclassified_route_fails_closed();
+    test_deployment_routes_need_super();
     _tt_unlink_store(_T_AUTHNDB);
     return assert_summary();
 }

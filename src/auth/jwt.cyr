@@ -71,7 +71,7 @@ fn agnostic_jwt_set_secret(ptr, len): i64 {
 # ⚠ **Ephemeral: every restart invalidates every outstanding token.** That is the
 # right default for a server with no configured secret — the alternative, a
 # built-in constant, is a signing key published in the source. An operator who
-# wants tokens to survive a restart installs their own.
+# wants tokens to survive a restart sets `AGNOSTIC_JWT_SECRET`.
 fn agnostic_jwt_init_random(): i64 {
     var buf = alloc(AGNOSTIC_JWT_SECRET_MIN);
     if (buf == 0) { return 0; }
@@ -319,6 +319,15 @@ fn agnostic_jwt_verify_a(a, token: Str): i64 {
     if (bayan_json_v_is_int(exp) != 1) { return 0; }
     if (bayan_json_v_int(exp) <= clock_epoch_secs()) { return 0; }
     return v;
+}
+
+# When a verified claims object was issued, or 0 when it does not say.
+fn agnostic_jwt_claim_iat(v): i64 {
+    if (v == 0) { return 0; }
+    var iat = bayan_json_v_obj_get_by_cstr(v, "iat");
+    if (iat == 0) { return 0; }
+    if (bayan_json_v_is_int(iat) != 1) { return 0; }
+    return bayan_json_v_int(iat);
 }
 
 # The uid a verified claims object names, or 0.

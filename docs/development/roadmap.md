@@ -55,14 +55,12 @@ deployment has one user, no issuable API key, and tokens that die on restart, an
 "a consumer green against the published API" cannot be met until it is done. Details under *Identity
 and deployment*.
 
-- [ ] **Provisioning** (G1): routes for users, API keys and tenants, plus one offline recovery command,
-  with an ADR.
-- [ ] **`AGNOSTIC_JWT_SECRET`** (G2), length-checked, so a restart does not log everyone out.
-- [ ] **Scope what is not scoped**: agent definitions, and ADMIN against SUPER (audit S3, S4). Both are
-  latent today and become real the moment a second user can exist, so they ship together with it.
+Provisioning, `AGNOSTIC_JWT_SECRET`, password change and tenant scoping shipped together at 0.3.0
+([ADR 0023](../adr/0023-provisioning-is-routes-and-one-recovery-command.md)).
+
+- [ ] **A users view in the WebGUI**, on the 0.3.0 routes, so provisioning does not need `curl`.
 - [ ] **A trusted-proxy setting**, since TLS belongs to a proxy and a proxy gives every client one login
   bucket (audit S7).
-- [ ] **Password change**, which also closes the bootstrap credential's rotation (audit S12b).
 - [ ] **Tenant limits** (G11), beyond the login limit.
 - [ ] **A metrics route** (G7) over `agnosai_metrics_gather`, beside the OTLP traces.
 - [ ] **Deployment** (G14): a guide for the binary, a reverse proxy and a unit file, and the Zugot
@@ -388,32 +386,8 @@ owed for 1.0.0:
 From the [parity review](research/2026-11-05-python-port-parity.md) (G1, G2, G7, G11, G12, G14) and the
 [2026-11-05 audit](../audit/2026-11-05-audit.md).
 
-- [ ] **Provisioning (G1).** Nothing can add anyone after the bootstrap admin:
-  `agnostic_users_create_a` is called only by bootstrap, and `agnostic_tenant_create_a` and
-  `agnostic_apikey_issue_a` have no callers in `src/`. The form is settled (see *Settled decisions*);
-  the ADR comes with the work.
-  - **Routes** for users, API keys and tenants, so provisioning works on a running server and the WebGUI
-    can use it. SUPER manages tenants and any tenant's users, ADMIN manages users in their own tenant,
-    and everyone manages their own password and API keys. Nobody grants a role above their own, and the
-    last super admin cannot be deleted or demoted. These rules rest on audit S4, below.
-  - **`agnostic admin reset-password <email>`**, the one command. It takes the database claim, so it
-    refuses while a server runs. It reads the password from stdin, because arguments are visible in
-    `/proc/<pid>/cmdline`, and it writes an audit entry.
-  - **The store needs:** listing users and keys, a role change, a password set, a user delete, and
-    revoking a key by id. `agnostic_apikey_revoke_a` takes the raw key, so an admin who does not hold it
-    cannot revoke it.
-- [ ] **`AGNOSTIC_JWT_SECRET` (G2)**, refused at mount when short. `src/auth/jwt.cyr:72` already says an
-  operator can install a secret; nothing lets them.
-- [ ] **Agent definitions are not tenant-scoped (audit S3).** A tenant-b OPERATOR listed, read, replaced
-  and deleted tenant-a's definition, reproduced in-process through the real dispatcher. Key them by
-  scope, as plugin documents are. It needs a store migration.
-- [ ] **Any ADMIN is a deployment admin (audit S4), against ADR 0008.** A tenant-c ADMIN read tenant-a's
-  entries from the audit trail and switched a deployment-wide plugin; no route requires
-  `AGNOSTIC_PERM_SUPER`. Require SUPER for those routes, or filter entries by scope.
 - [ ] **A trusted-proxy setting (audit S7).** `src/auth/ratelimit.cyr:90` keys the login bucket on the
   socket peer, so behind a proxy about 5 anonymous requests a minute lock out every login.
-- [ ] **Password change (audit S12b).** The mount WARN says to rotate the bootstrap credential, and
-  nothing can.
 - [ ] **The audit vocabulary (G12).** A failed login is audited since 0.2.2. A 401, a 403 and a
   rate-limit hit still leave nothing, and `agnostic_rl_shed_count` and `agnostic_argon_shed_count`
   have no callers. Bounded, so the trail does not become a write amplifier.
@@ -781,7 +755,7 @@ own section below.
   with the server stopped, and the WebGUI could not use it at all. Routes alone leave one hole:
   `agnostic_auth_bootstrap_a` acts only on an empty store, so a lost password on the last super admin
   has no way back. `agnostic admin reset-password` fills that hole and does nothing else. The rules are
-  under *Identity and deployment*.
+  in [ADR 0023](../adr/0023-provisioning-is-routes-and-one-recovery-command.md).
 - **2026-11-05 — A crew's target is a checked field on the crew, and a task may override it** (parity
   question 2). Prose gives agnostic nothing to check a tool's call against, and the system under test
   writes what those tools read. A task-only field means one copy per task and no single value for a

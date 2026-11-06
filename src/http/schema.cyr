@@ -290,6 +290,12 @@ fn _agnostic_sch_body_of(id): i64 {
     if (id == AGNOSTIC_ROUTE_DEF_CREATE) { return "agent_definition"; }
     if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { return "agent_definition"; }
     if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return "login"; }
+    if (id == AGNOSTIC_ROUTE_AUTH_PASSWORD) { return "password_change"; }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEY_NEW) { return "api_key"; }
+    if (id == AGNOSTIC_ROUTE_USER_CREATE) { return "user"; }
+    if (id == AGNOSTIC_ROUTE_USER_UPDATE) { return "user_role"; }
+    if (id == AGNOSTIC_ROUTE_USER_PASSWORD) { return "user_password"; }
+    if (id == AGNOSTIC_ROUTE_TENANT_CREATE) { return "tenant"; }
     if (id == AGNOSTIC_ROUTE_PLUGIN_SET) { return "plugin_switch"; }
     if (id == AGNOSTIC_ROUTE_PDATA_PUT) { return "plugin_document"; }
     return 0;
@@ -368,6 +374,9 @@ fn _agnostic_sch_ok_a(a, id): i64 {
     var ok = bayan_json_v_arr_new_a(a);
     if (id == AGNOSTIC_ROUTE_CREW_SUBMIT) { return _agnostic_sch_status_a(a, ok, AGNOSTIC_HTTP_ACCEPTED); }
     if (id == AGNOSTIC_ROUTE_DEF_CREATE) { return _agnostic_sch_status_a(a, ok, AGNOSTIC_HTTP_CREATED); }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEY_NEW) { return _agnostic_sch_status_a(a, ok, AGNOSTIC_HTTP_CREATED); }
+    if (id == AGNOSTIC_ROUTE_USER_CREATE) { return _agnostic_sch_status_a(a, ok, AGNOSTIC_HTTP_CREATED); }
+    if (id == AGNOSTIC_ROUTE_TENANT_CREATE) { return _agnostic_sch_status_a(a, ok, AGNOSTIC_HTTP_CREATED); }
     # A plugin's PUT is an upsert, and says which happened (`src/routes/plugindata.cyr`).
     if (id == AGNOSTIC_ROUTE_PDATA_PUT) { ok = _agnostic_sch_status_a(a, ok, AGNOSTIC_HTTP_CREATED); }
     ok = _agnostic_sch_status_a(a, ok, HTTP_OK);
@@ -420,6 +429,23 @@ fn _agnostic_sch_keys_a(a, id): i64 {
         return _agnostic_sch_words_a(a, k, "scorer? candidate_limit?");
     }
     if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return _agnostic_sch_words_a(a, k, "token token_type expires_in role"); }
+    if (id == AGNOSTIC_ROUTE_AUTH_ME) { return _agnostic_sch_words_a(a, k, "id email role tenant scope"); }
+    if (id == AGNOSTIC_ROUTE_AUTH_PASSWORD) { return _agnostic_sch_words_a(a, k, "token token_type expires_in role"); }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEYS) { return _agnostic_sch_words_a(a, k, "keys total"); }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEY_NEW) { return _agnostic_sch_words_a(a, k, "id label api_key created_at"); }
+    if (id == AGNOSTIC_ROUTE_AUTH_KEY_DEL) { return _agnostic_sch_words_a(a, k, "id status"); }
+    if (id == AGNOSTIC_ROUTE_USER_LIST) { return _agnostic_sch_words_a(a, k, "users total"); }
+    if (id == AGNOSTIC_ROUTE_USER_CREATE) { return _agnostic_sch_words_a(a, k, "user"); }
+    if (id == AGNOSTIC_ROUTE_USER_GET) { return _agnostic_sch_words_a(a, k, "user"); }
+    if (id == AGNOSTIC_ROUTE_USER_UPDATE) { return _agnostic_sch_words_a(a, k, "user"); }
+    if (id == AGNOSTIC_ROUTE_USER_DELETE) { return _agnostic_sch_words_a(a, k, "id status"); }
+    if (id == AGNOSTIC_ROUTE_USER_PASSWORD) { return _agnostic_sch_words_a(a, k, "id status"); }
+    if (id == AGNOSTIC_ROUTE_USER_KEYS) { return _agnostic_sch_words_a(a, k, "keys total"); }
+    if (id == AGNOSTIC_ROUTE_USER_KEY_DEL) { return _agnostic_sch_words_a(a, k, "id status"); }
+    if (id == AGNOSTIC_ROUTE_TENANT_LIST) { return _agnostic_sch_words_a(a, k, "tenants total"); }
+    if (id == AGNOSTIC_ROUTE_TENANT_CREATE) { return _agnostic_sch_words_a(a, k, "tenant"); }
+    if (id == AGNOSTIC_ROUTE_TENANT_GET) { return _agnostic_sch_words_a(a, k, "tenant"); }
+    if (id == AGNOSTIC_ROUTE_TENANT_DELETE) { return _agnostic_sch_words_a(a, k, "key status"); }
     if (id == AGNOSTIC_ROUTE_PRESET_LIST) { return _agnostic_sch_words_a(a, k, "presets total"); }
     if (id == AGNOSTIC_ROUTE_PRESET_GET) {
         # The compiled-in document itself (`src/presets/*.json`), not a wrapper.
@@ -526,6 +552,13 @@ fn _agnostic_sch_bodies_a(a): i64 {
     b = _agnostic_sch_put_a(a, b, "task", _agnostic_sch_fields_body_a(a, agnostic_task_req_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "agent_definition", def);
     b = _agnostic_sch_put_a(a, b, "login", _agnostic_sch_fields_body_a(a, agnostic_login_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "password_change", _agnostic_sch_fields_body_a(a,
+        agnostic_password_change_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "api_key", _agnostic_sch_fields_body_a(a, agnostic_apikey_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "user", _agnostic_sch_fields_body_a(a, agnostic_user_create_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "user_role", _agnostic_sch_fields_body_a(a, agnostic_user_role_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "user_password", _agnostic_sch_fields_body_a(a, agnostic_user_password_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "tenant", _agnostic_sch_fields_body_a(a, agnostic_tenant_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "plugin_switch", _agnostic_sch_fields_body_a(a, agnostic_plugin_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "plugin_document", doc);
     return b;

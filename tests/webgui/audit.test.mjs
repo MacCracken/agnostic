@@ -14,11 +14,11 @@ const entry = (i, over = {}) => Object.assign({ index: i, timestamp: '2026-10-02
   action: 'crew.submit', details: 'crew_id=' + i, hash: hash(i), prev_hash: i ? hash(i - 1) : '0'.repeat(64) }, over);
 
 class FakeAgnostic {
-  constructor(n) { this.entries = []; for (let i = 0; i < n; i++) this.entries.push(entry(i)); this.role = 'admin'; this.calls = []; }
+  constructor(n) { this.entries = []; for (let i = 0; i < n; i++) this.entries.push(entry(i)); this.role = 'super_admin'; this.calls = []; }
   answer(status, data) { return Promise.resolve({ status, data: structuredClone(data), etag: null }); }
   request(method, path) {
     this.calls.push(path);
-    if (this.role !== 'admin') return this.answer(403, { error: 'insufficient role' });
+    if (this.role !== 'super_admin') return this.answer(403, { error: 'insufficient role' });
     const [bare, query] = path.split('?');
     const q = new URLSearchParams(query || '');
     if (bare === '/api/v1/audit') return this.answer(200, { total: this.entries.length, entries_at_open: 0, appended: this.entries.length, dropped: 0, verified: 'open', intact: true, storage: 'patra' });
@@ -116,11 +116,11 @@ test('mergeNewest adds only what is newer', () => {
   assert.deepEqual(A.mergeNewest([], [entry(1)]).map((e) => e.index), [1]);
 });
 
-test('a role that is not admin is told the trail is for administrators', async () => {
+test('a role below super_admin is told the trail is for super administrators', async () => {
   const fake = new FakeAgnostic(3);
-  fake.role = 'operator';
+  fake.role = 'admin';
   const t = new A.AuditTrail(hostFor(fake));
   assert.equal(await t.load(), false);
-  assert.match(t.error, /for administrators/);
-  assert.match(t.summaryError, /for administrators/);
+  assert.match(t.error, /for super administrators/);
+  assert.match(t.summaryError, /for super administrators/);
 });

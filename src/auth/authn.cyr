@@ -326,11 +326,17 @@ fn _agnostic_authn_credential_a(a, header: Str, scheme): i64 {
 
 # Build a principal for `uid` by reading the CURRENT role and tenant from the
 # user row. 0 when the uid no longer resolves.
-fn _agnostic_authn_principal_for_a(a, uid): i64 {
+#
+# `iat`, for a bearer token, is when it was issued: one from before the user's `tokens_from` is
+# refused, which is how setting a password ends the sessions it should (`src/auth/store.cyr`).
+# An API key and an external IdP pass 0 for "not a token of ours", and skip that check.
+fn _agnostic_authn_principal_for_a(a, uid, iat): i64 {
     if (uid == 0) { return 0; }
     var found: i64[1];
-    var role = agnostic_users_identity_a(a, uid, &found);
+    var from: i64[1];
+    var role = agnostic_users_identity_a(a, uid, &found, &from);
     if (role < 0) { return 0; }
+    if (iat != 0 && iat < load64(&from)) { return 0; }
     var tenant = load64(&found);
     if (tenant == 0) { tenant = str_from_a(a, ""); }
     return agnostic_principal_new_a(a, uid, role, tenant);
@@ -353,17 +359,18 @@ fn agnostic_authn_resolve_a(a, header: Str): i64 {
             # and only for a uid — see `agnostic_authn_set_external`.
             if (_agnostic_authn_external == 0) { return 0; }
             return _agnostic_authn_principal_for_a(a,
-              fncall2(_agnostic_authn_external, a, tok));
+              fncall2(_agnostic_authn_external, a, tok), 0);
         }
         # The subject is trusted because the MAC covered it. The ROLE is not —
         # it is re-read from the row below.
-        return _agnostic_authn_principal_for_a(a, agnostic_jwt_claim_uid(claims));
+        return _agnostic_authn_principal_for_a(a, agnostic_jwt_claim_uid(claims),
+          agnostic_jwt_claim_iat(claims));
     }
 
     if (_agnostic_authn_scheme_is(header, "ApiKey") == 1) {
         var key = _agnostic_authn_credential_a(a, header, "ApiKey");
         if (key == 0) { return 0; }
-        return _agnostic_authn_principal_for_a(a, agnostic_apikey_resolve_a(a, key));
+        return _agnostic_authn_principal_for_a(a, agnostic_apikey_resolve_a(a, key), 0);
     }
 
     return 0;
