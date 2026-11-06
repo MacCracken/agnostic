@@ -178,6 +178,42 @@ fn test_encode_roundtrip() {
     assert_eq(str_eq_cstr(agnostic_req_str(back, str_from("status")), "ok"), 1, "round-trip preserves the value");
 }
 
+var _t_top_value = 0;
+# 0.2.3: one key of a stored document, read without a parse.
+fn _t_top(json, key) {
+    var at = 0;
+    var len = 0;
+    var r = agnostic_json_top_str(str_from(json), key, &at, &len);
+    if (r == 1) { _t_top_value = str_new(at, len); }
+    return r;
+}
+
+fn test_top_str() {
+    test_group("codec/top-str");
+    assert_eq(_t_top("{\"a\":1,\"scope\":\"acme\",\"z\":[{}]}", "scope"), 1, "a key among others");
+    assert_eq(str_eq_cstr(_t_top_value, "acme"), 1, "its string, without the quotes");
+    assert_eq(_t_top(" { \"scope\" : \"acme\" } \n", "scope"), 1, "whitespace is passed over");
+    assert_eq(str_eq_cstr(_t_top_value, "acme"), 1, "the same string");
+    assert_eq(_t_top("{\"scope\":\"first\",\"scope\":\"second\"}", "scope"), 1, "a repeated key");
+    assert_eq(str_eq_cstr(_t_top_value, "first"), 1, "the first wins, as bayan's lookup does");
+    assert_eq(_t_top("{\"a\":\"x\\\"scope\\\":\\\"no\",\"scope\":\"yes\"}", "scope"), 1, "a quote inside a string");
+    assert_eq(str_eq_cstr(_t_top_value, "yes"), 1, "is not a key");
+    assert_eq(_t_top("{\"a\":{\"scope\":\"nested\"}}", "scope"), 0, "⭐ a nested key is not a top-level one");
+    assert_eq(_t_top("{\"a\":[\"scope\",\"x\"]}", "scope"), 0, "nor is a string in an array");
+    assert_eq(_t_top("{}", "scope"), 0, "an empty object has no key");
+    assert_eq(_t_top("{\"scope\":7}", "scope"), 0, "a number is not a string");
+    assert_eq(_t_top("{\"scope\":7,\"scope\":\"x\"}", "scope"), 0, "and it stays the first value");
+    assert_eq(_t_top("{\"scopes\":\"x\",\"scop\":\"y\"}", "scope"), 0, "a key must match whole");
+    assert_eq(_t_top("[\"scope\"]", "scope"), 0 - 1, "an array is not an object");
+    assert_eq(_t_top("{\"scope\":\"x\"", "scope"), 0 - 1, "⭐ an object that never closes is refused");
+    assert_eq(_t_top("{\"scope\":\"x\"} tail", "scope"), 0 - 1, "and so is anything after it");
+    assert_eq(_t_top("{\"scope\":\"x\",}", "scope"), 0 - 1, "and a trailing comma");
+    assert_eq(_t_top("{\"scope\":\"x\",\"a\":}", "scope"), 0 - 1, "and a bad value past the key");
+    assert_eq(_t_top("", "scope"), 0 - 1, "and nothing at all");
+    assert_eq(agnostic_json_top_str(0, "scope", 0, 0), 0 - 1, "and no body");
+    return 0;
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -189,6 +225,7 @@ fn main() {
     test_optional_str();
     test_required_int_bool();
     test_encode_roundtrip();
+    test_top_str();
     return assert_summary();
 }
 

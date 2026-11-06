@@ -376,6 +376,236 @@ fn _agnostic_bench_json_build(): i64 {
     return 0;
 }
 
+# 0.2.3 — a crew id, the same shape the engine mints: `6ba7b810-9dad-41d1-80b4-` and twelve
+# hex digits of `n`.
+fn _agnostic_bench_id_a(a, n): i64 {
+    var buf = alloc_via(a, 37);
+    memcpy(buf, "6ba7b810-9dad-41d1-80b4-", 24);
+    var i = 0;
+    while (i < 12) {
+        store8(buf + 35 - i, load8("0123456789abcdef" + ((n >> (i * 4)) & 15)));
+        i = i + 1;
+    }
+    store8(buf + 36, 0);
+    return str_new_a(a, buf, 36);
+}
+
+# A finished crew's listing row, for `_agnostic_bench_store_crews`.
+fn _agnostic_bench_row_a(a, n): i64 {
+    var row = agnostic_crew_row_new_a(a);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_CREW_ID, _agnostic_bench_id_a(a, n));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_SCOPE, str_from_a(a, "_"));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_NAME, str_from_a(a, "bench"));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_COMPLETED);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_SUBMITTED, 1700000000000 + n);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STARTED, 1700000000001 + n);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_FINISHED, 1700000000002 + n);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_NTASKS, 1);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_MODE, str_from_a(a, "placeholder"));
+    return row;
+}
+
+# `count` finished crews in scope `_`, written in BATCH mode: seeding at the 11.5 ms a row
+# costs for real would spend minutes before the first measurement.
+fn _agnostic_bench_store_crews(count, doc: Str): i64 {
+    var db = agnostic_store_db();
+    patra_set_sync_mode(db, PATRA_SYNC_BATCH);
+    var a = arena_allocator(1048576);
+    var i = 0;
+    while (i < count) {
+        agnostic_crews_save_row(_agnostic_bench_row_a(a, i), doc);
+        reset_via(a);
+        i = i + 1;
+    }
+    patra_set_sync_mode(db, PATRA_SYNC_FULL);
+    return count;
+}
+
+# 0.2.3 — the audit's P4 and P5. What one page of `GET /api/v1/crews` costs over 10,000
+# durable crews, what a stored crew costs to read, and what one finished crew costs to
+# write (11.5 ms on a real disk; `_agnostic_bench_inflight` says why tmpfs reads lower).
+fn _agnostic_bench_crews(): i64 {
+    var path = _tt_tmp_path("bench-crews");
+    sys_unlink(path);
+    patra_init();
+    if (agnostic_store_open(str_from(path)) == 0) { return 0; }
+    agnostic_crews_ensure();
+    _agnostic_bench_store_crews(10000, str_from("{\"status\":\"completed\",\"scope\":\"_\"}"));
+
+    var ctx_a = arena_allocator(65536);
+    var ctx = agnostic_reqctx_new_a(ctx_a, 0, 0);
+    var a = arena_allocator(67108864);
+    var list = str_from("/api/v1/crews?limit=50");
+    var n = 0;
+    var bl = bench_new("crews_list_10k");
+    bench_batch_start(bl);
+    var i = 0;
+    while (i < 50) {
+        if (agnostic_route_crews_list_a(a, list, ctx) != 0) { n = n + 1; }
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(bl, 50);
+    bench_report(bl);
+
+    # A document the audit's size, 422 KB: forty tasks of about 10 KB each.
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"crew_id\":\"x\",\"status\":\"completed\",\"results\":[");
+    var t = 0;
+    while (t < 40) {
+        if (t > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "{\"task_id\":\"t\",\"status\":\"completed\",\"output\":\"");
+        var c = 0;
+        while (c < 1050) { str_builder_add_cstr(sb, "0123456789"); c = c + 1; }
+        str_builder_add_cstr(sb, "\"}");
+        t = t + 1;
+    }
+    str_builder_add_cstr(sb, "],\"scope\":\"_\"}");
+    var big = str_builder_build(sb);
+    var seed = arena_allocator(1048576);
+    var row = _agnostic_bench_row_a(seed, 20000);
+    agnostic_crews_save_row(row, big);
+    var id = agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID);
+    var bg = bench_new("crew_get_stored_422k");
+    bench_batch_start(bg);
+    var j = 0;
+    while (j < 200) {
+        if (agnostic_route_crew_get_a(a, id, ctx) != 0) { n = n + 1; }
+        reset_via(a);
+        j = j + 1;
+    }
+    bench_batch_stop(bg, 200);
+    bench_report(bg);
+
+    var doc = str_from("{\"status\":\"completed\",\"scope\":\"_\"}");
+    var bs = bench_new("crew_save_row");
+    bench_batch_start(bs);
+    var k = 0;
+    while (k < 200) {
+        n = n + agnostic_crews_save_row(_agnostic_bench_row_a(seed, 30000 + k), doc);
+        reset_via(seed);
+        k = k + 1;
+    }
+    bench_batch_stop(bs, 200);
+    bench_report(bs);
+    agnostic_store_close();
+    sys_unlink(path);
+    return n;
+}
+
+# 0.2.3 — the audit's two credential paths: 109 and 153 µs before 0.2.2 made each one
+# statement. Both read the store, so a slow one is store-lock time for everybody.
+fn _agnostic_bench_authn(): i64 {
+    var path = _tt_tmp_path("bench-authn");
+    sys_unlink(path);
+    patra_init();
+    if (agnostic_store_open(str_from(path)) == 0) { return 0; }
+    agnostic_auth_ensure();
+    agnostic_argon_pool_init();
+    var k = alloc(32);
+    memset(k, 7, 32);
+    agnostic_jwt_set_secret(k, 32);
+    var seed = arena_allocator(1048576);
+    var uid = agnostic_users_create_a(seed, str_from("bench@example.com"),
+      str_from("bench-password"), AGNOSTIC_ROLE_ADMIN, str_from("acme"));
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Bearer ");
+    str_builder_add(sb, agnostic_jwt_issue_a(seed, uid, AGNOSTIC_ROLE_ADMIN, str_from("acme"), 86400));
+    var bearer = str_builder_build(sb);
+    var sk = str_builder_new();
+    str_builder_add_cstr(sk, "ApiKey ");
+    str_builder_add(sk, agnostic_apikey_issue_a(seed, uid, str_from("bench")));
+    var apikey = str_builder_build(sk);
+    var a = arena_allocator(1048576);
+    var n = 0;
+    var bb = bench_new("authn_bearer");
+    bench_batch_start(bb);
+    var i = 0;
+    while (i < 5000) {
+        if (agnostic_authn_resolve_a(a, bearer) != 0) { n = n + 1; }
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(bb, 5000);
+    bench_report(bb);
+    var bk = bench_new("authn_apikey");
+    bench_batch_start(bk);
+    var j = 0;
+    while (j < 5000) {
+        if (agnostic_authn_resolve_a(a, apikey) != 0) { n = n + 1; }
+        reset_via(a);
+        j = j + 1;
+    }
+    bench_batch_stop(bk, 5000);
+    bench_report(bk);
+    agnostic_store_close();
+    sys_unlink(path);
+    return n;
+}
+
+# 0.2.3 — the audit's P3: a start reads and verifies the whole trail. 589 B and about 16 µs
+# per entry, for the life of the process.
+fn _agnostic_bench_audit_open(): i64 {
+    var path = _tt_tmp_path("bench-audit-open");
+    var p = str_from(path);
+    sys_unlink(path);
+    patra_init();
+    if (agnostic_audit_open(p) == 0) { return 0; }
+    patrastore_set_sync_mode(_agnostic_audit_store, PATRA_SYNC_BATCH);
+    var k = 0;
+    while (k < 10000) {
+        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("crew.submit"),
+          str_from("crew_id=6ba7b810-9dad-41d1-80b4-00c04fd430c8"));
+        k = k + 1;
+    }
+    agnostic_audit_close();
+    var n = 0;
+    var bo = bench_new("audit_open_10k");
+    bench_batch_start(bo);
+    var i = 0;
+    while (i < 5) {
+        n = n + agnostic_audit_open(p);
+        agnostic_audit_close();
+        i = i + 1;
+    }
+    bench_batch_stop(bo, 5);
+    bench_report(bo);
+    sys_unlink(path);
+    return n;
+}
+
+# 0.2.3 — the whole serve adapter on `/health`, over a socketpair, with the same request
+# arena a worker would have. The pair's own cost is in the figure.
+fn _agnostic_bench_serve_handler(): i64 {
+    var req = "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    var len = strlen(req);
+    var n = 0;
+    var arena = arena_allocator(AGNOSTIC_SERVE_ARENA_BYTES);
+    _sandhi_req_arena_slot = thread_local_alloc();
+    thread_local_set(_sandhi_req_arena_slot, arena);
+    var bh = bench_new("serve_handler_health");
+    bench_batch_start(bh);
+    var i = 0;
+    while (i < 20000) {
+        var fds: i64[1];
+        store64(&fds, 0);
+        if (sys_socketpair(1, SOCK_STREAM, 0, &fds) == 0) {
+            var server_fd = load32(&fds);
+            var client_fd = load32(&fds + 4);
+            reset_via(arena);
+            agnostic_serve_handler(0, server_fd, req, len);
+            var buf[1024];
+            n = n + sys_read(client_fd, &buf, 1023);
+            sys_close(server_fd);
+            sys_close(client_fd);
+        }
+        i = i + 1;
+    }
+    bench_batch_stop(bh, 20000);
+    bench_report(bh);
+    return n;
+}
+
 fn main(): i64 {
     alloc_init();
     var b = bench_new("noop");
@@ -441,6 +671,10 @@ fn main(): i64 {
     _agnostic_bench_crew_decode();
     _agnostic_bench_ledger_row();
     _agnostic_bench_json_build();
+    _agnostic_bench_crews();
+    _agnostic_bench_authn();
+    _agnostic_bench_audit_open();
+    _agnostic_bench_serve_handler();
     return 0;
 }
 

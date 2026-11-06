@@ -676,11 +676,25 @@ fn _agnostic_crews_inflight_count_locked(): i64 {
     return n;
 }
 
-# Every durable crew row in `scope`, as a vec of crew rows in `a` — strings COPIED out of
-# the result set (0.1.5), which is freed before this returns.
-fn agnostic_crews_index_in_a(a, scope: Str): i64 {
+# Durable crew rows in `scope`, as a vec of crew rows in `a`: strings COPIED out of the result
+# set (0.1.5), which is freed before this returns.
+#
+# `status` narrows to one crew status, or -1 for every one. `before_ms` narrows to crews
+# submitted at or before it, or -1 for every one. `n` is how many rows to read, newest first,
+# or 0 for all of them, in no order.
+#
+# ⚠ **The order is `submitted`, then `crew_id`: the listing's own** (`_agnostic_crews_row_newer`).
+# A limit on `submitted` alone could keep either of two crews submitted in one millisecond, and
+# the cursor would then step past the other for good. Rows that are read are always the first
+# ones in the listing's order, so a caller can tell a short page from a finished one.
+#
+# ⚠ **This does not end the scan** (0.2.3). patra reads every row of the scope and sorts them
+# before it cuts them: 55 ms at 10,000 rows, where the whole read cost 72 ms. What it saves is
+# the TEXT read and the copy of each row that does not reach the page. Only an index on recency
+# ends it, and that is patra's to give (roadmap, *Upstream*).
+fn agnostic_crews_index_page_a(a, scope: Str, status, before_ms, n): i64 {
     agnostic_store_lock();
-    var r = _agnostic_crews_index_in_locked_a(a, scope);
+    var r = _agnostic_crews_index_page_locked_a(a, scope, status, before_ms, n);
     agnostic_store_unlock();
     return r;
 }
@@ -696,16 +710,37 @@ fn _agnostic_crews_str_a(a, rs, row, col): i64 {
     return str_new_a(a, buf, n);
 }
 
-# `agnostic_crews_index_in_a`'s body. The caller holds the store lock.
-fn _agnostic_crews_index_in_locked_a(a, scope: Str): i64 {
+# `str` appended to the C string being built at `buf + at`. The index after it.
+fn _agnostic_crews_sql_add(buf, at, str): i64 {
+    var n = strlen(str);
+    memcpy(buf + at, str, n);
+    return at + n;
+}
+
+# `agnostic_crews_index_page_a`'s body. The caller holds the store lock.
+#
+# The statement is at most 240 bytes: every clause below, and 20 digits of `n`.
+fn _agnostic_crews_index_page_locked_a(a, scope: Str, status, before_ms, limit): i64 {
     var out = vec_new_a(a);
     if (out == 0 || scope == 0) { return out; }
     var db = agnostic_store_db();
     if (db == 0) { return out; }
-    var st = patra_prepare(db, "SELECT crew_id, cname, cstatus, submitted, started, finished, \
-ntasks, mode, tokens, cost FROM agnostic_crew_index WHERE scope = ?");
+    var sql[256];
+    var at = _agnostic_crews_sql_add(&sql, 0, "SELECT crew_id, cname, cstatus, submitted, started, \
+finished, ntasks, mode, tokens, cost FROM agnostic_crew_index WHERE scope = ?");
+    if (status >= 0) { at = _agnostic_crews_sql_add(&sql, at, " AND cstatus = ?"); }
+    if (before_ms >= 0) { at = _agnostic_crews_sql_add(&sql, at, " AND submitted <= ?"); }
+    if (limit > 0) {
+        at = _agnostic_crews_sql_add(&sql, at, " ORDER BY submitted DESC, crew_id DESC LIMIT ");
+        at = at + fmt_int_buf(limit, &sql + at);
+    }
+    store8(&sql + at, 0);
+    var st = patra_prepare(db, &sql);
     if (st == 0) { return out; }
-    patra_bind_text(st, 0, str_data(scope), str_len(scope));
+    var bound = 0;
+    patra_bind_text(st, bound, str_data(scope), str_len(scope));
+    if (status >= 0) { bound = bound + 1; patra_bind_int(st, bound, status); }
+    if (before_ms >= 0) { bound = bound + 1; patra_bind_int(st, bound, before_ms); }
     var rs = patra_query_prepared(db, st);
     patra_finalize(st);
     if (rs == 0) { return out; }

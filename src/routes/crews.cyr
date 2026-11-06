@@ -148,8 +148,29 @@ fn _agnostic_crew_doc_in_scope(v, scope: Str): i64 {
     return str_eq(scope, AGNOSTIC_SCOPE_DEFAULT);
 }
 
-# The outcome stored for crew `key` from an earlier run, parsed in `a`, when it belongs to
-# `scope` — or 0: none stored, unreadable, or another tenant's. What `GET /crews/{id}` answers
+# Whether the stored crew document `doc` belongs to `scope`, read in `a`.
+#
+# A walk that allocates nothing, since the bytes go out as they are (0.2.3). A document the walk
+# refuses is not necessarily unreadable: it holds what the engine reported, and bayan takes
+# bytes that `agnostic_json_kind`'s stricter rule does not, so a crew whose output is not valid
+# UTF-8 stays readable through the parse.
+fn _agnostic_crew_doc_belongs_a(a, doc: Str, scope: Str): i64 {
+    var at = 0;
+    var len = 0;
+    var found = agnostic_json_top_str(doc, "scope", &at, &len);
+    if (found == 0) { return str_eq(scope, AGNOSTIC_SCOPE_DEFAULT); }
+    if (found == 1) {
+        if (len != str_len(scope)) { return 0; }
+        if (memeq(at, str_data(scope), len) == 1) { return 1; }
+        return 0;
+    }
+    var v = bayan_json_v_parse_buf_a(a, str_data(doc), str_len(doc));
+    if (v == 0) { return 0; }
+    return _agnostic_crew_doc_in_scope(v, scope);
+}
+
+# The outcome stored for crew `key` from an earlier run, its bytes in `a`, when it belongs to
+# `scope`, or 0: none stored, unreadable, or another tenant's. What `GET /crews/{id}` answers
 # for a crew this process does not hold, and what makes cancel's 409 agree with it (0.1.15).
 #
 # The document carries the scope it was written in (0.1.9); one from an earlier release
@@ -157,10 +178,8 @@ fn _agnostic_crew_doc_in_scope(v, scope: Str): i64 {
 fn _agnostic_crew_stored_a(a, key: Str, scope: Str): i64 {
     var stored = agnostic_crews_doc_a(a, key);
     if (stored == 0) { return 0; }
-    var v = bayan_json_v_parse_buf_a(a, str_data(stored), str_len(stored));
-    if (v == 0) { return 0; }
-    if (_agnostic_crew_doc_in_scope(v, scope) == 0) { return 0; }
-    return v;
+    if (_agnostic_crew_doc_belongs_a(a, stored, scope) == 0) { return 0; }
+    return stored;
 }
 
 fn _agnostic_crew_not_found_a(a): i64 {
@@ -375,7 +394,7 @@ fn agnostic_route_crew_get_a(a, id: Str, ctx): i64 {
         # work. The stored bytes go out verbatim, which is the response the run
         # that produced them would have given.
         var v = _agnostic_crew_stored_a(a, key, scope);
-        if (v != 0) { return agnostic_response_json_a(a, HTTP_OK, v); }
+        if (v != 0) { return agnostic_response_bytes_a(a, HTTP_OK, "application/json", v, 0); }
         return _agnostic_crew_not_found_a(a);
     }
 
@@ -810,34 +829,26 @@ fn agnostic_route_crews_list_a(a, path: Str, ctx): i64 {
         if (_agnostic_crews_row_wanted(row, want) == 1) { vec_push_a(a, rows, row); }
         i = i + 1;
     }
-    var durable = agnostic_crews_index_in_a(a, scope);
-    var j = 0;
-    while (j < vec_len(durable)) {
-        var dr = vec_get(durable, j);
-        if (map_get(held, agnostic_crew_row_get(dr, AGNOSTIC_CR_CREW_ID)) == 0) {
-            if (_agnostic_crews_row_wanted(dr, want) == 1) { vec_push_a(a, rows, dr); }
-        }
-        j = j + 1;
+    # Only what can reach the page: `read` rows always leave `limit + 1` once the ledger's own
+    # are taken out, unless the cursor takes out more (0.2.3).
+    var durable = 0;
+    var status = _agnostic_crews_one_status(want);
+    var read = limit + 1 + vec_len(live);
+    if ((want & AGNOSTIC_CREWS_STORED) != 0) {
+        durable = agnostic_crews_index_page_a(a, scope, status, cur_ms, read);
     }
-
-    # The page: the `limit` newest rows strictly older than the cursor, kept in order in a
-    # small sorted vec — one pass, without sorting everything the tenant ever ran.
-    var page = vec_new_a(a);
+    var counted = 0;
+    var page = _agnostic_crews_cut_a(a, rows, durable, held, want, cur_ms, cur_id, limit, &counted);
+    # ⚠ **A read that was cut and left the page short says nothing about what it cut off.** The
+    # crews a cursor steps over all count against `read`, so a run of crews submitted in one
+    # millisecond can fill it. So the page is read again, whole.
+    if (durable != 0 && counted <= limit) {
+        if (vec_len(durable) >= read) {
+            durable = agnostic_crews_index_page_a(a, scope, status, cur_ms, 0);
+            page = _agnostic_crews_cut_a(a, rows, durable, held, want, cur_ms, cur_id, limit, &counted);
+        }
+    }
     if (page == 0) { return 0; }
-    var more = 0;
-    var k = 0;
-    while (k < vec_len(rows)) {
-        var r = vec_get(rows, k);
-        var after_cursor = 1;
-        if (cur_ms >= 0) {
-            if (_agnostic_crews_row_before(r, cur_ms, cur_id) == 0) { after_cursor = 0; }
-        }
-        if (after_cursor == 1) {
-            var placed = _agnostic_crews_page_insert_a(a, page, r, limit);
-            if (placed == 2) { more = 1; }
-        }
-        k = k + 1;
-    }
 
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0; }
@@ -852,7 +863,7 @@ fn agnostic_route_crews_list_a(a, path: Str, ctx): i64 {
     }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREWS, arr);
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREW_SCOPE, bayan_json_v_str_new_a(a, scope));
-    if (more == 1 && vec_len(page) > 0) {
+    if (counted > limit && vec_len(page) > 0) {
         var cur = _agnostic_crews_cursor_a(a, vec_get(page, vec_len(page) - 1));
         if (cur == 0) { return 0; }
         bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_NEXT, bayan_json_v_str_new_a(a, cur));
@@ -860,10 +871,58 @@ fn agnostic_route_crews_list_a(a, path: Str, ctx): i64 {
     return agnostic_response_json_a(a, HTTP_OK, obj);
 }
 
+# The page: the `limit` newest of the ledger's `rows` and the `durable` rows it does not hold,
+# strictly older than the cursor, kept in order in a small sorted vec: one pass, without sorting
+# everything. `out_counted` is how many crews qualified, so more than `limit` means there is a
+# next page. 0 when the arena is exhausted.
+fn _agnostic_crews_cut_a(a, rows, durable, held, want, cur_ms, cur_id: Str, limit, out_counted): i64 {
+    var page = vec_new_a(a);
+    if (page == 0) { return 0; }
+    var counted = 0;
+    var k = 0;
+    while (k < vec_len(rows)) {
+        var r = vec_get(rows, k);
+        if (cur_ms < 0 || _agnostic_crews_row_before(r, cur_ms, cur_id) == 1) {
+            counted = counted + 1;
+            _agnostic_crews_page_insert_a(a, page, r, limit);
+        }
+        k = k + 1;
+    }
+    var j = 0;
+    while (durable != 0 && j < vec_len(durable)) {
+        var dr = vec_get(durable, j);
+        if (map_get(held, agnostic_crew_row_get(dr, AGNOSTIC_CR_CREW_ID)) == 0) {
+            if (_agnostic_crews_row_wanted(dr, want) == 1) {
+                if (cur_ms < 0 || _agnostic_crews_row_before(dr, cur_ms, cur_id) == 1) {
+                    counted = counted + 1;
+                    _agnostic_crews_page_insert_a(a, page, dr, limit);
+                }
+            }
+        }
+        j = j + 1;
+    }
+    store64(out_counted, counted);
+    return page;
+}
+
 # Every status, as a listing filter (0.1.10): bit `1 << status` for each, through the
 # highest. ⚠ Derived, not a literal: 63 stopped at UNKNOWN and silently hid every
 # INTERRUPTED crew (0.1.13) from the unfiltered listing.
 var AGNOSTIC_CREWS_ANY = (1 << (AGNOSTIC_CREW_INTERRUPTED + 1)) - 1;
+
+# The statuses a stored crew can have: never one still in flight (ADR 0013), so a filter on those
+# has nothing to read from the store (0.2.3).
+var AGNOSTIC_CREWS_STORED = AGNOSTIC_CREWS_ANY - (1 << AGNOSTIC_CREW_PENDING) - (1 << AGNOSTIC_CREW_RUNNING);
+
+# The one status the filter `want` names, or -1 when it names several.
+fn _agnostic_crews_one_status(want): i64 {
+    var s = 0;
+    while (s <= AGNOSTIC_CREW_INTERRUPTED) {
+        if (want == (1 << s)) { return s; }
+        s = s + 1;
+    }
+    return 0 - 1;
+}
 
 # The filter a `status` query value names — `1 << status` for one wire status, pending and
 # running together for `active` — or 0 when it names nothing.

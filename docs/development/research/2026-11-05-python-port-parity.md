@@ -8,7 +8,7 @@ Status words: **PORTED** (a `src/` file and a test), **DELEGATED** (an agnosai o
 
 ## 1. Verdict
 
-**`python-port/` can go whenever you say.** Nothing in the repo reads it (§9), and all of it stays in git. The first-party rule asks for equal or better coverage (`first-party-standards.md:53`), and by that rule five things stand in the way, all of them function agnostic does not have yet:
+**`python-port/` is removed once the release plan is finished and tagged.** Nothing in the repo reads it (§9), and all of it stays in git. The first-party rule asks for equal or better coverage (`first-party-standards.md:53`), and the largest function agnostic does not have yet is:
 
 | Missing from agnostic | What agnostic has today | Release |
 |---|---|---|
@@ -18,7 +18,7 @@ Status words: **PORTED** (a `src/` file and a test), **DELEGATED** (an agnosai o
 | Issuing users, API keys and tenants (G1) | The store functions and `Authorization: ApiKey`. No route or command calls them, so a deployment has one user | 0.3.x |
 | An operator-set JWT secret (G2) | `agnostic_jwt_set_secret`, with no caller, so tokens die on restart | 0.3.x |
 
-Any question in §3 answered yes joins this list. Streaming (M9) is on the 0.5.x line and is not needed for the rule: `GET /api/v1/crews/:id/events` already gives a client the same events.
+§3 lists everything else, and the [release plan](../roadmap.md#release-plan) carries all of it.
 
 ## 2. What was and was not checked
 
@@ -68,24 +68,24 @@ Nothing to port.
 | `GET /tools` (G10) | `src/engine/tools.cyr` resolves names, and no route shows them | 0.4.x |
 | Completion webhook (G3) | `src/auth/webhook.cyr` signs and verifies with a signed timestamp, tested in `tests/loginguard.tcyr`. Nothing sends one, and the crew body has no callback field | 0.5.x |
 | A boot-and-probe CI step (G17) | Suites run on socketpairs, and CI never boots the binary and probes it | 0.2.x |
+| Issue and PR templates (G17) | `.github` holds workflows only | 0.2.x |
+| Tenant limits (G11) | Login is the only limit | 0.3.x |
+| A metrics route (G7) | OTLP traces. `agnosai_metrics_gather` exists, and nothing calls it | 0.3.x |
+| Stored definitions in a crew body (G4) | A client reads a definition and re-sends it | 0.4.x |
+| Engine features with no route (G10) | Definition versions and rollback, package export and import, tool upload, GPU, fleet, the `team` crew spec and `recommend_preset`, which has no owner | 0.4.x |
+| The AGNOS clients (G13) | Memory, RAG, reasoning, recording, RPC, screen and vector: none here | 0.5.x |
+| Scheduled reports and delivery (G6) | None. The former default jobs raised on construction, so there is nothing to copy | 0.5.x |
+| Health alerts (G8) | None | 0.5.x |
+| Text search across crews (G9) | `GET /api/v1/crews` lists and does not search | 0.5.x |
 
 ### Questions for the user
 
-Not in agnostic, and only you can say whether the project wants it. Each one is an ask, with no recommendation. A yes puts it on the release plan.
+Each of these is on the release plan. What is left is a form only you can pick, so each is an ask, with no recommendation.
 
 1. **Provisioning (G1):** routes, an `agnostic admin` command, or both?
-2. **Stored definitions (G4):** should a crew body name them (`agent_keys`)? Today a client reads a definition and re-sends it.
-3. **A crew's target (G4):** a task field, or prose in `description`?
-4. **Reports (G5):** do they read crew outcomes, or a result model of their own (sessions, results, metrics)?
-5. **Scheduled reports (G6):** do you want them, with delivery by webhook, Slack or SMTP? There is nothing to copy: the former default jobs raised on construction.
-6. **Metrics (G7):** a route over `agnosai_metrics_gather`, which nothing calls, or OTLP traces only?
-7. **Alerts (G8):** health alerts by webhook, Slack or email?
-8. **Search (G9):** text search across crews?
-9. **Engine features (G10):** which get a route: definition versions and rollback, package export and import, tool upload, GPU, fleet, the `team` crew spec, `recommend_preset`? `recommend_preset` has no owner anywhere.
-10. **Tenant limits (G11):** anything beyond the login limit? agnosai F5 is the engine's budget work.
-11. **AGNOS clients (G13):** which does the project want: memory, RAG, reasoning, recording, RPC, screen, vector?
-12. **MCP surface (M7):** the 34 operations the former code exposed, the 38 QA classes, or both? They overlap in no name (§7).
-13. **Repo templates (G17):** issue and PR templates for this repo?
+2. **A crew's target (G4):** a task field, or prose in `description`?
+3. **Reports (G5):** do they read crew outcomes, or a result model of their own (sessions, results, metrics)?
+4. **MCP surface (M7):** the 34 operations the former code exposed, the 38 QA classes, or both? They overlap in no name (§7).
 
 ## 4. Area by area
 
@@ -633,8 +633,8 @@ Everything committed stays reachable through `git show <rev>:python-port/...`, s
 |---|---|---|
 | Preset documents (18) | No. `src/presets/*.json` is byte-identical | Nothing to do |
 | **Tool intent** for the 36 classes: `name`, `description`, inputs, outputs | **Yes.** Roadmap M6 says to build against "preset-declared intent", but a preset declares a class name and an agent `focus`. The rest is only in the classes and `agents/*/README.md` | Reference while M6 designs each tool for agnostic. Recoverable from git |
-| **MCP manifest**: 34 tools with `inputSchema` (`webgui/routes/mcp.py`) | **Yes** | Reference for question 12 (§3). Recoverable from git |
-| Result model: `shared/yeoman_schemas.py` (`Finding`, severity and category enums, `SecurityResult`, `PerformanceResult`, `TestExecutionResult`, `QAReport`) | Yes, and the only typed result model in the tree | Reference for question 4 (§3). Recoverable from git |
+| **MCP manifest**: 34 tools with `inputSchema` (`webgui/routes/mcp.py`) | **Yes** | Reference for question 4 (§3). Recoverable from git |
+| Result model: `shared/yeoman_schemas.py` (`Finding`, severity and category enums, `SecurityResult`, `PerformanceResult`, `TestExecutionResult`, `QAReport`) | Yes, and the only typed result model in the tree | Reference for question 3 (§3). Recoverable from git |
 | Report logic: `webgui/exports.py`, `webgui/history.py`, `shared/database/repository.py` (`diff_sessions`, `get_quality_trends`) | Yes | Recoverable from git. Read §11 first: most of it was unreachable |
 | Schema: `alembic/versions/*`, `shared/database/models.py` | Yes | Recoverable. No production data exists. The migration and the models disagree (§11) |
 | A2A message types: `webgui/routes/tasks.py`, `docs/api/a2a-protocol.md`, `docs/adr/019-a2a-protocol.md` | Yes | Recoverable. M7 targets A2A v1.0.x, so this is background, not a contract |
@@ -644,7 +644,7 @@ Everything committed stays reachable through `git show <rev>:python-port/...`, s
 | Fixtures | `tests/fixtures/common.py` is 265 bytes; no data fixtures exist | Nothing to do |
 | Benchmark workloads: `benchmarks/scenarios.py` | Yes | Recoverable. Useful only if an end-to-end crew benchmark is added |
 | `config/models.json`, `config/testing_targets.json`, `examples/*.json`, `tests/load/locustfile.py` | Yes | Recoverable |
-| `.github` issue and PR templates | Yes | Recoverable (question 13, §3) |
+| `.github` issue and PR templates | Yes | Recoverable (G17) |
 
 Before the deletion commit: tag the parent, then put that rev in `ORACLE-AUDIT.md`'s header so its citations resolve.
 

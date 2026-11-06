@@ -912,7 +912,8 @@ fn test_an_interrupted_crew_is_not_404() {
         sys_unlink(_T_RESTARTDB);
         return 0;
     }
-    var gb = agnostic_response_body(g);
+    var gs = agnostic_response_body(g);
+    var gb = bayan_json_v_parse_buf_a(a, str_data(gs), str_len(gs));
     assert_eq(str_eq_cstr(agnostic_req_str(gb, AGNOSTIC_JK_STATUS), "interrupted"), 1,
       "⭐ with status interrupted — terminal, not a stale pending");
     assert_eq(agnostic_req_int(gb, AGNOSTIC_JK_TASKS_SUB, 0 - 1), 1, "tasks_submitted 1, as accepted");

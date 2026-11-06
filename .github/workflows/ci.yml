@@ -69,42 +69,15 @@ jobs:
         # stdlib" — which is false and sends you the wrong way.
         run: cyrius lib sync --full
 
-      - name: Resolve dependencies
-        run: cyrius deps
-
-      - name: Lockfile agrees with a clean resolution
-        # Only meaningful once [deps.NAME] git deps exist — with none declared
-        # there is no lockfile, which is the documented default
-        # (first-party-standards.md:135, "No lockfile by default").
+      - name: lib/ and cyrius.lock are what the tags resolve
+        # Writes nothing, and fails naming each difference: a pin, a tag, a file's hash or a
+        # missing lock. Line order does not count, which is what kept scripts/lock-check.sh here
+        # until 0.2.3 (`cyrius deps` emits the lock in directory order, so a byte compare of two
+        # machines' locks tests the filesystem).
         #
-        # When a lock IS committed it must match what CI just resolved. agnosai
-        # emitted a ::notice here and shipped anyway; that is precisely how a
-        # lock written by a drifted machine reached main and broke the build.
-        # Fail instead.
-        run: |
-          set -e
-          if [ ! -f cyrius.lock ]; then
-            if grep -qE '^\[deps\.[a-z0-9_-]+\]' cyrius.cyml; then
-              echo "::error::cyrius.cyml declares git deps but no cyrius.lock was produced"
-              exit 1
-            fi
-            echo "no git deps declared — no lockfile expected"
-            exit 0
-          fi
-          # ⛔ NOT `git diff --quiet -- cyrius.lock`. `cyrius deps` does NOT emit the
-          # lock's entries in a stable ORDER across machines, so a byte-exact compare
-          # tests the filesystem, not the dependency graph. Proven here 2026-09-12: this
-          # gate reported "98 insertions(+), 98 deletions(-)" while an order-insensitive
-          # compare of the same two files came back EMPTY — identical hashes for all 117
-          # entries, different sequence. commandress hit this on its first CI run and
-          # solved it; scripts/lock-check.sh is that solution, adopted verbatim.
-          #
-          # --no-resolve because the 'Resolve dependencies' step above already ran
-          # `cyrius deps`. The script baselines from `git show HEAD:cyrius.lock`, NOT the
-          # working tree — without that it would compare a regeneration against another
-          # regeneration and pass unconditionally (commandress audit 2026-08-26 A-03).
-          scripts/lock-check.sh --no-resolve
-          echo "cyrius.lock matches ($(grep -c '^commit' cyrius.lock || echo 0) commit-pinned dep(s))"
+        # ⚠ Before anything resolves. After a `cyrius deps` it would compare a regeneration with
+        # itself and could not fail, which is how a lock from a drifted machine reaches main.
+        run: cyrius deps --locked
 
       - name: Symbol check
         # Cyrius has ONE flat symbol table and last-definition-wins. The
@@ -162,6 +135,20 @@ jobs:
             || { echo "::error::a usage error printed no usage on stderr"; exit 1; }
           echo "exit codes OK — help 0, a usage error 2"
 
+      - name: Boot and probe
+        # The suites drive handlers through socketpairs, so nothing else here listens, binds, takes
+        # a signal or restarts (scripts/boot-probe.sh says what it covers). On the DCE binary,
+        # because that is what ships.
+        timeout-minutes: 5
+        run: ./scripts/boot-probe.sh build/agnostic
+
+      - name: Load test
+        # 2,000 crews from 16 clients, past the engine's registry of 1,000. A suite cannot show
+        # this: one thread, no contention (ADR 0022). scripts/load-test.py says what each step
+        # guards. The full 6,000 is a local run.
+        timeout-minutes: 10
+        run: python3 scripts/load-test.py build/agnostic --crews 2000
+
       - name: Cross-build aarch64
         # Conditional per first-party-standards.md:371 — "where the toolchain
         # supports it". Skips rather than fails when the cross compiler is not
@@ -183,9 +170,11 @@ jobs:
         #
         # ⚠ GitHub runs `run:` under `bash -e`, so an unguarded failing pipeline
         # aborts before the reporting can happen — hence the `|| rc=$?` guard.
+        #
+        # CYRIUS_DCE=1, so the suites test the shape that ships.
         run: |
           rc=0
-          cyrius test 2>&1 | tee /tmp/agnostic-test.log || rc=$?
+          CYRIUS_DCE=1 cyrius test 2>&1 | tee /tmp/agnostic-test.log || rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "::error::test suite failed"
             grep -aE "FAIL|failed|error" /tmp/agnostic-test.log | head -40

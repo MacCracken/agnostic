@@ -326,8 +326,9 @@ fn test_an_interrupted_crew_stays_its_tenants() {
     var g = _t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, ""), "", _t_ctx(a, ta, 0));
     assert_eq(agnostic_response_status(g), HTTP_OK, "acme reads its interrupted crew");
     if (agnostic_response_status(g) == HTTP_OK) {
-        assert_eq(str_eq_cstr(agnostic_req_str(agnostic_response_body(g), AGNOSTIC_JK_STATUS), "interrupted"), 1,
-          "as interrupted");
+        var gs = agnostic_response_body(g);
+        var gv = bayan_json_v_parse_buf_a(a, str_data(gs), str_len(gs));
+        assert_eq(str_eq_cstr(agnostic_req_str(gv, AGNOSTIC_JK_STATUS), "interrupted"), 1, "as interrupted");
     }
     assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(acme, ""), "", _t_ctx(a, tg, 0))),
       HTTP_NOT_FOUND, "⭐ globex cannot — the stored document carries acme's scope");
@@ -466,6 +467,145 @@ fn test_idempotency_key() {
     agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
 }
 
+# A finished crew stored in `scope`, id `n` in octal at the end of the id, submitted at `at`.
+fn _t_stored(a, n, scope, status, at, doc: Str) {
+    var id = alloc_via(a, 37);
+    memcpy(id, "00000000-0000-4000-8000-000000000000", 37);
+    var i = 0;
+    while (i < 4) {
+        store8(id + 35 - i, 48 + ((n >> (i * 3)) & 7));
+        i = i + 1;
+    }
+    var row = agnostic_crew_row_new_a(a);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_CREW_ID, str_new_a(a, id, 36));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_SCOPE, str_from_a(a, scope));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, status);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_SUBMITTED, at);
+    agnostic_crews_save_row(row, doc);
+    return row;
+}
+
+# Walk every page of the listing `query`: how many crews it listed, or -1 when one came twice.
+fn _t_walk(a, query) {
+    var seen = vec_new_a(a);
+    var next = 0;
+    while (1) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, query);
+        if (next != 0) { str_builder_add_cstr(sb, "&before="); str_builder_add(sb, next); }
+        var r = _t_list(a, str_data(str_builder_build(sb)), 0);
+        if (agnostic_response_status(r) != HTTP_OK) { return 0 - 1; }
+        var arr = _t_listed(r);
+        var i = 0;
+        while (i < bayan_json_v_arr_len(arr)) {
+            var id = agnostic_req_str(bayan_json_v_arr_get(arr, i), AGNOSTIC_JK_CREW_ID);
+            var j = 0;
+            while (j < vec_len(seen)) {
+                if (str_eq(vec_get(seen, j), id) == 1) { return 0 - 1; }
+                j = j + 1;
+            }
+            vec_push_a(a, seen, id);
+            i = i + 1;
+        }
+        var nv = bayan_json_v_obj_get_by_str(agnostic_response_body(r), AGNOSTIC_JK_NEXT);
+        if (nv == 0) { return vec_len(seen); }
+        next = bayan_json_v_str(nv);
+    }
+}
+
+# ⭐ 0.2.3: the listing asks the store for only what can reach the page. A limit decides which
+# crews come back, so it has to agree with the cursor about their order, or a crew falls between
+# two pages for good; and rows the cursor steps over must not stand in for rows the limit cut.
+fn test_list_read_is_cut() {
+    test_group("tenancy/list-read-cut");
+    _t_open();
+    var a = arena_allocator(16777216);
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var doc = str_from("{\"status\":\"completed\"}");
+    var i = 0;
+    # Thirty crews in one millisecond, so the walk's limit always falls inside the tie, and not
+    # stored in id order, or the store's own order could pass for the listing's.
+    while (i < 30) {
+        _t_stored(a, (i * 7) % 30, "_", AGNOSTIC_CREW_COMPLETED, 1700000000000, doc);
+        i = i + 1;
+    }
+    while (i < 36) {
+        _t_stored(a, i, "_", AGNOSTIC_CREW_FAILED, 1699999999000 - i, doc);
+        i = i + 1;
+    }
+    assert_eq(_t_walk(a, "limit=2"), 36, "⭐ two at a time, every crew is listed exactly once");
+    assert_eq(_t_walk(a, "limit=7"), 36, "seven at a time, the same");
+    assert_eq(_t_walk(a, "limit=200"), 36, "and one page holds them all");
+    assert_eq(_t_walk(a, "limit=2&status=failed"), 6, "a filtered walk lists its six");
+    assert_eq(_t_walk(a, "limit=2&status=completed"), 30, "and the thirty in one millisecond");
+    assert_eq(_t_walk(a, "limit=5&status=active"), 0, "nothing stored is in flight");
+    var r = _t_list(a, "limit=3", 0);
+    var arr = _t_listed(r);
+    assert_eq(str_eq_cstr(agnostic_req_str(bayan_json_v_arr_get(arr, 0), AGNOSTIC_JK_CREW_ID),
+        "00000000-0000-4000-8000-000000000035"), 1, "the page starts at the highest id of the newest tie");
+
+    var some = agnostic_crews_index_page_a(a, str_from("_"), 0 - 1, 0 - 1, 3);
+    assert_eq(vec_len(some), 3, "a read of 3 is 3 rows");
+    assert_eq(vec_len(agnostic_crews_index_page_a(a, str_from("_"), AGNOSTIC_CREW_FAILED, 0 - 1, 0)), 6,
+      "a read narrows to one status");
+    assert_eq(vec_len(agnostic_crews_index_page_a(a, str_from("_"), 0 - 1, 1699999999000 - 31, 0)), 5,
+      "and to crews at or before a time");
+    assert_eq(vec_len(agnostic_crews_index_page_a(a, str_from("nobody"), 0 - 1, 0 - 1, 3)), 0,
+      "and to the scope");
+    return 0;
+}
+
+# ⭐ 0.2.3: a stored crew goes out as the bytes it was stored as, and belongs to its scope with
+# or without a parse.
+fn test_stored_bytes() {
+    test_group("tenancy/stored-bytes");
+    _t_open();
+    var a = arena_allocator(4194304);
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var doc = str_from("{\"status\":\"completed\",\"a\":{\"scope\":\"nested\"},\"z\":1.50,\"scope\":\"_\"}");
+    var row = _t_stored(a, 1, "_", AGNOSTIC_CREW_COMPLETED, 1700000000000, doc);
+    var id = agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID);
+    var g = _t_req(a, AGNOSTIC_METHOD_GET, _t_url(id, ""), "", 0);
+    assert_eq(agnostic_response_status(g), HTTP_OK, "a stored crew reads back");
+    assert_eq(str_eq(agnostic_response_body(g), doc), 1, "⭐ byte for byte: no key moved, 1.50 stayed 1.50");
+    assert_eq(str_eq_cstr(str_from(agnostic_response_ctype(g)), "application/json"), 1, "as JSON");
+
+    var other = _t_stored(a, 2, "acme", AGNOSTIC_CREW_COMPLETED, 1700000000000, doc);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET,
+          _t_url(agnostic_crew_row_get(other, AGNOSTIC_CR_CREW_ID), ""), "", 0)), HTTP_OK,
+      "a document's own scope field decides, not the row it came with");
+
+    var nested = str_from("{\"status\":\"completed\",\"a\":{\"scope\":\"_\"},\"scope\":\"acme\"}");
+    var nr = _t_stored(a, 3, "acme", AGNOSTIC_CREW_COMPLETED, 1700000000000, nested);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET,
+          _t_url(agnostic_crew_row_get(nr, AGNOSTIC_CR_CREW_ID), ""), "", 0)), HTTP_NOT_FOUND,
+      "⭐ a nested scope is not the document's: acme's crew is not `_`'s");
+
+    var old = str_from("{\"status\":\"completed\"}");
+    var or = _t_stored(a, 4, "_", AGNOSTIC_CREW_COMPLETED, 1700000000000, old);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET,
+          _t_url(agnostic_crew_row_get(or, AGNOSTIC_CR_CREW_ID), ""), "", 0)), HTTP_OK,
+      "a document from before 0.1.9 has no scope, and is the default scope's");
+
+    # What the engine reported is stored as it came, and bayan reads what the strict walk refuses.
+    var text = "{\"output\":\"xZy\",\"scope\":\"_\"}";
+    var raw = alloc_via(a, strlen(text));
+    memcpy(raw, text, strlen(text));
+    store8(raw + 12, 255);
+    var bad = str_new_a(a, raw, strlen(text));
+    assert_eq(agnostic_json_kind(bad), AGNOSTIC_JSON_MALFORMED, "the strict walk refuses a byte that is not UTF-8");
+    var br = _t_stored(a, 5, "_", AGNOSTIC_CREW_COMPLETED, 1700000000000, bad);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET,
+          _t_url(agnostic_crew_row_get(br, AGNOSTIC_CR_CREW_ID), ""), "", 0)), HTTP_OK,
+      "⭐ and that crew stays readable, through the parse");
+
+    var broken = _t_stored(a, 6, "_", AGNOSTIC_CREW_COMPLETED, 1700000000000, str_from("{\"status\":"));
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET,
+          _t_url(agnostic_crew_row_get(broken, AGNOSTIC_CR_CREW_ID), ""), "", 0)), HTTP_NOT_FOUND,
+      "a document neither can read is not sent");
+    return 0;
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -477,6 +617,8 @@ fn main() {
     test_legacy_document_is_the_default_scope();
     test_idempotency_key();
     test_request_limits();
+    test_list_read_is_cut();
+    test_stored_bytes();
     agnostic_store_close();
     _tt_unlink_store(_T_DB);
     return assert_summary();

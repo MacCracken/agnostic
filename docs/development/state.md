@@ -2,7 +2,12 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-06, at **0.2.2** — the P(-1) audit ([`2026-11-05-audit.md`](../audit/2026-11-05-audit.md))
+> Last refreshed: 2026-11-06, at **0.2.3** — every gap the parity review found is on the release plan,
+> and `python-port/` comes out once that plan is finished and tagged. The two slow reads are faster
+> (`GET /crews` 82 to 55 ms at 10,000 crews, a stored crew 6.8 to 2.8 ms for 422 KB), and CI boots the
+> real binary and loads it. No dependency moved. Version, Source, Tests, Hardening and Next were
+> refreshed then.
+> Before that, 2026-11-06, at **0.2.2** — the P(-1) audit ([`2026-11-05-audit.md`](../audit/2026-11-05-audit.md))
 > and its repairs: memory exhaustion without credentials (arenas grow, ADR 0021), completed crews lost
 > under load (reading a crew is apart from writing it, ADR 0022), and everything else the record lists.
 > No dependency moved. The roadmap is reorganized into 0.2.x to 0.5.x, with the
@@ -76,7 +81,7 @@
 
 ## Version
 
-**0.2.2** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.2.3** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -142,12 +147,12 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 50 files, 29,860 lines, 1,235 top-level definitions (0.2.2; 29,256
+the real surface (0.1.10)** — 50 files, 30,007 lines, 1,242 top-level definitions (0.2.3; 29,860 at 0.2.2; 29,256
 lines and 1,189 at 0.2.1), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
 `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,903 — five embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 33 suites, 2,920 assertions, 0 failed** (`cyrius test`, 0.2.2; 2,806 at 0.2.1), plus
+**Tests: 33 suites, 2,961 assertions, 0 failed** (`cyrius test`, 0.2.3; 2,920 at 0.2.2), plus
 **80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.2.1) — **and the
 same 33 suites natively on aarch64, with the same per-suite counts** (Raspberry Pi 4). Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
@@ -463,7 +468,10 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**33 suites, 2,920 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.2.2, 2026-11-06),
+**33 suites, 2,961 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.2.3, 2026-11-06),
+with `CYRIUS_DCE=1` as CI runs them. 0.2.3's additions, each mutation-checked: `tenancy/list-read-cut`,
+`tenancy/stored-bytes` and `codec/top-str`.
+At 0.2.2: **33 suites, 2,920 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 2026-11-06),
 and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). The run ends `34 passed`, because bare
 `cyrius test` also runs the empty `[build].test` entry since cyrius 6.6.17. The suites are under the lint
 gate since 0.2.2. 0.2.2's additions, each repair mutation-checked: `crews/engine-cap`,
@@ -647,7 +655,7 @@ or waiting on 0.3.x, one mitigated (idle sockets), and the rest upstream.
 | aarch64 (0.1.10) | every suite and the server run natively on a Raspberry Pi 4 before an aarch64 artifact ships |
 | request memory (0.2.2) | [ADR 0021](../adr/0021-request-arenas-grow-and-do-not-spill.md): a worker keeps its largest request and no more; `serve/arena-grows` holds it |
 | crew durability (0.2.2) | [ADR 0022](../adr/0022-a-finished-crew-leaves-the-engines-registry.md): a crew is read apart from its write, and a graceful stop drains the writes; `crews/engine-cap`, `crews/collect-apart` |
-| symbols | `check-symbols.sh` OK — 1,235 top-level definitions across 50 files, no duplicates, all prefixed (0.2.2; 1,189 at 0.2.1) |
+| symbols | `check-symbols.sh` OK — 1,242 top-level definitions across 50 files, no duplicates, all prefixed (0.2.3; 1,235 at 0.2.2) |
 | request allocations (0.1.15) | `tests/request_alloc.tcyr`: every refusal arm, an authenticated read, a failed and a successful login, and an audited write keep 0 bytes of agnostic's own on the global heap; an audited request keeps only libro's entry (roadmap, Memory). Since 0.1.16 the serve adapter around dispatch too: `tests/server_span.tcyr` holds a request through the real handler to 0 B, with its span recorded or not. Since 0.1.17 a crew or definition body refused part-way, and the cycle check of an accepted one (`alloc/refused-bodies`) |
 | server spans (0.1.16) | [ADR 0020](../adr/0020-each-request-records-an-http-server-span.md): one SERVER span per request when OTLP is on, under the request's own span id; a crew's `invoke_workflow` under it, in one trace; ten mutations in `tests/server_span.tcyr`, each failing by name |
 | one process per database (0.1.15) | mount claims `<db>.owner` with an exclusive `flock` before anything opens; `restart/one-process` holds a claim from a separate open and checks mount refuses and sweeps nothing |
@@ -843,11 +851,9 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 
 ## Next
 
-See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x. Next in the 0.2.x line:
-the agnosai re-pin that removes `_agnostic_crew_retire_a`'s reach into its fields, `GET /crews` paging,
-and a CI step that boots the binary. Then 0.3.x: provisioning, `AGNOSTIC_JWT_SECRET`, tenant scope and
-a trusted-proxy setting. The parity review's thirteen questions are waiting on the user (*Decisions awaiting the
-user*). The notes below were written for M5 and remain true.
+See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x and holds every gap the
+parity review found. `python-port/` is removed once that plan is finished and tagged. Four forms are
+waiting on the user (*Decisions awaiting the user*). The notes below were written for M5 and remain true.
 
 ✅ **patra's single index per table does NOT bind here — corrected 2026-08-21.**
 The earlier note said M5 needs users by id *and* by email and would therefore

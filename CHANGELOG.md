@@ -4,6 +4,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-11-06
+
+**The release plan holds everything, and the 0.2.x housekeeping is done.** Every gap and missing item
+from the parity review is on the roadmap's release plan, and `python-port/` comes out once that plan
+is finished and tagged. In the code, the two slow reads the audit named are faster, and CI now does
+what only a hand run did before: it boots the real binary, and it puts it under load.
+
+### Changed
+
+- **`GET /api/v1/crews` asks the store for one page**, not the tenant's history: the limit, the status
+  and the cursor go into the query, and a filter on crews in flight reads nothing from the store. 82 to
+  55 ms a request at 10,000 crews, and the lock held from 72 to 55 ms. The answers are the same. The
+  query sorts as the cursor does, by time and then id, and a page cut short is read again whole, so
+  crews submitted in one millisecond cannot fall between two pages.
+- **A stored crew goes out as the bytes it was stored as**, as the code always said it did. Its scope is
+  read by a walk of the document that allocates nothing, and one the walk refuses still reads through
+  the parse, so a crew whose output is not valid UTF-8 stays readable. 6.8 to 2.8 ms for 422 KB. Cancel's
+  409 uses the same read.
+- **CI runs `cyrius deps --locked`, before anything resolves**, and `scripts/lock-check.sh` is gone. It
+  fails on a pin, a tag, a hash or a missing lock, and names each. Run after `cyrius deps`, it would
+  compare a regeneration with itself.
+- **CI's suites build with `CYRIUS_DCE=1`**, the shape that ships.
+
+### Added
+
+- **`scripts/boot-probe.sh`**, a CI step: the real binary on a real socket, serving a crew through to
+  its stored outcome, refusing a port in use, stopping on SIGTERM and reading it all back after a
+  restart. Nothing else in CI served a request.
+- **`scripts/load-test.py`**, a CI step at 2,000 crews: 16 clients past the engine's registry of 1,000,
+  every crew read back, a burst stopped by SIGTERM, and a restart where every crew must read
+  `completed`.
+- **Benchmark rows:** `crews_list_10k` (54.6 ms), `crew_get_stored_422k` (2.8 ms), `crew_save_row`
+  (11.6 ms), `authn_bearer` (61 µs), `authn_apikey` (108 µs), `audit_open_10k` (255 ms) and
+  `serve_handler_health` (20 µs).
+- **Issue and PR templates.**
+- **A filing with patra**, uncommitted in its `docs/development/issues/`: reading the newest rows of a
+  key reads every row of that key.
+
+### Verification
+
+Mutation-checked, each failing a named check: the tie-break in the query (24 of 36 crews listed), the
+second read of a short page (3 of 36), the parse of a document the walk refuses, the scope compare,
+the walk's end-of-document check, a sweep that collects nothing (1,000 of 2,000 crews `unknown`), a stop
+that writes nothing (485 of 2,500 `interrupted`), and a silent bind failure.
+
+A sibling-free replica with an empty cache passed every step in CI's order and rebuilt the binary byte
+for byte. The suites, the boot probe and the load test also ran natively on the Pi, the first load run
+there: 2,500 crews all `completed`, at 51 a second, with a 14.6 s stop.
+
+### Known
+
+- **`GET /crews` still scans the tenant's history**, in patra, under the store lock: 55 ms at 10,000
+  crews, and it grows with the history. Only an index on recency ends it. Filed with patra.
+- **`[embed]` is not adopted.** `gen-webgui.sh` also validates pages and keeps the plugin kit in step,
+  so it would stay either way. It stays on the 0.2.x line.
+
 ## [0.2.2] — 2026-11-06
 
 **The P(-1) audit, and what it found repaired.** Three independent reviews (security; correctness;

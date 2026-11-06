@@ -1368,7 +1368,12 @@ fn _t_status_text(r) {
 # declared and not marked optional is there. Records the keys it held under `idx`.
 fn _t_check_json(idx, rt, pattern, r) {
     var body = agnostic_response_body(r);
-    if (agnostic_response_is_text(r) != 0) { return _t_broken(pattern, " is not a JSON object", 0); }
+    # A stored crew goes out as the bytes it was stored as (0.2.3), so its keys are read back.
+    if (agnostic_response_is_text(r) != 0) {
+        var bytes = body;
+        body = bayan_json_v_parse_buf_a(bump_allocator(), str_data(bytes), str_len(bytes));
+        if (body == 0) { return _t_broken(pattern, " is not a JSON object", 0); }
+    }
     if (bayan_json_v_is_obj(body) != 1) { return _t_broken(pattern, " is not a JSON object", 0); }
     var keys = _t_get(_t_get(rt, "response"), "keys");
     var seen = vec_get(_t_seen_keys, idx);

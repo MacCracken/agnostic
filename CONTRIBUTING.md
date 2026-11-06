@@ -35,7 +35,16 @@ cyrius coverage --min 80
 
 # 6. Everything else CI runs
 ./scripts/check-clean.sh && ./scripts/check-symbols.sh
+
+# 7. The real binary, on a real socket. CI runs the load test at 2,000 crews.
+CYRIUS_DCE=1 cyrius build src/main.cyr build/agnostic
+./scripts/boot-probe.sh build/agnostic
+./scripts/load-test.py build/agnostic --crews 6000
 ```
+
+⚠ **A suite cannot show a concurrency repair.** It runs one thread with no store contention, so
+anything that touches the serve path, the collector or the ledger needs step 7 as well: the first
+version of ADR 0022's fix passed every suite and lost most of its crews under load.
 
 ⚠ **`check-clean.sh` does not compile `tests/` or `benches/`.** It can be green
 while a suite fails to build, which has happened. Before opening a PR, confirm

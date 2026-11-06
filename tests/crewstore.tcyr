@@ -154,7 +154,7 @@ fn test_a_cancelled_crew_is_rewritten_with_its_results() {
     assert_eq(str_contains(second, str_from("kept output")), 1, "and the stored outcome now carries them");
     assert_eq(str_contains(second, str_from("\"status\":\"cancelled\"")), 1, "still cancelled");
     assert_eq(agnostic_crews_count(), 1, "rewritten in place: one outcome");
-    var rows = agnostic_crews_index_in_a(a, scope);
+    var rows = agnostic_crews_index_page_a(a, scope, 0 - 1, 0 - 1, 0);
     assert_eq(vec_len(rows), 1, "and one listing row");
     var row = vec_get(rows, 0);
     assert_eq(agnostic_crew_row_get(row, AGNOSTIC_CR_STATUS), AGNOSTIC_CREW_CANCELLED, "listed as cancelled");
@@ -404,7 +404,7 @@ fn test_the_sweep_interrupts_what_was_in_flight() {
       "the other crew is interrupted too");
     assert_eq(str_eq_cstr(agnostic_req_str(db, AGNOSTIC_JK_CREW_SCOPE), "_"), 1, "in its own scope");
 
-    var rows = agnostic_crews_index_in_a(a, str_from("acme"));
+    var rows = agnostic_crews_index_page_a(a, str_from("acme"), 0 - 1, 0 - 1, 0);
     assert_eq(vec_len(rows), 1, "it is listed, from the durable index");
     if (vec_len(rows) != 1) { return 0; }
     var row = vec_get(rows, 0);
@@ -597,7 +597,7 @@ fn test_the_sweep_interrupts_a_long_named_crew() {
     if (db == 0) { return 0; }
     assert_eq(_t_is(agnostic_req_str(db, AGNOSTIC_JK_NAME), multi), 1, "with its whole name");
 
-    var rows = agnostic_crews_index_in_a(a, str_from("acme"));
+    var rows = agnostic_crews_index_page_a(a, str_from("acme"), 0 - 1, 0 - 1, 0);
     assert_eq(vec_len(rows), 1, "it is listed");
     if (vec_len(rows) != 1) { return 0; }
     assert_eq(_t_is(agnostic_crew_row_get(vec_get(rows, 0), AGNOSTIC_CR_NAME), lname), 1,
