@@ -52,10 +52,12 @@ fn test_reason_phrases() {
     assert_eq(str_eq_cstr(str_from(agnostic_http_reason(HTTP_NOT_FOUND)), "Not Found"), 1, "404");
     assert_eq(str_eq_cstr(str_from(agnostic_http_reason(HTTP_METHOD_NOT_ALLOWED)), "Method Not Allowed"), 1, "405");
     assert_eq(str_eq_cstr(str_from(agnostic_http_reason(HTTP_PAYLOAD_TOO_LARGE)), "Payload Too Large"), 1, "413");
-    assert_eq(str_eq_cstr(str_from(agnostic_http_reason(AGNOSTIC_HTTP_UNPROCESSABLE)), "Unprocessable Entity"), 1, "422");
-    assert_eq(str_eq_cstr(str_from(agnostic_http_reason(AGNOSTIC_HTTP_TOO_MANY_REQUESTS)), "Too Many Requests"), 1, "429");
+    assert_eq(str_eq_cstr(str_from(agnostic_http_reason(AGNOSTIC_HTTP_UNPROCESSABLE)), "Unprocessable Entity"), 1,
+      "422");
+    assert_eq(str_eq_cstr(str_from(agnostic_http_reason(AGNOSTIC_HTTP_TOO_MANY_REQUESTS)), "Too Many Requests"), 1,
+      "429");
     assert_eq(str_eq_cstr(str_from(agnostic_http_reason(HTTP_INTERNAL)), "Internal Server Error"), 1, "500");
-    assert_eq(str_eq_cstr(str_from(agnostic_http_reason(HTTP_NOT_IMPLEMENTED)), "Not Implemented"), 1, "501");
+    assert_eq(str_eq_cstr(str_from(agnostic_http_reason(HTTP_NOT_IMPLEMENTED)), "Not Implemented"), 1, "501"); #skip-lint
     assert_eq(str_eq_cstr(str_from(agnostic_http_reason(HTTP_SERVICE_UNAVAILABLE)), "Service Unavailable"), 1, "503");
 
     # An unmapped code falls back rather than returning 0.

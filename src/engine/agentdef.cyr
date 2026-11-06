@@ -329,7 +329,13 @@ fn agnostic_agent_def_unforwarded_count(d): i64 {
 # into the global heap, so a body refused part-way kept what had been built — 152 B for a
 # crew refused at its second agent, 392 B for a definition refused for its `complexity`.
 fn agnostic_agent_def_decode_a(a, v, index, out): i64 {
-    return _agnostic_agent_def_decode_as(a, v, index, out, 1);
+    return _agnostic_agent_def_decode_as(a, default_alloc(), v, index, out, 1);
+}
+
+# `agnostic_agent_def_decode_a` with the record, and all it holds, in allocator `al`: for a reader
+# whose record lasts no longer than its request.
+fn agnostic_agent_def_decode_in_a(a, al, v, index, out): i64 {
+    return _agnostic_agent_def_decode_as(a, al, v, index, out, 1);
 }
 
 # Whether `v` is an agent definition a door accepts: every refusal
@@ -338,7 +344,7 @@ fn agnostic_agent_def_decode_a(a, v, index, out): i64 {
 # it too (0.1.15). Answers 1, or 0 with the rejection in `out`. Builds nothing: a refused body
 # keeps nothing on the global heap, and the rejection lives in `a` (0.1.17).
 fn agnostic_agent_def_check_a(a, v, index, out): i64 {
-    if (_agnostic_agent_def_decode_as(a, v, index, out, 0) == 0) { return 0; }
+    if (_agnostic_agent_def_decode_as(a, a, v, index, out, 0) == 0) { return 0; }
     var cx = agnostic_opt_str(v, AGNOSTIC_JK_COMPLEXITY, 0 - 1);
     if (cx != 0 - 1 && agnostic_complexity_from_wire(cx) < 0) {
         return agnostic_agent_def_complexity_reject_a(a, out, index);
@@ -346,9 +352,9 @@ fn agnostic_agent_def_check_a(a, v, index, out): i64 {
     return 1;
 }
 
-# The decoder's one body. `build` 1 answers the record, built on the global heap; `build` 0
-# makes every check and builds nothing — no engine agent, no record, no clone — answering 1.
-fn _agnostic_agent_def_decode_as(a, v, index, out, build): i64 {
+# The decoder's one body. `build` 1 answers the record, built in `al`; `build` 0 makes every
+# check and builds nothing — no engine agent, no record, no clone — answering 1.
+fn _agnostic_agent_def_decode_as(a, al, v, index, out, build): i64 {
     if (bayan_json_v_is_obj(v) != 1) {
         return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "an agent must be a JSON object"));
@@ -402,24 +408,24 @@ fn _agnostic_agent_def_decode_as(a, v, index, out, build): i64 {
     # `e` stays 0 when checking: the helpers below check and set nothing.
     var e = 0;
     if (build == 1) {
-        e = agnosai_agent_new(str_clone(key), str_clone(role), str_clone(goal));
+        e = agnosai_agent_new_a(al, str_clone_a(al, key), str_clone_a(al, role), str_clone_a(al, goal));
         if (e == 0) {
             return _agnostic_ad_reject(a, out, index, HTTP_INTERNAL,
               str_from_a(a, "could not allocate the agent definition"));
         }
     }
 
-    if (_agnostic_ad_opt_str(a, out, index, v, AGNOSTIC_JK_NAME, e, 0) == 0) { return 0; }
-    if (_agnostic_ad_opt_str(a, out, index, v, AGNOSTIC_JK_BACKSTORY, e, 1) == 0) { return 0; }
-    if (_agnostic_ad_opt_str(a, out, index, v, AGNOSTIC_JK_DOMAIN, e, 2) == 0) { return 0; }
-    if (_agnostic_ad_opt_str(a, out, index, v, AGNOSTIC_JK_COMPLEXITY, e, 3) == 0) { return 0; }
-    if (_agnostic_ad_opt_str(a, out, index, v, AGNOSTIC_JK_LLM_MODEL, e, 4) == 0) { return 0; }
-    if (_agnostic_ad_tools(a, out, index, v, e) == 0) { return 0; }
+    if (_agnostic_ad_opt_str(a, al, out, index, v, AGNOSTIC_JK_NAME, e, 0) == 0) { return 0; }
+    if (_agnostic_ad_opt_str(a, al, out, index, v, AGNOSTIC_JK_BACKSTORY, e, 1) == 0) { return 0; }
+    if (_agnostic_ad_opt_str(a, al, out, index, v, AGNOSTIC_JK_DOMAIN, e, 2) == 0) { return 0; }
+    if (_agnostic_ad_opt_str(a, al, out, index, v, AGNOSTIC_JK_COMPLEXITY, e, 3) == 0) { return 0; }
+    if (_agnostic_ad_opt_str(a, al, out, index, v, AGNOSTIC_JK_LLM_MODEL, e, 4) == 0) { return 0; }
+    if (_agnostic_ad_tools(a, al, out, index, v, e) == 0) { return 0; }
     if (_agnostic_ad_gpu(a, out, index, v, e) == 0) { return 0; }
 
     var d = 0;
     if (build == 1) {
-        d = alloc(AGNOSTIC_AD_SIZE);
+        d = alloc_via(al, AGNOSTIC_AD_SIZE);
         if (d == 0) {
             return _agnostic_ad_reject(a, out, index, HTTP_INTERNAL,
               str_from_a(a, "could not allocate the agent definition"));
@@ -439,7 +445,7 @@ fn _agnostic_agent_def_decode_as(a, v, index, out, build): i64 {
             return _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
               str_from_a(a, "'focus' exceeds the maximum length"));
         }
-        if (d != 0) { store64(d + AGNOSTIC_AD_FOCUS, str_clone(focus)); }
+        if (d != 0) { store64(d + AGNOSTIC_AD_FOCUS, str_clone_a(al, focus)); }
     }
 
     var deleg = _agnostic_opt_bool(v, "allow_delegation");
@@ -458,7 +464,7 @@ fn _agnostic_agent_def_decode_as(a, v, index, out, build): i64 {
 # A dispatch integer rather than a function pointer: `fncall2` would need every
 # setter to share one signature, and the five here already do — but the integer
 # keeps the call sites readable and costs one compare.
-fn _agnostic_ad_opt_str(a, out, index, v, key: Str, e, which): i64 {
+fn _agnostic_ad_opt_str(a, al, out, index, v, key: Str, e, which): i64 {
     var s = agnostic_opt_str(v, key, 0 - 1);
     if (s == 0) {
         var sb = str_builder_new_a(a);
@@ -480,7 +486,7 @@ fn _agnostic_ad_opt_str(a, out, index, v, key: Str, e, which): i64 {
         return 0;
     }
     if (e == 0) { return 1; }
-    var c = str_clone(s);
+    var c = str_clone_a(al, s);
     if (which == 0) { agnosai_agent_with_name(e, c); }
     if (which == 1) { agnosai_agent_with_backstory(e, c); }
     # ⚠ An EMPTY domain is no domain (0.1.14). The engine scores an agent with no domain 1.0
@@ -501,7 +507,7 @@ fn _agnostic_ad_opt_str(a, out, index, v, key: Str, e, which): i64 {
 # every tool silently, which is precisely what the oracle did to all 38 of its
 # preset tool names (`ORACLE-AUDIT.md` §3.15). Names are carried through
 # verbatim; resolution, and erroring on a miss, is M6's.
-fn _agnostic_ad_tools(a, out, index, v, e): i64 {
+fn _agnostic_ad_tools(a, al, out, index, v, e): i64 {
     var tv = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_TOOLS);
     if (tv == 0) { return 1; }
     if (bayan_json_v_is_null(tv) == 1) { return 1; }
@@ -517,7 +523,7 @@ fn _agnostic_ad_tools(a, out, index, v, e): i64 {
         return 0;
     }
     var tools = 0;
-    if (e != 0) { tools = vec_new(); }
+    if (e != 0) { tools = vec_new_a(al); }
     var i = 0;
     while (i < n) {
         var t = bayan_json_v_arr_get(tv, i);
@@ -526,7 +532,7 @@ fn _agnostic_ad_tools(a, out, index, v, e): i64 {
               str_from_a(a, "'tools' must be an array of strings"));
             return 0;
         }
-        if (e != 0) { vec_push(tools, str_clone(bayan_json_v_str(t))); }
+        if (e != 0) { vec_push_a(al, tools, str_clone_a(al, bayan_json_v_str(t))); }
         i = i + 1;
     }
     if (e != 0) { agnosai_agent_with_tools(e, tools); }

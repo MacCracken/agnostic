@@ -2,10 +2,9 @@
 #
 # ## ⚠ The Argon2 buffer pool IS the concurrency cap
 #
-# `sigil`'s convenience form allocates its own scratch and its own comment rules
-# it out here: *"`fl_alloc` is not thread-safe (quirk #7) — concurrent callers
-# want `argon2id_into`."* Agnostic runs handlers on sandhi pool workers, so
-# `argon2id_into` with a caller-supplied buffer is the only correct entry point.
+# `sigil`'s convenience form allocates its own scratch, which leaves concurrency uncapped.
+# Agnostic runs handlers on sandhi pool workers, so `argon2id_into` with a buffer from this
+# pool is the only correct entry point.
 #
 # At the roadmap's parameters — m=19456 KiB, t=2, p=1 — that buffer is
 # **19.0 MiB per concurrent hash** (`argon2_mem_bytes`, measured). One per worker
@@ -221,9 +220,10 @@ fn agnostic_crypto_main_init(): i64 {
 
 # SHA-256 of `len` bytes at `data` into `out32`. Returns 1.
 fn agnostic_sha256(data, len, out32): i64 {
-    var ctx = sha256_init();
-    sha256_update(ctx, data, len);
-    sha256_finalize(ctx, out32);
+    # The one-shot form, whose context is on the frame and wiped. `sha256_init` takes one from
+    # the freelist and nothing here gave it back: 144 B per hash, on the global heap, for a
+    # request with no credential (`Authorization: ApiKey x`) as much as for any other.
+    sha256(data, len, out32);
     return 1;
 }
 

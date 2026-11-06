@@ -243,8 +243,28 @@ fn _agnostic_crews_save_row_locked(row, doc: Str): i64 {
     if (_agnostic_crews_save_locked(crew_id, agnostic_crew_row_get(row, AGNOSTIC_CR_NAME), status, doc) == 0) {
         return 0;
     }
+    if (agnostic_store_db() == 0) { return 0; }
+    # The outcome is stored even if its row is not: the crew is durable and readable by id, just
+    # not listed — the honest degradation, never a lost outcome. So the answer is still 1, but
+    # the in-flight row stays, which is what the next start repairs the listing from.
+    if (_agnostic_crews_index_insert_locked(row) != PATRA_OK) { return 1; }
+    # ⭐ The crew has its outcome, so it is no longer in flight (0.1.13, ADR 0013). Here,
+    # in the critical section that wrote the outcome, so the cancel latch, the collector
+    # and a poll all discharge it and no caller has to remember to. Its result is ignored: a
+    # row left behind is swept at the next start, which finds this outcome and only deletes it.
+    _agnostic_crews_inflight_drop_locked(crew_id);
+    # And what its finished tasks answered while it ran (0.1.15, ADR 0019): the outcome
+    # holds the results now, or the sweep has just written them into the interrupted one.
+    _agnostic_crews_partial_drop_locked(crew_id);
+    return 1;
+}
+
+# Write `row` to the listing. The caller holds the store lock. Returns patra's result.
+fn _agnostic_crews_index_insert_locked(row): i64 {
     var db = agnostic_store_db();
-    if (db == 0) { return 0; }
+    if (db == 0) { return PATRA_ERR_IO; }
+    var crew_id = agnostic_crew_row_get(row, AGNOSTIC_CR_CREW_ID);
+    var status = agnostic_crew_row_get(row, AGNOSTIC_CR_STATUS);
     var scope = agnostic_crew_row_get(row, AGNOSTIC_CR_SCOPE);
     if (scope == 0) { scope = AGNOSTIC_SCOPE_DEFAULT; }
     var nm = agnostic_crew_row_get(row, AGNOSTIC_CR_NAME);
@@ -254,7 +274,7 @@ fn _agnostic_crews_save_row_locked(row, doc: Str): i64 {
     var st = patra_prepare(db, "INSERT INTO agnostic_crew_index \
 (crew_id, scope, cname, cstatus, submitted, started, finished, ntasks, mode, tokens, cost) \
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    if (st == 0) { return 0; }
+    if (st == 0) { return PATRA_ERR_IO; }
     patra_bind_text(st, 0, str_data(crew_id), str_len(crew_id));
     patra_bind_text(st, 1, str_data(scope), str_len(scope));
     patra_bind_text(st, 2, str_data(nm), str_len(nm));
@@ -266,21 +286,57 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     patra_bind_text(st, 8, str_data(mode), str_len(mode));
     patra_bind_int(st, 9, agnostic_crew_row_get(row, AGNOSTIC_CR_TOKENS));
     patra_bind_int(st, 10, agnostic_crew_row_get(row, AGNOSTIC_CR_COST));
-    # The outcome is stored even if its row is not: the crew is durable and readable by
-    # id, just not listed — the honest degradation, never a lost outcome. So the index
-    # write's own result does not change the answer.
-    patra_exec_prepared(db, st);
+    var rc = patra_exec_prepared(db, st);
     patra_finalize(st);
-    # ⭐ The crew has its outcome, so it is no longer in flight (0.1.13, ADR 0013). Here,
-    # in the critical section that wrote the outcome, so the cancel latch, the collector
-    # and a poll all discharge it and no caller has to remember to. Its result is ignored
-    # like the index row's: a row left behind is swept at the next start, which finds
-    # this outcome and only deletes it.
-    _agnostic_crews_inflight_drop_locked(crew_id);
-    # And what its finished tasks answered while it ran (0.1.15, ADR 0019): the outcome
-    # holds the results now, or the sweep has just written them into the interrupted one.
-    _agnostic_crews_partial_drop_locked(crew_id);
-    return 1;
+    return rc;
+}
+
+# The stored outcome's status for `crew_id`, or -1. The caller holds the store lock.
+fn _agnostic_crews_status_locked(crew_id: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0 - 1; }
+    var st = patra_prepare(db, "SELECT cstatus FROM agnostic_crews WHERE crew_id = ?");
+    if (st == 0) { return 0 - 1; }
+    patra_bind_text(st, 0, str_data(crew_id), str_len(crew_id));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0 - 1; }
+    var status = 0 - 1;
+    if (patra_result_count(rs) > 0) { status = patra_result_get_int(rs, 0, 0); }
+    patra_result_free(rs);
+    return status;
+}
+
+# 1 when the listing holds `crew_id`. The caller holds the store lock. A scan: this runs at
+# start-up, for a crew the last process stopped in the middle of writing.
+fn _agnostic_crews_index_has_locked(crew_id: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db, "SELECT crew_id FROM agnostic_crew_index WHERE crew_id = ?");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(crew_id), str_len(crew_id));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var n = patra_result_count(rs);
+    patra_result_free(rs);
+    if (n > 0) { return 1; }
+    return 0;
+}
+
+# List a crew whose outcome was stored and whose listing row was not, from its in-flight `row`.
+# Its times and usage are in the document, which `GET /crews/{id}` still answers: the row says
+# what the in-flight record knows. The caller holds the store lock.
+fn _agnostic_crews_index_repair_locked(crew_id: Str, row): i64 {
+    if (_agnostic_crews_index_has_locked(crew_id) == 1) { return 0; }
+    var status = _agnostic_crews_status_locked(crew_id);
+    if (status < 0) { return 0; }
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, status);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STARTED, 0);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_FINISHED, 0);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_TOKENS, 0 - 1);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_COST, 0 - 1);
+    return _agnostic_crews_index_insert_locked(row);
 }
 
 # Delete a crew's in-flight row, if it has one. The caller holds the store lock.
@@ -460,6 +516,10 @@ fn _agnostic_crews_interrupt_row_locked(row, doc: Str): i64 {
     if (crew_id == 0) { return 0; }
     if (agnostic_store_db() == 0) { return 0; }
     if (_agnostic_crews_exists_locked(crew_id) == 1) {
+        # The outcome was written and the stop came before its in-flight row went, which may
+        # also be before its listing row: a crew's writes are not one transaction, because
+        # that costs three times as much on every crew. Put back a row that never landed.
+        _agnostic_crews_index_repair_locked(crew_id, row);
         _agnostic_crews_inflight_drop_locked(crew_id);
         _agnostic_crews_partial_drop_locked(crew_id);
         return 2;

@@ -7,7 +7,7 @@ no `Makefile` — the Python tree is frozen at `python-port/` as the behavioural
 oracle and is never built or shipped. Do not run `pip install`, `pytest`, or
 anything under `python-port/` expecting it to produce the product.
 
-⚠ **`python-port/` is a reference, not a spec.** `ORACLE-AUDIT.md` records 85
+⚠ **`python-port/` is a reference, not a spec.** `ORACLE-AUDIT.md` records 86
 verified defects in it. Check that document before porting any behaviour — several
 of the oracle's paths are wrong, and reproducing them faithfully would reproduce
 the bugs.
@@ -56,8 +56,8 @@ things break the mirror deliberately:
 - **Most of the oracle does not survive.** AgnosAI owns the engine tier (crews,
   tasks, agents, scheduling, LLM routing, fleet, tools, sandboxing), so the
   corresponding `python-port/` modules have no counterpart here. See
-  `CYRIUS-PORT-BRIEF.md` for the three-way split of what is ported, what is
-  delegated to a dependency, and what is dropped.
+  `docs/development/research/2026-11-05-python-port-parity.md` for what is ported,
+  what is delegated to a dependency, and what is dropped.
 - **Python package layout is not Cyrius layout.** Cyrius has one flat symbol
   namespace, so directory nesting carries no scoping — it is organisational only.
 

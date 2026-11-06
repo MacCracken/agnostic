@@ -165,16 +165,13 @@ fn test_ladder_enforcement() {
 
     # ⭐ 403 — the same viewer lacks WRITE. The handler must never run, so the
     # body is deliberately garbage: a 400 here would mean auth let it through.
+    # ⭐ An unparseable body: it would be a 400 had the request reached the handler, so a 403
+    # says the refusal came first.
     var forbidden = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST,
-      str_from("/api/v1/crews"), str_from("{\"not\":\"valid\"}"), 1048576,
+      str_from("/api/v1/crews"), str_from("{not json"), 1048576,
       agnostic_reqctx_new_a(a, vhdr, 0));
     assert_eq(agnostic_response_status(forbidden), HTTP_FORBIDDEN,
-      "a viewer submitting a crew is 403 — identified, and refused");
-
-    # ⭐ And the refusal happens BEFORE the handler: an unparseable body would
-    # be a 400 if the request had reached it.
-    assert_neq(agnostic_response_status(forbidden), HTTP_BAD_REQUEST,
-      "the body was never parsed — auth ran first");
+      "a viewer submitting a crew is 403, before its body is parsed");
 
     agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
 }

@@ -16,14 +16,132 @@ chain, durable state, SSE, Prometheus and OTLP telemetry, RL learning, definitio
 versioning/packaging, the crew assembler and the preset library.
 
 What remains is the **product** tier: the HTTP and MCP surfaces consumers bind to, the QA domain
-tools, identity and tenancy, persistence and reporting, and the GUI. Sequencing below follows
-dependency order, not the Python tree's layout — see [`../../CYRIUS-PORT-BRIEF.md`](../../CYRIUS-PORT-BRIEF.md)
-for the three-way split of ported / delegated / dropped.
+tools, identity and tenancy, persistence and reporting, and the GUI. Sequencing follows
+the release plan below, not the Python tree's layout. What was ported, delegated or dropped, area by
+area, is in the [parity review](research/2026-11-05-python-port-parity.md).
 
 The oracle at `python-port/` is a **behavioural reference, not a specification**.
 [`../../ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) records 86 verified defects in it; several of its
 paths are wrong, and reproducing them faithfully would reproduce the bugs. Check that document
 before porting any behaviour.
+
+## Release plan
+
+Which release line takes which owed item. The items themselves, with their evidence, are in the
+sections below; this one only sequences them. One minor line per theme, with patch releases inside a
+line as each piece lands. Decided 2026-11-05: this replaces "one release", though 1.0.0 is still the
+release that completes M6–M9 (see *Release shape*).
+
+agnostic's lines lean on agnosai's: its 2.3.x carries the tool loop M6 needs, 2.4.x the approvals and
+budgets, 2.5.x the durable crew log, and 2.6.x MCP 2026-07-28 and A2A v1.0.x.
+
+### 0.2.x — hardening and housekeeping
+
+- **Re-pin agnosai once it carries the crew-registry fix**, and delete `_agnostic_crew_retire_a`'s reach
+  into the orchestrator's fields ([ADR 0022](../adr/0022-a-finished-crew-leaves-the-engines-registry.md),
+  *Upstream*). bote 3.8.15 comes with that re-pin.
+- **`GET /crews` reads the tenant's whole history**, whatever `limit` says (*Open*, Performance).
+- **A stored crew is parsed and re-encoded** on read (*Open*, Performance).
+- **A CI step that boots the binary and probes it** (the parity review's G17): socketpair suites miss
+  what a real listen catches, and `CYRIUS_DCE=1` on CI's test builds tests the shape it ships.
+- The benchmark rows the audit asked for (*Open*, Tests).
+- **A load test in the tree**: 16 clients and 6,000 crews, as the audit ran by hand. The first version
+  of ADR 0022's fix passed every suite and lost most of them under this.
+- The parity review's fifteen records (*Decisions awaiting the user*), so the deletion list shrinks to
+  real work.
+- Any time: `[embed]` and `deps --locked` (*Available from the toolchain*).
+
+### 0.3.x — identity, tenancy and deployment
+
+Comes first among the feature lines because nothing else can be used by a machine without it. A
+deployment has one user, no issuable API key, and tokens that die on restart. Python's static key
+worked, so this is a regression, and the v1.0 criterion "a consumer green against the published API"
+cannot be met until it is done. Details under *Identity and deployment*.
+
+- **Provisioning**: users, API keys and tenants, by route or an `agnostic admin` command, with an ADR.
+- **`AGNOSTIC_JWT_SECRET`**, length-checked, so a restart does not log everyone out.
+- **Scope what is not scoped**: agent definitions, and ADMIN against SUPER (audit S3, S4). Both are
+  latent today and become real the moment a second user can exist, so they ship together with it.
+- **A trusted-proxy setting**, since TLS belongs to a proxy and a proxy gives every client one login
+  bucket (audit S7).
+- **Password change**, which also closes the bootstrap credential's rotation (audit S12b).
+- **Deployment**: a guide for the binary, a reverse proxy and a unit file, and the Zugot recipe.
+- **What a refusal leaves behind**: the rest of the audit vocabulary, and the rate-limit and Argon2
+  shed counters, which nothing reads.
+- **Crew memory** (*Open*, Memory), with agnosai's half.
+
+### 0.4.x — the QA tool surface (M6)
+
+Waits on agnosai 2.3.x: F1, and B33. Extract the tool intent from `python-port/` first (*Deleting
+`python-port/`*): M6 says "preset-declared intent", and a preset declares only a class name and a
+`focus`.
+
+- **M6**: every one of the 38 names resolved, written or struck, with a miss an error.
+- **The tool-registry seam** (`handoff.md` §8), decided with F1.
+- **The reviewer preset**, once F9 hands a dependent task its dependencies' outputs (agnosai 2.4.x).
+- **`target_url`** (G4): a task field, or prose in `description`.
+- **`GET /tools`** (G10), which the viability gate wants.
+- **The model picker** (M9), on B33.
+
+### 0.5.x — MCP, reports and streaming (M7, M8, M9)
+
+Waits on agnosai 2.6.x for MCP 2026-07-28 and A2A v1.0.x.
+
+- **M7**: `/mcp`, `/api/v1/mcp/invoke`, A2A, and the daimon registrar. Say which surface it means: the
+  34 Python MCP tools are operations, and the 38 are QA classes (parity review, §7). The manifest is
+  extracted before deletion.
+- **The completion webhook** (G3), on agnosai's guarded fetch: how a CI job learns a run ended.
+- **M8**: exports, trends and comparison. **Decide what reports read first** (G5): crew outcomes, or
+  a result model of their own.
+- **M9**: streaming crew events, reports in the shell, and the "which crew needs me?" badge, which
+  needs agnosai F3.
+
+### 1.0.0 — the freeze
+
+The v1.0 criteria below, the exported symbols' half of the API freeze, a security audit re-run, and
+the deletion of `python-port/`.
+
+## Deleting `python-port/` — at 1.0.0, once M6–M8 and the gaps are closed
+
+Full record: [the parity review](research/2026-11-05-python-port-parity.md), which went over all 397
+tracked files, 106 routes and 192 environment variables.
+
+**The verdict: not yet by the rule, and safe mechanically.** Nothing in the repo reads the tree: no
+script, suite or CI step, and `gen-presets.sh` reads `src/presets/`, whose 18 documents match byte
+for byte. Deleting it now would break nothing. But `first-party-standards.md:53` asks for equal or
+better coverage, and that is not met. If you would rather delete earlier, the only cost is that M6–M8
+read the oracle through `git show`, which is a convenience loss, not a data loss.
+
+**Blockers:**
+
+- [ ] **M6:** 36 of 38 tool names resolve to nothing, and agnosai F1 means none would be called if they
+  did.
+- [ ] **M7:** MCP and A2A are not started.
+- [ ] **M8:** reports are not started, and their input is undecided (G5).
+- [ ] **G1 and G2 in code:** machine access regresses from what Python had (0.3.x).
+- [ ] **G3–G17:** fifteen missing records, most of them one-line drops (*Decisions awaiting the user*).
+
+M9's streaming is owed but is not a blocker: the event cursor gives everything `/ws/realtime` gave
+except push.
+
+**Before the deletion commit:**
+
+- [ ] **Extract the tool intent** for the 36 classes (`name`, `description`, inputs, outputs). It is the
+  only copy, and M6 is written against it.
+- [ ] **Extract the 34-tool MCP manifest** (`webgui/routes/mcp.py`) into M7's ADR notes.
+- [ ] Note `shared/yeoman_schemas.py` for G5: it is the only typed result model in the tree.
+- [ ] Tag the parent commit, and put that rev in `ORACLE-AUDIT.md`'s header, so its citations resolve.
+
+Everything else is recoverable with `git show <rev>:python-port/...`. There are no Grafana dashboards
+or alert rules to save: `monitoring/grafana/dashboards/dashboard.yml` is a provisioning stub.
+
+**The deletion commit:**
+
+- [ ] `git rm -r python-port`, and delete its 8 untracked `benchmarks/__pycache__/*.pyc` from disk.
+- [ ] Edit `scripts/bench-history.sh:119`, or the mention returns to `BENCHMARKS.md`.
+- [ ] Update the prose that names it: `CONTRIBUTING.md`, `ORACLE-AUDIT.md`, `CYRIUS-PORT-BRIEF.md`,
+  `SECURITY.md`, `docs/adr/0001…`, `docs/audit/*`, `state.md`, `handoff.md`, this file, and
+  `src/routes/health.cyr:12`. All of it is stale prose: none of it breaks anything.
 
 ## v1.0 criteria
 
@@ -36,16 +154,17 @@ before porting any behaviour.
       **Breaking** CHANGELOG entry. Still open: the exported Cyrius symbols' half, and what the
       schema leaves out (nested shapes, field types; see "Later").
 - [ ] `python-port/` retired — the Cyrius tree has equal or better coverage
-      (`first-party-standards.md:53`). ⚠ The benchmark half of that rule cannot be satisfied as
-      written: `ORACLE-AUDIT.md` §4 shows the oracle's published numbers are invalid, so parity is
-      assessed on coverage and behaviour, not on its timings.
+      (`first-party-standards.md:53`; *Deleting `python-port/`* above). ⚠ The benchmark half of that
+      rule cannot be satisfied as written: `ORACLE-AUDIT.md` §4 shows the oracle's published numbers
+      are invalid, so parity is assessed on coverage and behaviour, not on its timings.
 - [x] Benchmarks captured in `BENCHMARKS.md` with a CSV trail — met at 0.1.16: all 18 benchmarks,
       run on the clean tagged tree (`024be8b`, 2026-10-08), the first full run since 0.1.0's one
       row. Keep it met: re-run `./scripts/bench-history.sh` right after each tag.
 - [ ] At least one consumer green against the published API — Agnostic's own, not a
       pre-existing client's contract (see M7)
 - [ ] CHANGELOG complete from v0.1.0 onward
-- [ ] Security audit pass re-run (`docs/audit/YYYY-MM-DD-audit.md`)
+- [ ] Security audit pass re-run at the cut. The last is
+      [`docs/audit/2026-11-05-audit.md`](../audit/2026-11-05-audit.md), for 0.2.2.
 - [ ] Zugot recipe published (`zugot: marketplace/agnostic.toml`)
 
 ## Milestones
@@ -67,7 +186,8 @@ all** (`ArtifactManagementTool`, `CIPipelineIntegrationTool`, both named by `qua
 None of the 36 was ever registered — the oracle's `_REGISTRY` is never populated, so every agent ran
 with `tools=[]` (`ORACLE-AUDIT.md` §3.15). The presets' tool lists are a **specification of intent,
 not observed behaviour**: port the presets as documents, and treat each tool as a fresh
-implementation against its preset-declared intent, not as a port of working code.
+implementation against its intent, not as a port of working code. A preset declares only a class name
+and an agent's `focus`. The rest of that intent is in the Python tool classes, the only copy.
 
 - [ ] **The viability gate reaches 0.** The gate is built: `src/engine/tools.cyr` resolves the
   38-name manifest against the engine's registry, pinned by `tests/tools.tcyr`, and **2 of 38
@@ -183,7 +303,7 @@ owed for 1.0.0:
 
 - [ ] Streaming crew events (M7's transport) — the cursor replaced the window-matching poll at 0.1.9
   (ADR 0009), but it is still a one-second poll. Needs a transport that does not hold a pooled
-  worker per watcher, and sandhi's `send_chunk` fix (see "Upstream").
+  worker per watcher.
 - [ ] M8's reports, once they exist, as views or downloads from the shell.
 - [ ] **"Which crew needs me?"** Once agnosai F3 ships, show `awaiting_approval` as a crew
   status and in its events. Roll it up as a badge from task to crew to tenant in Crews and
@@ -202,6 +322,33 @@ owed for 1.0.0:
   agnosai picks for the agent's complexity. The route sits behind a permission, as the presets list does
   (`presets:read`); the route, its permission and the cache go in an ADR.
 
+## Identity and deployment (0.3.x)
+
+From the [parity review](research/2026-11-05-python-port-parity.md) (G1, G2, G11, G12, G14) and the
+[2026-11-05 audit](../audit/2026-11-05-audit.md).
+
+- [ ] **Provisioning (G1).** Nothing can add anyone after the bootstrap admin:
+  `agnostic_users_create_a` is called only by bootstrap, and `agnostic_tenant_create_a` and
+  `agnostic_apikey_issue_a` have no callers in `src/`. Admin routes or an `agnostic admin` command,
+  with an ADR. `src/auth/jwt.cyr:72` already says an operator can install a secret; nothing lets them.
+- [ ] **`AGNOSTIC_JWT_SECRET` (G2)**, refused at mount when short.
+- [ ] **Agent definitions are not tenant-scoped (audit S3).** A tenant-b OPERATOR listed, read, replaced
+  and deleted tenant-a's definition, reproduced in-process through the real dispatcher. Key them by
+  scope, as plugin documents are. It needs a store migration.
+- [ ] **Any ADMIN is a deployment admin (audit S4), against ADR 0008.** A tenant-c ADMIN read tenant-a's
+  entries from the audit trail and switched a deployment-wide plugin; no route requires
+  `AGNOSTIC_PERM_SUPER`. Require SUPER for those routes, or filter entries by scope.
+- [ ] **A trusted-proxy setting (audit S7).** `src/auth/ratelimit.cyr:90` keys the login bucket on the
+  socket peer, so behind a proxy about 5 anonymous requests a minute lock out every login.
+- [ ] **Password change (audit S12b).** The mount WARN says to rotate the bootstrap credential, and
+  nothing can.
+- [ ] **Tenant limits (G11):** defer to agnosai F5, and record that quotas, which never ran, are dropped.
+- [ ] **The audit vocabulary (G12).** A failed login is audited since 0.2.2. A 401, a 403 and a
+  rate-limit hit still leave nothing, and `agnostic_rl_shed_count` and `agnostic_argon_shed_count`
+  have no callers. Bounded, so the trail does not become a write amplifier.
+- [ ] **Deployment (G14):** a guide for the binary, a reverse proxy and a unit file. TLS is the proxy's
+  job. A small image is optional.
+
 ## Waiting on agnosai (release agnosai, then re-pin)
 
 Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity"), B33 under **B** ("Owed").
@@ -215,6 +362,10 @@ Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity")
 - **F4 — durable crew log:** turns an `interrupted` crew (ADR 0013) into a resumable one.
 - **F5 — budgets and caps:** brings back an `AGNOSTIC_CREW_MAX_CONCURRENT_TASKS` that is actually
   enforced.
+- **The crew registry (agnostic 0.2.2's H1):** evict oldest-first down to a low-water mark, and give a
+  consumer a call to forget a crew it has read. Until then `_agnostic_crew_retire_a` reaches into the
+  orchestrator's fields (ADR 0022). Filed with agnosai.
+- **A transport error that names the gateway's URL:** agnostic scrubs it from results. Filed with agnosai.
 - **bote 3.8.15:** agnosai 2.2.3 pins 3.8.11. Nothing reaches agnostic, because neither repo calls a
   bote function, so it moves with the next agnosai release and not by an override pin here.
 - **B33 — models from hoosh's catalog (recorded 2026-10-09):** a crew whose agents name no model is
@@ -283,17 +434,22 @@ Found while building, grouped by area. H and B numbers in this file are those of
   returns only the head hash, and agnostic needs the entry to store it (`patrastore_append`) and
   to copy it into the kept ring. The ask, for libro: an append that builds its entry in a caller's
   allocator, or a `nokeep` that hands back the scratch entry for the duration of the call. Then
-  re-pin and drop `_t_libro_record_cost`'s allowance. Not filed yet.
+  re-pin and drop `_t_libro_record_cost`'s allowance. Filed with libro.
 - The outbound calls' remaining bytes (an exporter batch, an inference call) are in sandhi's
   dispatch path; see "Upstream".
-
-### Server
-
-- [ ] **A server that cannot bind says nothing about why** (found 2026-11-05, at 0.2.1).
-  `agnostic_serve` logs `listening` before `sandhi_server_run_pooled` binds, so a port already in use
-  prints that line and exits 1 with no other output. agnosai 2.2.3 fixed the same defect in itself.
-  Fix: on a non-zero `rc`, read the failing step and errno back with `sandhi_server_last_failure`
-  (needs the options block `o`) and log them, and pin the step names in a suite.
+- [ ] **Under sustained load the outcome writes fall behind**, by about 200 crews a second against 86
+  here (ADR 0022). A graceful stop drains the backlog, and a crash loses it to `interrupted`. Nothing
+  bounds it but the load. If a deployment meets this, batching several outcomes per fsync is the next
+  step; BATCH mode as it stands loses the outcome-before-delete ordering (see Performance).
+- [ ] **A crew keeps about 16 KB for life, plus 1.6× its output** (audit P2): about 16 GB per million
+  crews. The ledger's cap bounds entries and frees nothing, since eviction unlinks an entry and the
+  global heap has no `free`. The largest parts are the ledger's event ring (4,096 B), the subscribe
+  channel (2.4 KB) and the engine's spec (2.0 KB). Needs a crew-scoped arena in agnosai, and ring
+  recycling here. An evicted entry can still be held by a request, so clear its ring pointer under the
+  lock first.
+- [ ] **Audit open holds the whole trail** (`src/engine/audit.cyr:251`): 589 B and ~16 µs per entry, so
+  100,000 entries take 1.4 s and 59 MB for life. Needs a streaming verify read from libro, beside the
+  ranged read already recorded.
 
 ### Telemetry
 
@@ -304,31 +460,52 @@ Found while building, grouped by area. H and B numbers in this file are those of
   follow-up). Until then a `-00` traceparent switches off span export for the sender's own crews
   (ADR 0018).
 
+### Performance
+
+From the audit's performance review, at 10,000 crews.
+
+- [ ] **`GET /crews` reads the tenant's whole history**, whatever `limit` says
+  (`src/routes/crews.cyr`, `src/engine/crewstore.cyr:640`): 88 ms a request, ~75 ms of it holding the
+  store lock, so the p99 of another store-touching GET went from 0.45 to 80 ms with a list every
+  300 ms. Memory stopped leaking at 0.2.2, but the work is still O(tenant history). Pick the page from
+  the result set in place and copy only those rows, or `ORDER BY submitted DESC LIMIT n`, with `n`
+  covering the crews the ledger holds. Only a recency index shortens the lock, and patra has one
+  index per table.
+- [ ] **A stored crew is parsed and re-encoded** on read (`src/routes/crews.cyr:160`), despite
+  "verbatim" at `crewstore.cyr:38`: a 422 KB document costs 20.8 ms against 13 ms held. Read the scope
+  from the index row and send the bytes; a document with no index row still needs the parse.
+- ⛔ **Measured, and not to do:** a transaction around a finished crew's writes (31.5 ms against
+  11.5 ms autocommit), BATCH mode for them (7.4 ms, but it loses outcome-before-delete ordering on a
+  power cut), and reusing prepared statements (22 µs against 50 µs, single-threaded only:
+  `audit.cyr:88` records a process-killing fault from that shape).
+
 ### Tests, tooling and docs
 
-- [ ] **`check-clean.sh` lints `tests/**/*.cyr` but not the suites, `tests/*.tcyr`** (found
-  2026-10-08, at 0.1.16). fmt covers the suites; lint does not, so a line over 120 characters or an
-  untracked deferral in a suite passes the gate. At 0.1.16, 18 of the 33 suites carry findings —
-  104 warnings, nearly all long lines (`crew_request` 31, `webgui` 14 and a deferral, `crew_tenancy`
-  12), and 9 untracked deferrals (`store_concurrency` 6). Fix: wrap or tag each, then add
-  `$(find tests -name "*.tcyr" | sort)` to the lint loop. agnosai has the same gap (its B31).
-- [ ] **No benchmark times bayan's JSON parser** (found 2026-11-05, at 0.2.1). `crew_decode_4a_8t`
-  parses once, outside its loop, so a parser change cannot show in it: bayan 1.11.1 is 38–66% slower by
-  agnosai's benches, and every row here stayed flat. Add a row that parses a crew body.
-- [ ] **`scripts/check-log-lengths.py` miscounts a non-ASCII literal** (from agnosai 2.1.8's fix, whose
-  script was adopted from this one). `byte_len` decodes with `unicode_escape`, which reads UTF-8 bytes
-  as Latin-1, so every non-ASCII byte counts twice and the gate would demand a length past the
-  literal. None of the 88 literals in `src/` and `tests/` is wrong today, checked with
-  `codecs.escape_decode` at 0.1.18. Fix: measure that way, with agnosai's seven-literal self-test.
+- [ ] **Benchmark rows the audit asked for:** `crews_list_10k`, `authn_bearer` and `authn_apikey` (109
+  and 153 µs before 0.2.2), `crew_save_row` (11.5 ms), `audit_open_10k`, `serve_handler_health` (16 µs).
+- [ ] **A CI step that boots the binary and probes it** (G17), and `CYRIUS_DCE=1` on CI's test builds.
+- [ ] **A load test in the tree.** A suite runs one thread with no store contention, so it cannot show
+  what a sweep does at 200 crews a second. Only a real server with concurrent clients did.
 
 ## Upstream — owed by sibling repos
 
-Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped here.
+Each is fixed at its source and reaches agnostic by a re-pin. One exception is wrapped here until
+then, ADR 0022, with the gateway-URL scrub beside it. Filings are in each repo's
+`docs/development/issues/`.
 
+- [ ] → **cyrius**: `_arena_grow` keeps a chunk per slightly larger allocation (`lib/alloc.cyr`). A need
+  over the chunk size gets a chunk of its own in front of the next, and a chunk too small for what comes
+  next is not looked at again, so needs that keep rising each keep one. agnostic keeps its chunks at
+  least the body cap (ADR 0021), which covers bodies and not responses over 1 MiB. Filed with cyrius.
+- [ ] → **sandhi**: one connection holds one worker while it is read (audit S2). A per-peer connection
+  cap is what closes it, since `AGNOSTIC_REQUEST_MS` only shortens it. `AGNOSTIC_IDLE_MS` also has no
+  effect on that wait: `_sandhi_server_wait_request` polls until the deadline, so a shorter idle
+  limit is ignored. Accepted sockets have no `SO_SNDTIMEO` either.
+- [ ] → **patra**: its database and WAL files are created 0644 (`lib/patra.cyr:404`, `:1379`). agnostic
+  sets the database to 0600 at mount and uses no transaction, so no WAL exists today.
 - [ ] → **sandhi**, through agnosai: an exporter batch still leaves ~480 B, and an inference call
   ~2.6 KB including the reply it keeps, on the global bump in sandhi's dispatch path (16 B is the
-  stdlib's `sockaddr_in`). Recorded on agnosai's roadmap as "To file"; not yet filed with sandhi
-  (CHANGELOG 0.1.14, Known).
+  stdlib's `sockaddr_in`). Filed with sandhi (CHANGELOG 0.1.14, Known).
 - [ ] → **patra**: an over-length STR *query literal* is clamped (found by CNAME-255, 2026-10-04).
   `row_write_str` and `_str_hash64` (`lib/patra.cyr:2128`, `:2180`, 1.16.6) cut a literal over 255 bytes to
   its 255-byte prefix. So a `WHERE` on a STR column given a longer literal hashes and compares as
@@ -337,7 +514,7 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
   - Not reachable in agnostic today. Every STR it queries is capped below 255 bytes at the door:
     tenant keys at 64, settings at 64 and 255, and crew ids are UUIDs.
   - Fix direction: an upstream patra release that refuses an over-length literal the way it
-    refuses an over-length value. Fix it at source; do not wrap it here. Then re-pin. Not filed yet.
+    refuses an over-length value. Fix it at source; do not wrap it here. Then re-pin. Filed with patra.
 - [ ] → **patra**: an INSERT whose page write fails reports success (found 2026-10-07, reading
   patra for 0.1.15's audit fix). `tbl_insert` (`lib/patra.cyr:4989`, 1.16.6) calls `page_write`
   three times and ignores each result, though `page_write` answers `PATRA_ERR_IO` or a WAL refusal;
@@ -347,10 +524,10 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
   head moves to it, and the next start reports the trail `altered` at the entry after it.
   - Not reachable in a suite here (it needs an I/O error on write). Fix at source: propagate each
     `page_write` result out of `tbl_insert` (and check the other callers that ignore it), then
-    re-pin through a cyrius fold. Not filed yet.
+    re-pin through a cyrius fold. Filed with patra.
 - [ ] → **agnosai**: streamline its preset set (18 in `src/presets/`) to a small illustrative example
   library rather than a competing production one, so the two stop diverging by accident (Settled
-  decisions, preset canon). Not yet on agnosai's roadmap.
+  decisions, preset canon). Filed with agnosai.
 - [ ] → **bote**, through agnosai's tool registry (F1): the client half of MCP, so a crew's agents
   can call tools on external MCP servers. bote is the ecosystem's MCP layer (Settled decisions,
   2026-10-07). At 3.3.16 it is the server half — dispatch, six transports, sessions — plus a
@@ -361,6 +538,18 @@ Each is fixed at its source and reaches agnostic by a re-pin; none is wrapped he
 
 ## Decisions awaiting the user
 
+- [ ] **The parity review's records.** Each gap needs a line saying what happens to it. These are its
+  recommendations, for you to accept or change; the [review](research/2026-11-05-python-port-parity.md)
+  has the evidence for each.
+  - **Drop, with a recorded reason:** G6 scheduled reports and delivery (the default jobs raised on
+    construction, so they never ran), G8 alerts, G9 dashboards and the agent monitor (they read keys
+    with no literal writer), G13 the AGNOS clients (five never used beyond a shutdown `close()`), G16
+    preset writes, G17 small leftovers.
+  - **Port, on the plan above:** G1, G2, G3, G12, G14.
+  - **Decide at a milestone:** G4 at M6, G5 before M8.
+  - **Record per item:** G7 (one `/metrics` route, or OTLP only; drop the stack either way), G10 (each
+    unsurfaced engine capability; `recommend_preset` has no owner), G11 (defer to agnosai F5).
+  - G15, the operator documentation, is started: `docs/guides/configuration.md`, since 0.2.2.
 - [ ] **Make the post-tag benchmark run part of the Process?** 0.1.16's was run on request, right
   after the tag, on the clean tree: `./scripts/bench-history.sh`, then commit `BENCHMARKS.md` and
   `bench-history.csv`, so each row names a tagged commit. The proposal is a clause in CLAUDE.md's
@@ -553,17 +742,12 @@ own section below.
 
 ## Release shape
 
-**Decided 2026-08-20 — one release. M1–M9 ship together as 1.0.0.**
+**Decided 2026-08-20: one release, with M1–M9 shipping together as 1.0.0. Changed 2026-11-05: minor
+lines, 0.2.x to 0.5.x**, as in the *Release plan* above.
 
-`cyrius/CLAUDE.md:96` permits 1–2 releases for a multi-phase arc and AgnosAI used two, but Agnostic
-cuts as a total. The consequence to plan around: there is no intermediate tag, so `main` must stay
-green the whole way rather than being stabilised once per release — every milestone lands with its
-gates passing, and nothing is left "to be fixed before the cut".
-
-The 0.1.x line changed one part of this: patch releases are tagged from `main` as work lands
-(0.1.1 onward; M0–M5 shipped in 0.1.0 and 0.1.1), so there are intermediate tags. The rest stands:
-`main` stays green, and 1.0.0 is the release that completes M6–M9. The original plan's
-per-milestone versions (v0.2.0 to v0.9.0) are not used.
+1.0.0 is still the release that completes M6–M9, and `main` still stays green the whole way: every
+line lands with its gates passing, and nothing is left "to be fixed before the cut". Patch releases
+are tagged from `main` as work lands.
 
 ## Out of scope for v1.0
 
@@ -587,8 +771,6 @@ Each is optional, and nothing here gates a release.
 
 - **`cyrius deps --locked`** (6.7.6) resolves, writes nothing and fails naming each difference, so it
   can replace `scripts/lock-check.sh`.
-- **A `[test]` section** (6.7.6): `assert` and `bench` can move to `[test] stdlib`, which keeps them out
-  of the binary's compile set.
 - **`scripts/gen-presets.sh` retires, and `scripts/gen-webgui.sh` keeps only its CSP half, via `[embed]`**
   (cyrius P2, shipped in 6.6.19).
   `[embed] NAME = "path"` in cyrius.cyml gives every compile `NAME()` (the file's bytes, NUL-terminated) and

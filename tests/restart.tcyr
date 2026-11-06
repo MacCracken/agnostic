@@ -117,8 +117,15 @@ fn test_mount_interrupts_what_the_last_process_left_in_flight() {
       "⭐ the crew whose outcome was written is still completed");
     assert_eq(agnostic_crews_inflight_count(), 0, "and nothing is in flight");
 
+    # _T_B's outcome was written and its listing row never was, which is where a stop between
+    # the two leaves a crew: mount lists it again.
+    var repaired = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,
+        str_from("/api/v1/crews?status=completed"), str_from(""), 1048576, 0));
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(repaired, AGNOSTIC_JK_CREWS)), 1,
+      "⭐ a crew stopped between its outcome and its listing row is listed again");
+
     # Through the routes, as the first request after the listen would see it.
-    var g = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/crews/c0ffee00-0000-4000-8000-00000000000a"),
+    var g = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/crews/c0ffee00-0000-4000-8000-00000000000a"), #skip-lint
       str_from(""), 1048576, 0);
     assert_eq(agnostic_response_status(g), HTTP_OK, "GET answers 200, not 404");
     var list = agnostic_response_body(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET,

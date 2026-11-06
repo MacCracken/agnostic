@@ -55,8 +55,8 @@ enum AgnosticDefResult {
 #
 # ⚠ **A cache bound, not a store bound.** M3's identically-named cap was a real
 # ceiling — `create` refused past it. patra has no such limit, so creates are no
-# longer refused; past this many distinct keys, `get` simply decodes each time
-# and the process trades speed for memory it was going to spend anyway.
+# longer refused; past this many distinct keys, a read decodes each time, in the
+# reader's own arena.
 var AGNOSTIC_DEFINITIONS_MAX = 256;
 
 # key -> decoded AgnosticAgentDef. Never authoritative; see the module header.
@@ -272,8 +272,16 @@ fn _agnostic_definitions_replace_locked(key: Str, def): i64 {
 # Cache first, then patra. A row whose document no longer decodes answers 0 —
 # see the module header for why that is the right failure.
 fn agnostic_definitions_get(key: Str): i64 {
+    return agnostic_definitions_get_a(default_alloc(), key);
+}
+
+# `agnostic_definitions_get` for a reader in a request. A definition past the cache is decoded
+# in `a`, so it lives as long as the request. Each one used to be decoded on the global heap and
+# dropped, which leaked 12.8 KB a GET and 778 KB a listing past 256 definitions, to anyone with
+# READ permission.
+fn agnostic_definitions_get_a(a, key: Str): i64 {
     agnostic_store_lock();
-    var r = _agnostic_definitions_get_locked(key);
+    var r = _agnostic_definitions_get_locked_a(a, key);
     agnostic_store_unlock();
     return r;
 }
@@ -283,7 +291,7 @@ fn agnostic_definitions_get(key: Str): i64 {
 # ⚠ **The decode runs under the lock too**, though it touches no handle. Releasing
 # between the read and the cache write is exactly the window in which a `replace`
 # or `remove` lands and this function then caches what they just superseded.
-fn _agnostic_definitions_get_locked(key: Str): i64 {
+fn _agnostic_definitions_get_locked_a(a, key: Str): i64 {
     if (key == 0) { return 0; }
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
@@ -303,7 +311,15 @@ fn _agnostic_definitions_get_locked(key: Str): i64 {
 
     var len = patra_result_get_text_len(rs, 0, 0);
     if (len <= 0) { patra_result_free(rs); return 0; }
-    var buf = alloc(len);
+    # The cache keeps what it is given for the life of the process, so a decode it will take goes
+    # on the global heap. Past its bound the record is the reader's alone.
+    var into = a;
+    var cached = 0;
+    if (map_size(_agnostic_def_cache) < AGNOSTIC_DEFINITIONS_MAX) {
+        into = default_alloc();
+        cached = 1;
+    }
+    var buf = alloc_via(into, len);
     if (buf == 0) { patra_result_free(rs); return 0; }
     if (patra_result_read_text(db, rs, 0, 0, buf) != PATRA_OK) {
         patra_result_free(rs);
@@ -311,16 +327,16 @@ fn _agnostic_definitions_get_locked(key: Str): i64 {
     }
     patra_result_free(rs);
 
-    var v = bayan_json_v_parse_buf(buf, len);
+    var v = bayan_json_v_parse_buf_a(into, buf, len);
     if (v == 0) { return 0; }
     var reject: i64[1];
     store64(&reject, 0);
     # -1: not inside an `agents` array, so a rejection reads as a document
     # problem rather than as an array index nobody sent.
-    var d = agnostic_agent_def_decode_a(default_alloc(), v, 0 - 1, &reject);
+    var d = agnostic_agent_def_decode_in_a(into, into, v, 0 - 1, &reject);
     if (d == 0) { return 0; }
 
-    _agnostic_def_cache_put(key, d);
+    if (cached == 1) { _agnostic_def_cache_put(key, d); }
     return d;
 }
 
@@ -370,7 +386,7 @@ fn agnostic_definitions_replace_if_a(a, key: Str, def, if_match: Str): i64 {
 # `agnostic_definitions_replace_if_a`'s body. The caller holds the store lock.
 fn _agnostic_definitions_replace_if_locked_a(a, key: Str, def, if_match: Str): i64 {
     if (if_match != 0) {
-        var cur = _agnostic_definitions_get_locked(key);
+        var cur = _agnostic_definitions_get_locked_a(a, key);
         if (cur == 0) { return AGNOSTIC_DEF_MISSING; }
         if (agnostic_definition_precondition_a(a, cur, if_match) == 0) { return AGNOSTIC_DEF_PRECONDITION; }
     }
@@ -388,7 +404,7 @@ fn agnostic_definitions_remove_if_a(a, key: Str, if_match: Str): i64 {
 # `agnostic_definitions_remove_if_a`'s body. The caller holds the store lock.
 fn _agnostic_definitions_remove_if_locked_a(a, key: Str, if_match: Str): i64 {
     if (if_match != 0) {
-        var cur = _agnostic_definitions_get_locked(key);
+        var cur = _agnostic_definitions_get_locked_a(a, key);
         if (cur == 0) { return AGNOSTIC_DEF_MISSING; }
         if (agnostic_definition_precondition_a(a, cur, if_match) == 0) { return AGNOSTIC_DEF_PRECONDITION; }
     }

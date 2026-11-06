@@ -64,7 +64,7 @@ fn test_every_forwarded_field_arrives() {
     var a = arena_allocator(262144);
     var rj: i64[1];
     var d = _t_decode(a,
-      "{\"key\":\"qa-1\",\"role\":\"r\",\"goal\":\"g\",\"name\":\"Ann\",\"backstory\":\"veteran\",\"domain\":\"quality\",\"complexity\":\"high\",\"llm_model\":\"m1\",\"tools\":[\"RegressionTestingTool\",\"LoadTestingTool\"],\"gpu_required\":true,\"gpu_preferred\":true,\"gpu_memory_min_mb\":8192}",
+      "{\"key\":\"qa-1\",\"role\":\"r\",\"goal\":\"g\",\"name\":\"Ann\",\"backstory\":\"veteran\",\"domain\":\"quality\",\"complexity\":\"high\",\"llm_model\":\"m1\",\"tools\":[\"RegressionTestingTool\",\"LoadTestingTool\"],\"gpu_required\":true,\"gpu_preferred\":true,\"gpu_memory_min_mb\":8192}", #skip-lint
       &rj);
     assert_neq(d, 0, "every forwarded field is accepted");
 

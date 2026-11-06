@@ -8,7 +8,7 @@
 include "src/app.cyr"
 include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
-var _T_BODY = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}";
+var _T_BODY = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}"; #skip-lint
 
 fn _t_status(a, method, path, body): i64 {
     return agnostic_response_status(
@@ -145,7 +145,7 @@ fn test_submit_rejections() {
     assert_eq(_t_status(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", "{}"), HTTP_BAD_REQUEST,
       "an empty object is 400");
     assert_eq(_t_status(a, AGNOSTIC_METHOD_POST, "/api/v1/crews",
-        "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}],\"extra\":1}"),
+        "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}],\"extra\":1}"), #skip-lint
       AGNOSTIC_HTTP_UNPROCESSABLE, "an unknown field is 422");
 
     # Body-size rejection happens BEFORE routing, so an oversized body to a real
@@ -613,6 +613,186 @@ var _T_CREWDB = _tt_tmp_path("crews-route-collector");
 # ⭐ The collector (0.1.9): with no client polling at all, a finished crew's outcome is
 # latched and PERSISTED, and its events are collected and timed. Before 0.1.9 an outcome
 # was latched only by a poll, so a crew that finished unwatched did not survive a restart.
+# A crew the ledger has finished with leaves the engine's registry, so the engine's all-at-once
+# eviction never fires. Anything still in it has not been read.
+fn test_a_finished_crew_leaves_the_engine() {
+    test_group("crews/retired");
+
+    var a = arena_allocator(262144);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"),
+      str_from(_T_BODY), 1048576, 0);
+    var id = agnostic_req_str(agnostic_response_body(resp), AGNOSTIC_JK_CREW_ID);
+    var entry = agnostic_ledger_entry(id);
+    var sa = arena_allocator(262144);
+    var sweeps = 0;
+    while (sweeps < 300 && agnostic_ledger_is_live(entry) == 1) {
+        agnostic_collector_sweep_a(sa);
+        reset_via(sa);
+        sleep_ms(5);
+        sweeps = sweeps + 1;
+    }
+    assert_eq(agnostic_ledger_is_live(entry), 0, "the crew finished");
+    assert_eq(agnostic_engine_crew_count(), 0, "⭐ and the engine no longer holds it");
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/crews/");
+    str_builder_add(sb, id);
+    var got = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_builder_build(sb), str_from(""), 1048576, 0);
+    assert_eq(agnostic_response_status(got), HTTP_OK, "the ledger still answers for it");
+    assert_eq(str_eq_cstr(agnostic_req_str(agnostic_response_body(got), AGNOSTIC_JK_STATUS), "completed"), 1,
+      "as completed");
+}
+
+# ⭐ At the engine's 1000 the next submit drops every finished crew at once, read or not. Through
+# 0.2.1 that lost whatever the collector had not reached, and each read `unknown`, with its results
+# gone: 885 of 1,300 at 190/s.
+fn test_no_crew_is_lost_at_the_engine_cap() {
+    test_group("crews/engine-cap");
+
+    var a = arena_allocator(262144);
+    var sa = arena_allocator(262144);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var ids = vec_new();
+    var total = AGNOSAI_MAX_RETAINED_CREWS + 200;
+    var i = 0;
+    while (i < total) {
+        var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"),
+          str_from(_T_BODY), 1048576, 0);
+        vec_push(ids, str_clone(agnostic_req_str(agnostic_response_body(resp), AGNOSTIC_JK_CREW_ID)));
+        reset_via(a);
+        # Time for this crew to finish. A running crew survives the eviction: only one that has
+        # finished and not been read can be lost, and the sweep below is the collector's lag.
+        sleep_ms(1);
+        # Not a divisor of the engine's 1000, or a sweep lands just before its eviction every time.
+        if ((i % 64) == 63) {
+            agnostic_collector_sweep_a(sa);
+            reset_via(sa);
+        }
+        i = i + 1;
+    }
+    var waited = 0;
+    while (waited < 600 && agnostic_engine_crew_count() > 0) {
+        agnostic_collector_sweep_a(sa);
+        reset_via(sa);
+        sleep_ms(10);
+        waited = waited + 1;
+    }
+    assert_eq(agnostic_engine_crew_count(), 0, "every crew was read and retired");
+    var lost = 0;
+    i = 0;
+    while (i < total) {
+        var e = agnostic_ledger_entry(vec_get(ids, i));
+        if (e != 0) {
+            if (agnostic_ledger_status(e) != AGNOSTIC_CREW_COMPLETED) { lost = lost + 1; }
+        }
+        i = i + 1;
+    }
+    assert_eq(lost, 0, "⭐ and none was lost to the engine's eviction");
+}
+
+# A crew of `n` tasks, as a body.
+fn _t_body_of(n) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"many\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":["); #skip-lint
+    var i = 0;
+    while (i < n) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "{\"description\":\"t\"}");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "]}");
+    return str_builder_build(sb);
+}
+
+# ⭐ Seeing that a crew finished does not wait for its write. A sweep doing both managed about 50
+# crews a second, so at 200/s the registry reached the engine's cap and lost them anyway.
+fn test_collecting_does_not_wait_for_the_write() {
+    test_group("crews/collect-apart");
+
+    agnostic_store_close();
+    sys_unlink(_T_CREWDB);
+    patra_init();
+    agnostic_store_open(str_from(_T_CREWDB));
+    agnostic_crews_ensure();
+    var a = arena_allocator(262144);
+    var sa = arena_allocator(262144);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+
+    var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"),
+      str_from(_T_BODY), 1048576, 0);
+    var id = agnostic_req_str(agnostic_response_body(resp), AGNOSTIC_JK_CREW_ID);
+    var entry = agnostic_ledger_entry(id);
+    var tries = 0;
+    while (tries < 400 && agnostic_engine_crew_count() > 0) {
+        agnostic_crew_collect_a(sa, entry, id);
+        reset_via(sa);
+        sleep_ms(5);
+        tries = tries + 1;
+    }
+    assert_eq(agnostic_engine_crew_count(), 0, "the crew is retired with no write done");
+    assert_eq(agnostic_ledger_status(entry), AGNOSTIC_CREW_COMPLETED, "a reader sees it finished");
+    assert_eq(agnostic_ledger_is_live(entry), 1, "and the ledger still owes its outcome");
+    assert_eq(agnostic_crews_doc_a(sa, id), 0, "which is not stored yet");
+
+    assert_eq(agnostic_collector_finish_a(sa), 1, "a stop writes what is owed");
+    assert_neq(agnostic_crews_doc_a(sa, id), 0, "and the outcome is stored");
+    assert_eq(agnostic_ledger_is_live(entry), 0, "so the entry is finished");
+}
+
+# ⭐ A cancelled crew reads CANCELLED before it ends. If one thread drains the engine's close
+# between another's last look and its retirement, the look that holds the results has to be the
+# retirement's own. Scripted, because the threads that hit this needed 4,000 crews to do it.
+fn test_a_cancelled_crew_keeps_its_results_at_retirement() {
+    test_group("crews/cancel-retire");
+
+    var a = arena_allocator_growable(1048576);
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+    var o = agnostic_engine_orchestrator();
+    var body = _t_body_of(1000);
+    var tries = 0;
+    var checked = 0;
+    while (tries < 200 && checked == 0) {
+        tries = tries + 1;
+        reset_via(a);
+        var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), body, 1048576, 0);
+        var id = str_clone(agnostic_req_str(agnostic_response_body(resp), AGNOSTIC_JK_CREW_ID));
+        var e = agnostic_ledger_entry(id);
+        var spins = 0;
+        while (agnostic_ledger_event_count(e) < 6 && spins < 100000) {
+            agnostic_crew_refresh_a(a, e, id);
+            spins = spins + 1;
+        }
+        if (agnostic_crew_cancel_a(a, id) == AGNOSTIC_CANCEL_OK) {
+            var sub = load64(e + AGNOSTIC_LE_SUB);
+            if (sub != 0) {
+                while (agnosai_event_sub_closed(sub) == 0) { sleep_ms(1); }
+                var engine_n = vec_len(agnosai_crew_state_results(agnosai_orchestrator_crew(o, id)));
+                if (engine_n > 0) {
+                    # Another thread's drain sees the close; this one goes straight to retirement.
+                    agnostic_ledger_drain_a(a, e, vec_new_a(a));
+                    assert_eq(_agnostic_crew_retire_a(a, e, id), 1, "the crew is retired");
+                    assert_eq(_agnostic_results_count(agnostic_ledger_results(e)), engine_n,
+                      "⭐ with every result the engine recorded");
+                    assert_eq(agnostic_ledger_status(e), AGNOSTIC_CREW_CANCELLED, "and still cancelled");
+                    checked = 1;
+                }
+            }
+        }
+    }
+    assert_eq(checked, 1, "the sequence was reached");
+}
+
 fn test_collector_without_a_poller() {
     test_group("crews/collector");
 
@@ -768,7 +948,7 @@ fn test_an_interrupted_crew_is_not_404() {
     sys_unlink(_T_RESTARTDB);
 }
 
-var _T_DAG = "{\"name\":\"plan\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"llm_model\":\"m1\"},{\"key\":\"a2\",\"role\":\"writer\",\"goal\":\"write it up\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\",\"priority\":\"high\"},{\"description\":\"three\",\"dependencies\":[0,1]}]}";
+var _T_DAG = "{\"name\":\"plan\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"llm_model\":\"m1\"},{\"key\":\"a2\",\"role\":\"writer\",\"goal\":\"write it up\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\",\"priority\":\"high\"},{\"description\":\"three\",\"dependencies\":[0,1]}]}"; #skip-lint
 
 fn _t_crew_url(id, tail): i64 {
     var sb = str_builder_new();
@@ -811,7 +991,8 @@ fn test_task_ids_and_plan() {
     var pt0 = bayan_json_v_arr_get(tasks, 0);
     var pt1 = bayan_json_v_arr_get(tasks, 1);
     var pt2 = bayan_json_v_arr_get(tasks, 2);
-    assert_eq(str_eq(agnostic_req_str(pt0, AGNOSTIC_JK_TASK_ID), t0), 1, "in request order: task 0 is the 202's first id");
+    assert_eq(str_eq(agnostic_req_str(pt0, AGNOSTIC_JK_TASK_ID), t0), 1,
+      "in request order: task 0 is the 202's first id");
     assert_eq(str_eq(agnostic_req_str(pt2, AGNOSTIC_JK_TASK_ID), t2), 1, "and task 2 its third");
     assert_eq(str_eq_cstr(agnostic_req_str(pt1, AGNOSTIC_JK_DESCRIPTION), "two"), 1, "each with its description");
     assert_eq(str_eq_cstr(agnostic_req_str(pt1, AGNOSTIC_JK_PRIORITY), "high"), 1, "and priority");
@@ -860,7 +1041,7 @@ fn test_task_ids_and_plan() {
 
 # Three agents a task can tell apart only by complexity: the task says none, which the engine
 # reads as medium, so a2 ("medium") aligns fully and a1 ("low") and a3 ("high") by two thirds.
-var _T_PICK = "{\"name\":\"pick\",\"process\":\"sequential\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"low\"},{\"key\":\"a2\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"medium\"},{\"key\":\"a3\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"high\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\"}]}";
+var _T_PICK = "{\"name\":\"pick\",\"process\":\"sequential\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"low\"},{\"key\":\"a2\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"medium\"},{\"key\":\"a3\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"high\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\"}]}"; #skip-lint
 
 # The key of `obj`'s `field` object's `agent_key`, or 0.
 fn _t_key_of(obj, field) {
@@ -1030,7 +1211,7 @@ fn test_plan_explains_selection() {
 }
 
 # Two agents and two tasks: one task names no hint, the other asks for `load`'s tool and domain.
-var _T_HINTED = "{\"name\":\"hinted\",\"agents\":[{\"key\":\"web\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"playwright\"]},{\"key\":\"load\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"k6\"],\"domain\":\"performance\"}],\"tasks\":[{\"description\":\"plain\"},{\"description\":\"soak\",\"required_tools\":[\"k6\"],\"complexity\":\"medium\",\"domain\":\"performance\",\"gpu_required\":false}]}";
+var _T_HINTED = "{\"name\":\"hinted\",\"agents\":[{\"key\":\"web\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"playwright\"]},{\"key\":\"load\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"k6\"],\"domain\":\"performance\"}],\"tasks\":[{\"description\":\"plain\"},{\"description\":\"soak\",\"required_tools\":[\"k6\"],\"complexity\":\"medium\",\"domain\":\"performance\",\"gpu_required\":false}]}"; #skip-lint
 
 # The plan says what each task was hinted with, and the explanation shows the hints at work
 # (0.1.14, ADR 0017).
@@ -1114,7 +1295,8 @@ fn test_explain_refuses_past_the_budget() {
     agnostic_engine_init(agnostic_config_from_env());
 
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "{\"name\":\"big\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[");
+    str_builder_add_cstr(sb,
+      "{\"name\":\"big\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[");
     var i = 0;
     while (i <= AGNOSTIC_EXPLAIN_MAX_CANDIDATES) {
         if (i > 0) { str_builder_add_cstr(sb, ","); }
@@ -1211,6 +1393,10 @@ fn main() {
     test_events_route_status_is_current();
     test_events_cursor();
     test_events_gap();
+    test_a_finished_crew_leaves_the_engine();
+    test_no_crew_is_lost_at_the_engine_cap();
+    test_collecting_does_not_wait_for_the_write();
+    test_a_cancelled_crew_keeps_its_results_at_retirement();
     test_collector_without_a_poller();
     test_submit_marks_the_crew_in_flight();
     test_an_interrupted_crew_is_not_404();

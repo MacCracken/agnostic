@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-10-04
+**Note**: the request arena no longer spills. [ADR 0021](0021-request-arenas-grow-and-do-not-spill.md) replaced that policy at 0.2.2.
 
 ## Context
 

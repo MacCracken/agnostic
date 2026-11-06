@@ -299,12 +299,8 @@ fn agnostic_preset_document(p): i64 {
 # The listing entry for one preset: name, description, domain, size, version,
 # workflow_mode and agent_count — **not** the document.
 #
-# ⚠ The whole library is 61,412 bytes of compact JSON and the default request
-# arena is 65,536 (`AGNOSTIC_DEFAULT_ARENA`). Rendering 18 full documents into a
-# list would consume 94% of the arena for the output string alone, before the
-# value tree that produces it — and the arena's `ARENA_FULL_SPILL` policy
-# satisfies an overflow from the global bump, which has no `free()`. A full-document
-# listing would therefore leak, permanently, on every call.
+# The whole library is 61,412 bytes of compact JSON, so a full-document listing would
+# make every worker that served one hold about three times that for good (ADR 0021).
 #
 # Summaries are ~4 KB, and they are the right answer on merit anyway: a caller
 # listing presets is choosing one, and fetches the document it chose.

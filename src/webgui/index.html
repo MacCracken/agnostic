@@ -438,9 +438,9 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     }
     window.addEventListener('message', async (e) => {
       const frame = $('plugin-frame');
-      // Only the plugin frame on screen may ask, and only as itself — and it is always
-      // sandboxed, so its origin is opaque ('null'). A frame that navigated itself to a
-      // real origin is no longer the plugin, and gets nothing.
+      // Only the plugin frame on screen may ask, and only as itself. It is always sandboxed, so
+      // its origin is opaque ('null') wherever it navigates: this check cannot see a navigated
+      // frame. The boundary is what the bridge grants, checked again by the server (ADR 0007).
       if (!bridge.plugin || !frame.contentWindow || e.source !== frame.contentWindow) return;
       if (e.origin !== 'null') return;
       const msg = e.data;

@@ -132,7 +132,8 @@ fn test_parse_otlp_endpoint() {
     assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://localhost\t")), 0, "and a control byte");
     assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://:4318")), 0,
       "an empty host is refused (sandhi's parser, which the exporter posts through)");
-    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://collector:abc")), 0, "so is a port that is not a number");
+    assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://collector:abc")), 0,
+      "so is a port that is not a number");
     assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://user:pass@collector:4318")), 0,
       "userinfo is refused: a token belongs in OTEL_EXPORTER_OTLP_HEADERS");
     assert_eq(agnostic_config_parse_otlp_endpoint(str_from("http://collector:4318?x=1")), 0,
@@ -174,8 +175,42 @@ fn test_parse_otlp_endpoint() {
     assert_eq(agnostic_config_llm_timeout_secs(c), 120, "and reads back");
 }
 
+# A value that is not one of these stops the server: a typo must not leave it open.
+fn test_parse_auth() {
+    test_group("config/parse-auth");
+    assert_eq(agnostic_config_parse_auth(str_from("required")), AGNOSTIC_AUTH_REQUIRED, "required");
+    assert_eq(agnostic_config_parse_auth(str_from("REQUIRED")), AGNOSTIC_AUTH_REQUIRED, "in any case");
+    assert_eq(agnostic_config_parse_auth(str_from("off")), AGNOSTIC_AUTH_OFF, "off");
+    assert_eq(agnostic_config_parse_auth(str_from("")), AGNOSTIC_AUTH_OFF, "empty is the default");
+    assert_eq(agnostic_config_parse_auth(str_from("requred")), 0 - 1, "a typo is refused");
+    assert_eq(agnostic_config_parse_auth(str_from("true")), 0 - 1, "and so is a boolean");
+}
+
+fn test_parse_addr() {
+    test_group("config/parse-addr");
+    assert_eq(agnostic_config_parse_addr(str_from("any")), INADDR_ANY(), "any");
+    assert_eq(agnostic_config_parse_addr(str_from("loopback")), INADDR_LOOPBACK(), "loopback");
+    assert_eq(agnostic_config_parse_addr(str_from("localhost")), INADDR_LOOPBACK(), "localhost");
+    assert_eq(agnostic_config_parse_addr(str_from("127.0.0.1")), INADDR_LOOPBACK(), "127.0.0.1");
+    assert_eq(agnostic_config_parse_addr(str_from("")), INADDR_LOOPBACK(), "empty is the default");
+    assert_eq(agnostic_config_parse_addr(str_from("10.1.2.3")), 0 - 1, "an address it cannot honour is refused");
+}
+
+fn test_url_userinfo() {
+    test_group("config/url-userinfo");
+    assert_eq(agnostic_config_url_has_userinfo(str_from("http://user:pw@gw:8088/v1")), 1, "user:pass@");
+    assert_eq(agnostic_config_url_has_userinfo(str_from("https://token@gw")), 1, "a bare token@");
+    assert_eq(agnostic_config_url_has_userinfo(str_from("http://gw:8088/v1")), 0, "a plain URL");
+    assert_eq(agnostic_config_url_has_userinfo(str_from("http://gw:8088/a@b")), 0, "an @ in the path");
+    assert_eq(agnostic_config_url_has_userinfo(str_from("http://gw?x=a@b")), 0, "an @ in the query");
+    assert_eq(agnostic_config_url_has_userinfo(str_from("gw")), 0, "no scheme at all");
+}
+
 fn main() {
     alloc_init();
+    test_parse_auth();
+    test_parse_addr();
+    test_url_userinfo();
     test_parse_port();
     test_parse_bounded();
     test_parse_bool();

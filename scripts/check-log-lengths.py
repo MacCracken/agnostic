@@ -19,6 +19,7 @@ is the only thing standing between a miscount and production.
 
 Exits non-zero on any mismatch. Run from the repo root.
 """
+import codecs
 import glob
 import re
 import sys
@@ -41,8 +42,35 @@ SAKSHI_KV = re.compile(
 
 
 def byte_len(literal):
-    """The length sakshi is actually handed: bytes, after resolving escapes."""
-    return len(literal.encode().decode("unicode_escape").encode("utf-8"))
+    """The length sakshi is actually handed: bytes, after resolving escapes.
+
+    `codecs.escape_decode` works on the UTF-8 bytes: it resolves `\\n`, `\\0`, `\\\\`
+    and `\\"` and leaves every other byte as it is. Through 0.2.1 this read those
+    bytes as Latin-1 and encoded each one again, so every non-ASCII byte counted
+    twice and the gate would have demanded a length past the literal.
+    """
+    return len(codecs.escape_decode(literal.encode("utf-8"))[0])
+
+
+# Known byte counts, checked before any file is scanned: a checker that mismeasures
+# passes every literal sized by its own count. Each pair is (literal as written in
+# source, bytes sakshi is handed).
+SELF_TEST = [
+    ("plain ascii", 11),
+    ("a — b", 7),              # an em dash is 3 bytes
+    ("café", 5),               # a 2-byte character
+    ("line\\n", 5),            # \n is one byte
+    ("nul\\0", 4),             # \0 is one byte
+    ("q\\\"q", 3),             # \" is one byte
+    ("back\\\\slash", 10),     # \\ is one byte
+]
+
+
+def self_test():
+    wrong = [(lit, want, byte_len(lit)) for lit, want in SELF_TEST if byte_len(lit) != want]
+    for lit, want, got in wrong:
+        print("    self-test: %r is %d bytes, byte_len says %d" % (lit, want, got))
+    return not wrong
 
 
 def line_of(text, pos):
@@ -81,6 +109,9 @@ def check(path, bad):
 
 
 def main():
+    if not self_test():
+        print("error: byte_len mismeasures a known literal, so no length here can be trusted.")
+        return 1
     bad = []
     paths = (sorted(glob.glob("src/**/*.cyr", recursive=True))
              + sorted(glob.glob("tests/*.tcyr"))

@@ -879,6 +879,18 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
         return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
           str_from_a(a, "task dependencies contain a cycle"));
     }
+    # ⚠ Accepted only where it means something, as `max_concurrency` is: under `sequential` or
+    # `parallel` a dependency was accepted and ignored, and a task ran before the one it named.
+    if (process != AGNOSTIC_PROCESS_DAG) {
+        ti = 0;
+        while (ti < tn) {
+            if (vec_len(load64(vec_get(checked, ti) + AGNOSTIC_TQ_DEPENDENCIES)) > 0) {
+                return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
+                  str_from_a(a, "'dependencies' applies only to process 'dag'"));
+            }
+            ti = ti + 1;
+        }
+    }
 
     # Built — nothing below refuses but an allocation that fails.
     var agents = vec_new();
@@ -909,6 +921,33 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
     store64(r + AGNOSTIC_CQ_AGENTS, agents);
     store64(r + AGNOSTIC_CQ_TASKS, tasks);
     return r;
+}
+
+# `agnostic_crew_req_unforwarded_a` read straight off a body already checked, with nothing built:
+# what a replay answers.
+fn agnostic_crew_value_unforwarded_a(a, v): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0 || v == 0) { return arr; }
+    var agents = bayan_json_v_obj_get_by_str(v, str_from_a(a, "agents"));
+    if (bayan_json_v_is_arr(agents) != 1) { return arr; }
+    var focus = 0;
+    var deleg = 0;
+    var i = 0;
+    while (i < bayan_json_v_arr_len(agents)) {
+        var ag = bayan_json_v_arr_get(agents, i);
+        var fv = bayan_json_v_obj_get_by_str(ag, AGNOSTIC_JK_FOCUS);
+        if (fv != 0 && bayan_json_v_is_null(fv) != 1) { focus = 1; }
+        var dv = bayan_json_v_obj_get_by_str(ag, AGNOSTIC_JK_DELEGATION);
+        if (dv != 0 && bayan_json_v_is_null(dv) != 1) { deleg = 1; }
+        i = i + 1;
+    }
+    if (focus == 1) {
+        bayan_json_v_arr_push_a(a, arr, bayan_json_v_str_new_a(a, AGNOSTIC_JK_FOCUS));
+    }
+    if (deleg == 1) {
+        bayan_json_v_arr_push_a(a, arr, bayan_json_v_str_new_a(a, AGNOSTIC_JK_DELEGATION));
+    }
+    return arr;
 }
 
 # Which retained-but-unforwarded fields this submission's agents carry, as a

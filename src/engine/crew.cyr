@@ -206,6 +206,11 @@ fn agnostic_engine_init(cfg): i64 {
     var o = agnosai_orchestrator_new(budget);
     if (o == 0) { return 0; }
 
+    # The engine's own audit chain is agnostic's to switch off: libro holds the trail here and
+    # nothing reads this one. It cost 9.6 KB per crew, and past 10,000 entries its eviction
+    # re-hashed on the global heap, taking a crew's cost from 28 KB to 65 KB.
+    agnosai_orchestrator_with_audit(o, 0);
+
     _agnostic_event_bus = agnosai_event_bus_new();
     if (_agnostic_event_bus != 0) { agnosai_orchestrator_with_events(o, _agnostic_event_bus); }
 
@@ -217,6 +222,7 @@ fn agnostic_engine_init(cfg): i64 {
     var url = agnostic_config_llm_url(cfg);
     if (url != 0) {
         agnosai_orchestrator_with_llm_url(o, url, agnostic_config_llm_api_key(cfg));
+        agnostic_outcome_set_gateway(url);
         # The inference call's ceilings (0.1.14; agnosai 2.1.6 gave the call any). Unset keeps
         # agnosai's: connect 10 s, each read or write 300 s, the exchange 600 s. A shorter
         # exchange bounds the other two with it. Mount time: the block is read lock-free.
@@ -385,7 +391,7 @@ fn agnostic_crew_submit_owned(r, out_entry, scope: Str, idem: Str, fprint: Str):
 }
 
 # The room the start-up sweep reads the in-flight rows into, and renders each crew's
-# document in. SPILL beyond either, like the collector's arena.
+# document in. Both grow past that, like the collector's arena.
 var AGNOSTIC_INFLIGHT_ROWS_BYTES = 262144;
 var AGNOSTIC_INFLIGHT_DOC_BYTES  = 65536;
 
@@ -407,12 +413,10 @@ var AGNOSTIC_INFLIGHT_DOC_BYTES  = 65536;
 # file would sweep the first one's live crews (ADR 0013, docs/architecture/001).
 fn agnostic_crews_interrupt_inflight(): i64 {
     if (agnostic_store_is_open() == 0) { return 0; }
-    var ra = arena_allocator(AGNOSTIC_INFLIGHT_ROWS_BYTES);
+    var ra = arena_allocator_growable(AGNOSTIC_INFLIGHT_ROWS_BYTES);
     if (ra == 0) { return 0; }
-    arena_allocator_set_on_full(ra, ARENA_FULL_SPILL);
-    var da = arena_allocator(AGNOSTIC_INFLIGHT_DOC_BYTES);
+    var da = arena_allocator_growable(AGNOSTIC_INFLIGHT_DOC_BYTES);
     if (da == 0) { return 0; }
-    arena_allocator_set_on_full(da, ARENA_FULL_SPILL);
 
     var rows = agnostic_crews_inflight_a(ra);
     if (rows == 0) { return 0; }
@@ -526,31 +530,71 @@ fn agnostic_crew_observed_status(e, observed): i64 {
 # `crew_completed` before the orchestrator records the terminal state, so once
 # that state is observed, the closing events are already in the channel.
 fn agnostic_crew_refresh_a(a, entry, crew_id: Str): i64 {
+    agnostic_crew_collect_a(a, entry, crew_id);
+    agnostic_ledger_flush_a(a, entry);
+    return entry;
+}
+
+# Everything a refresh does but write the outcome: read the engine, latch, and retire the crew.
+#
+# ⚠ **Apart from the write, on purpose (0.2.2, ADR 0022).** A crew's outcome costs about 11.5 ms of
+# fsync, so a sweep doing both managed about 50 crews a second. At 200/s the registry reached the
+# engine's cap in 5 s and lost crews regardless. This half is memory, so a sweep always keeps up.
+fn agnostic_crew_collect_a(a, entry, crew_id: Str): i64 {
     # The outputs finished tasks sent while the crew runs (0.1.15, ADR 0019): collected under
     # the ledger lock, kept below once it is released — never the two locks at once.
     var finals = vec_new_a(a);
     agnostic_ledger_drain_a(a, entry, finals);
-
-    if (_agnostic_orchestrator != 0) {
-        var state = agnosai_orchestrator_crew(_agnostic_orchestrator, crew_id);
-        if (state != 0) {
-            var observed = agnostic_outcome_from_state_a(a, state);
-            var status = agnostic_crew_observed_status(entry, agnostic_outcome_status(observed));
-            agnostic_ledger_latch(entry, status,
-              agnostic_outcome_error(observed),
-              agnostic_outcome_results(observed));
-        } else {
-            if (agnostic_status_is_terminal(agnostic_ledger_status(entry)) == 0) {
-                agnostic_ledger_latch(entry, AGNOSTIC_CREW_UNKNOWN,
-                  AGNOSTIC_CREW_LOST_MSG, 0);
-            }
-        }
-    }
+    _agnostic_crew_observe_a(a, entry, crew_id);
     if (agnostic_status_is_terminal(agnostic_ledger_status(entry)) == 1) {
         agnostic_ledger_drain_a(a, entry, finals);
     }
+    _agnostic_crew_retire_a(a, entry, crew_id);
     _agnostic_crew_keep_finals(crew_id, finals);
     return entry;
+}
+
+# Latch what the engine's registry says about a crew now: rungs 2 to 4 above.
+fn _agnostic_crew_observe_a(a, entry, crew_id: Str): i64 {
+    if (_agnostic_orchestrator == 0) { return 0; }
+    var state = agnosai_orchestrator_crew(_agnostic_orchestrator, crew_id);
+    if (state != 0) {
+        var observed = agnostic_outcome_from_state_a(a, state);
+        var status = agnostic_crew_observed_status(entry, agnostic_outcome_status(observed));
+        agnostic_ledger_latch_owed(entry, status, agnostic_outcome_error(observed),
+          agnostic_outcome_results(observed));
+    } else {
+        if (agnostic_status_is_terminal(agnostic_ledger_status(entry)) == 0) {
+            agnostic_ledger_latch_owed(entry, AGNOSTIC_CREW_UNKNOWN, AGNOSTIC_CREW_LOST_MSG, 0);
+        }
+    }
+    return 0;
+}
+
+# Take a finished crew out of the engine's registry, once the ledger holds all it will ever need.
+#
+# ⛔ **The fix for finished crews going missing (0.2.2).** At 1000 entries the engine's next submit
+# drops every finished crew at once (`_agnosai_orch_evict_locked`), including those this
+# process has not read yet: the collector looks only every 200 ms, so under load a completed
+# crew vanished and latched UNKNOWN, with its results gone, and read `interrupted` after a
+# restart. 1,300 crews at 190/s lost 885. A crew retired here is one the ledger already holds, so
+# the registry stays at the crews still running and that eviction never fires.
+#
+# ⚠ It reaches into the orchestrator's fields because agnosai 2.2.3 has no call for this: a rename
+# there is a build error here, not a silent change. The upstream fix is on the roadmap, and this
+# goes when it ships.
+fn _agnostic_crew_retire_a(a, entry, crew_id: Str): i64 {
+    if (_agnostic_orchestrator == 0) { return 0; }
+    if (agnostic_ledger_retire_claim(entry) == 0) { return 0; }
+    # One last look, by the one thread that won the claim. The subscription closed, so the engine
+    # has recorded the final state, and this is the last chance to read it: a cancelled crew reads
+    # CANCELLED before it ends, and an observation made a moment ago can hold no results.
+    _agnostic_crew_observe_a(a, entry, crew_id);
+    var mtx = load64(_agnostic_orchestrator + AGN_OR_MUTEX);
+    mutex_lock(mtx);
+    map_delete(load64(_agnostic_orchestrator + AGN_OR_CREWS), crew_id);
+    mutex_unlock(mtx);
+    return 1;
 }
 
 # Keep each finished task's output in `finals` (events, `agnostic_ledger_is_final_token`) for
@@ -624,7 +668,14 @@ fn agnostic_crew_cancel_a(a, crew_id: Str): i64 {
         return AGNOSTIC_CANCEL_ENGINE_UNKNOWN;
     }
 
-    agnostic_ledger_latch(entry, AGNOSTIC_CREW_CANCELLED, 0, 0);
+    # The crew can finish between the engine's answer and this latch. The ledger then holds what it
+    # finished as, and a cancel that changed nothing must not report that it did. A refresh that
+    # got here first latched this cancel's own CANCELLED, which is this cancel succeeding.
+    if (agnostic_ledger_latch_a(a, entry, AGNOSTIC_CREW_CANCELLED, 0, 0) == 0) {
+        if (agnostic_ledger_status(entry) != AGNOSTIC_CREW_CANCELLED) {
+            return AGNOSTIC_CANCEL_ALREADY_TERMINAL;
+        }
+    }
     agnostic_log_kv_str(SK_INFO, "crew cancelled", 14, "crew_id", 7, crew_id);
     agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, "crew.cancel"),
       agnostic_audit_detail_a(a, "crew_id", crew_id));

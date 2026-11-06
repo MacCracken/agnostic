@@ -101,7 +101,9 @@ crew that never existed. With authentication off, everyone shares one tenant, `_
 
 - Every **POST and PUT** sends `Content-Type: application/json`, including cancel, which has no
   body. Without it the answer is **415**.
-- A body is at most 1 MiB by default (**413**).
+- A body is at most 1 MiB by default (**413**), and a login body at most 4 KiB.
+- A request must arrive whole within 15 s of connecting by default (**408**).
+- JSON must be well-formed UTF-8, with no key repeated in an object (**400**).
 - Every error is `{"error":"…"}`, and the message names the field or rule. (A few WebGUI plugin
   refusals add a `code`.) **405** means the path exists but not with that method; its `Allow`
   header names the methods the path takes.
@@ -168,7 +170,7 @@ of 0 or more), `focus`, `allow_delegation` (a boolean).
 <!-- schema: bodies.task.fields vocabularies.priority vocabularies.risk vocabularies.complexity -->
 **Task**: `description` is required. Optional: `expected_output`, `priority` (`background`, `low`,
 `normal`, `high`, `critical`), `risk` (`low`, `medium`, `high`), `dependencies` (indices into
-`tasks`, at most 64, never itself, no cycles; `dag` runs a task after the tasks it depends on).
+`tasks`, at most 64, never itself, no cycles, `dag` only; it runs a task after the tasks it depends on).
 Hints for choosing its agent: `required_tools` (an array of tool names, at most 64), `complexity`
 (`low`, `medium`, `high`), `domain` (compared with each agent's, ignoring case) and `gpu_required`
 (a boolean).

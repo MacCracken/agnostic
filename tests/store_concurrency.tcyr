@@ -179,29 +179,29 @@ fn test_the_lock_is_reentrant_and_owned() {
     assert_eq(agnostic_rlock_held(_t_rl), 0, "leaving the main thread holding nothing");
 
     # ⭐ 0.1.15: `defer` may pair an enter with its exit again. cycc 6.6.6 dropped a pending
-    # `defer` when the fn returned through `return f(...)`, so a deferred exit was a lock held
+    # `defer` when the fn returned through `return f(...)`, so a `defer`red exit was a lock held
     # forever (filed 2026-09-26, fixed in cyrius 6.6.7). This pins the fix at the toolchain
     # this repo is built with: every return shape that skipped it, then.
-    assert_eq(_t_deferred_tail(_t_rl), 1, "held inside a fn that defers its exit");
+    assert_eq(_t_defer_tail(_t_rl), 1, "held inside a fn that defers its exit");
     assert_eq(agnostic_rlock_held(_t_rl), 0, "⭐ and released when it returns through a tail call");
-    assert_eq(_t_deferred_tail_arg(_t_rl), 2, "a tail call with arguments");
+    assert_eq(_t_defer_tail_arg(_t_rl), 2, "a tail call with arguments");
     assert_eq(agnostic_rlock_held(_t_rl), 0, "⭐ releases it too");
     assert_eq(agnostic_rlock_depth(_t_rl), 0, "at depth 0");
 }
 
-# The lock's depth as seen from inside `_t_deferred_*`.
+# The lock's depth as seen from inside `_t_defer_*`.
 fn _t_held_depth(l): i64 { return agnostic_rlock_depth(l); }
 fn _t_plus(l, n): i64 { return agnostic_rlock_depth(l) + n; }
 
 # Enter `l`, defer the exit, and leave through `return f(...)` — the shape cycc 6.6.6 broke.
-fn _t_deferred_tail(l): i64 {
+fn _t_defer_tail(l): i64 {
     agnostic_rlock_enter(l);
     defer { agnostic_rlock_exit(l); }
     return _t_held_depth(l);
 }
 
 # The same with an argument to the tail call.
-fn _t_deferred_tail_arg(l): i64 {
+fn _t_defer_tail_arg(l): i64 {
     agnostic_rlock_enter(l);
     defer { agnostic_rlock_exit(l); }
     return _t_plus(l, 1);

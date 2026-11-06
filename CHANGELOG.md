@@ -4,6 +4,136 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-11-06
+
+**The P(-1) audit, and what it found repaired.** Three independent reviews (security; correctness;
+performance and memory) went over the whole tree, a fourth reviewed the repairs, and the record is
+[`docs/audit/2026-11-05-audit.md`](docs/audit/2026-11-05-audit.md). They found no authentication or
+authorisation bypass and no memory corruption. They did find memory exhaustion without credentials,
+completed crews lost under load, and reads that leaked on every call. All are repaired, with the
+exceptions the audit lists. The roadmap is reorganized into release lines, 0.2.x to 0.5.x, with a
+[parity review](docs/development/research/2026-11-05-python-port-parity.md) that says what stands
+between `python-port/` and its deletion.
+
+⚠ **Wire-visible**, each below: a request must arrive whole within **15 s** of connecting, not 60; a
+login body over 4 KiB is **413**; raw invalid UTF-8 or a raw control byte in JSON is **400**;
+`dependencies` outside `process: dag` is **400**. ⚠ **Start-up:** an `AGNOSTIC_AUTH` or `AGNOSTIC_ADDR`
+it cannot read, an `AGNOSTIC_LLM_URL` holding a password, and a bootstrap password under 12 characters
+now refuse to start.
+
+**33 suites, 2,920 assertions, 0 failed** — on x86_64 and natively on aarch64 (the Raspberry Pi), with
+the same per-suite counts — plus **80 JavaScript tests**; 0.2.1 had 33, 2,806 and 80. Each repair's test
+was mutation-checked, and the crew-loss test took two corrections before it failed without its fix. A
+sibling-free replica with an empty dep cache reproduced `lib/`, the lock and both binaries
+byte for byte, and every CI gate passed there in CI's order. On the real binary: 6,000 crews from 16
+clients at 201/s all completed; 1,500 crews with SIGTERM straight after the last was accepted all read
+`completed` after a restart; and a database and audit chain written by a 0.2.1 binary opened under
+0.2.2, its files set to 0600 and the chain `intact`. Those three runs were x86_64 only. On the Pi, the
+aarch64 binary served a crew and passed the bind, request-budget, body-cap and file-mode checks.
+
+### Fixed
+
+- ⚠ **Memory exhaustion without credentials (CRITICAL).** A full request arena spilled to the global
+  heap, which is never reclaimed. A 1 MiB `[1,1,…]` at the login route kept 20 MiB per request, and a
+  server under `ulimit -v 700000` died on the 22nd, with no log line. Any response or listing over the
+  arena did the same: 1.4 MB per `GET /crews` at 6,000 crews, for a READ client, and an ordinary
+  mix grew 367 MB in 180 s and was accelerating. Arenas now grow and reuse what they took
+  ([ADR 0021](docs/adr/0021-request-arenas-grow-and-do-not-spill.md)), each at least the body cap, and a
+  login body is capped at 4 KiB. The same mix's reads now hold flat.
+- ⚠ **Completed crews lost under load (HIGH).** At 1000 entries the engine drops every finished crew at
+  once, read or not. agnostic reads every 200 ms, so a completed crew vanished, latched `unknown` with
+  its results gone, and read `interrupted` after a restart: 885 of 1,300 at 190/s. Reading a crew is
+  now apart from writing it, and a read crew leaves the engine's registry
+  ([ADR 0022](docs/adr/0022-a-finished-crew-leaves-the-engines-registry.md)). 6,000 crews at 219/s all
+  complete. A graceful stop writes what is owed: 1,500 crews stopped straight after the last was
+  accepted took 10.6 s, and all read `completed` after a restart.
+- **A server that could not bind said nothing about why.** It logged `listening` and exited 1. It now
+  logs `server failed reason=bind (errno 98)`.
+- **Reads past the 256-definition cache leaked**, 12.8 KB a GET and 778 KB a listing, for READ.
+- **A keyed replay rebuilt the whole crew on the global heap**, 27.9 KB per replay of a 20 KB body.
+- **Ledger eviction dropped every terminal entry at once**, so an `Idempotency-Key` could stop replaying
+  81 crews later, with `/events` and `/plan` going 404 at the same moment. It takes the oldest down to
+  768 entries, and leaves what is not stored yet.
+- **Invalid UTF-8 and raw control bytes were accepted**, and one such crew made a tenant's `GET /crews`
+  undecodable to a strict client, for good. `agnostic_decode_a` validates at every door.
+- **`AGNOSTIC_AUTH=requred` started with authentication off**, and `AGNOSTIC_ADDR=10.1.2.3` silently
+  bound loopback. Both are refused. `AGNOSTIC_ADDR` also takes `loopback`, `localhost` and `127.0.0.1`.
+- **`dependencies` under `sequential` or `parallel` were accepted and ignored**, so a task ran before
+  the one it named. They are refused, as `max_concurrency` already was. `priority` under `sequential`
+  stays accepted and has no effect.
+- **The gateway's URL reached READ callers** in a transport error, password included. A URL with
+  userinfo is refused, and the address is scrubbed from results.
+- **The database and audit files were 0644**, holding Argon2 hashes and crew output. They are 0600.
+- **A failed login left no record.** It writes `auth.login.failed`, naming the peer and not the address
+  tried. The trail is bounded by what an attacker can spend on Argon2.
+- **Each `agnostic_sha256` kept 144 B**, reachable with `Authorization: ApiKey x`.
+- **A user with an illegal tenant key fell into the shared `_` scope.** Such a principal now holds
+  nothing. Latent: nothing can create a second user yet.
+- **Cancel could answer 200 for a crew that had just completed**, and trailing events, `crew_completed`
+  among them, could be lost between the last drain and the close check.
+- **A failed outcome write was described as logged, and was not.** A stop between an outcome and its
+  listing row left a crew never listed, and the start-up sweep now repairs that.
+- **Four tests could not fail**, or passed for the wrong reason, and three limits had no test.
+- **`scripts/check-log-lengths.py` miscounted a non-ASCII literal**, the bug agnosai 2.1.8 fixed in its
+  copy. It now runs a self-test first.
+
+### Mitigated, not closed
+
+- ⚠ **One connection holds one worker while it is read**, so 16 idle sockets stall every other client.
+  A new `AGNOSTIC_REQUEST_MS`, 15 s by default, cuts the stall from 59.6 s to 15.0 s. Closing it needs a
+  per-peer cap in sandhi, which is filed, and `AGNOSTIC_IDLE_MS` has no effect on that wait. A proxy that
+  buffers requests removes it, and `SECURITY.md` says so.
+
+### Changed
+
+- **The engine's own audit chain is off.** libro holds the trail, and nothing read the chain: 9.6 KB per
+  crew, and past 10,000 entries it re-hashed on the global heap.
+- **An authenticated request runs one statement, not two**, so identity is read at one instant.
+- **`GET /audit` reads a counter**, not a COUNT scan under the audit lock: 123 ms at 100,000 entries.
+- **A listing row reads two integers** without building a JSON object.
+- **A worker's arena is at least the body cap plus 4 KiB**, about 1 MiB by default, so about 16 MB held
+  from the start.
+- **The suites are under the lint gate**, 99 long lines wrapped or tagged, and `check-clean.sh` covers
+  them.
+- **`cyrius.cyml`:** `assert` and `bench` moved to `[test] stdlib`, `hashmap_fast` dropped (nothing calls
+  it), and the description is real.
+- **The roadmap is a release plan**, 0.2.x to 0.5.x, with *Deleting `python-port/`* and *Identity and
+  deployment* sections. `Release shape` records the change.
+
+### Added
+
+- **`docs/guides/configuration.md`**, every variable, and what a reverse proxy changes.
+- **`docs/audit/2026-11-05-audit.md`**, **ADRs 0021 and 0022**, and the
+  [parity review](docs/development/research/2026-11-05-python-port-parity.md).
+- **Benchmark rows:** `json_parse_crew_4a_8t` (20.5 µs: bayan's parser, which nothing timed),
+  `ledger_row` (240 ns) and `json_build_64k` (1.7 ms).
+- **Upstream filings**, uncommitted in each repo's `docs/development/issues/`: agnosai (the registry
+  eviction, the gateway URL, its preset set), sandhi (the idle-socket stall, outbound bytes), patra (the
+  clamped literal, the unchecked page write, file modes), libro (the append's entry, a streaming verify)
+  and cyrius (`_arena_grow`).
+
+### Performance
+
+Flat on every timed row. Built from the 0.2.1 tree and from this one on the same toolchain, three
+interleaved rounds put all 19 rows within ±5%, and 17 of them within ±2.5%. Every JSON body is now
+validated before it is parsed, about 5 ns a byte, so 5 µs on a 1 KB crew. Under sustained load the
+gain is memory: a mix that grew 367 MB in 180 s and was accelerating, on the audit's measure, read
+flat through every read phase of the replay here.
+
+**The cost:** about 16 MB more held from the start, 1 MiB of arena per worker.
+
+### Known
+
+- ⚠ **`python-port/` cannot go yet.** Nothing depends on it mechanically, but M6–M8 and the parity
+  review's gaps stand between it and "equal or better coverage". Its fifteen records are yours to
+  accept (roadmap, *Decisions awaiting the user*).
+- **agnostic reaches into agnosai's private fields** to retire a crew, until agnosai has a call for it.
+- **Under sustained load the outcome writes fall behind**, about 200 crews a second against 86. A
+  graceful stop drains them, and a crash loses them to `interrupted`.
+- **Tenancy findings S3, S4 and S7 are open, for 0.3.x:** agent definitions are not tenant-scoped, any
+  ADMIN is a deployment admin, and a proxy puts every client in one login bucket. The first two are
+  latent until a second user can exist.
+
 ## [0.2.1] — 2026-11-05
 
 **Cyrius 6.7.18 and the latest release of both direct dependencies.** Cyrius 6.7.9 → 6.7.18, agnosai

@@ -39,8 +39,32 @@ fn agnostic_login_fields_a(a): i64 {
     return f;
 }
 
+# The request's peer address, dotted, in `a`.
+fn _agnostic_peer_str_a(a, ctx): i64 {
+    var ip = agnostic_reqctx_peer(ctx);
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_int_a(a, sb, ip & 0xFF);
+    str_builder_add_cstr_a(a, sb, ".");
+    str_builder_add_int_a(a, sb, (ip >> 8) & 0xFF);
+    str_builder_add_cstr_a(a, sb, ".");
+    str_builder_add_int_a(a, sb, (ip >> 16) & 0xFF);
+    str_builder_add_cstr_a(a, sb, ".");
+    str_builder_add_int_a(a, sb, (ip >> 24) & 0xFF);
+    return str_builder_build_a(a, sb);
+}
+
+# The longest login body. An email and a password fit in far less, and this route is open: a
+# megabyte of `[1,1,…]` costs its worker twenty times that in parse tree before the rate limit
+# can refuse it.
+var AGNOSTIC_LOGIN_MAX_BODY = 4096;
+
 # `POST /api/v1/auth/login`.
 fn agnostic_route_login_a(a, body: Str, ctx): i64 {
+    if (str_len(body) > AGNOSTIC_LOGIN_MAX_BODY) {
+        return agnostic_response_error_a(a, HTTP_PAYLOAD_TOO_LARGE,
+          str_from_a(a, "request body too large"));
+    }
     var v = agnostic_decode_a(a, body);
     if (v == 0) {
         return agnostic_response_error_a(a, HTTP_BAD_REQUEST,
@@ -70,6 +94,11 @@ fn agnostic_route_login_a(a, body: Str, ctx): i64 {
           str_from_a(a, "too many attempts; retry later"));
     }
     if (uid == 0) {
+        # Past the rate limit and the Argon2 pool, so what an attacker can write here is
+        # bounded by what they can spend on Argon2. The peer, never the address tried:
+        # a mistyped password in the email field must not reach the trail.
+        agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, "auth.login.failed"),
+          agnostic_audit_detail_a(a, "peer", _agnostic_peer_str_a(a, ctx)));
         # ⚠ Same message whether the address is unknown or the password is
         # wrong. Do not "improve" this into something more helpful.
         return agnostic_response_error_a(a, HTTP_UNAUTHORIZED,

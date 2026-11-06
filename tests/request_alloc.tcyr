@@ -71,6 +71,7 @@ fn _t_cost_once(method, path, body, auth, transport) {
         authz = str_new_a(a, h, 7 + str_len(_t_token));
     }
     if (auth == 2) { authz = _t_viewer_authz_a(a); }
+    if (auth == 3) { authz = str_from_a(a, "ApiKey x"); }
     var ctx = agnostic_reqctx_new_a(a, authz, 7);
     if (transport == 1) { agnostic_reqctx_set_transport(ctx, 0, str_from_a(a, "localhost")); }
     var before = alloc_used();
@@ -104,6 +105,8 @@ fn test_refusals_keep_nothing() {
     assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/nope", "", 0, 0), 0, "⭐ a 404 keeps nothing");
     assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/health", "", 0, 0), 0, "a 405, with its Allow, keeps nothing");
     assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/crews", "", 0, 0), 0, "⭐ a 401 keeps nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/crews", "", 3, 0), 0,
+      "⭐ a 401 for an unknown API key keeps nothing, though it hashes the key");
     assert_eq(_t_cost(AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":true}", 2, 0), 0,
       "a 403 keeps nothing");
     assert_eq(_t_cost(AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/x", "{}", 1, 1), 0,
@@ -145,7 +148,8 @@ fn test_login_keeps_nothing() {
     var libro = _t_libro_record_cost();
     agnostic_rl_reset();
     assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/auth/login",
-        "{\"email\":\"alloc@example.com\",\"password\":\"wrong\"}", 0, 0), 0, "⭐ a failed login keeps nothing");
+        "{\"email\":\"alloc@example.com\",\"password\":\"wrong\"}", 0, 0) - libro, 0,
+      "⭐ a failed login keeps nothing of agnostic's — only libro's audit entry");
     agnostic_rl_reset();
     assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/auth/login",
         "{\"email\":\"alloc@example.com\",\"password\":\"a long enough password\"}", 0, 0) - libro, 0,
@@ -220,6 +224,35 @@ fn test_refused_bodies_keep_nothing() {
       "a lookup that misses keeps nothing");
 }
 
+# ⭐ Past the cache a definition is decoded for the reader, not for the process: through 0.2.1 each
+# read kept it on the global heap, 12.8 KB a GET and 778 KB a listing, for anyone with READ.
+fn test_definitions_past_the_cache_keep_nothing() {
+    test_group("alloc/definitions-past-cache");
+    var i = 0;
+    while (i < AGNOSTIC_DEFINITIONS_MAX + 2) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "{\"key\":\"past-");
+        str_builder_add_int(sb, i);
+        str_builder_add_cstr(sb, "\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"a\",\"b\"],\"focus\":\"f\"}");
+        _t_cost_once(AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", str_data(str_builder_build(sb)), 1, 0);
+        i = i + 1;
+    }
+    var path = "/api/v1/agents/definitions/past-257";
+    assert_eq(agnostic_response_status(_t_get_a(path)), HTTP_OK, "precondition: it is stored");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, path, "", 1, 0), 0, "⭐ a definition past the cache keeps nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions", "", 1, 0), 0, "⭐ nor does listing them");
+}
+
+# The status of an authenticated GET of `path`.
+fn _t_get_a(path) {
+    var a = arena_allocator(1048576);
+    var h = alloc_via(a, 7 + str_len(_t_token));
+    memcpy(h, "Bearer ", 7);
+    memcpy(h + 7, str_data(_t_token), str_len(_t_token));
+    var ctx = agnostic_reqctx_new_a(a, str_new_a(a, h, 7 + str_len(_t_token)), 7);
+    return agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from_a(a, path), str_from_a(a, ""), 4096, ctx);
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -230,6 +263,7 @@ fn main() {
     test_login_keeps_nothing();
     test_audited_writes_keep_nothing();
     test_refused_bodies_keep_nothing();
+    test_definitions_past_the_cache_keep_nothing();
     agnostic_audit_close();
     agnostic_store_close();
     _tt_unlink_store(_T_RADB);

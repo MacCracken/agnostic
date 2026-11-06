@@ -11,6 +11,7 @@ include "src/app.cyr"
 include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
 var _T_LRDB = _tt_tmp_path("loginroute-suite");
+var _T_LRAUDIT = _tt_tmp_path("loginroute-suite-audit");
 
 fn _t_lr_open() {
     agnostic_store_close();
@@ -174,6 +175,67 @@ fn test_login_throttles() {
       HTTP_OK, "another source still logs in");
 }
 
+# A password the length check accepts, so a refusal below is the guard's own.
+var _T_BOOT_PW = "bootstrap-pass";
+
+# A login body is small, and this route is open: it is refused by size before it costs a parse.
+fn test_login_body_cap() {
+    test_group("login/body-cap");
+    _t_lr_open();
+    var a = arena_allocator(1048576);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"email\":\"t@example.com\",\"password\":\"");
+    var i = 0;
+    while (i < AGNOSTIC_LOGIN_MAX_BODY) { str_builder_add_cstr(sb, "x"); i = i + 1; }
+    str_builder_add_cstr(sb, "\"}");
+    var over = str_builder_build(sb);
+    assert_eq(agnostic_response_status(_t_post_login(a, over, 5001)), HTTP_PAYLOAD_TOO_LARGE,
+      "a body over the cap is 413");
+
+    # Malformed and at the limit: it reaches the parser, so the cap sits exactly at its number.
+    var at = str_builder_new();
+    i = 0;
+    while (i < AGNOSTIC_LOGIN_MAX_BODY) { str_builder_add_cstr(at, "x"); i = i + 1; }
+    assert_eq(agnostic_response_status(_t_post_login(a, str_builder_build(at), 5002)), HTTP_BAD_REQUEST,
+      "a body at the cap is parsed");
+}
+
+# 1 when `s` holds the C string `needle`.
+fn _t_contains(s: Str, needle): i64 {
+    var m = strlen(needle);
+    var i = 0;
+    while (i + m <= str_len(s)) {
+        if (memeq(str_data(s) + i, needle, m) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# A failed attempt leaves a record, and the record names the peer and not the address tried.
+fn test_failed_login_is_audited() {
+    test_group("login/failed-audited");
+    _t_lr_open();
+    var a = arena_allocator(1048576);
+    assert_eq(agnostic_audit_open(str_from(_T_LRAUDIT)), 1, "the trail opens");
+    agnostic_users_create_a(a, str_from("t@example.com"), str_from("pw"), AGNOSTIC_ROLE_VIEWER, 0);
+    var before = agnostic_audit_count();
+    var r = _t_post_login(a, str_from("{\"email\":\"t@example.com\",\"password\":\"nope\"}"), 0x0100007F);
+    assert_eq(agnostic_response_status(r), HTTP_UNAUTHORIZED, "the attempt is refused");
+    assert_eq(agnostic_audit_count(), before + 1, "and recorded");
+    var ok = _t_post_login(a, str_from("{\"email\":\"t@example.com\",\"password\":\"pw\"}"), 0x0100007F);
+    assert_eq(agnostic_response_status(ok), HTTP_OK, "a good attempt still logs in");
+
+    var entries = agnostic_audit_entries_a(a, 1 << 40, 4);
+    assert_eq(vec_len(entries), before + 2, "both are in the trail");
+    var failed = vec_get(entries, 1);
+    assert_eq(str_eq_cstr(load64(failed + AGNOSTIC_AR_ACTION), "auth.login.failed"), 1, "the older is the failure");
+    var details = load64(failed + AGNOSTIC_AR_DETAILS);
+    assert_eq(_t_contains(details, "127.0.0.1"), 1, "it names the peer");
+    assert_eq(_t_contains(details, "t@example.com"), 0, "and not the address tried");
+    agnostic_audit_close();
+    _tt_unlink_store(_T_LRAUDIT);
+}
+
 fn test_bootstrap() {
     test_group("bootstrap/first-admin");
 
@@ -181,7 +243,7 @@ fn test_bootstrap() {
     var a = arena_allocator(1048576);
     assert_eq(agnostic_users_count(), 0, "no users yet");
 
-    var uid = agnostic_auth_bootstrap_a(a, str_from("root@example.com"), str_from("bootpw"));
+    var uid = agnostic_auth_bootstrap_a(a, str_from("root@example.com"), str_from(_T_BOOT_PW));
     assert_neq(uid, 0, "the first administrator is created");
     assert_eq(agnostic_users_role(uid), AGNOSTIC_ROLE_SUPER_ADMIN,
       "as a SUPER_ADMIN — it has to be able to provision everything else");
@@ -189,7 +251,7 @@ fn test_bootstrap() {
 
     # ⭐ THE GUARD. This is what stops a credential left in the environment from
     # being a standing backdoor: once ANY user exists, bootstrap is closed.
-    assert_eq(agnostic_auth_bootstrap_a(a, str_from("second@example.com"), str_from("pw")), 0,
+    assert_eq(agnostic_auth_bootstrap_a(a, str_from("second@example.com"), str_from(_T_BOOT_PW)), 0,
       "a second bootstrap is REFUSED once any user exists");
     assert_eq(agnostic_users_count(), 1, "and nothing was written");
 
@@ -198,19 +260,22 @@ fn test_bootstrap() {
     agnostic_users_reset();
     agnostic_users_create_a(a, str_from("viewer@example.com"), str_from("pw"),
       AGNOSTIC_ROLE_VIEWER, 0);
-    assert_eq(agnostic_auth_bootstrap_a(a, str_from("root2@example.com"), str_from("pw")), 0,
+    assert_eq(agnostic_auth_bootstrap_a(a, str_from("root2@example.com"), str_from(_T_BOOT_PW)), 0,
       "even a lone VIEWER closes the bootstrap");
 
     agnostic_users_reset();
     assert_eq(agnostic_auth_bootstrap_a(a, str_from("root@example.com"), str_from("")), 0,
       "an empty password is refused");
-    assert_eq(agnostic_auth_bootstrap_a(a, 0, str_from("pw")), 0, "and a null email");
+    assert_eq(agnostic_auth_bootstrap_a(a, str_from("root@example.com"), str_from("elevenchars")), 0,
+      "and one under twelve characters, since nothing can rotate it yet");
+    assert_eq(agnostic_users_count(), 0, "with nothing written");
+    assert_eq(agnostic_auth_bootstrap_a(a, 0, str_from(_T_BOOT_PW)), 0, "and a null email");
 
     # And the bootstrapped account can actually log in.
-    var buid = agnostic_auth_bootstrap_a(a, str_from("root@example.com"), str_from("bootpw"));
+    var buid = agnostic_auth_bootstrap_a(a, str_from("root@example.com"), str_from(_T_BOOT_PW));
     assert_neq(buid, 0, "bootstrap succeeds on an empty store");
     var r = _t_post_login(a,
-      str_from("{\"email\":\"root@example.com\",\"password\":\"bootpw\"}"), 77);
+      str_from("{\"email\":\"root@example.com\",\"password\":\"bootstrap-pass\"}"), 77);
     assert_eq(agnostic_response_status(r), HTTP_OK, "and the credential works at the login route");
 }
 
@@ -222,6 +287,8 @@ fn main() {
     test_login_gives_nothing_away();
     test_login_request_validation();
     test_login_throttles();
+    test_login_body_cap();
+    test_failed_login_is_audited();
     test_bootstrap();
     _tt_unlink_store(_T_LRDB);
     return assert_summary();

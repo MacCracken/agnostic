@@ -8,11 +8,6 @@
 # place the number appears, so a bump cuts the [Unreleased] section over to a
 # dated release heading.
 #
-# The Rust-era script rewrote a root Cargo.toml and regenerated Cargo.lock.
-# Neither exists on the Cyrius line — the Rust tree is frozen at rust-old/ as
-# the parity oracle and must never be modified — so all of that handling is
-# gone. See CLAUDE.md.
-#
 # Everything is checked before anything is written: a failed check leaves the
 # repo untouched instead of half-bumped.
 set -euo pipefail

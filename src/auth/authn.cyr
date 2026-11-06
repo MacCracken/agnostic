@@ -282,15 +282,22 @@ fn agnostic_principal_tenant(p): i64 {
 # Outside the tenant-key charset (`[a-z0-9][a-z0-9-]*`), so it can never be a tenant.
 var AGNOSTIC_SCOPE_DEFAULT = str_from("_");
 
-# The scope a principal acts in (0.1.9): its tenant key when that is a legal one, else
-# `_`. A principal of 0 — authentication off — is in `_`. Everything tenant-scoped reads
+# The scope of a principal whose tenant is not a legal key. Outside the charset too, and not
+# `_`, so it holds nothing and shares nothing.
+var AGNOSTIC_SCOPE_NONE = str_from("!");
+
+# The scope a principal acts in (0.1.9): its tenant key when that is a legal one. A principal
+# of 0 — authentication off — and one with no tenant are in `_`. Everything tenant-scoped reads
 # this one function: plugin documents since 0.1.8, crews since 0.1.9.
+#
+# ⚠ **An illegal tenant fails closed.** It used to read as no tenant, which put a user created
+# with a bad key in the shared `_` scope, among other users' documents.
 fn agnostic_principal_scope(p): i64 {
     var t = agnostic_principal_tenant(p);
-    if (t != 0) {
-        if (agnostic_tenant_key_valid(t) == 1) { return t; }
-    }
-    return AGNOSTIC_SCOPE_DEFAULT;
+    if (t == 0) { return AGNOSTIC_SCOPE_DEFAULT; }
+    if (str_len(t) == 0) { return AGNOSTIC_SCOPE_DEFAULT; }
+    if (agnostic_tenant_key_valid(t) == 1) { return t; }
+    return AGNOSTIC_SCOPE_NONE;
 }
 
 # The scope of the request `ctx` carries — its principal's, once the auth rung has run.
@@ -326,9 +333,10 @@ fn _agnostic_authn_credential_a(a, header: Str, scheme): i64 {
 # user row. 0 when the uid no longer resolves.
 fn _agnostic_authn_principal_for_a(a, uid): i64 {
     if (uid == 0) { return 0; }
-    var role = agnostic_users_role(uid);
+    var found: i64[1];
+    var role = agnostic_users_identity_a(a, uid, &found);
     if (role < 0) { return 0; }
-    var tenant = agnostic_users_tenant_a(a, uid);
+    var tenant = load64(&found);
     if (tenant == 0) { tenant = str_from_a(a, ""); }
     return agnostic_principal_new_a(a, uid, role, tenant);
 }

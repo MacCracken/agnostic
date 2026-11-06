@@ -37,7 +37,7 @@ fn _t_has(s: Str, needle): i64 {
     return 0;
 }
 
-# A fresh database with every table mount creates, and a WebGUI not yet loaded.
+# A fresh database with every table mount creates, and a WebGUI still to be loaded.
 fn _t_open() {
     agnostic_webgui_reset();
     agnostic_store_close();
@@ -463,7 +463,7 @@ fn test_plugin_rung() {
       "switched on, a granted route answers (presets:read)");
     assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/crews?limit=5", "")),
       HTTP_OK, "with a query string too — the match is on the path");
-    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/k1", "{}")),
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/k1", "{}")), #skip-lint
       AGNOSTIC_HTTP_CREATED, "its own documents (storage, :self)");
     assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/crews", "")), HTTP_OK,
       "the crew list (crews:read)");
@@ -473,24 +473,24 @@ fn test_plugin_rung() {
     assert_eq(str_eq_cstr(_t_code(other), "plugin_forbidden"), 1, "plugin_forbidden");
     assert_eq(_t_refusal_is(a, other, "Swarm Command is not permitted to make this request", "plugin_forbidden"), 1,
       "the plugin_forbidden body is unchanged");
-    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":false}")),
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":false}")), #skip-lint
       HTTP_FORBIDDEN, "⭐ nor its own switch");
     assert_eq(agnostic_plugin_enabled(agnostic_plugin_find(str_from("swarm"))), 1, "which stays on");
-    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/audit", "")), HTTP_FORBIDDEN,
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/audit", "")), HTTP_FORBIDDEN, #skip-lint
       "nor the audit trail");
     assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions", "")),
       HTTP_FORBIDDEN, "nor definitions, which its manifest does not ask for");
-    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", "{}")),
+    assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", "{}")), #skip-lint
       HTTP_FORBIDDEN, "nor writing a definition");
     assert_eq(agnostic_response_status(_t_req_for(a, "swarm", AGNOSTIC_METHOD_DELETE, "/api/v1/presets", "")),
-      HTTP_METHOD_NOT_ALLOWED, "a method no route takes is 405 from routing, before the rung — there is nothing to grant");
+      HTTP_METHOD_NOT_ALLOWED, "a method no route takes is 405 from routing, before the rung — there is nothing to grant"); #skip-lint
 
     var nobody = _t_req_for(a, "no-such-plugin", AGNOSTIC_METHOD_GET, "/api/v1/presets", "");
     assert_eq(agnostic_response_status(nobody), HTTP_FORBIDDEN, "an unknown plugin is refused");
     assert_eq(str_eq_cstr(_t_code(nobody), "plugin_unknown"), 1, "plugin_unknown");
     assert_eq(_t_refusal_is(a, nobody, "no such plugin is built into this server", "plugin_unknown"), 1,
       "the plugin_unknown body is unchanged");
-    assert_eq(str_eq_cstr(_t_code(_t_req_for(a, "Not An Id", AGNOSTIC_METHOD_GET, "/api/v1/presets", "")), "plugin_unknown"), 1,
+    assert_eq(str_eq_cstr(_t_code(_t_req_for(a, "Not An Id", AGNOSTIC_METHOD_GET, "/api/v1/presets", "")), "plugin_unknown"), 1, #skip-lint
       "and so is a malformed id");
 
     assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, "/api/v1/audit", "")), HTTP_OK,
@@ -502,25 +502,25 @@ fn test_plugin_rung() {
     assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions",
           "{\"key\":\"lib-probe\",\"role\":\"r\",\"goal\":\"g\"}")), AGNOSTIC_HTTP_CREATED,
       "Library may create a definition (definitions:write)");
-    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/lib-probe",
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/lib-probe", #skip-lint
           "{\"key\":\"lib-probe\",\"role\":\"r\",\"goal\":\"g2\"}")), HTTP_OK, "replace one");
-    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_DELETE, "/api/v1/agents/definitions/lib-probe", "")),
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_DELETE, "/api/v1/agents/definitions/lib-probe", "")), #skip-lint
       HTTP_OK, "and delete one");
-    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/crews", "")), HTTP_FORBIDDEN,
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/crews", "")), HTTP_FORBIDDEN, #skip-lint
       "but not read crews");
-    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "")), HTTP_FORBIDDEN,
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "")), HTTP_FORBIDDEN, #skip-lint
       "nor the audit trail");
     _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/audit", "{\"enabled\":true}");
     assert_eq(agnostic_response_status(_t_req_for(a, "audit", AGNOSTIC_METHOD_GET, "/api/v1/audit", "")), HTTP_OK,
       "the Audit view reads the summary (audit:read)");
-    assert_eq(agnostic_response_status(_t_req_for(a, "audit", AGNOSTIC_METHOD_GET, "/api/v1/audit/entries?limit=5", "")), HTTP_OK,
+    assert_eq(agnostic_response_status(_t_req_for(a, "audit", AGNOSTIC_METHOD_GET, "/api/v1/audit/entries?limit=5", "")), HTTP_OK, #skip-lint
       "and the entries, by cursor");
-    assert_eq(agnostic_response_status(_t_req_for(a, "audit", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", "{}")), HTTP_FORBIDDEN,
+    assert_eq(agnostic_response_status(_t_req_for(a, "audit", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", "{}")), HTTP_FORBIDDEN, #skip-lint
       "and nothing it does not ask for");
     _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/crews", "{\"enabled\":true}");
-    assert_eq(agnostic_response_status(_t_req_for(a, "crews", AGNOSTIC_METHOD_GET, "/api/v1/crews?status=active", "")), HTTP_OK,
+    assert_eq(agnostic_response_status(_t_req_for(a, "crews", AGNOSTIC_METHOD_GET, "/api/v1/crews?status=active", "")), HTTP_OK, #skip-lint
       "Crews lists crews, filtered");
-    assert_eq(agnostic_response_status(_t_req_for(a, "crews", AGNOSTIC_METHOD_PUT, "/api/v1/plugins/crews/data/k", "{}")), HTTP_FORBIDDEN,
+    assert_eq(agnostic_response_status(_t_req_for(a, "crews", AGNOSTIC_METHOD_PUT, "/api/v1/plugins/crews/data/k", "{}")), HTTP_FORBIDDEN, #skip-lint
       "and keeps no documents: it did not ask for storage");
     _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/library", "{\"enabled\":false}");
     _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/audit", "{\"enabled\":false}");

@@ -63,8 +63,11 @@ echo "fmt: $n files"
 # and by `tests/presets.tcyr` — this exemption is one rule, not the gate.
 n=0
 skipped=0
-# `tests/**/*.cyr` — code the suites share (`tests/support/`, 0.1.15) — is linted like `src/`.
+# `tests/**/*.cyr` — code the suites share (`tests/support/`, 0.1.15) — is linted like `src/`, and
+# so are the suites since 0.2.2. A JSON fixture cannot be split, because Cyrius has no adjacent-literal
+# concatenation, so a line holding one carries `#skip-lint`.
 for f in $(find src -name "*.cyr" | sort) $(find tests -name "*.cyr" | sort) \
+         $(find tests -name "*.tcyr" | sort) \
          $(find benches -name "*.bcyr" | sort) \
          $(find examples -name "*.cyr" 2>/dev/null | sort); do
     [ -e "$f" ] || continue

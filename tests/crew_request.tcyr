@@ -47,7 +47,7 @@ fn _t_decode(a, body, out): i64 {
 
 # A minimal valid submission with one agent and one task.
 fn _t_valid(): i64 {
-    return "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}";
+    return "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}"; #skip-lint
 }
 
 fn test_valid_minimum() {
@@ -99,7 +99,7 @@ fn test_the_oracles_fallback_shape_is_rejected() {
     # `description` and no tasks. Rather than being turned into a one-task crew,
     # it is refused, and the response names the field that does not belong.
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"description\":\"do everything\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"description\":\"do everything\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_eq(r, 0, "a crew-level 'description' is not silently absorbed");
     assert_eq(agnostic_reject_status(load64(&rj)), AGNOSTIC_HTTP_UNPROCESSABLE, "422 for an unknown field");
@@ -113,14 +113,14 @@ fn test_unknown_fields_named() {
     var rj: i64[1];
 
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"nonsense\":true}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"nonsense\":true}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_eq(r, 0, "an unknown AGENT field is refused");
     assert_eq(_t_has(agnostic_reject_message(load64(&rj)), "nonsense"), 1, "named");
     assert_eq(_t_has(agnostic_reject_message(load64(&rj)), "agents[0]"), 1, "and located");
 
     var r2 = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"retries\":3}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"retries\":3}]}", #skip-lint
       &rj);
     assert_eq(r2, 0, "an unknown TASK field is refused");
     assert_eq(_t_has(agnostic_reject_message(load64(&rj)), "retries"), 1, "named");
@@ -146,7 +146,7 @@ fn test_gpu_strict_is_refused_by_name() {
     # parameter. So it is REFUSED, and refused with its own message: a caller who
     # needs hard-fail must learn the platform cannot do it, not that they typo'd.
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"gpu_required\":true,\"gpu_strict\":true}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"gpu_required\":true,\"gpu_strict\":true}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_eq(r, 0, "gpu_strict is refused, never accepted and dropped");
     assert_eq(agnostic_reject_status(load64(&rj)), AGNOSTIC_HTTP_UNPROCESSABLE, "as a 422");
@@ -177,7 +177,7 @@ fn test_gpu_required_is_forwarded() {
     # it is not the hard-fail flag — see `test_gpu_strict_is_refused_by_name`.
     # All three must arrive on the agent definition the engine will schedule.
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"gpu_required\":true,\"gpu_memory_min_mb\":8192}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"gpu_required\":true,\"gpu_memory_min_mb\":8192}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_neq(r, 0, "the submission decodes");
 
@@ -189,7 +189,7 @@ fn test_gpu_required_is_forwarded() {
     # the string is non-empty — which is the silent misreading the codec exists
     # to stop. It must be a 422, not a default.
     var r2 = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"gpu_required\":\"false\"}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"gpu_required\":\"false\"}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_eq(r2, 0, "a string in a boolean field is refused, not coerced");
     assert_eq(agnostic_reject_status(load64(&rj)), AGNOSTIC_HTTP_UNPROCESSABLE, "as a 422");
@@ -201,7 +201,7 @@ fn test_optional_agent_fields_forwarded() {
     var a = arena_allocator(262144);
     var rj: i64[1];
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"name\":\"Ann\",\"domain\":\"qa\",\"backstory\":\"veteran\",\"complexity\":\"high\",\"llm_model\":\"m1\",\"tools\":[\"grep\",\"curl\"]}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"name\":\"Ann\",\"domain\":\"qa\",\"backstory\":\"veteran\",\"complexity\":\"high\",\"llm_model\":\"m1\",\"tools\":[\"grep\",\"curl\"]}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_neq(r, 0, "every listed agent field is accepted");
 
@@ -231,7 +231,7 @@ fn test_process_modes() {
     var a = arena_allocator(262144);
     var rj: i64[1];
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"process\":\"paralell\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"process\":\"paralell\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_eq(r, 0, "and the decoder refuses it");
     assert_eq(agnostic_reject_status(load64(&rj)), HTTP_BAD_REQUEST, "as a 400");
@@ -244,7 +244,7 @@ fn test_concurrency_only_where_it_applies() {
     var rj: i64[1];
 
     var ok = _t_decode(a,
-      "{\"name\":\"s\",\"process\":\"parallel\",\"max_concurrency\":8,\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"process\":\"parallel\",\"max_concurrency\":8,\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_neq(ok, 0, "max_concurrency is accepted with parallel");
     assert_eq(agnostic_crew_req_concurrency(ok), 8, "and read");
@@ -253,13 +253,13 @@ fn test_concurrency_only_where_it_applies() {
     # failure this milestone is about. The engine takes concurrency from the
     # process mode, so `max_concurrency` alongside `sequential` would do nothing.
     var bad = _t_decode(a,
-      "{\"name\":\"s\",\"process\":\"sequential\",\"max_concurrency\":8,\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"process\":\"sequential\",\"max_concurrency\":8,\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_eq(bad, 0, "but refused where it would silently do nothing");
     assert_eq(_t_has(agnostic_reject_message(load64(&rj)), "parallel"), 1, "explaining where it applies");
 
     var oor = _t_decode(a,
-      "{\"name\":\"s\",\"process\":\"parallel\",\"max_concurrency\":9999,\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"process\":\"parallel\",\"max_concurrency\":9999,\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_eq(oor, 0, "and bounded");
 }
@@ -276,7 +276,7 @@ fn test_priority_and_risk() {
     var a = arena_allocator(262144);
     var rj: i64[1];
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"priority\":\"background\",\"risk\":\"high\"}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"priority\":\"background\",\"risk\":\"high\"}]}", #skip-lint
       &rj);
     assert_neq(r, 0, "wire names decode");
     var t = vec_get(agnostic_crew_req_tasks(r), 0);
@@ -296,13 +296,13 @@ fn test_dependency_validation() {
     var rj: i64[1];
 
     var oor = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"dependencies\":[5]}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"dependencies\":[5]}]}", #skip-lint
       &rj);
     assert_eq(oor, 0, "an out-of-range dependency is refused");
     assert_eq(_t_has(agnostic_reject_message(load64(&rj)), "out of range"), 1, "saying so");
 
     var self = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"dependencies\":[0]}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"dependencies\":[0]}]}", #skip-lint
       &rj);
     assert_eq(self, 0, "a self-dependency is refused");
     assert_eq(_t_has(agnostic_reject_message(load64(&rj)), "itself"), 1, "saying so");
@@ -324,7 +324,7 @@ fn test_cycles_are_refused() {
     #
     # Rejecting the cycle here makes that arm unreachable through Agnostic.
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"dependencies\":[1]},{\"description\":\"y\",\"dependencies\":[0]}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"dependencies\":[1]},{\"description\":\"y\",\"dependencies\":[0]}]}", #skip-lint
       &rj);
     assert_eq(r, 0, "a two-task cycle is refused before submission");
     assert_eq(agnostic_reject_status(load64(&rj)), HTTP_BAD_REQUEST, "as a 400");
@@ -332,14 +332,14 @@ fn test_cycles_are_refused() {
 
     # A longer cycle, to show the detector is not just a pair check.
     var r3 = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"dependencies\":[2]},{\"description\":\"y\",\"dependencies\":[0]},{\"description\":\"z\",\"dependencies\":[1]}]}",
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"dependencies\":[2]},{\"description\":\"y\",\"dependencies\":[0]},{\"description\":\"z\",\"dependencies\":[1]}]}", #skip-lint
       &rj);
     assert_eq(r3, 0, "a three-task cycle is refused too");
 
     # And an acyclic diamond is accepted — a detector that rejects everything is
     # not a detector.
     var ok = _t_decode(a,
-      "{\"name\":\"s\",\"process\":\"dag\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"root\"},{\"description\":\"l\",\"dependencies\":[0]},{\"description\":\"r\",\"dependencies\":[0]},{\"description\":\"join\",\"dependencies\":[1,2]}]}",
+      "{\"name\":\"s\",\"process\":\"dag\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"root\"},{\"description\":\"l\",\"dependencies\":[0]},{\"description\":\"r\",\"dependencies\":[0]},{\"description\":\"join\",\"dependencies\":[1,2]}]}", #skip-lint
       &rj);
     assert_neq(ok, 0, "an acyclic diamond is accepted");
     assert_eq(vec_len(agnostic_crew_req_tasks(ok)), 4, "with every task");
@@ -351,17 +351,17 @@ fn test_required_scalars() {
     var a = arena_allocator(262144);
     var rj: i64[1];
 
-    assert_eq(_t_decode(a, "{\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", &rj), 0,
+    assert_eq(_t_decode(a, "{\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", &rj), 0, #skip-lint
       "'name' is required");
     assert_eq(_t_decode(a, "{\"name\":\"s\",\"tasks\":[{\"description\":\"x\"}]}", &rj), 0,
       "'agents' is required");
     assert_eq(_t_decode(a, "{\"name\":\"s\",\"agents\":[],\"tasks\":[{\"description\":\"x\"}]}", &rj), 0,
       "at least one agent is required");
-    assert_eq(_t_decode(a, "{\"name\":\"\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", &rj), 0,
+    assert_eq(_t_decode(a, "{\"name\":\"\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", &rj), 0, #skip-lint
       "an empty name is refused");
-    assert_eq(_t_decode(a, "{\"name\":\"s\",\"agents\":[{\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", &rj), 0,
+    assert_eq(_t_decode(a, "{\"name\":\"s\",\"agents\":[{\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", &rj), 0, #skip-lint
       "an agent without 'key' is refused");
-    assert_eq(_t_decode(a, "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"\"}]}", &rj), 0,
+    assert_eq(_t_decode(a, "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"\"}]}", &rj), 0, #skip-lint
       "an empty task description is refused");
 
     var arr = _t_decode(a, "[1,2,3]", &rj);
@@ -375,7 +375,7 @@ fn test_spec_build() {
     var a = arena_allocator(262144);
     var rj: i64[1];
     var r = _t_decode(a,
-      "{\"name\":\"sweep\",\"process\":\"dag\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"first\"},{\"description\":\"second\",\"dependencies\":[0]}]}",
+      "{\"name\":\"sweep\",\"process\":\"dag\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"first\"},{\"description\":\"second\",\"dependencies\":[0]}]}", #skip-lint
       &rj);
     assert_neq(r, 0, "decoded");
 
@@ -401,7 +401,7 @@ fn test_spec_build() {
 
     # A default-concurrency parallel spec picks up the documented default.
     var pr = _t_decode(a,
-      "{\"name\":\"s\",\"process\":\"parallel\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}",
+      "{\"name\":\"s\",\"process\":\"parallel\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     var pspec = agnostic_crew_spec_build(pr);
     assert_eq(agnosai_process_max_concurrency(agnosai_crew_process(pspec)),
@@ -413,8 +413,9 @@ fn test_spec_build() {
 fn _t_hinted(hints): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"name\":\"h\",\"agents\":[");
-    str_builder_add_cstr(sb, "{\"key\":\"web\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"playwright\"],\"domain\":\"web\"},");
-    str_builder_add_cstr(sb, "{\"key\":\"load\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"k6\"],\"domain\":\"performance\",\"complexity\":\"high\",\"gpu_required\":true}");
+    str_builder_add_cstr(sb,
+      "{\"key\":\"web\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"playwright\"],\"domain\":\"web\"},");
+    str_builder_add_cstr(sb, "{\"key\":\"load\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"k6\"],\"domain\":\"performance\",\"complexity\":\"high\",\"gpu_required\":true}"); #skip-lint
     str_builder_add_cstr(sb, "],\"tasks\":[{\"description\":\"x\"");
     str_builder_add_cstr(sb, hints);
     str_builder_add_cstr(sb, "}]}");
@@ -446,7 +447,7 @@ fn test_selection_hints() {
 
     var a = arena_allocator(262144);
     var rj: i64[1];
-    var r = _t_decode(a, _t_hinted(",\"required_tools\":[\"k6\",\"jq\"],\"complexity\":\"high\",\"domain\":\"Performance\",\"gpu_required\":true"), &rj);
+    var r = _t_decode(a, _t_hinted(",\"required_tools\":[\"k6\",\"jq\"],\"complexity\":\"high\",\"domain\":\"Performance\",\"gpu_required\":true"), &rj); #skip-lint
     assert_neq(r, 0, "a task with all four hints decodes");
     var t = vec_get(agnostic_crew_req_tasks(r), 0);
     assert_eq(vec_len(agnostic_task_req_required_tools(t)), 2, "required_tools decoded");
@@ -489,7 +490,7 @@ fn test_selection_hints() {
 
     # Accepted edges: an empty tool list (no requirement), null for any hint (absent).
     assert_eq(_t_hint_status(a, ",\"required_tools\":[]"), 0, "an empty required_tools is no requirement");
-    assert_eq(_t_hint_status(a, ",\"required_tools\":null,\"complexity\":null,\"domain\":null,\"gpu_required\":null"), 0,
+    assert_eq(_t_hint_status(a, ",\"required_tools\":null,\"complexity\":null,\"domain\":null,\"gpu_required\":null"), 0, #skip-lint
       "null is absent");
     assert_eq(_t_hint_status(a, ",\"gpu_required\":false"), 0, "gpu_required false is accepted");
 
@@ -593,7 +594,7 @@ fn test_empty_agent_domain_is_absent() {
     var a = arena_allocator(262144);
     var rj: i64[1];
     var r = _t_decode(a,
-      "{\"name\":\"d\",\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\",\"domain\":\"\"},{\"key\":\"b\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"domain\":\"performance\"}]}",
+      "{\"name\":\"d\",\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\",\"domain\":\"\"},{\"key\":\"b\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\",\"domain\":\"performance\"}]}", #skip-lint
       &rj);
     assert_neq(r, 0, "an empty agent domain is accepted");
     var spec = agnostic_crew_spec_build(r);
@@ -607,7 +608,8 @@ fn test_empty_agent_domain_is_absent() {
 # A crew whose one agent carries `complexity` `c` (a C string), answered with its rejection.
 fn _t_agent_cx(a, c, out) {
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "{\"name\":\"c\",\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"");
+    str_builder_add_cstr(sb,
+      "{\"name\":\"c\",\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"");
     str_builder_add_cstr(sb, c);
     str_builder_add_cstr(sb, "\"}],\"tasks\":[{\"description\":\"x\"}]}");
     return _t_decode(a, str_data(str_builder_build(sb)), out);
@@ -639,7 +641,7 @@ fn test_swarm_role_hints_pick_the_role() {
     var a = arena_allocator(262144);
     var rj: i64[1];
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"process\":\"parallel\",\"agents\":[{\"key\":\"planner\",\"role\":\"Planner\",\"goal\":\"g\",\"domain\":\"planner\",\"tools\":[\"llm\",\"db\",\"fs\"]},{\"key\":\"coder\",\"role\":\"Coder\",\"goal\":\"g\",\"domain\":\"coder\",\"tools\":[\"exec\",\"fs\",\"llm\"]},{\"key\":\"reviewer\",\"role\":\"Reviewer\",\"goal\":\"g\",\"domain\":\"reviewer\",\"tools\":[\"llm\",\"exec\",\"fs\"]}],\"tasks\":[{\"description\":\"review\",\"domain\":\"reviewer\",\"required_tools\":[\"llm\",\"exec\",\"fs\"]},{\"description\":\"code\",\"domain\":\"coder\",\"required_tools\":[\"exec\",\"fs\",\"llm\"]},{\"description\":\"plan\",\"domain\":\"planner\",\"required_tools\":[\"llm\",\"db\",\"fs\"]}]}",
+      "{\"name\":\"s\",\"process\":\"parallel\",\"agents\":[{\"key\":\"planner\",\"role\":\"Planner\",\"goal\":\"g\",\"domain\":\"planner\",\"tools\":[\"llm\",\"db\",\"fs\"]},{\"key\":\"coder\",\"role\":\"Coder\",\"goal\":\"g\",\"domain\":\"coder\",\"tools\":[\"exec\",\"fs\",\"llm\"]},{\"key\":\"reviewer\",\"role\":\"Reviewer\",\"goal\":\"g\",\"domain\":\"reviewer\",\"tools\":[\"llm\",\"exec\",\"fs\"]}],\"tasks\":[{\"description\":\"review\",\"domain\":\"reviewer\",\"required_tools\":[\"llm\",\"exec\",\"fs\"]},{\"description\":\"code\",\"domain\":\"coder\",\"required_tools\":[\"exec\",\"fs\",\"llm\"]},{\"description\":\"plan\",\"domain\":\"planner\",\"required_tools\":[\"llm\",\"db\",\"fs\"]}]}", #skip-lint
       &rj);
     assert_neq(r, 0, "the swarm's request decodes");
     if (r == 0) { return 0; }
@@ -677,7 +679,7 @@ fn test_an_accepted_crew_outlives_the_arena() {
     test_group("request/outlives-arena");
     var a = arena_allocator(65536);
     var rj: i64[1];
-    var r = _t_decode(a, "{\"name\":\"keep\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"tools\":[\"k6\"],\"focus\":\"api\"}],\"tasks\":[{\"description\":\"first\",\"expected_output\":\"a report\",\"required_tools\":[\"k6\"],\"domain\":\"performance\",\"complexity\":\"high\",\"priority\":\"high\",\"risk\":\"low\",\"gpu_required\":true},{\"description\":\"second\",\"dependencies\":[0]}]}", &rj);
+    var r = _t_decode(a, "{\"name\":\"keep\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"tools\":[\"k6\"],\"focus\":\"api\"}],\"tasks\":[{\"description\":\"first\",\"expected_output\":\"a report\",\"required_tools\":[\"k6\"],\"domain\":\"performance\",\"complexity\":\"high\",\"priority\":\"high\",\"risk\":\"low\",\"gpu_required\":true},{\"description\":\"second\",\"dependencies\":[0]}]}", &rj); #skip-lint
     assert_neq(r, 0, "the crew is accepted");
     if (r == 0) { return 0; }
     reset_via(a);
@@ -703,8 +705,32 @@ fn test_an_accepted_crew_outlives_the_arena() {
     assert_eq(str_eq_cstr(agnosai_agent_key(e), "a1"), 1, "and its agent's key");
 }
 
+# A dependency means something only to `dag`. Anywhere else it was accepted and ignored, and a task
+# ran before the one it named.
+fn test_dependencies_need_a_dag() {
+    test_group("request/deps-need-dag");
+    var a = arena_allocator(1048576);
+    var rj: i64[1];
+    var tasks = "\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"x\"},{\"description\":\"y\",\"dependencies\":[0]}]}"; #skip-lint
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"s\",");
+    str_builder_add_cstr(sb, tasks);
+    assert_eq(_t_decode(a, str_data(str_builder_build(sb)), &rj), 0, "a default crew with a dependency is refused");
+    assert_eq(str_eq_cstr(agnostic_reject_message(load64(&rj)), "'dependencies' applies only to process 'dag'"), 1,
+      "and is told why");
+    sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"s\",\"process\":\"parallel\",");
+    str_builder_add_cstr(sb, tasks);
+    assert_eq(_t_decode(a, str_data(str_builder_build(sb)), &rj), 0, "as is a parallel one");
+    sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"s\",\"process\":\"dag\",");
+    str_builder_add_cstr(sb, tasks);
+    assert_neq(_t_decode(a, str_data(str_builder_build(sb)), &rj), 0, "and a dag takes it");
+}
+
 fn main() {
     alloc_init();
+    test_dependencies_need_a_dag();
     thread_local_init();
     test_valid_minimum();
     test_tasks_are_required();

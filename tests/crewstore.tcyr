@@ -104,7 +104,7 @@ fn test_outcomes_survive_a_reopen() {
 
     _t_open();
     var id = str_from("44444444-4444-4444-4444-444444444444");
-    var doc = str_from("{\"crew_id\":\"44444444-4444-4444-4444-444444444444\",\"status\":\"completed\",\"task_count\":2}");
+    var doc = str_from("{\"crew_id\":\"44444444-4444-4444-4444-444444444444\",\"status\":\"completed\",\"task_count\":2}"); #skip-lint
     agnostic_crews_save(id, str_from("persisted"), AGNOSTIC_CREW_COMPLETED, doc);
 
     # ⭐ Close and reopen — a different handle, nothing carried in memory.
@@ -264,7 +264,7 @@ fn test_finished_outputs_survive_a_restart() {
     agnostic_crews_save_partial(str_from(idc), str_from("t-1"), str_from("done"));
     var row = _t_row(a, idc, "_");
     agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_COMPLETED);
-    assert_eq(agnostic_crews_save_row(row, str_from("{\"crew_id\":\"99999999-9999-4999-8999-999999999993\",\"status\":\"completed\"}")), 1,
+    assert_eq(agnostic_crews_save_row(row, str_from("{\"crew_id\":\"99999999-9999-4999-8999-999999999993\",\"status\":\"completed\"}")), 1, #skip-lint
       "the crew's outcome is written");
     assert_eq(agnostic_crews_partial_count(), 0, "⭐ which clears what was kept for it");
     assert_eq(agnostic_crews_save_partial(str_from(idc), str_from("t-2"), str_from("late")), 0,
@@ -390,7 +390,8 @@ fn test_the_sweep_interrupts_what_was_in_flight() {
     assert_eq(bayan_json_v_obj_get_by_str(d, AGNOSTIC_JK_FINISHED_AT), 0,
       "⭐ no finished_at: it did not finish, and the downtime is not run time");
     assert_eq(bayan_json_v_obj_get_by_str(d, AGNOSTIC_JK_STARTED_AT), 0, "no started_at: not known");
-    assert_eq(agnostic_req_int(d, AGNOSTIC_JK_INTERRUPTED_AT, 0 - 1) > 0, 1, "interrupted_at says when it was declared");
+    assert_eq(agnostic_req_int(d, AGNOSTIC_JK_INTERRUPTED_AT, 0 - 1) > 0, 1,
+      "interrupted_at says when it was declared");
     var usage = bayan_json_v_obj_get_by_str(d, AGNOSTIC_JK_USAGE);
     assert_eq(agnostic_req_int(usage, AGNOSTIC_JK_METERED, 0 - 1), 0, "usage: nothing metered");
     var err = agnostic_req_str(d, AGNOSTIC_JK_ERROR);
@@ -399,7 +400,8 @@ fn test_the_sweep_interrupts_what_was_in_flight() {
     var db = _t_doc(a, idb);
     assert_neq(db, 0, "the other crew has an outcome too");
     if (db == 0) { return 0; }
-    assert_eq(str_eq_cstr(agnostic_req_str(db, AGNOSTIC_JK_STATUS), "interrupted"), 1, "the other crew is interrupted too");
+    assert_eq(str_eq_cstr(agnostic_req_str(db, AGNOSTIC_JK_STATUS), "interrupted"), 1,
+      "the other crew is interrupted too");
     assert_eq(str_eq_cstr(agnostic_req_str(db, AGNOSTIC_JK_CREW_SCOPE), "_"), 1, "in its own scope");
 
     var rows = agnostic_crews_index_in_a(a, str_from("acme"));
@@ -531,7 +533,8 @@ fn test_a_long_name_is_stored() {
     var doc = _t_named_doc(name);
     assert_eq(agnostic_crews_save(id, name, AGNOSTIC_CREW_COMPLETED, doc), 1,
       "⭐ a crew named in 300 bytes is stored");
-    assert_eq(_t_is(agnostic_crews_doc_a(a, id), doc), 1, "its document reads back byte for byte, the whole name in it");
+    assert_eq(_t_is(agnostic_crews_doc_a(a, id), doc), 1,
+      "its document reads back byte for byte, the whole name in it");
     assert_eq(_t_is(_t_cname_a(a, id), str_sub(name, 0, 255)), 1, "the name column holds its first 255 bytes");
 
     var id2 = str_from("bbbbbbbb-2222-4222-8222-222222222222");
@@ -553,7 +556,8 @@ fn test_a_long_name_is_stored() {
     # 3-byte characters: 255 = 85 × 3, so the 86th starts exactly at the cut.
     var id4 = str_from("bbbbbbbb-4444-4444-8444-444444444444");
     var euro = _t_repeat("\xe2\x82\xac", 100);
-    assert_eq(agnostic_crews_save(id4, euro, AGNOSTIC_CREW_COMPLETED, _t_named_doc(euro)), 1, "a 300-byte name of 3-byte characters is stored");
+    assert_eq(agnostic_crews_save(id4, euro, AGNOSTIC_CREW_COMPLETED, _t_named_doc(euro)), 1,
+      "a 300-byte name of 3-byte characters is stored");
     assert_eq(_t_is(_t_cname_a(a, id4), str_sub(euro, 0, 255)), 1,
       "and a cut that falls between characters keeps all 255 bytes");
     assert_eq(agnostic_crews_count(), 4, "four outcomes");
@@ -586,7 +590,8 @@ fn test_the_sweep_interrupts_a_long_named_crew() {
     assert_neq(d, 0, "the long-named crew has a stored outcome");
     if (d == 0) { return 0; }
     assert_eq(str_eq_cstr(agnostic_req_str(d, AGNOSTIC_JK_STATUS), "interrupted"), 1, "status interrupted");
-    assert_eq(_t_is(agnostic_req_str(d, AGNOSTIC_JK_NAME), lname), 1, "⭐ with its whole name, not the column's 255 bytes");
+    assert_eq(_t_is(agnostic_req_str(d, AGNOSTIC_JK_NAME), lname), 1,
+      "⭐ with its whole name, not the column's 255 bytes");
     var db = _t_doc(a, idb);
     assert_neq(db, 0, "the multi-byte-named crew has one too");
     if (db == 0) { return 0; }
@@ -601,6 +606,30 @@ fn test_the_sweep_interrupts_a_long_named_crew() {
     _t_reopen();
     assert_eq(agnostic_crews_interrupt_inflight(), 0, "a second start has nothing to retry");
     assert_eq(agnostic_crews_count(), 2, "two outcomes, written once each");
+}
+
+# An outcome whose listing row cannot be written is still stored, and its in-flight row stays,
+# because that is what the next start repairs the listing from.
+fn test_a_lost_listing_row_keeps_what_repairs_it() {
+    test_group("crewstore/listing-failure");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var id = str_from("0f0f0f0f-1111-4222-8333-444444444444");
+    agnostic_crews_mark_inflight(id, str_from("_"), str_from("n"), 1759000000000, 1, str_from("live"),
+      str_from("sequential"));
+    assert_eq(agnostic_crews_inflight_count(), 1, "precondition: one crew is in flight");
+
+    agnostic_store_lock();
+    patra_exec(agnostic_store_db(), "DROP TABLE agnostic_crew_index");
+    agnostic_store_unlock();
+
+    var row = agnostic_crew_row_new_a(a);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_CREW_ID, id);
+    agnostic_crew_row_set(row, AGNOSTIC_CR_NAME, str_from("n"));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_COMPLETED);
+    assert_eq(agnostic_crews_save_row(row, str_from("{\"status\":\"completed\"}")), 1, "the outcome is stored");
+    assert_neq(agnostic_crews_doc_a(a, id), 0, "and reads back");
+    assert_eq(agnostic_crews_inflight_count(), 1, "⭐ and the in-flight row stays, for the repair");
 }
 
 fn test_no_database_is_not_a_silent_success() {
@@ -663,6 +692,7 @@ fn main() {
     test_a_cancelled_crew_stays_cancelled_across_a_restart();
     test_a_long_name_is_stored();
     test_the_sweep_interrupts_a_long_named_crew();
+    test_a_lost_listing_row_keeps_what_repairs_it();
     test_no_database_is_not_a_silent_success();
     agnostic_store_close();
     test_patra_init_leaves_the_log_level_alone();

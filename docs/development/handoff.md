@@ -15,7 +15,7 @@ Read in this order:
 | [`roadmap.md`](roadmap.md) | Open work through v1.0 (M6–M9), what waits on agnosai and other siblings, and the settled decisions |
 | [`../../CYRIUS-PORT-BRIEF.md`](../../CYRIUS-PORT-BRIEF.md) | Research snapshot (2026-08-19): language notes, dep stack, **§7 decisions — binding** |
 | [`../../ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) | 86 verified defects in the Python oracle. §3 gated M2, §2.2 gated M3; **§3.15 is what M6's gate now measures** |
-| [`../adr/`](../adr/) | Nineteen ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server, views that link through the shell with one bridge client, audit entries read from a bounded copy, a cancelled crew keeping its finished results, a crew a restart interrupted answering `interrupted`, the estimator's one-agent baseline as its own model, the HTTP API described by a generated schema, agent selection explained by recomputing it, selection hints on a task, and crews joining their request's trace with OTLP export, and an interrupted crew keeping what its finished tasks answered |
+| [`../adr/`](../adr/) | Twenty-two ADRs: health/readiness split, daimon Tier 1 deferral, one store lock rather than a patra handle per worker, compiled-in WebGUI plugins, the plugin host bridge, loopback-Host and JSON-only writes, plugin requests checked by the server, crews that belong to their tenant, crew progress collected by the server, views that link through the shell with one bridge client, audit entries read from a bounded copy, a cancelled crew keeping its finished results, a crew a restart interrupted answering `interrupted`, the estimator's one-agent baseline as its own model, the HTTP API described by a generated schema, agent selection explained by recomputing it, selection hints on a task, and crews joining their request's trace with OTLP export, and an interrupted crew keeping what its finished tasks answered |
 
 ---
 
@@ -190,7 +190,7 @@ the roadmap carries each one against its milestone.
 |---|---|
 | Identity | **Own it, thin** — adapt `secureyeoman/yeo-cy-test/src/auth.cyr`. kavach struck (zero identity surface) |
 | Presets | **Agnostic's library is canonical** — the two sets share names and nothing else |
-| PDF reports | **HTML + CSV + JSON only** in 1.0; wait for `bayan_pdf_*` |
+| PDF reports | **HTML + CSV + JSON only** in 1.0, unless the user decides otherwise: `bayan_pdf_*` shipped (roadmap M8) |
 | Release shape | **One release, total** — M1–M9 ship together as 1.0.0 |
 | Daimon Tier 1 | **Deferred** — ADR 0002; it cannot be implemented as written |
 | MCP transports | **Both shapes**, justified on merit; the 5–8 tool figure is a soft guideline, not a ceiling |
@@ -351,8 +351,8 @@ then, against a real requirement. Out of scope for v1.0.
   and `run_pooled_tls` do not, so every `_a` site needs a bare-form fallback.
 - **Arena exhaustion returns 0, and a `Str` of 0 is indistinguishable from a valid one.** No option
   type, no error channel through the `_a` families. Constructors return 0 rather than a half-built
-  record; callers must check. `ARENA_FULL_SPILL` is applied to sandhi's arena so an oversized
-  response degrades instead of faulting.
+  record; callers must check. `ARENA_FULL_GROW` is applied to sandhi's arena, so an oversized
+  response grows it and later requests reuse what it took (ADR 0021).
 - **sandhi accessors return NUL-terminated cstrings, not `Str`.** Passing one through unwrapped reads
   the pointer as a `Str` header and every downstream length is garbage.
 - **sakshi takes `(pointer, length)`, and a miscount fails silently.** One too many puts the NUL
@@ -463,7 +463,6 @@ change.
 
 - **`yantra`** — needs `Page.captureScreenshot` on its CDP surface before **M6**'s
   browser-automation tools. Not started.
-- **`bayan`** — a `bayan_pdf_*` request should be filed before **M8** reports.
 - ✅ **`kavach` `STDIN` — CLOSED at 0.1.3.** `InjectionMethod.STDIN` collided with
   `io.cyr`'s `var STDIN = 0` and collapsed onto `ENV_VAR`. kavach 3.12.9 prefixed
   the members (`KAVACH_INJECT_*`), that fix arrived here with 3.13.1, and the

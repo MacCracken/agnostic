@@ -2,7 +2,13 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-05, at **0.2.1** — **Cyrius 6.7.18**, with **agnosai 2.2.3**, **libro 2.11.3**
+> Last refreshed: 2026-11-06, at **0.2.2** — the P(-1) audit ([`2026-11-05-audit.md`](../audit/2026-11-05-audit.md))
+> and its repairs: memory exhaustion without credentials (arenas grow, ADR 0021), completed crews lost
+> under load (reading a crew is apart from writing it, ADR 0022), and everything else the record lists.
+> No dependency moved. The roadmap is reorganized into 0.2.x to 0.5.x, with the
+> [parity review](research/2026-11-05-python-port-parity.md). Version, Source, Tests, Hardening,
+> Dependency layout and Next were refreshed then.
+> Before that, 2026-11-05, at **0.2.1** — **Cyrius 6.7.18**, with **agnosai 2.2.3**, **libro 2.11.3**
 > and every pin inside them on a 6.7.18 fold, and no line of `src/` changed. A JSON body that repeats a
 > key or has a leading zero is now 400. Version, Toolchain, Dependencies, Dependency layout, Tests and
 > Next were refreshed then.
@@ -70,7 +76,7 @@
 
 ## Version
 
-**0.2.1** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.2.2** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -136,13 +142,13 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 50 files, 29,256 lines, 1,189 top-level definitions (0.2.0; 29,284
-lines and 1,190 at 0.1.18), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
+the real surface (0.1.10)** — 50 files, 29,860 lines, 1,235 top-level definitions (0.2.2; 29,256
+lines and 1,189 at 0.2.1), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
 `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,903 — five embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 33 suites, 2,806 assertions, 0 failed** (`cyrius test`, 0.2.1; the same at 0.2.0), plus
-**80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.2.0) — **and the
+**Tests: 33 suites, 2,920 assertions, 0 failed** (`cyrius test`, 0.2.2; 2,806 at 0.2.1), plus
+**80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.2.1) — **and the
 same 33 suites natively on aarch64, with the same per-suite counts** (Raspberry Pi 4). Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
 shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
@@ -190,9 +196,9 @@ response into a JSON string, and a test that reads the body directly rather than
 through the send path will not notice.
 
 ⚠ **`AGNOSTIC_AUTH` defaults to `off`, and `agnostic_serve_mount` REFUSES TO
-START with it off on any bind but loopback.** There is no bootstrap route yet, so
-nothing could authenticate on a fresh deployment — the refusal is what keeps that
-from being fail-open rather than a promise that it is not.
+START with it off on any bind but loopback.** Nothing can authenticate until an
+operator has provisioned a user through the bootstrap environment — the refusal is
+what keeps that from being fail-open rather than a promise that it is not.
 
 ⚠ **Every security property in `src/auth/` is mutation-verified.** The suites are
 written so that removing a guard breaks a named assertion: the bucket re-checks,
@@ -457,10 +463,16 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**33 suites, 2,806 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.2.1, 2026-11-05),
-and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). No test changed at 0.2.1. At 0.2.0
-`routes/version` was rewritten to pin the version to the `VERSION` file, with the same count. The run
-ends `34 passed`, because bare `cyrius test` also runs the empty `[build].test` entry since cyrius 6.6.17.
+**33 suites, 2,920 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.2.2, 2026-11-06),
+and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). The run ends `34 passed`, because bare
+`cyrius test` also runs the empty `[build].test` entry since cyrius 6.6.17. The suites are under the lint
+gate since 0.2.2. 0.2.2's additions, each repair mutation-checked: `crews/engine-cap`,
+`crews/collect-apart` and `crews/cancel-retire` (a crew is never lost at the engine's cap, and its results
+survive retirement), `serve/arena-grows`, `serve/restrictions` and `serve/failure-reason`,
+`alloc/definitions-past-cache`, `ledger/evict-oldest`, `ledger/owed` and `ledger/unknown-settled`,
+`request/deps-need-dag`, `login/body-cap` and `login/failed-audited`, `tenancy/limits`,
+`crewstore/listing-failure`, and `config/parse-auth`, `parse-addr` and `url-userinfo`.
+At 0.2.1: 33 suites and 2,806 assertions.
 At 0.1.17: 33 suites and 2,806 assertions. Its additions, each guard mutation-checked (CHANGELOG [0.1.17]): `alloc/refused-bodies` (+10 — every
 refusal of a crew or definition body keeps 0 B) and `request/outlives-arena` (+12 — an accepted
 crew read back after its arena is overwritten).
@@ -597,8 +609,9 @@ Agnostic owns the product tier. Versions and pins: see the table under
 
 `lib/` holds **120** `.cyr`: **113** from the 6.7.18 stdlib snapshot (`unicode/` included) plus 7 dep
 dists (`agnosai`, `bote-core`, `majra`, `ai-hwaccel`, `tyche`, `kavach`, `libro`).
-`deps --verify` 120/0. The compile set `check-lib-symbols.py` resolves is **51** modules. Since cyrius
-6.6.18 a dep's `.deps` sidecar names only what its bundle needs.
+`deps --verify` 120/0. The compile set `check-lib-symbols.py` resolves is **50** modules. Since cyrius
+6.6.18 a dep's `.deps` sidecar names only what its bundle needs. `assert` and `bench` are in `[test]
+stdlib` since 0.2.2.
 
 ⚠ **`check-lib-symbols.py` evaluates `#ifdef` per target since 0.1.7.** sigil 3.13.5
 declares eight errno names in both arms of `#ifdef CYRIUS_TARGET_MACOS`, and a gate that
@@ -614,7 +627,10 @@ Agnostic is built to stand on its own, not as a required layer.
 
 ## Hardening
 
-**P(-1) complete — 2026-08-20**, re-audited at M1.
+**P(-1) complete — 2026-08-20**, re-audited at M1, and **re-run in full on 2026-11-05 for 0.2.2**:
+[`2026-11-05-audit.md`](../audit/2026-11-05-audit.md) — 1 CRITICAL, 3 HIGH, 11 MEDIUM and 17 LOW, no
+authentication bypass and no memory corruption. All repaired but the listed open items: three latent
+or waiting on 0.3.x, one mitigated (idle sockets), and the rest upstream.
 
 | Criterion | Status |
 |---|---|
@@ -629,7 +645,9 @@ Agnostic is built to stand on its own, not as a required layer.
 | agent skill (0.1.13) | `skills/agnostic/SKILL.md`; `scripts/check-skill.py` in `check-clean.sh` checks its frontmatter, and every route, method, query parameter, curl header, response example and `<!-- schema: … -->` list against `docs/api/generated/schema.json`; 22 mutations, each failing by name |
 | views (0.1.10) | [ADR 0010](../adr/0010-views-link-through-the-shell-and-share-one-bridge-client.md): a navigate only to a view that is switched on, params in a fixed alphabet (`shell.test.mjs`); every plugin's bridge client verified byte for byte by the generator |
 | aarch64 (0.1.10) | every suite and the server run natively on a Raspberry Pi 4 before an aarch64 artifact ships |
-| symbols | `check-symbols.sh` OK — 1,189 top-level definitions across 50 files, no duplicates, all prefixed (0.2.0; 1,190 at 0.1.18) |
+| request memory (0.2.2) | [ADR 0021](../adr/0021-request-arenas-grow-and-do-not-spill.md): a worker keeps its largest request and no more; `serve/arena-grows` holds it |
+| crew durability (0.2.2) | [ADR 0022](../adr/0022-a-finished-crew-leaves-the-engines-registry.md): a crew is read apart from its write, and a graceful stop drains the writes; `crews/engine-cap`, `crews/collect-apart` |
+| symbols | `check-symbols.sh` OK — 1,235 top-level definitions across 50 files, no duplicates, all prefixed (0.2.2; 1,189 at 0.2.1) |
 | request allocations (0.1.15) | `tests/request_alloc.tcyr`: every refusal arm, an authenticated read, a failed and a successful login, and an audited write keep 0 bytes of agnostic's own on the global heap; an audited request keeps only libro's entry (roadmap, Memory). Since 0.1.16 the serve adapter around dispatch too: `tests/server_span.tcyr` holds a request through the real handler to 0 B, with its span recorded or not. Since 0.1.17 a crew or definition body refused part-way, and the cycle check of an accepted one (`alloc/refused-bodies`) |
 | server spans (0.1.16) | [ADR 0020](../adr/0020-each-request-records-an-http-server-span.md): one SERVER span per request when OTLP is on, under the request's own span id; a crew's `invoke_workflow` under it, in one trace; ten mutations in `tests/server_span.tcyr`, each failing by name |
 | one process per database (0.1.15) | mount claims `<db>.owner` with an exclusive `flock` before anything opens; `restart/one-process` holds a claim from a separate open and checks mount refuses and sweeps nothing |
@@ -825,11 +843,11 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). After 0.2.1: a server that cannot bind says why; agnosai's F1 tool loop
-and F9's hand-off of dependency outputs (M6's prerequisites, with the tool-registry decision of
-`handoff.md` §8); and what 0.1.15 recorded upstream (libro's per-append entry, patra's unchecked page
-write). The toolchain options this pin makes available are at the end of the roadmap. The notes below
-were written for M5 and remain true.
+See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x. Next in the 0.2.x line:
+the agnosai re-pin that removes `_agnostic_crew_retire_a`'s reach into its fields, `GET /crews` paging,
+and a CI step that boots the binary. Then 0.3.x: provisioning, `AGNOSTIC_JWT_SECRET`, tenant scope and
+a trusted-proxy setting. The parity review's records are waiting on the user (*Decisions awaiting the
+user*). The notes below were written for M5 and remain true.
 
 ✅ **patra's single index per table does NOT bind here — corrected 2026-08-21.**
 The earlier note said M5 needs users by id *and* by email and would therefore

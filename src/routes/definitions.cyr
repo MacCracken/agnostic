@@ -201,7 +201,7 @@ fn agnostic_route_definitions_list_a(a): i64 {
         # A key removed between the snapshot and this fetch answers 0 and is
         # skipped — see `agnostic_definitions_keys`. `total` counts what is in
         # the array, never what the snapshot happened to hold.
-        var d = agnostic_definitions_get(vec_get(keys, i));
+        var d = agnostic_definitions_get_a(a, vec_get(keys, i));
         if (d != 0) {
             bayan_json_v_arr_push_a(a, arr, agnostic_agent_def_summary_a(a, d));
             shown = shown + 1;
@@ -221,7 +221,7 @@ fn agnostic_route_definition_create_a(a, body: Str): i64 {
     if (v == 0) { return load64(&resp); }
     # A taken key is refused before anything is built. The store checks again under its lock
     # with the write: only two creates of one key racing each other build one to refuse.
-    if (agnostic_definitions_get(agnostic_req_str(v, AGNOSTIC_JK_KEY)) != 0) { return _agnostic_def_exists_a(a); }
+    if (agnostic_definitions_get_a(a, agnostic_req_str(v, AGNOSTIC_JK_KEY)) != 0) { return _agnostic_def_exists_a(a); }
     var d = _agnostic_def_build_a(a, v, &resp);
     if (d == 0) { return load64(&resp); }
 
@@ -250,7 +250,7 @@ fn agnostic_route_definition_create_a(a, body: Str): i64 {
 # `GET /api/v1/agents/definitions/{key}` — one definition.
 fn agnostic_route_definition_get_a(a, key: Str): i64 {
     if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
-    var d = agnostic_definitions_get(key);
+    var d = agnostic_definitions_get_a(a, key);
     if (d == 0) { return _agnostic_def_not_found_a(a); }
     return _agnostic_def_answer_a(a, HTTP_OK, d);
 }
@@ -270,7 +270,7 @@ fn agnostic_route_definition_replace_a(a, key: Str, body: Str, ctx): i64 {
     if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
     var if_match = agnostic_reqctx_if_match(ctx);
     if (if_match != 0) {
-        var cur = agnostic_definitions_get(key);
+        var cur = agnostic_definitions_get_a(a, key);
         if (cur == 0) { return _agnostic_def_not_found_a(a); }
         if (agnostic_definition_precondition_a(a, cur, if_match) == 0) { return _agnostic_def_stale_a(a); }
     }
@@ -284,7 +284,7 @@ fn agnostic_route_definition_replace_a(a, key: Str, body: Str, ctx): i64 {
     }
     # An absent definition is refused before anything is built, as a taken key is on create;
     # the store checks again under its lock with the write.
-    if (if_match == 0 && agnostic_definitions_get(key) == 0) { return _agnostic_def_not_found_a(a); }
+    if (if_match == 0 && agnostic_definitions_get_a(a, key) == 0) { return _agnostic_def_not_found_a(a); }
     var d = _agnostic_def_build_a(a, v, &resp);
     if (d == 0) { return load64(&resp); }
 
@@ -356,7 +356,7 @@ fn agnostic_route_audit_a(a): i64 {
     if (obj == 0) { return 0; }
 
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOTAL,
-      bayan_json_v_int_new_a(a, agnostic_audit_count()));
+      bayan_json_v_int_new_a(a, agnostic_audit_next_index()));
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_AT_OPEN,
       bayan_json_v_int_new_a(a, agnostic_audit_at_open()));
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_APPENDED,

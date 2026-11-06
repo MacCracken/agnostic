@@ -4,7 +4,7 @@
 [package]
 name = "agnostic"
 version = "${file:VERSION}"
-description = "agnostic — TODO"
+description = "QA agent platform: crews, QA tools, reports and a WebGUI over AgnosAI"
 license = "GPL-3.0-only"
 language = "cyrius"
 cyrius = "6.7.18"
@@ -17,12 +17,15 @@ output = "agnostic"
 [deps]
 stdlib = [
     "syscalls", "alloc", "result", "tagged", "fmt", "io", "fs", "str", "string",
-    "vec", "slice", "args", "process", "assert", "bench",
-    "fnptr", "freelist", "hashmap", "hashmap_fast", "callback", "chrono", "math",
+    "vec", "slice", "args", "process",
+    "fnptr", "freelist", "hashmap", "callback", "chrono", "math",
     "atomic", "sync", "thread", "thread_local", "ct", "keccak", "random", "sha1",
     "mmap", "dynlib", "fdlopen", "async", "bayan",
     "net", "http", "tls", "sakshi", "sandhi", "patra", "sigil",
 ]
+
+[test]
+stdlib = ["assert", "bench"]
 
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"

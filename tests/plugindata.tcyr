@@ -236,7 +236,7 @@ fn test_count_limit() {
     var i = 0;
     var ok = 0;
     while (i < AGNOSTIC_PLUGINDATA_MAX_DOCS) {
-        if (agnostic_plugindata_put(a, scope, swarm, str_from_int_a(a, i), str_from("{}"), 1) == AGNOSTIC_PDATA_CREATED) {
+        if (agnostic_plugindata_put(a, scope, swarm, str_from_int_a(a, i), str_from("{}"), 1) == AGNOSTIC_PDATA_CREATED) { #skip-lint
             ok = ok + 1;
         }
         i = i + 1;
@@ -303,9 +303,12 @@ fn test_routes() {
     var i = 0;
     while (i < 32) { store8(k + i, 50 + i); i = i + 1; }
     agnostic_jwt_set_secret(k, 32);
-    var ua = agnostic_users_create_a(a, str_from("op@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("acme"));
-    var ug = agnostic_users_create_a(a, str_from("op@globex.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("globex"));
-    var uv = agnostic_users_create_a(a, str_from("v@acme.example"), str_from("pw"), AGNOSTIC_ROLE_VIEWER, str_from("acme"));
+    var ua = agnostic_users_create_a(a, str_from("op@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR,
+      str_from("acme"));
+    var ug = agnostic_users_create_a(a, str_from("op@globex.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR,
+      str_from("globex"));
+    var uv = agnostic_users_create_a(a, str_from("v@acme.example"), str_from("pw"), AGNOSTIC_ROLE_VIEWER,
+      str_from("acme"));
     var ta = agnostic_jwt_issue_a(a, ua, AGNOSTIC_ROLE_OPERATOR, str_from("acme"), 600);
     var tg = agnostic_jwt_issue_a(a, ug, AGNOSTIC_ROLE_OPERATOR, str_from("globex"), 600);
     var tv = agnostic_jwt_issue_a(a, uv, AGNOSTIC_ROLE_VIEWER, str_from("acme"), 600);
@@ -438,7 +441,7 @@ fn test_revisions() {
 
     var n1 = _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/fresh", "{}", _t_ctx_if(a, 0, "*"));
     assert_eq(_t_status(n1), AGNOSTIC_HTTP_CREATED, "If-None-Match: * on a new key creates it");
-    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/fresh", "{\"x\":1}", _t_ctx_if(a, 0, "*"))),
+    assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/fresh", "{\"x\":1}", _t_ctx_if(a, 0, "*"))), #skip-lint
       AGNOSTIC_HTTP_PRECONDITION_FAILED, "⭐ and on an existing one is 412 — two tabs cannot both create one swarm");
     assert_eq(_t_status(_t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm/data/odd", "{}", _t_ctx_if(a, 0, "abc"))),
       AGNOSTIC_HTTP_PRECONDITION_FAILED, "an If-None-Match other than * cannot be met");

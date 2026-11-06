@@ -418,7 +418,8 @@ fn test_the_ring_is_bounded() {
     assert_eq(_t_fresh(), 1, "fresh store");
     var n = 0;
     while (n < AGNOSTIC_AUDIT_RING + 6) {
-        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("tick"), agnostic_audit_detail("n", str_from_int(n)));
+        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("tick"),
+          agnostic_audit_detail("n", str_from_int(n)));
         n = n + 1;
     }
     assert_eq(agnostic_audit_next_index(), AGNOSTIC_AUDIT_RING + 6, "every entry is numbered");
@@ -446,7 +447,8 @@ fn test_the_entries_route() {
     assert_eq(_t_fresh(), 1, "fresh store");
     var i = 0;
     while (i < 5) {
-        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("crew.submit"), agnostic_audit_detail("n", str_from_int(i)));
+        agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("crew.submit"),
+          agnostic_audit_detail("n", str_from_int(i)));
         i = i + 1;
     }
     var a = arena_allocator(1048576);

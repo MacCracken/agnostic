@@ -4,7 +4,7 @@
 # never write bytes, which is what keeps them testable without a server and what
 # keeps the route table separable from handler logic.
 #
-# ## The per-request arena, and why SPILL
+# ## The per-request arena, and why GROW
 #
 # `lib/alloc.cyr` is a bump allocator with **no `free()`**. Without a per-request
 # arena every `_a` call falls through to that global bump and the process grows
@@ -14,15 +14,21 @@
 # calling that setter leaves `sandhi_server_request_arena()` returning 0 for the
 # life of the process, so the leak is the default rather than the exception.
 #
-# The arena is wrapped in `ARENA_FULL_SPILL` because a full arena answers **0**,
-# and a `Str` of 0 is indistinguishable from a valid one — there is no option
-# type and no error channel through the `_a` families. Without SPILL an oversized
-# response is not an error, it is a segfault several frames later.
+# The arena is set to `ARENA_FULL_GROW` because a full arena answers **0**, and a `Str` of 0
+# is indistinguishable from a valid one — there is no option type and no error channel
+# through the `_a` families. Without a policy an oversized response is not an error, it is
+# a segfault several frames later.
 #
-# ⚠ SPILL, not GROW, deliberately. GROW retains its chunks across `arena_reset`,
-# so each worker would converge on its worst-ever request and hold that forever,
-# times the worker count. Spilled bytes come from the global bump and are not
-# reclaimed — the pre-arena cost, applied to the overflow alone.
+# ⚠ GROW, not SPILL (0.2.2, ADR 0021). GROW keeps its chunks across `arena_reset`, so a
+# worker converges on its largest request and then allocates nothing. SPILL takes each
+# overflow from the global bump, which never gives it back, so through 0.2.1 any response or
+# listing over the arena leaked on every call, and a client with READ permission could exhaust
+# the process.
+#
+# ⚠ **The arena must be at least the body cap (`agnostic_serve_arena_bytes`).** An allocation
+# larger than the chunk size gets a chunk of its own, in front of the next, and a chunk too
+# small for what comes next is not looked at again. Bodies that each grew by 16 B kept a whole
+# chunk per request, 880 KB each, until the arena's chunks were larger than any body.
 #
 # ## Only run_pooled populates the arena
 #
@@ -37,8 +43,8 @@
 # request without one was a segfault that killed the process. Rather than audit
 # every `_a` function below the router for a null, the handler now substitutes the
 # global allocator when sandhi gives it none (`_agnostic_serve_fallback_alloc`):
-# everything downstream always receives a usable allocator. The cost is the one
-# SPILL already accepts — bytes that are not reclaimed — and it is logged once.
+# everything downstream always receives a usable allocator. The cost is bytes that
+# are not reclaimed, and it is logged once.
 
 var AGNOSTIC_SERVE_ARENA_BYTES = 65536;
 
@@ -63,22 +69,14 @@ var AGNOSTIC_SHUTDOWN_SIGMASK = 0x4002;
 var _agnostic_serve_cfg = 0;
 var _agnostic_serve_stop = 0;
 
-# A fresh arena with the SPILL exhaustion policy.
-fn agnostic_spill_arena(capacity): i64 {
-    var a = arena_allocator(capacity);
-    if (a == 0) { return 0; }
-    arena_allocator_set_on_full(a, ARENA_FULL_SPILL);
-    return a;
-}
-
-# Apply SPILL to sandhi's own request arena.
+# Apply GROW to sandhi's own request arena.
 #
 # sandhi owns the arena and resets it between requests, so this does not create
 # one — it sets the policy on the existing one. Idempotent, so no thread-local
 # flag is needed to remember whether this worker has already done it.
-fn _agnostic_spill_for(sandhi_arena): i64 {
+fn _agnostic_grow_for(sandhi_arena): i64 {
     if (sandhi_arena == 0) { return 0; }
-    arena_allocator_set_on_full(sandhi_arena, ARENA_FULL_SPILL);
+    arena_allocator_set_on_full(sandhi_arena, ARENA_FULL_GROW);
     return sandhi_arena;
 }
 
@@ -227,7 +225,7 @@ fn _agnostic_serve_header_a(a, buf, blen, name): i64 {
 fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
     # When the request arrived: its server span's start (0.1.16).
     var start_ns = clock_epoch_ns();
-    var a = _agnostic_spill_for(sandhi_server_request_arena());
+    var a = _agnostic_grow_for(sandhi_server_request_arena());
     # Never 0 past this line — see the module header and 0.1.5.
     if (a == 0) { a = _agnostic_serve_fallback_alloc(); }
 
@@ -332,6 +330,19 @@ fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
     return 0;
 }
 
+# Room over the body cap, for what an allocation adds to a body: a NUL, a header.
+var AGNOSTIC_ARENA_SLACK = 4096;
+
+# The size of a worker's request arena and of each chunk it grows by: what was configured, and at
+# least the body cap, so that no single allocation a body can cause needs a chunk of its own.
+fn agnostic_serve_arena_bytes(cfg): i64 {
+    var arena = agnostic_config_arena_bytes(cfg);
+    if (arena <= 0) { arena = AGNOSTIC_SERVE_ARENA_BYTES; }
+    var least = agnostic_config_max_body(cfg) + AGNOSTIC_ARENA_SLACK;
+    if (arena < least) { arena = least; }
+    return arena;
+}
+
 # Build sandhi server options from config.
 #
 # ⚠ `sandhi_server_options_idle_ms` and `_max_conns` have no `opts == 0` guard —
@@ -349,20 +360,35 @@ fn agnostic_serve_options(cfg): i64 {
     if (idle <= 0) { idle = AGNOSTIC_DEFAULT_IDLE_MS; }
     sandhi_server_options_idle_ms(o, idle);
 
+    # A connection holds a worker while it is read, so this is what an idle socket can cost.
+    var budget = agnostic_config_request_ms(cfg);
+    if (budget <= 0) { budget = AGNOSTIC_DEFAULT_REQUEST_MS; }
+    sandhi_server_options_request_ms(o, budget);
+
     var backlog = agnostic_config_backlog(cfg);
     if (backlog <= 0) { backlog = AGNOSTIC_DEFAULT_BACKLOG; }
     sandhi_server_options_backlog(o, backlog);
 
     # The setter that must not be forgotten — see the module header.
-    var arena = agnostic_config_arena_bytes(cfg);
-    if (arena <= 0) { arena = AGNOSTIC_SERVE_ARENA_BYTES; }
-    sandhi_server_options_req_arena(o, arena);
+    sandhi_server_options_req_arena(o, agnostic_serve_arena_bytes(cfg));
 
     var max_body = agnostic_config_max_body(cfg);
     if (max_body > 0) { sandhi_server_options_max_request(o, max_body); }
 
     sandhi_server_options_stop_flag(o, &_agnostic_serve_stop);
     return o;
+}
+
+# 0600: the store holds password hashes and crew output, and the trail what everyone did.
+var AGNOSTIC_STORE_FILE_MODE = 384;
+
+# Close a store file to everyone but its owner. patra creates its files 0644. A failure is
+# logged and not fatal: the server can still run, on a filesystem that has no modes.
+fn _agnostic_serve_restrict(path: Str): i64 {
+    if (sys_chmod(str_cstr(path), AGNOSTIC_STORE_FILE_MODE) < 0) {
+        agnostic_log_kv_str(SK_WARN, "could not restrict a store file to its owner", 44, "path", 4, path);
+    }
+    return 0;
 }
 
 # Everything that must happen before workers exist.
@@ -407,7 +433,7 @@ fn agnostic_serve_mount(cfg): i64 {
     #
     # ⚠ **Auth off on a non-loopback bind REFUSES TO START.** The default mode is
     # `off` because nothing can authenticate before an operator has provisioned a
-    # user and there is no bootstrap route yet — but "unauthenticated" and
+    # user through the bootstrap environment — but "unauthenticated" and
     # "reachable from the network" together is not a configuration this binary
     # will run. `state.md` recorded loopback as the only thing standing in front
     # of the crew routes; this makes that structural rather than incidental.
@@ -564,6 +590,7 @@ fn agnostic_serve_mount(cfg): i64 {
         }
     }
     agnostic_log_kv_str(SK_INFO, "database open", 13, "path", 4, db_path);
+    _agnostic_serve_restrict(db_path);
 
     # ⚠ Also fatal. A trail that silently stops recording is worse than a
     # startup that refuses — the whole value of a tamper-evident chain is that
@@ -575,6 +602,7 @@ fn agnostic_serve_mount(cfg): i64 {
         return 0;
     }
     agnostic_log_kv_str(SK_INFO, "audit chain open", 16, "path", 4, audit_path);
+    _agnostic_serve_restrict(audit_path);
 
     # --- crews the last process never finished (0.1.13, ADR 0013) -------------
     #
@@ -593,25 +621,6 @@ fn agnostic_serve_mount(cfg): i64 {
 
     agnostic_ready_register(str_from("engine"), &agnostic_engine_is_ready);
 
-    # ⚠ **The two size ceilings interact, and the interaction leaks.** A request
-    # body is parsed into the per-request arena, and the arena's exhaustion
-    # policy is `ARENA_FULL_SPILL` — an overflow is satisfied from the global
-    # bump, which has no `free()`. So every body larger than the arena leaks its
-    # overflow permanently, in proportion to traffic.
-    #
-    # The defaults make this reachable: 64 KiB arena against a 1 MiB body limit.
-    # The crew routes make it easy to hit — the engine's own caps admit 1000
-    # tasks of 10000 characters, several megabytes of entirely legal request.
-    #
-    # Not a startup failure: the safe configuration depends on the deployment,
-    # and refusing to start would be worse than serving with a warning an
-    # operator can act on. Raise AGNOSTIC_REQUEST_ARENA_BYTES or lower
-    # AGNOSTIC_MAX_BODY_BYTES; note the arena cost is per worker.
-    if (agnostic_config_max_body(cfg) > agnostic_config_arena_bytes(cfg)) {
-        agnostic_log_kv_int(SK_WARN,
-          "max body exceeds the request arena; oversized bodies spill to the global allocator and are not reclaimed",
-          104, "arena_bytes", 11, agnostic_config_arena_bytes(cfg));
-    }
     return agnostic_serve_options(cfg);
 }
 
@@ -643,7 +652,35 @@ fn agnostic_serve_telemetry_stop(g): i64 {
     return agnosai_telemetry_shutdown(g);
 }
 
+# The step `sandhi_server_last_failure` reports, as a word for the log line.
+fn agnostic_serve_failure_step_name(step): i64 {
+    if (step == SANDHI_SERVER_FAIL_CONFIG) { return "config"; }
+    if (step == SANDHI_SERVER_FAIL_ALLOC) { return "alloc"; }
+    if (step == SANDHI_SERVER_FAIL_SOCKET) { return "socket"; }
+    if (step == SANDHI_SERVER_FAIL_BIND) { return "bind"; }
+    if (step == SANDHI_SERVER_FAIL_LISTEN) { return "listen"; }
+    if (step == SANDHI_SERVER_FAIL_ACCEPT) { return "accept"; }
+    if (step == SANDHI_SERVER_FAIL_THREAD) { return "thread"; }
+    return "unknown";
+}
+
+# Why the server loop given options `o` failed, as `<step> (errno <n>)`.
+fn agnostic_serve_failure_reason(o): Str {
+    var step = 0;
+    var err = 0;
+    sandhi_server_last_failure(o, &step, &err);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, agnostic_serve_failure_step_name(step));
+    str_builder_add_cstr(sb, " (errno ");
+    str_builder_add_int(sb, err);
+    str_builder_add_cstr(sb, ")");
+    return str_builder_build(sb);
+}
+
 # Bind and serve until the stop flag is set. Returns 0 on a graceful stop.
+#
+# `listening` is logged before the loop binds, so a port already in use prints it too. The
+# `server failed` line that follows says what really happened.
 #
 # `run_pooled` and not `run`/`run_async`: only the pooled worker populates the
 # per-request arena, and without it every allocation goes to the no-free global
@@ -667,8 +704,16 @@ fn agnostic_serve(cfg): i64 {
     agnostic_log_kv_int(SK_INFO, "listening", 9, "port", 4, port);
 
     var rc = sandhi_server_run_pooled(addr, port, &agnostic_serve_handler, 0, o);
+    # Outcomes the collector had not reached yet, before anything else stops. An arena of its own:
+    # no request is running, and a backlog at a stop is at most what the last sweeps left.
+    var fa = arena_allocator_growable(1048576);
+    if (fa != 0) { agnostic_collector_finish_a(fa); }
     # The last batch is the one most likely to explain the stop: flush it, whatever rc says.
     agnostic_serve_telemetry_stop(telemetry);
-    if (rc == 0) { sakshi_info("server shut down gracefully", 27); }
+    if (rc == 0) {
+        sakshi_info("server shut down gracefully", 27);
+    } else {
+        agnostic_log_kv_str(SK_ERROR, "server failed", 13, "reason", 6, agnostic_serve_failure_reason(o));
+    }
     return rc;
 }

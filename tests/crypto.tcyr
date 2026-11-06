@@ -153,7 +153,7 @@ fn test_pool_caps_concurrency_rather_than_queueing() {
     # and the shed path is never reached — which is what this assertion is for.
     # 16-byte salt, 32-byte hash, both full length.
     assert_eq(agnostic_password_verify_a(a, str_from("x"),
-        str_from("v1$2$19456$1$000102030405060708090a0b0c0d0e0f$00000000000000000000000000000000000000000000000000000000000000ff"),
+        str_from("v1$2$19456$1$000102030405060708090a0b0c0d0e0f$00000000000000000000000000000000000000000000000000000000000000ff"), #skip-lint
         &shed), 0, "verification fails with no scratch");
     assert_eq(load64(&shed), 1, "and says it was SHED, not that the password was wrong");
 

@@ -48,7 +48,8 @@ enum AgnosticConfigOff {
     AGNOSTIC_CFG_OTEL_SVC  = 144;   # the service name spans are exported as (0.1.14)
     AGNOSTIC_CFG_OTLP_AS_IS = 152;  # 1 when the endpoint is the per-signal traces URL (0.1.14)
     AGNOSTIC_CFG_LLM_SECS  = 160;   # the inference call's ceiling, s; 0 = agnosai's own (0.1.14)
-    AGNOSTIC_CFG_SIZE      = 168;
+    AGNOSTIC_CFG_REQUEST_MS = 168;  # accept to a complete request, ms (0.2.2)
+    AGNOSTIC_CFG_SIZE      = 176;
 }
 
 # The service name agnostic's spans are exported under when `OTEL_SERVICE_NAME` is unset or
@@ -67,6 +68,11 @@ var AGNOSTIC_DEFAULT_WORKERS  = 16;
 var AGNOSTIC_DEFAULT_ARENA    = 65536;
 var AGNOSTIC_DEFAULT_MAX_BODY = 1048576;
 var AGNOSTIC_DEFAULT_IDLE_MS  = 30000;
+
+# How long a connection has from accept to a complete request. Each connection holds a pool
+# worker while it is read, so this is how long a client that sends nothing can hold one. It is
+# the only bound on that: sandhi's read waits on this deadline, not on `AGNOSTIC_IDLE_MS`.
+var AGNOSTIC_DEFAULT_REQUEST_MS = 15000;
 var AGNOSTIC_DEFAULT_BACKLOG  = 128;
 
 # The crew wall-clock ceiling, added at M2. Matches AgnosAI's own fallback, so an
@@ -240,6 +246,46 @@ fn agnostic_config_parse_otlp_endpoint(v: Str): i64 {
     return 1;
 }
 
+# `AGNOSTIC_AUTH` as a mode: `off` (or empty) and `required`, in any case. -1 for anything
+# else, which the caller refuses.
+fn agnostic_config_parse_auth(v: Str): i64 {
+    if (str_len(v) == 0) { return AGNOSTIC_AUTH_OFF; }
+    if (agnostic_str_eq_cstr_ci(v, "off") == 1) { return AGNOSTIC_AUTH_OFF; }
+    if (agnostic_str_eq_cstr_ci(v, "required") == 1) { return AGNOSTIC_AUTH_REQUIRED; }
+    return 0 - 1;
+}
+
+# `AGNOSTIC_ADDR` as an address: `any`, or loopback spelled `loopback`, `localhost`,
+# `127.0.0.1` or left empty. -1 for anything else, which the caller refuses.
+fn agnostic_config_parse_addr(v: Str): i64 {
+    if (str_len(v) == 0) { return INADDR_LOOPBACK(); }
+    if (agnostic_str_eq_cstr_ci(v, "any") == 1) { return INADDR_ANY(); }
+    if (agnostic_str_eq_cstr_ci(v, "loopback") == 1) { return INADDR_LOOPBACK(); }
+    if (agnostic_str_eq_cstr_ci(v, "localhost") == 1) { return INADDR_LOOPBACK(); }
+    if (agnostic_str_eq_cstr_ci(v, "127.0.0.1") == 1) { return INADDR_LOOPBACK(); }
+    return 0 - 1;
+}
+
+# 1 when URL `v` holds userinfo: an `@` between `://` and the path.
+fn agnostic_config_url_has_userinfo(v: Str): i64 {
+    var n = str_len(v);
+    var d = str_data(v);
+    var i = 0;
+    while (i + 2 < n) {
+        if (load8(d + i) == 58 && load8(d + i + 1) == 47 && load8(d + i + 2) == 47) { break; }
+        i = i + 1;
+    }
+    if (i + 2 >= n) { return 0; }
+    i = i + 3;
+    while (i < n) {
+        var c = load8(d + i) & 0xFF;
+        if (c == 47 || c == 63 || c == 35) { return 0; }
+        if (c == 64) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
 # Map a log-level name to its sakshi constant. -1 for an unknown name, so the
 # caller can reject rather than silently pick a level the operator did not ask
 # for. Case-insensitive.
@@ -284,14 +330,13 @@ fn agnostic_config_from_env(): i64 {
     if (raw_port != 0) { port = agnostic_config_parse_port(str_from(raw_port)); }
     store64(c + AGNOSTIC_CFG_PORT, port);
 
-    # "any" binds 0.0.0.0, anything else binds loopback. Defaulting to loopback
-    # is the safe direction: a service that is unreachable is a visible failure,
-    # one that is reachable from the whole network by accident is not.
-    var addr = INADDR_LOOPBACK();
+    # Loopback by default, and `any` for 0.0.0.0. Loopback is the safe direction: a service
+    # that is unreachable is a visible failure, one that is reachable from the whole network
+    # by accident is not. Anything else is refused, not read as loopback: `10.1.2.3` used to
+    # start on 127.0.0.1 and answer no one, with nothing saying why.
     var raw_addr = getenv("AGNOSTIC_ADDR");
-    if (raw_addr != 0) {
-        if (agnostic_str_eq_cstr_ci(str_from(raw_addr), "any") == 1) { addr = INADDR_ANY(); }
-    }
+    var addr = INADDR_LOOPBACK();
+    if (raw_addr != 0) { addr = agnostic_config_parse_addr(str_from(raw_addr)); }
     store64(c + AGNOSTIC_CFG_ADDR, addr);
 
     store64(c + AGNOSTIC_CFG_WORKERS,
@@ -302,6 +347,8 @@ fn agnostic_config_from_env(): i64 {
       _agnostic_config_int_env("AGNOSTIC_MAX_BODY_BYTES", AGNOSTIC_DEFAULT_MAX_BODY, 268435456));
     store64(c + AGNOSTIC_CFG_IDLE_MS,
       _agnostic_config_int_env("AGNOSTIC_IDLE_MS", AGNOSTIC_DEFAULT_IDLE_MS, 3600000));
+    store64(c + AGNOSTIC_CFG_REQUEST_MS,
+      _agnostic_config_int_env("AGNOSTIC_REQUEST_MS", AGNOSTIC_DEFAULT_REQUEST_MS, 3600000));
     store64(c + AGNOSTIC_CFG_BACKLOG,
       _agnostic_config_int_env("AGNOSTIC_BACKLOG", AGNOSTIC_DEFAULT_BACKLOG, 65535));
 
@@ -326,11 +373,17 @@ fn agnostic_config_from_env(): i64 {
     # `engine_mode` on every crew response (not `/ready`) says which of the two this
     # process is, so the distinction is visible rather than inferred from output
     # that looks oddly synthetic.
+    #
+    # ⚠ **A URL holding userinfo is refused.** agnosai puts the gateway's URL in a transport
+    # error, so `user:pass@` would reach a response body, a stored outcome and the log.
     var url = 0;
     var raw_url = getenv("AGNOSTIC_LLM_URL");
     if (raw_url != 0) {
         var u = str_from(raw_url);
-        if (str_len(u) > 0) { url = u; }
+        if (str_len(u) > 0) {
+            url = u;
+            if (agnostic_config_url_has_userinfo(u) == 1) { url = 0 - 1; }
+        }
     }
     store64(c + AGNOSTIC_CFG_LLM_URL, url);
 
@@ -370,13 +423,12 @@ fn agnostic_config_from_env(): i64 {
     # fail-open hole is `agnostic_serve_mount`: with auth off it REFUSES TO
     # START on any bind but loopback. Unauthenticated and reachable is not a
     # configuration this binary will run.
+    #
+    # ⚠ **Only `off` and `required` are values.** Anything else is refused, so a typo such
+    # as `AGNOSTIC_AUTH=requred` stops the server rather than leaving it open.
     var auth = AGNOSTIC_AUTH_OFF;
     var raw_auth = getenv("AGNOSTIC_AUTH");
-    if (raw_auth != 0) {
-        if (agnostic_str_eq_cstr_ci(str_from(raw_auth), "required") == 1) {
-            auth = AGNOSTIC_AUTH_REQUIRED;
-        }
-    }
+    if (raw_auth != 0) { auth = agnostic_config_parse_auth(str_from(raw_auth)); }
     store64(c + AGNOSTIC_CFG_AUTH_MODE, auth);
 
     # The first-administrator credential, used exactly once — see
@@ -496,6 +548,8 @@ fn agnostic_config_max_body(c): i64 { if (c == 0) { return 0; } return load64(c 
 
 # Idle timeout in milliseconds before a kept connection is dropped.
 fn agnostic_config_idle_ms(c): i64 { if (c == 0) { return 0; } return load64(c + AGNOSTIC_CFG_IDLE_MS); }
+# How long a connection has from accept to a complete request, in ms.
+fn agnostic_config_request_ms(c): i64 { if (c == 0) { return 0; } return load64(c + AGNOSTIC_CFG_REQUEST_MS); }
 
 # Listen backlog depth.
 fn agnostic_config_backlog(c): i64 { if (c == 0) { return 0; } return load64(c + AGNOSTIC_CFG_BACKLOG); }
@@ -588,5 +642,9 @@ fn agnostic_config_invalid(c): i64 {
     if (load64(c + AGNOSTIC_CFG_CREW_SECS) < 0) { return 1; }
     if (load64(c + AGNOSTIC_CFG_OTLP) < 0) { return 1; }
     if (load64(c + AGNOSTIC_CFG_LLM_SECS) < 0) { return 1; }
+    if (load64(c + AGNOSTIC_CFG_REQUEST_MS) < 0) { return 1; }
+    if (load64(c + AGNOSTIC_CFG_AUTH_MODE) < 0) { return 1; }
+    if (load64(c + AGNOSTIC_CFG_ADDR) == 0 - 1) { return 1; }
+    if (load64(c + AGNOSTIC_CFG_LLM_URL) == 0 - 1) { return 1; }
     return 0;
 }

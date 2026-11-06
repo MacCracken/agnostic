@@ -44,7 +44,7 @@
 var AGNOSTIC_COLLECTOR_INTERVAL_MS = 200;
 
 # The collector's arena. A sweep needs one small outcome record per live crew, so this is
-# room for every crew the ledger can hold several times over; SPILL beyond it.
+# room for every crew the ledger can hold several times over, and it grows past that.
 var AGNOSTIC_COLLECTOR_ARENA_BYTES = 262144;
 
 # 1 once the thread is running.
@@ -53,9 +53,15 @@ var _agnostic_collector_started = 0;
 # How many sweeps have completed. Read by the suites and the bench.
 var _agnostic_collector_sweeps = 0;
 
-# One sweep: refresh every live ledger entry, in `a`. Returns how many entries it
-# refreshed. Safe to call from any thread, concurrently with the routes — it is exactly
-# the refresh a poll performs.
+# How long one sweep spends writing outcomes. Each is about 11.5 ms of fsync, so a backlog could
+# otherwise hold the next sweep off for seconds while finished crews pile up in the engine.
+var AGNOSTIC_COLLECTOR_WRITE_MS = 150;
+
+# One sweep, in `a`: bring every live ledger entry up to date, then write what is owed, for as long
+# as the budget lasts. The first half is memory and always finishes, so a backlog of writes never
+# stops the sweep from reading the engine. What the budget leaves stays live, and the next sweep
+# has it. Returns how many entries it looked at. Safe to call from any thread, concurrently with
+# the routes — it is exactly the refresh a poll performs.
 fn agnostic_collector_sweep_a(a): i64 {
     var live = agnostic_ledger_live_entries_a(a);
     if (live == 0) { return 0; }
@@ -63,7 +69,30 @@ fn agnostic_collector_sweep_a(a): i64 {
     var i = 0;
     while (i < n) {
         var e = vec_get(live, i);
-        agnostic_crew_refresh_a(a, e, agnostic_ledger_crew_id(e));
+        agnostic_crew_collect_a(a, e, agnostic_ledger_crew_id(e));
+        i = i + 1;
+    }
+    var began = clock_now_ms();
+    i = 0;
+    while (i < n && clock_now_ms() - began < AGNOSTIC_COLLECTOR_WRITE_MS) {
+        agnostic_ledger_flush_a(a, vec_get(live, i));
+        i = i + 1;
+    }
+    return n;
+}
+
+# Write everything the ledger still owes, with no budget. A graceful stop runs this, after the
+# server has stopped accepting: a crew that finished must not read `interrupted` after a restart
+# because its write was still waiting for a sweep. Returns how many entries it looked at.
+fn agnostic_collector_finish_a(a): i64 {
+    var live = agnostic_ledger_live_entries_a(a);
+    if (live == 0) { return 0; }
+    var n = vec_len(live);
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(live, i);
+        agnostic_crew_collect_a(a, e, agnostic_ledger_crew_id(e));
+        agnostic_ledger_flush_a(a, e);
         i = i + 1;
     }
     return n;
@@ -77,12 +106,13 @@ fn agnostic_collector_sweeps(): i64 {
 # The thread body: sweep, rewind, sleep, until `stop_flag` (a pointer to the server's
 # stop word) reads non-zero.
 fn _agnostic_collector_thread(stop_flag): i64 {
-    var a = arena_allocator(AGNOSTIC_COLLECTOR_ARENA_BYTES);
+    # Growable, so a sweep larger than the arena reuses what it took (ADR 0021). An arena that
+    # spilled lost the overflow of every sweep, five times a second, with nobody asking.
+    var a = arena_allocator_growable(AGNOSTIC_COLLECTOR_ARENA_BYTES);
     if (a == 0) {
         sakshi_error("crew collector: no arena; crews are refreshed only when polled", 62);
         return 0;
     }
-    arena_allocator_set_on_full(a, ARENA_FULL_SPILL);
     while (load64(stop_flag) == 0) {
         agnostic_collector_sweep_a(a);
         reset_via(a);

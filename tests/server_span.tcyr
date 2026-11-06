@@ -17,7 +17,7 @@ var _T_SDB = _tt_tmp_path("span-suite");
 var _T_SAUDIT = _tt_tmp_path("span-suite-audit");
 
 var _T_INBOUND = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-var _T_CREW = "{\"name\":\"spanned\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}";
+var _T_CREW = "{\"name\":\"spanned\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}"; #skip-lint
 
 # The worker's request arena, rewound before each request as sandhi rewinds it.
 var _t_harena = 0;

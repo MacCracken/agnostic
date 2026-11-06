@@ -102,8 +102,14 @@ fn agnostic_unknown_field(obj, allowed): i64 {
 }
 
 # Parse a request body into a bayan value in arena `a`. 0 on malformed JSON.
+#
+# ⚠ **Through `agnostic_json_kind` first (0.2.2).** bayan takes raw invalid UTF-8 and raw control
+# bytes in a string. A crew named `a\xff\xfeb` was accepted, stored, and then made that tenant's
+# `GET /crews` undecodable to any strict client, for good. The plugin document route has always
+# refused such a body; this is the same check, at every door.
 fn agnostic_decode_a(a, body: Str): i64 {
     if (str_len(body) == 0) { return 0; }
+    if (agnostic_json_kind(body) == AGNOSTIC_JSON_MALFORMED) { return 0; }
     return bayan_json_v_parse_buf_a(a, str_data(body), str_len(body));
 }
 

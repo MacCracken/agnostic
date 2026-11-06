@@ -318,7 +318,62 @@ fn _agnostic_bench_crew_decode(): i64 {
     }
     bench_batch_stop(b, 2000);
     bench_report(b);
+
+    # What the row above leaves out: it decodes a value parsed once, outside its loop, so a change to
+    # bayan's parser cannot show there. Every JSON write route pays this first.
+    var p = bench_new("json_parse_crew_4a_8t");
+    bench_batch_start(p);
+    i = 0;
+    while (i < 2000) {
+        reset_via(a);
+        if (bayan_json_v_parse_buf_a(a, str_data(body), str_len(body)) != 0) { ok = ok + 1; }
+        i = i + 1;
+    }
+    bench_batch_stop(p, 2000);
+    bench_report(p);
     return ok;
+}
+
+# One listing row. `GET /crews` asks this of every crew the ledger holds, and until 0.2.2 each one
+# built a JSON object to read two integers from.
+fn _agnostic_bench_ledger_row(): i64 {
+    var a = arena_allocator(1048576);
+    var e = agnostic_ledger_record(str_from("bench-row"), str_from("bench"), 0);
+    var b = bench_new("ledger_row");
+    bench_batch_start(b);
+    var i = 0;
+    while (i < 100000) {
+        if ((i & 1023) == 0) { reset_via(a); }
+        agnostic_ledger_row_a(a, e);
+        i = i + 1;
+    }
+    bench_batch_stop(b, 100000);
+    bench_report(b);
+    return 0;
+}
+
+# Rendering a 64 KB response. bayan's builder takes about three times its output in the arena, so
+# this is the row that says what a large response asks of a worker.
+fn _agnostic_bench_json_build(): i64 {
+    var a = arena_allocator_growable(65536);
+    var arr = bayan_json_v_arr_new();
+    var item = str_from("a string of about one hundred bytes, which is what a crew's listing row comes to, more or less");
+    var i = 0;
+    while (i < 640) {
+        bayan_json_v_arr_push(arr, bayan_json_v_str_new(item));
+        i = i + 1;
+    }
+    var b = bench_new("json_build_64k");
+    bench_batch_start(b);
+    i = 0;
+    while (i < 1000) {
+        reset_via(a);
+        bayan_json_v_build_a(a, arr);
+        i = i + 1;
+    }
+    bench_batch_stop(b, 1000);
+    bench_report(b);
+    return 0;
 }
 
 fn main(): i64 {
@@ -384,6 +439,8 @@ fn main(): i64 {
     _agnostic_bench_inflight();
     _agnostic_bench_server_span();
     _agnostic_bench_crew_decode();
+    _agnostic_bench_ledger_row();
+    _agnostic_bench_json_build();
     return 0;
 }
 

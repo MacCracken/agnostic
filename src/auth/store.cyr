@@ -291,6 +291,35 @@ fn agnostic_users_tenant_a(a, uid): i64 {
       "SELECT tenant FROM agnostic_users WHERE uid = ?", 0);
 }
 
+# The role for a uid, with its tenant through `out_tenant` (0 when unset), or -1 when there is no
+# such user. One statement: the request's identity is read at one instant, and an authenticated
+# request pays for one lookup.
+fn agnostic_users_identity_a(a, uid, out_tenant): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_users_identity_locked_a(a, uid, out_tenant);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_users_identity_a`'s body. The caller holds the store lock.
+fn _agnostic_users_identity_locked_a(a, uid, out_tenant): i64 {
+    store64(out_tenant, 0);
+    var db = agnostic_store_db();
+    if (db == 0 || uid == 0) { return 0 - 1; }
+    var st = patra_prepare(db, "SELECT urole, tenant FROM agnostic_users WHERE uid = ?");
+    if (st == 0) { return 0 - 1; }
+    patra_bind_int(st, 0, uid);
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0 - 1; }
+    if (patra_result_count(rs) == 0) { patra_result_free(rs); return 0 - 1; }
+    var role = patra_result_get_int(rs, 0, 0);
+    store64(out_tenant, _agnostic_auth_str_a(a, rs, 0, 1));
+    patra_result_free(rs);
+    if (agnostic_role_is_valid(role) == 0) { return 0 - 1; }
+    return role;
+}
+
 # The role for a uid, or -1 when there is no such user.
 #
 # ⚠ -1, not VIEWER. A missing user must not read as a low-privilege one — the
@@ -401,6 +430,10 @@ fn agnostic_users_reset(): i64 {
 
 # --- bootstrap ------------------------------------------------------------
 
+# The shortest bootstrap password. No route can rotate it yet, so what is set here is what
+# guards the deployment until someone replaces the database.
+var AGNOSTIC_BOOTSTRAP_PASSWORD_MIN = 12;
+
 # Create the first administrator. Returns the new `uid`, or 0.
 #
 # ⚠ **Refuses outright if ANY user already exists.** That single guard is what
@@ -422,7 +455,7 @@ fn agnostic_users_reset(): i64 {
 fn agnostic_auth_bootstrap_a(a, email: Str, password: Str): i64 {
     if (agnostic_store_is_open() == 0) { return 0; }
     if (email == 0 || password == 0) { return 0; }
-    if (str_len(email) == 0 || str_len(password) == 0) { return 0; }
+    if (str_len(email) == 0 || str_len(password) < AGNOSTIC_BOOTSTRAP_PASSWORD_MIN) { return 0; }
 
     # The guard. Not "no admin exists" — ANY user. A deployment that already has
     # identities has already been bootstrapped, whoever those identities are.

@@ -87,7 +87,8 @@ fn test_named_param() {
     assert_eq(str_eq_cstr(param, "abc"), 1, "captured value is correct");
 
     # An empty segment is not a value.
-    assert_eq(agnostic_path_matches_a(a, str_from("/crews/"), "/crews/:id", &param), 0, "empty segment does not fill a param");
+    assert_eq(agnostic_path_matches_a(a, str_from("/crews/"), "/crews/:id", &param), 0,
+      "empty segment does not fill a param");
 
     # The param binds exactly one segment, not the remainder.
     assert_eq(agnostic_path_matches_a(a, str_from("/crews/abc/cancel"), "/crews/:id", &param), 0,
@@ -607,7 +608,8 @@ fn test_definition_complexity() {
     assert_eq(agnostic_definitions_get(str_from("cx-1")), 0, "and stores nothing");
 
     # A definition stored before 0.1.15 with another value: written past the door, as it was.
-    var v = agnostic_decode_a(a, str_from("{\"key\":\"cx-old\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"extreme\"}"));
+    var v = agnostic_decode_a(a,
+      str_from("{\"key\":\"cx-old\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"extreme\"}"));
     var rj: i64[1];
     var d = agnostic_agent_def_decode_a(default_alloc(), v, 0 - 1, &rj);
     assert_neq(d, 0, "precondition: the decoder still accepts it");

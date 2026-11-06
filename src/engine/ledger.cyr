@@ -90,7 +90,9 @@ enum AgnosticLedgerEntryOff {
     AGNOSTIC_LE_SCOPE     = 120;  # the tenant scope the crew belongs to — `_` for none (0.1.9)
     AGNOSTIC_LE_IDEM      = 128;  # the `Idempotency-Key` it was submitted with, or 0
     AGNOSTIC_LE_FPRINT    = 136;  # hex SHA-256 of the body that key came with, or 0
-    AGNOSTIC_LE_SIZE      = 144;
+    AGNOSTIC_LE_RETIRED   = 144;  # 1 once the engine's registry has been told to forget it
+    AGNOSTIC_LE_PENDING   = 152;  # AGNOSTIC_PENDING_* bits: durable writes still owed
+    AGNOSTIC_LE_SIZE      = 160;
 }
 
 # The event type that carries a finished task's output (0.1.15, ADR 0019).
@@ -222,33 +224,106 @@ fn agnostic_status_is_terminal(s): i64 {
     return 0;
 }
 
-# Drop terminal entries when the ledger is at capacity. The caller holds the lock.
+# The durable writes an entry still owes. A latch only records them: seeing that a crew finished
+# is memory, and writing it down is about 11.5 ms of fsync, so the two run apart (ADR 0022).
+var AGNOSTIC_PENDING_OUTCOME = 1;   # its outcome has not been stored
+var AGNOSTIC_PENDING_RESULTS = 2;   # a cancelled crew took its results after that
+var AGNOSTIC_PENDING_WRITING = 4;   # a thread is writing, and the entry stays held until it ends
+
+# Whether a status has no further to go: terminal, or UNKNOWN, which means the engine's registry
+# holds nothing for the crew and nothing will come back to change that. UNKNOWN stays out of
+# `agnostic_status_is_terminal`, because a client must not read it as an outcome, and is
+# persisted by nothing, so the crew's in-flight row names it `interrupted` at the next start.
+fn agnostic_status_is_settled(s): i64 {
+    if (s == AGNOSTIC_CREW_UNKNOWN) { return 1; }
+    return agnostic_status_is_terminal(s);
+}
+
+# Whether the entry still has anything to collect or to write. The caller holds the lock.
+fn _agnostic_ledger_live_locked(e): i64 {
+    if (agnostic_status_is_settled(load64(e + AGNOSTIC_LE_STATUS)) == 0) { return 1; }
+    if (load64(e + AGNOSTIC_LE_SUB) != 0) { return 1; }
+    if (load64(e + AGNOSTIC_LE_PENDING) != 0) { return 1; }
+    return 0;
+}
+
+# Whether an entry can leave the ledger: its outcome is terminal and stored, so a reader finds it
+# on disk. UNKNOWN has nothing stored, and an evicted one would answer 404, so it stays. The caller
+# holds the lock.
+fn _agnostic_ledger_evictable_locked(e): i64 {
+    if (agnostic_status_is_terminal(load64(e + AGNOSTIC_LE_STATUS)) == 0) { return 0; }
+    if (load64(e + AGNOSTIC_LE_SUB) != 0) { return 0; }
+    if (load64(e + AGNOSTIC_LE_PENDING) != 0) { return 0; }
+    return 1;
+}
+
+# How far an eviction takes the ledger: down to this many entries.
+var AGNOSTIC_LEDGER_LOW_WATER = 768;
+
+# The most entries one eviction can look at, as (age, key) pairs on its frame.
+var AGNOSTIC_LEDGER_EVICT_MAX = 512;
+
+# Drop the oldest stored entries when the ledger is at capacity, down to the low-water mark. The
+# caller holds the lock.
 #
-# Only **terminal** entries go, so a ledger full of running crews grows past the
+# Only **stored** entries go, so a ledger full of running crews grows past the
 # cap rather than forgetting live work — the same judgement
 # `_agnosai_orch_evict_locked` makes, for the same reason: the cap bounds memory,
 # not work.
 #
+# ⚠ **Oldest first, and only some of them (0.2.2).** It used to drop every terminal entry at
+# once, so the crew submitted just before the cap went with the rest. That entry's
+# `Idempotency-Key` stopped replaying, its `/events` and `/plan` answered 404, and a retry
+# started a second crew 81 submissions later. Now at least the 768 newest stay, which is what
+# makes the window ADR 0008 assumes real. It walks the slots: `map_keys` would take a vec on the
+# global heap each time, and with the ledger full of running crews that is every submit.
+#
 # ⚠ This is the one place a latched outcome can be lost. A client that polls
-# promptly always gets its answer; one that waits out 1024 further submissions
-# gets `unknown`. That is a bounded, honest degradation — not a wrong answer.
+# promptly always gets its answer; one that waits out the eviction reads the stored outcome. That
+# is a bounded, honest degradation — not a wrong answer.
 fn _agnostic_ledger_evict_locked(): i64 {
-    if (map_size(_agnostic_ledger) < AGNOSTIC_LEDGER_MAX) { return 0; }
-    var keys = map_keys(_agnostic_ledger);
-    var evicted = 0;
+    var size = map_size(_agnostic_ledger);
+    if (size < AGNOSTIC_LEDGER_MAX) { return 0; }
+    var want = size - AGNOSTIC_LEDGER_LOW_WATER;
+    if (want > AGNOSTIC_LEDGER_EVICT_MAX) { want = AGNOSTIC_LEDGER_EVICT_MAX; }
+
+    # The `want` oldest of them, oldest first: (t0, key), an insertion sort on the frame.
+    # Bounded at 1024 × 512 compares, once per 256 submits.
+    var oldest: i64[1024];
+    var held = 0;
+    var slots = map_entries(_agnostic_ledger);
+    var cap = map_cap(_agnostic_ledger);
     var i = 0;
-    while (i < vec_len(keys)) {
-        var k = vec_get(keys, i);
-        var e = map_get(_agnostic_ledger, k);
-        if (e != 0) {
-            if (agnostic_status_is_terminal(load64(e + AGNOSTIC_LE_STATUS)) == 1) {
-                map_delete(_agnostic_ledger, k);
-                evicted = evicted + 1;
+    while (i < cap) {
+        var ep = slots + i * 24;
+        if (load64(ep + 16) == 1) {
+            var e = load64(ep + 8);
+            if (e != 0) {
+                if (_agnostic_ledger_evictable_locked(e) == 1) {
+                    var t0 = load64(e + AGNOSTIC_LE_T0_MS);
+                    if (held < want || t0 < load64(&oldest + (held - 1) * 16)) {
+                        var at = held;
+                        if (at == want) { at = want - 1; }
+                        while (at > 0 && load64(&oldest + (at - 1) * 16) > t0) {
+                            store64(&oldest + at * 16, load64(&oldest + (at - 1) * 16));
+                            store64(&oldest + at * 16 + 8, load64(&oldest + (at - 1) * 16 + 8));
+                            at = at - 1;
+                        }
+                        store64(&oldest + at * 16, t0);
+                        store64(&oldest + at * 16 + 8, load64(ep));
+                        if (held < want) { held = held + 1; }
+                    }
+                }
             }
         }
         i = i + 1;
     }
-    return evicted;
+    var n = 0;
+    while (n < held) {
+        map_delete(_agnostic_ledger, load64(&oldest + n * 16 + 8));
+        n = n + 1;
+    }
+    return held;
 }
 
 # Record a crew Agnostic has just submitted, and return its entry.
@@ -298,6 +373,8 @@ fn agnostic_ledger_record_owned(crew_id: Str, name: Str, sub, scope: Str, idem: 
     store64(e + AGNOSTIC_LE_SCOPE, str_clone(sc));
     store64(e + AGNOSTIC_LE_IDEM, 0);
     store64(e + AGNOSTIC_LE_FPRINT, 0);
+    store64(e + AGNOSTIC_LE_RETIRED, 0);
+    store64(e + AGNOSTIC_LE_PENDING, 0);
     if (idem != 0) { store64(e + AGNOSTIC_LE_IDEM, str_clone(idem)); }
     if (fprint != 0) { store64(e + AGNOSTIC_LE_FPRINT, str_clone(fprint)); }
 
@@ -687,6 +764,48 @@ fn agnostic_ledger_ev_event(r): i64 { return load64(r + AGNOSTIC_LEV_EV); }
 # Returns 1 when the status was written, 2 when a cancelled crew took its results, 0
 # when the observation was refused.
 fn agnostic_ledger_latch(e, status, error, results): i64 {
+    return agnostic_ledger_latch_a(default_alloc(), e, status, error, results);
+}
+
+# `agnostic_ledger_latch`, with what the durable write builds in `a`. A crew's outcome tree and
+# document are one-shot, 16 KB or more each time, and on the global heap they were never given
+# back: the routes and the collector pass an arena they reset.
+fn agnostic_ledger_latch_a(a, e, status, error, results): i64 {
+    var r = agnostic_ledger_latch_owed(e, status, error, results);
+    if (r != 0) { agnostic_ledger_flush_a(a, e); }
+    return r;
+}
+
+# Write what `agnostic_ledger_latch_owed` left owing, once, whichever thread gets here first.
+# Returns 1 when this call wrote. The bits stay set until the write ends, so the entry stays
+# held, and a reader cannot miss it in both the ledger and the store.
+fn agnostic_ledger_flush_a(a, e): i64 {
+    if (e == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var pending = load64(e + AGNOSTIC_LE_PENDING);
+    var work = pending & (AGNOSTIC_PENDING_OUTCOME | AGNOSTIC_PENDING_RESULTS);
+    if (work == 0 || (pending & AGNOSTIC_PENDING_WRITING) != 0) {
+        mutex_unlock(_agnostic_ledger_mutex);
+        return 0;
+    }
+    store64(e + AGNOSTIC_LE_PENDING, pending | AGNOSTIC_PENDING_WRITING);
+    mutex_unlock(_agnostic_ledger_mutex);
+
+    # The patra call is deliberately NOT under `_agnostic_ledger_mutex`: holding our lock
+    # across a library that takes its own is how a lock-order hazard gets built.
+    if ((work & AGNOSTIC_PENDING_OUTCOME) != 0) { _agnostic_ledger_persist(a, e); }
+    else { _agnostic_ledger_persist_again(a, e); }
+
+    var done = work | AGNOSTIC_PENDING_WRITING;
+    mutex_lock(_agnostic_ledger_mutex);
+    store64(e + AGNOSTIC_LE_PENDING, load64(e + AGNOSTIC_LE_PENDING) & ~done);
+    mutex_unlock(_agnostic_ledger_mutex);
+    return 1;
+}
+
+# `agnostic_ledger_latch` without its durable write: records what is owed, for
+# `agnostic_ledger_flush_a` to write.
+fn agnostic_ledger_latch_owed(e, status, error, results): i64 {
     if (e == 0) { return 0; }
     mutex_lock(_agnostic_ledger_mutex);
     var stored = load64(e + AGNOSTIC_LE_STATUS);
@@ -695,13 +814,12 @@ fn agnostic_ledger_latch(e, status, error, results): i64 {
         if (stored == AGNOSTIC_CREW_CANCELLED && agnostic_status_is_terminal(status) == 1) {
             if (_agnostic_results_count(load64(e + AGNOSTIC_LE_RESULTS)) == 0 && _agnostic_results_count(results) > 0) {
                 store64(e + AGNOSTIC_LE_RESULTS, results);
+                store64(e + AGNOSTIC_LE_PENDING, load64(e + AGNOSTIC_LE_PENDING) | AGNOSTIC_PENDING_RESULTS);
                 took = 1;
             }
         }
         mutex_unlock(_agnostic_ledger_mutex);
         if (took == 0) { return 0; }
-        # Rewrite what was persisted when the cancel latched — outside the lock, as below.
-        _agnostic_ledger_persist_again(e);
         return 2;
     }
     # ⚠ **The upgrade is made HERE, under the lock, as well as in the caller** (0.1.14). The
@@ -717,43 +835,51 @@ fn agnostic_ledger_latch(e, status, error, results): i64 {
     if (results != 0) { store64(e + AGNOSTIC_LE_RESULTS, results); }
     if (agnostic_status_is_terminal(status) == 1) {
         store64(e + AGNOSTIC_LE_FINISHED, agnostic_epoch_ms());
+        store64(e + AGNOSTIC_LE_PENDING, load64(e + AGNOSTIC_LE_PENDING) | AGNOSTIC_PENDING_OUTCOME);
     }
     mutex_unlock(_agnostic_ledger_mutex);
 
-    # ⚠ **Persisted outside the lock, on the one transition that matters.** This
-    # is the single point where a crew becomes terminal — the latch refuses every
-    # later write — so it is exactly where durability belongs, and doing it here
-    # means no caller has to remember. Writing the outcome also clears the crew's
-    # in-flight row (0.1.13), so the next start does not call it interrupted.
-    #
-    # The patra call is deliberately NOT under `_agnostic_ledger_mutex`: holding
-    # our lock across a library that takes its own is how a lock-order hazard
-    # gets built. The entry is already updated and the latch is closed, so
-    # nothing can change underneath this.
-    if (agnostic_status_is_terminal(status) == 1) { _agnostic_ledger_persist(e); }
+    # ⚠ **Owed, on the one transition that matters.** This is the single point where a crew
+    # becomes terminal — the latch refuses every later write — so it is exactly where
+    # durability belongs, and recording it here means no caller has to remember. Writing the
+    # outcome also clears the crew's in-flight row (0.1.13), so the next start does not call
+    # it interrupted.
     return 1;
+}
+
+# What a terminal entry's stored document says, in `a`. 0 on exhaustion.
+fn _agnostic_ledger_doc_a(a, e): i64 {
+    var o = agnostic_ledger_outcome_a(a, e);
+    if (o == 0) { return 0; }
+    var ov = agnostic_outcome_to_value_a(a, o);
+    if (ov == 0) { return 0; }
+    agnostic_ledger_describe_a(a, e, ov);
+    return bayan_json_v_build_a(a, ov);
 }
 
 # Write a now-terminal entry to the durable store — the outcome, its listing row, and
 # (0.1.13) the deletion of its in-flight row, in one critical section.
 #
-# Failure is logged and counted by the store, not raised: a crew that ran
-# correctly should not be reported as failed because the disk was full. What it
-# costs is that the crew answers `interrupted` after a restart, as its in-flight
-# row is still there — true rather than wrong (ADR 0013).
-fn _agnostic_ledger_persist(e): i64 {
+# Failure is logged, not raised: a crew that ran correctly should not be reported as failed
+# because the disk was full. What it costs is that the crew answers `interrupted` after a
+# restart, as its in-flight row is still there — true rather than wrong (ADR 0013).
+#
+# ⚠ **Not a transaction.** One costs 31.5 ms here against 11.5 ms for the separate writes, on
+# every crew, to protect a stop between two of them. The start-up sweep repairs that instead
+# (`_agnostic_crews_interrupt_row_locked`).
+fn _agnostic_ledger_persist(a, e): i64 {
     if (agnostic_store_is_open() == 0) { return 0; }
-    var o = agnostic_ledger_outcome_a(default_alloc(), e);
-    if (o == 0) { return 0; }
-    var ov = agnostic_outcome_to_value_a(default_alloc(), o);
-    if (ov == 0) { return 0; }
-    agnostic_ledger_describe_a(default_alloc(), e, ov);
-    var doc = bayan_json_v_build(ov);
+    var doc = _agnostic_ledger_doc_a(a, e);
     if (doc == 0) { return 0; }
     # The outcome and its listing row, together (0.1.9).
-    var row = agnostic_ledger_row_a(default_alloc(), e);
+    var row = agnostic_ledger_row_a(a, e);
     if (row == 0) { return 0; }
-    return agnostic_crews_save_row(row, doc);
+    var r = agnostic_crews_save_row(row, doc);
+    if (r == 0) {
+        agnostic_log_kv_str(SK_ERROR, "could not store a crew's outcome", 32,
+          "crew_id", 7, agnostic_ledger_crew_id(e));
+    }
+    return r;
 }
 
 # Record a just-accepted crew as in flight (0.1.13, ADR 0013): its id, scope, name,
@@ -830,16 +956,11 @@ fn _agnostic_results_count(results): i64 {
 
 # Rewrite a cancelled entry's durable outcome once it has taken its results (0.1.10) —
 # the one stored outcome that is ever written twice. See `agnostic_ledger_latch`.
-fn _agnostic_ledger_persist_again(e): i64 {
+fn _agnostic_ledger_persist_again(a, e): i64 {
     if (agnostic_store_is_open() == 0) { return 0; }
-    var o = agnostic_ledger_outcome_a(default_alloc(), e);
-    if (o == 0) { return 0; }
-    var ov = agnostic_outcome_to_value_a(default_alloc(), o);
-    if (ov == 0) { return 0; }
-    agnostic_ledger_describe_a(default_alloc(), e, ov);
-    var doc = bayan_json_v_build(ov);
+    var doc = _agnostic_ledger_doc_a(a, e);
     if (doc == 0) { return 0; }
-    var row = agnostic_ledger_row_a(default_alloc(), e);
+    var row = agnostic_ledger_row_a(a, e);
     if (row == 0) { return 0; }
     return agnostic_crews_resave_row(row, doc);
 }
@@ -872,15 +993,10 @@ fn agnostic_ledger_row_a(a, e): i64 {
         if (tasks != 0) { agnostic_crew_row_set(row, AGNOSTIC_CR_NTASKS, vec_len(tasks)); }
     }
     if (results != 0) {
-        var u = _agnostic_outcome_usage_a(a, results);
-        if (u != 0) {
-            if (agnostic_req_int(u, AGNOSTIC_JK_METERED, 0) > 0) {
-                agnostic_crew_row_set(row, AGNOSTIC_CR_TOKENS, agnostic_req_int(u, AGNOSTIC_JK_TOTAL_TOK, 0));
-            }
-            if (agnostic_req_int(u, AGNOSTIC_JK_COSTED, 0) > 0) {
-                agnostic_crew_row_set(row, AGNOSTIC_CR_COST, agnostic_req_int(u, AGNOSTIC_JK_COST_MICRO, 0));
-            }
-        }
+        var totals: i64[4];
+        _agnostic_outcome_totals(results, &totals);
+        if (load64(&totals + 8) > 0) { agnostic_crew_row_set(row, AGNOSTIC_CR_TOKENS, load64(&totals)); }
+        if (load64(&totals + 24) > 0) { agnostic_crew_row_set(row, AGNOSTIC_CR_COST, load64(&totals + 16)); }
     }
     return row;
 }
@@ -966,6 +1082,11 @@ fn agnostic_ledger_drain_a(a, e, finals): i64 {
     store64(e + AGNOSTIC_LE_LOST,
       load64(e + AGNOSTIC_LE_LOST) + agnosai_event_sub_lagged(sub));
 
+    # Read BEFORE the loop. Nothing is published after a close, so a subscription seen closed here
+    # is empty once the loop ends. Read after it, a push and a close between the two would lose
+    # that event, and `crew_completed` is the one the Crews view waits on.
+    var closed = agnosai_event_sub_closed(sub);
+
     # One clock read per sweep: every event taken now was waiting since the last one.
     var now = clock_now_ms();
     var taken = 0;
@@ -979,9 +1100,35 @@ fn agnostic_ledger_drain_a(a, e, finals): i64 {
 
     # Closed and drained — the crew has finished publishing. Release the
     # subscription so later polls skip the sweep entirely.
-    if (agnosai_event_sub_closed(sub) == 1) { store64(e + AGNOSTIC_LE_SUB, 0); }
+    if (closed == 1) { store64(e + AGNOSTIC_LE_SUB, 0); }
     mutex_unlock(_agnostic_ledger_mutex);
     return taken;
+}
+
+# 1 while the entry's event subscription is open.
+fn agnostic_ledger_sub_open(e): i64 {
+    if (e == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var open = 0;
+    if (load64(e + AGNOSTIC_LE_SUB) != 0) { open = 1; }
+    mutex_unlock(_agnostic_ledger_mutex);
+    return open;
+}
+
+# 1 the first time the entry is finished with the engine: terminal, with its subscription closed,
+# which the engine does only after it has recorded the crew's final state. 0 otherwise.
+fn agnostic_ledger_retire_claim(e): i64 {
+    if (e == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var claimed = 0;
+    if (agnostic_status_is_terminal(load64(e + AGNOSTIC_LE_STATUS)) == 1) {
+        if (load64(e + AGNOSTIC_LE_SUB) == 0 && load64(e + AGNOSTIC_LE_RETIRED) == 0) {
+            store64(e + AGNOSTIC_LE_RETIRED, 1);
+            claimed = 1;
+        }
+    }
+    mutex_unlock(_agnostic_ledger_mutex);
+    return claimed;
 }
 
 # Whether an entry still has anything to collect: its status is not terminal yet, or its
@@ -989,9 +1136,7 @@ fn agnostic_ledger_drain_a(a, e, finals): i64 {
 fn agnostic_ledger_is_live(e): i64 {
     if (e == 0) { return 0; }
     mutex_lock(_agnostic_ledger_mutex);
-    var live = 0;
-    if (agnostic_status_is_terminal(load64(e + AGNOSTIC_LE_STATUS)) == 0) { live = 1; }
-    if (load64(e + AGNOSTIC_LE_SUB) != 0) { live = 1; }
+    var live = _agnostic_ledger_live_locked(e);
     mutex_unlock(_agnostic_ledger_mutex);
     return live;
 }
@@ -1019,10 +1164,7 @@ fn agnostic_ledger_live_entries_a(a): i64 {
         if (load64(ep + 16) == 1) {
             var e = load64(ep + 8);
             if (e != 0) {
-                var live = 0;
-                if (agnostic_status_is_terminal(load64(e + AGNOSTIC_LE_STATUS)) == 0) { live = 1; }
-                if (load64(e + AGNOSTIC_LE_SUB) != 0) { live = 1; }
-                if (live == 1) { vec_push_a(a, out, e); }
+                if (_agnostic_ledger_live_locked(e) == 1) { vec_push_a(a, out, e); }
             }
         }
         i = i + 1;

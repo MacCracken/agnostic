@@ -1223,7 +1223,7 @@ fn test_probes() {
         i = i + 1;
     }
     assert_eq(headed, 6,
-      "six declared: idempotency-key on submit; if-match, if-none-match on a document put; if-match on its delete, and on a definition's put and delete");
+      "six declared: idempotency-key on submit; if-match, if-none-match on a document put; if-match on its delete, and on a definition's put and delete"); #skip-lint
     assert_eq(header_bad, 0, "and each is read: an invalid value is refused, a precondition with code revision");
 
     # ⭐ A grant's `self`, against the plugin gate: a plugin holding the grant may name itself in
@@ -1282,8 +1282,8 @@ fn test_probes() {
 
 var _T_BOOT_EMAIL = "schema-sweep@agnostic.test";
 var _T_BOOT_PW = "the sweep's bootstrap password";
-var _T_CREW = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"},{\"description\":\"read the result\"}]}";
-var _T_CREW_PAR = "{\"name\":\"fan out\",\"process\":\"parallel\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\"}]}";
+var _T_CREW = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"},{\"description\":\"read the result\"}]}"; #skip-lint
+var _T_CREW_PAR = "{\"name\":\"fan out\",\"process\":\"parallel\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\"}]}"; #skip-lint
 var _T_DEF = "{\"key\":\"schema-sweep\",\"role\":\"reviewer\",\"goal\":\"read the diff\"}";
 var _T_LOGIN = "{\"email\":\"schema-sweep@agnostic.test\",\"password\":\"the sweep's bootstrap password\"}";
 
@@ -1633,7 +1633,8 @@ fn test_responses() {
     # so that race is now lost honestly, where until then a cancel "won" it by relabelling a
     # crew that had already completed. A thousand tasks keeps the crew running long enough.
     var bigsb = str_builder_new();
-    str_builder_add_cstr(bigsb, "{\"name\":\"cancel me\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[");
+    str_builder_add_cstr(bigsb,
+      "{\"name\":\"cancel me\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[");
     var bt = 0;
     while (bt < AGNOSTIC_REQ_MAX_TASKS) {
         if (bt > 0) { str_builder_add_cstr(bigsb, ","); }

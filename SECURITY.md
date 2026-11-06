@@ -51,6 +51,14 @@ patch release; anything actively exploitable gets an out-of-band release.
   definition requires
 - Denial of service reachable without authentication
 
+## Deployment
+
+- agnostic serves plain HTTP. Terminate TLS in a reverse proxy, and see
+  [Configuration](docs/guides/configuration.md) for what that does to the login rate limit.
+- One connection holds one worker while it is read, so as many idle sockets as workers stall the
+  server for `AGNOSTIC_REQUEST_MS` (15 s by default). A proxy that buffers requests removes this.
+- With `AGNOSTIC_AUTH=off` the server refuses any bind but loopback.
+
 ## What Does Not
 
 - Missing hardening headers on a response that carries no sensitive data

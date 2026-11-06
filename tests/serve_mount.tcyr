@@ -108,7 +108,7 @@ fn test_the_handler_survives_a_missing_arena() {
       "GET /health answers 200 without an arena, instead of killing the process");
 
     var c = _t_through_handler(
-      "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: 127.0.0.1:8000\r\nContent-Type: application/json\r\nContent-Length: 40\r\n\r\n{\"key\":\"no-arena\",\"role\":\"r\",\"goal\":\"g\"}");
+      "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: 127.0.0.1:8000\r\nContent-Type: application/json\r\nContent-Length: 40\r\n\r\n{\"key\":\"no-arena\",\"role\":\"r\",\"goal\":\"g\"}"); #skip-lint
     assert_eq(str_starts_with(c, str_from("HTTP/1.1 201")), 1,
       "and a POST — decode, store, audit, render — works through the fallback too");
 }
@@ -145,27 +145,28 @@ fn test_the_transport_rules() {
     # --- the media-type rung: every POST and PUT declares JSON.
     var body = "{\"key\":\"ctype-probe\",\"role\":\"r\",\"goal\":\"g\"}";
     var b1 = str_builder_new();
-    str_builder_add_cstr(b1, "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\nContent-Length: 43\r\n\r\n");
+    str_builder_add_cstr(b1, "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\nContent-Length: 43\r\n\r\n"); #skip-lint
     str_builder_add_cstr(b1, body);
     assert_eq(str_eq_cstr(_t_status(str_data(str_builder_build(b1))), "415"), 1,
       "a text/plain POST — what a cross-site form sends — is 415");
     var b2 = str_builder_new();
-    str_builder_add_cstr(b2, "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: localhost\r\nContent-Length: 43\r\n\r\n");
+    str_builder_add_cstr(b2,
+      "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: localhost\r\nContent-Length: 43\r\n\r\n");
     str_builder_add_cstr(b2, body);
     assert_eq(str_eq_cstr(_t_status(str_data(str_builder_build(b2))), "415"), 1,
       "and so is a POST that declares nothing");
     assert_eq(str_eq_cstr(_t_status(
-          "POST /api/v1/crews/6ba7b810-9dad-11d1-80b4-00c04fd430c8/cancel HTTP/1.1\r\nHost: localhost\r\n\r\n"), "415"), 1,
+          "POST /api/v1/crews/6ba7b810-9dad-11d1-80b4-00c04fd430c8/cancel HTTP/1.1\r\nHost: localhost\r\n\r\n"), "415"), 1, #skip-lint
       "even a BODILESS post: an empty body is exactly what a cross-site form sends");
     var b3 = str_builder_new();
-    str_builder_add_cstr(b3, "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: localhost\r\nContent-Type: Application/JSON; charset=utf-8\r\nContent-Length: 43\r\n\r\n");
+    str_builder_add_cstr(b3, "POST /api/v1/agents/definitions HTTP/1.1\r\nHost: localhost\r\nContent-Type: Application/JSON; charset=utf-8\r\nContent-Length: 43\r\n\r\n"); #skip-lint
     str_builder_add_cstr(b3, body);
     assert_eq(str_eq_cstr(_t_status(str_data(str_builder_build(b3))), "201"), 1,
       "a JSON type passes, case and parameters ignored");
 
     # --- a plugin document through the handler: PUT, then the verbatim GET.
     assert_eq(str_eq_cstr(_t_status(
-          "PUT /api/v1/plugins/swarm/data/probe HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/vnd.swarm+json\r\nContent-Length: 15\r\n\r\n{ \"v\" : [1,2] }"), "201"), 1,
+          "PUT /api/v1/plugins/swarm/data/probe HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/vnd.swarm+json\r\nContent-Length: 15\r\n\r\n{ \"v\" : [1,2] }"), "201"), 1, #skip-lint
       "a +json type passes too, and the document is created");
     var g = _t_through_handler("GET /api/v1/plugins/swarm/data/probe HTTP/1.1\r\nHost: localhost\r\n\r\n");
     assert_eq(str_starts_with(g, str_from("HTTP/1.1 200")), 1, "and read back");
@@ -247,6 +248,98 @@ fn test_telemetry_export() {
     assert_eq(agnosai_telemetry_exporter(), 0, "and stops the same way");
 }
 
+# A server that cannot start says why. `listening` is logged before the bind, so through 0.2.1 a
+# port already in use printed that line and exited 1 with nothing else. Nothing captures sakshi
+# output here, so the reason the `server failed` line carries is checked instead.
+# 203.0.113.1, TEST-NET-3: an address no host holds, in the form INADDR_LOOPBACK() takes.
+var _T_UNHELD_ADDR = 0x017100CB;
+
+# ⭐ A request over the arena is what a worker keeps, not what the process leaks. Through 0.2.1 the
+# overflow went to the global heap on every such request: a READ client could exhaust the process
+# with `GET /crews`, and an anonymous one with a megabyte of JSON at the login route.
+fn test_an_oversized_request_reuses_its_arena() {
+    test_group("serve/arena-grows");
+    var c = _t_mount_cfg();
+    var size = agnostic_serve_arena_bytes(c);
+    assert_eq(size >= agnostic_config_max_body(c) + AGNOSTIC_ARENA_SLACK, 1,
+      "the arena is at least the body cap, whatever was configured");
+    store64(c + AGNOSTIC_CFG_ARENA, 1048576 * 8);
+    assert_eq(agnostic_serve_arena_bytes(c), 1048576 * 8, "and more when more was asked for");
+
+    var ar = arena_allocator(size);
+    _agnostic_grow_for(ar);
+    var i = 0;
+    while (i < 8) { assert_neq(alloc_via(ar, 262144), 0, "it answers past its size"); i = i + 1; }
+    reset_via(ar);
+    var settled = alloc_used();
+    var round = 0;
+    while (round < 3) {
+        i = 0;
+        while (i < 8) { alloc_via(ar, 262144); i = i + 1; }
+        reset_via(ar);
+        round = round + 1;
+    }
+    assert_eq(alloc_used() - settled, 0, "and the same request after it keeps nothing");
+
+    # ⭐ The pattern that defeated a smaller arena: each body a little larger than the last. A chunk
+    # too small for the next allocation is not looked at again, so each kept a chunk of its own.
+    var grew = 0;
+    var body = agnostic_config_max_body(c) - 4096;
+    round = 0;
+    while (round < 64) {
+        var before = alloc_used();
+        alloc_via(ar, 4096);
+        alloc_via(ar, body + round * 16);
+        reset_via(ar);
+        if (round > 2) { grew = grew + (alloc_used() - before); }
+        round = round + 1;
+    }
+    assert_eq(grew, 0, "⭐ and bodies that each grow by 16 B keep nothing either");
+}
+
+# 1 when `path` is readable and writable by its owner alone.
+fn _t_owner_only(path): i64 {
+    var st[256];
+    if (sys_stat(path, &st) != 0) { return 0; }
+    if ((load32(&st + STAT_MODE) & 0x1FF) == AGNOSTIC_STORE_FILE_MODE) { return 1; }
+    return 0;
+}
+
+# What mount leaves for a client that sends nothing, and for anyone else on the host.
+fn test_what_mount_restricts() {
+    test_group("serve/restrictions");
+    var o = agnostic_serve_options(_t_mount_cfg());
+    assert_eq(sandhi_server_options_get_request_ms(o), AGNOSTIC_DEFAULT_REQUEST_MS,
+      "a connection gets the request budget, not sandhi's 60 s");
+    assert_eq(_t_owner_only(_T_MDB), 1, "the database is its owner's alone");
+    assert_eq(_t_owner_only(_T_MAUDIT), 1, "and so is the audit trail");
+}
+
+fn test_a_failed_serve_says_why() {
+    test_group("serve/failure-reason");
+
+    assert_eq(str_eq_cstr(str_from(agnostic_serve_failure_step_name(SANDHI_SERVER_FAIL_BIND)), "bind"), 1,
+      "the step sandhi records for a port in use reads as bind");
+    assert_eq(str_eq_cstr(str_from(agnostic_serve_failure_step_name(SANDHI_SERVER_FAIL_LISTEN)), "listen"), 1,
+      "and listen as listen");
+    assert_eq(str_eq_cstr(str_from(agnostic_serve_failure_step_name(SANDHI_SERVER_FAIL_ACCEPT)), "accept"), 1,
+      "and accept as accept");
+    assert_eq(str_eq_cstr(str_from(agnostic_serve_failure_step_name(SANDHI_SERVER_FAIL_THREAD)), "thread"), 1,
+      "and thread as thread");
+    assert_eq(str_eq_cstr(str_from(agnostic_serve_failure_step_name(99)), "unknown"), 1,
+      "and a step this build does not know still logs");
+
+    # A real failed bind, through the loop the binary runs: it fails with EADDRNOTAVAIL before
+    # any worker or the stop flag matters.
+    var c = _t_mount_cfg();
+    var o = agnostic_serve_options(c);
+    assert_neq(o, 0, "the options build");
+    var rc = sandhi_server_run_pooled(_T_UNHELD_ADDR, 18999, &agnostic_serve_handler, 0, o);
+    assert_eq(rc, 1, "a bind that fails stops the loop");
+    assert_eq(str_eq_cstr(agnostic_serve_failure_reason(o), "bind (errno 99)"), 1,
+      "and the reason names the step and the errno");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -256,6 +349,9 @@ fn main() {
     test_the_transport_rules();
     test_a_405_says_what_is_allowed();
     test_telemetry_export();
+    test_an_oversized_request_reuses_its_arena();
+    test_what_mount_restricts();
+    test_a_failed_serve_says_why();
     agnostic_audit_close();
     agnostic_store_close();
     _tt_unlink_store(_T_MDB);

@@ -26,6 +26,18 @@ fn test_decode_basics() {
     assert_eq(agnostic_decode_a(a, str_from("")), 0, "empty body is not valid JSON");
     assert_eq(agnostic_decode_a(a, str_from("{\"a\":")), 0, "truncated JSON returns 0");
     assert_eq(agnostic_decode_a(a, str_from("not json")), 0, "garbage returns 0");
+
+    # What the parser takes and the validator refuses: a string a strict client cannot decode.
+    var bad = alloc(16);
+    memcpy(bad, "{\"a\":\"x\"}", 9);
+    store8(bad + 6, 0xFF);
+    assert_eq(agnostic_decode_a(a, str_new(bad, 9)), 0, "raw invalid UTF-8 returns 0");
+    store8(bad + 6, 1);
+    assert_eq(agnostic_decode_a(a, str_new(bad, 9)), 0, "and so does a raw control byte");
+    memcpy(bad, "{\"a\":\"xy\"}", 10);
+    store8(bad + 6, 0xC0);
+    store8(bad + 7, 0xAF);
+    assert_eq(agnostic_decode_a(a, str_new(bad, 10)), 0, "and an overlong form");
 }
 
 fn test_allow_list_accepts_known() {

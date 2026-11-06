@@ -19,7 +19,7 @@ var AGNOSTIC_WEBGUI_ASSET_COUNT = 5;
 # How many plugin manifests are embedded.
 var AGNOSTIC_WEBGUI_PLUGIN_COUNT = 4;
 
-# --- src/webgui/index.html — 39929 bytes -------------------------------------
+# --- src/webgui/index.html — 39975 bytes -------------------------------------
 var _AGNOSTIC_WEBGUI_ASSET_00 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -460,9 +460,9 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
     }
     window.addEventListener('message', async (e) => {
       const frame = $('plugin-frame');
-      // Only the plugin frame on screen may ask, and only as itself — and it is always
-      // sandboxed, so its origin is opaque ('null'). A frame that navigated itself to a
-      // real origin is no longer the plugin, and gets nothing.
+      // Only the plugin frame on screen may ask, and only as itself. It is always sandboxed, so
+      // its origin is opaque ('null') wherever it navigates: this check cannot see a navigated
+      // frame. The boundary is what the bridge grants, checked again by the server (ADR 0007).
       if (!bridge.plugin || !frame.contentWindow || e.source !== frame.contentWindow) return;
       if (e.origin !== 'null') return;
       const msg = e.data;
@@ -10847,7 +10847,7 @@ fn agnostic_webgui_asset_bytes(i): i64 {
 
 # The `i`th page's length in bytes, as the generator counted it, or 0.
 fn agnostic_webgui_asset_len(i): i64 {
-    if (i == 0) { return 39929; }
+    if (i == 0) { return 39975; }
     if (i == 1) { return 452787; }
     if (i == 2) { return 49422; }
     if (i == 3) { return 40065; }
@@ -10857,7 +10857,7 @@ fn agnostic_webgui_asset_len(i): i64 {
 
 # The SHA-256 of the `i`th page's source file, lowercase hex, or 0.
 fn agnostic_webgui_asset_sha256(i): i64 {
-    if (i == 0) { return "648fe9a771661148353e0aa1dc0052a079de169dcd50e6379b16472f006795a4"; }
+    if (i == 0) { return "358334c4778debf41f8c885da22b150ac072a3d4a176e5f959125ec18a2e7723"; }
     if (i == 1) { return "411669d9469395104380f00c572f29a2777104126e4efd3aa441ab4e0df83409"; }
     if (i == 2) { return "c2200c085910f796d5535a15a0dd405808cb327feab8ac14ab3786a541ea1797"; }
     if (i == 3) { return "a950f9468c64f6ba5b3fab044283395e20c4fc79b607735f105332b847a8a339"; }
@@ -10877,7 +10877,7 @@ fn agnostic_webgui_asset_path(i): i64 {
 
 # The Content-Security-Policy the `i`th page is served with, or 0.
 fn agnostic_webgui_asset_csp(i): i64 {
-    if (i == 0) { return "default-src 'none'; script-src 'sha256-bYYKB5LjVZ9/bMt48VUA0ybhegZ34CAu8JB5qDsSeh0=' 'sha256-7aaIEcGQDDIHI9mAjtdfnZC3ZgV1rxmVx/xdAXvmUMA='; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"; }
+    if (i == 0) { return "default-src 'none'; script-src 'sha256-bYYKB5LjVZ9/bMt48VUA0ybhegZ34CAu8JB5qDsSeh0=' 'sha256-1LIlsweLwnMLN0Blz/VSWK30Mab987Pelq3BS+FAr+M='; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"; }
     if (i == 1) { return "default-src 'none'; script-src 'sha256-T3C81vESEyEVff9yhaaRS1UkhRRM7amk1ZHTXmA27Xc='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 2) { return "default-src 'none'; script-src 'sha256-hk+5dtT8fds4ZJG3YGyOPNwKB4TREhZ1uzyb3QtBSxw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 3) { return "default-src 'none'; script-src 'sha256-wbYQVCh7XgC++N8NdS6axkB+bC4t9m5Vlq/EHlHuFQo='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }

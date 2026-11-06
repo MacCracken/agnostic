@@ -220,6 +220,9 @@ fn test_scope_prefixing() {
     # ⭐ Cross-tenant reads are refused, not silently split.
     assert_eq(agnostic_tenant_unscope_a(a, str_from("other"), str_from("acme:secret")), 0,
       "another tenant's scoped key does not unscope");
+    # The same length, so the colon lands where it should and only the compare can refuse it.
+    assert_eq(agnostic_tenant_unscope_a(a, str_from("acmf"), str_from("acme:secret")), 0,
+      "nor does a tenant of the same length");
 
     # ⚠ A prefix that merely starts with the tenant name is not in its scope.
     assert_eq(agnostic_tenant_unscope_a(a, str_from("ac"), str_from("acme:secret")), 0,

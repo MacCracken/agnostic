@@ -17,8 +17,8 @@ include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
 
 var _T_DB = _tt_tmp_path("crew-tenancy-suite");
 var _T_MAXB = 1048576;
-var _T_BODY = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}";
-var _T_BODY2 = "{\"name\":\"other\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"something else\"}]}";
+var _T_BODY = "{\"name\":\"sweep\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"run the suite\"}]}"; #skip-lint
+var _T_BODY2 = "{\"name\":\"other\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"something else\"}]}"; #skip-lint
 
 fn _t_open() {
     agnostic_store_close();
@@ -101,8 +101,10 @@ fn test_crews_belong_to_their_tenant() {
     var i = 0;
     while (i < 32) { store8(k + i, 70 + i); i = i + 1; }
     agnostic_jwt_set_secret(k, 32);
-    var ua = agnostic_users_create_a(a, str_from("op@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("acme"));
-    var ug = agnostic_users_create_a(a, str_from("op@globex.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("globex"));
+    var ua = agnostic_users_create_a(a, str_from("op@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR,
+      str_from("acme"));
+    var ug = agnostic_users_create_a(a, str_from("op@globex.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR,
+      str_from("globex"));
     var ta = agnostic_jwt_issue_a(a, ua, AGNOSTIC_ROLE_OPERATOR, str_from("acme"), 600);
     var tg = agnostic_jwt_issue_a(a, ug, AGNOSTIC_ROLE_OPERATOR, str_from("globex"), 600);
 
@@ -238,12 +240,14 @@ fn test_listing_filters_by_status() {
     assert_eq(_t_wait(a, done, 0), 1, "a crew completes");
     # Four more, in the states a placeholder engine never leaves a crew in.
     var sc = AGNOSTIC_SCOPE_DEFAULT;
-    var f = agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000001"), str_from("broke"), 0, sc, 0, 0);
+    var f = agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000001"), str_from("broke"), 0, sc, 0,
+      0);
     agnostic_ledger_latch(f, AGNOSTIC_CREW_FAILED, str_from("it broke"), 0);
     agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000002"), str_from("waiting"), 0, sc, 0, 0);
-    var r = agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000003"), str_from("busy"), 0, sc, 0, 0);
+    var r = agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000003"), str_from("busy"), 0, sc, 0,
+      0);
     agnostic_ledger_latch(r, AGNOSTIC_CREW_RUNNING, 0, 0);
-    var c = agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000004"), str_from("stopped"), 0, sc, 0, 0);
+    var c = agnostic_ledger_record_owned(str_from("aaaaaaaa-0000-4000-8000-000000000004"), str_from("stopped"), 0, sc, 0, 0); #skip-lint
     agnostic_ledger_latch(c, AGNOSTIC_CREW_CANCELLED, 0, 0);
 
     assert_eq(_t_count(a, 0, 0), 5, "unfiltered, all five");
@@ -297,8 +301,10 @@ fn test_an_interrupted_crew_stays_its_tenants() {
     var i = 0;
     while (i < 32) { store8(k + i, 110 + i); i = i + 1; }
     agnostic_jwt_set_secret(k, 32);
-    var ua = agnostic_users_create_a(a, str_from("op3@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("acme"));
-    var ug = agnostic_users_create_a(a, str_from("op3@globex.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("globex"));
+    var ua = agnostic_users_create_a(a, str_from("op3@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR,
+      str_from("acme"));
+    var ug = agnostic_users_create_a(a, str_from("op3@globex.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR,
+      str_from("globex"));
     var ta = agnostic_jwt_issue_a(a, ua, AGNOSTIC_ROLE_OPERATOR, str_from("acme"), 600);
     var tg = agnostic_jwt_issue_a(a, ug, AGNOSTIC_ROLE_OPERATOR, str_from("globex"), 600);
     agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
@@ -350,7 +356,8 @@ fn test_an_interrupted_crew_stays_its_tenants() {
         assert_eq(str_eq_cstr(agnostic_req_str(item, AGNOSTIC_JK_STATUS), "interrupted"), 1, "with status interrupted");
         assert_eq(bayan_json_v_obj_get_by_str(item, AGNOSTIC_JK_FINISHED_AT), 0, "no finished_at: it did not finish");
         assert_eq(bayan_json_v_obj_get_by_str(item, AGNOSTIC_JK_TOTAL_TOK), 0, "no total_tokens: nothing was metered");
-        assert_eq(bayan_json_v_obj_get_by_str(item, AGNOSTIC_JK_COST_MICRO), 0, "no cost_micro_usd: nothing was priced");
+        assert_eq(bayan_json_v_obj_get_by_str(item, AGNOSTIC_JK_COST_MICRO), 0,
+          "no cost_micro_usd: nothing was priced");
         assert_eq(agnostic_req_int(item, AGNOSTIC_JK_TASKS_SUB, 0 - 1), 1, "and its task count");
     }
     assert_eq(_t_count(a, "status=interrupted", _t_ctx(a, ta, 0)), 1, "status=interrupted finds it");
@@ -366,12 +373,48 @@ fn test_legacy_document_is_the_default_scope() {
     var a = arena_allocator(1048576);
     var id = str_from("0e0e0e0e-1111-4222-8333-444444444444");
     agnostic_crews_save(id, str_from("old"), AGNOSTIC_CREW_COMPLETED,
-      str_from("{\"crew_id\":\"0e0e0e0e-1111-4222-8333-444444444444\",\"status\":\"completed\",\"task_count\":0,\"results\":[]}"));
+      str_from("{\"crew_id\":\"0e0e0e0e-1111-4222-8333-444444444444\",\"status\":\"completed\",\"task_count\":0,\"results\":[]}")); #skip-lint
     agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
     assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(id, ""), "", 0)), HTTP_OK,
       "with authentication off a legacy crew still reads");
     assert_eq(bayan_json_v_arr_len(_t_listed(_t_list(a, 0, 0))), 0,
       "but it has no index row, so it is not listed — said in the CHANGELOG");
+
+    # And it stays the default scope's: a tenant does not read it.
+    var k = alloc(32);
+    var i = 0;
+    while (i < 32) { store8(k + i, 40 + i); i = i + 1; }
+    agnostic_jwt_set_secret(k, 32);
+    var ug = agnostic_users_create_a(a, str_from("op9@globex.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR,
+      str_from("globex"));
+    var tg = agnostic_jwt_issue_a(a, ug, AGNOSTIC_ROLE_OPERATOR, str_from("globex"), 600);
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    assert_eq(agnostic_response_status(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(id, ""), "", _t_ctx(a, tg, 0))),
+      HTTP_NOT_FOUND, "a tenant does not read a legacy crew");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
+# The bounds of what a client names: an Idempotency-Key, and a number in a query.
+fn test_request_limits() {
+    test_group("tenancy/limits");
+    _t_open();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var a = arena_allocator(4194304);
+
+    var longest = alloc(130);
+    memset(longest, 107, 128);
+    store8(longest + 128, 0);
+    var r = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), _T_BODY, _t_ctx(a, 0, longest));
+    assert_eq(agnostic_response_status(r), AGNOSTIC_HTTP_ACCEPTED, "a key of 128 is taken");
+    memset(longest, 107, 129);
+    store8(longest + 129, 0);
+    r = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), _T_BODY, _t_ctx(a, 0, longest));
+    assert_eq(agnostic_response_status(r), AGNOSTIC_HTTP_UNPROCESSABLE, "one of 129 is refused");
+
+    var ok = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/crews?limit=000000000000000050"), "", 0);
+    assert_eq(agnostic_response_status(ok), HTTP_OK, "18 digits in a query is a number");
+    var over = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/crews?limit=0000000000000000050"), "", 0);
+    assert_eq(agnostic_response_status(over), AGNOSTIC_HTTP_UNPROCESSABLE, "19 is refused");
 }
 
 fn test_idempotency_key() {
@@ -412,7 +455,8 @@ fn test_idempotency_key() {
     var i = 0;
     while (i < 32) { store8(k + i, 90 + i); i = i + 1; }
     agnostic_jwt_set_secret(k, 32);
-    var ua = agnostic_users_create_a(a, str_from("op2@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from("acme"));
+    var ua = agnostic_users_create_a(a, str_from("op2@acme.example"), str_from("pw"), AGNOSTIC_ROLE_OPERATOR,
+      str_from("acme"));
     var ta = agnostic_jwt_issue_a(a, ua, AGNOSTIC_ROLE_OPERATOR, str_from("acme"), 600);
     agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
     var r7 = _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), _T_BODY, _t_ctx(a, ta, "retry-key-0001"));
@@ -432,6 +476,7 @@ fn main() {
     test_an_interrupted_crew_stays_its_tenants();
     test_legacy_document_is_the_default_scope();
     test_idempotency_key();
+    test_request_limits();
     agnostic_store_close();
     _tt_unlink_store(_T_DB);
     return assert_summary();
