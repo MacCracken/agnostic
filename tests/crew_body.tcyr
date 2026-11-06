@@ -1,0 +1,812 @@
+# agnostic/engine — what a crew's body can say since 0.4.0: where it points, which stored agents it
+# wants, and the shape it wants back.
+#
+# What this suite holds:
+#
+#   1. A target is one spelling of one host, and the strings two URL parsers read differently are
+#      refused, not normalised (ADR 0029).
+#   2. WRITE alone chooses no host: with no list every target is a 403, and off the list one is too.
+#   3. A target reaches each task's context, a task's own overrides its crew's, and it is on the
+#      plan, the outcome and the listing, through a restart and from a database older than it.
+#   4. A crew can name a stored definition, in its tenant only, and runs what it said when the crew
+#      was accepted (ADR 0030).
+#   5. `output_schema` takes what agnosai checks and nothing it would ignore, and `output_valid` says
+#      what agnosai's `completed` does not (ADR 0031).
+#   6. `GET /api/v1/tools` says what resolves, and that no crew calls any of it yet.
+include "src/app.cyr"
+include "tests/support/tmp.cyr"
+
+var _T_DB = _tt_tmp_path("crew-body-suite");
+var _T_AUDIT = _tt_tmp_path("crew-body-audit");
+var _T_MAXB = 1048576;
+var _T_AG = "{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}";
+var _T_CREWS = "/api/v1/crews";
+
+fn _t_open() {
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    _tt_unlink_store(_T_AUDIT);
+    patra_init();
+    agnostic_definitions_open(str_from(_T_DB));
+    agnostic_definitions_reset();
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_crews_ensure();
+    agnostic_audit_open(str_from(_T_AUDIT));
+    agnostic_refusal_reset();
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+    agnostic_presets_init();
+    agnostic_target_set_hosts(0);
+    return 0;
+}
+
+# The operator's list, from what an operator writes.
+fn _t_hosts(list) {
+    var h = agnostic_config_parse_target_hosts(str_from(list));
+    agnostic_target_set_hosts(h);
+    return h;
+}
+
+fn _t_req(a, method, path: Str, body, ctx) {
+    return agnostic_route_dispatch_a(a, method, path, str_from(body), _T_MAXB, ctx);
+}
+
+fn _t_post(a, body, ctx) {
+    return _t_req(a, AGNOSTIC_METHOD_POST, str_from(_T_CREWS), body, ctx);
+}
+
+fn _t_st(r) { return agnostic_response_status(r); }
+
+fn _t_msg(r) {
+    var v = bayan_json_v_obj_get_by_str(agnostic_response_body(r), AGNOSTIC_JK_ERROR);
+    if (v == 0) { return str_from(""); }
+    return bayan_json_v_str(v);
+}
+
+# 1 when `s` contains the C string `needle`.
+fn _t_has(s: Str, needle): i64 {
+    var n = str_len(s);
+    var d = str_data(s);
+    var m = strlen(needle);
+    if (m > n) { return 0; }
+    var i = 0;
+    while (i <= n - m) {
+        if (memeq(d + i, needle, m) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _t_url(id, tail) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/crews/");
+    str_builder_add(sb, id);
+    str_builder_add_cstr(sb, tail);
+    return str_builder_build(sb);
+}
+
+# `{"name":"c","agents":[<agents>],"tasks":[<tasks>]<rest>}`, as a C string.
+fn _t_crew(agents, tasks, rest) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"c\",\"agents\":[");
+    str_builder_add_cstr(sb, agents);
+    str_builder_add_cstr(sb, "],\"tasks\":[");
+    str_builder_add_cstr(sb, tasks);
+    str_builder_add_cstr(sb, "]");
+    str_builder_add_cstr(sb, rest);
+    str_builder_add_cstr(sb, "}");
+    return str_cstr(str_builder_build(sb));
+}
+
+# `,"target":{"url":"<url>"}`, as a C string.
+fn _t_target(url) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, ",\"target\":{\"url\":\"");
+    str_builder_add_cstr(sb, url);
+    str_builder_add_cstr(sb, "\"}");
+    return str_cstr(str_builder_build(sb));
+}
+
+fn _t_id(r) { return agnostic_req_str(agnostic_response_body(r), AGNOSTIC_JK_CREW_ID); }
+
+# Poll crew `id` until it ends. The last answer's body, or 0 when it never did.
+fn _t_end(a, id, ctx) {
+    var tries = 0;
+    while (tries < 500) {
+        var b = agnostic_response_body(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(id, ""), "", ctx));
+        var st = agnostic_req_str(b, AGNOSTIC_JK_STATUS);
+        if (st != 0) {
+            if (str_eq_cstr(st, "completed") == 1 || str_eq_cstr(st, "failed") == 1) { return b; }
+        }
+        sleep_ms(5);
+        tries = tries + 1;
+    }
+    return 0;
+}
+
+# The `url` of the `target` of object `o`, a Str, or 0.
+fn _t_target_of(o) {
+    var t = bayan_json_v_obj_get_by_str(o, AGNOSTIC_JK_TARGET);
+    if (t == 0) { return 0; }
+    return agnostic_req_str(t, AGNOSTIC_JK_URL);
+}
+
+# The host `agnostic_target_host` finds in `url`, as a Str, or 0 when it refuses the URL.
+fn _t_host(url) {
+    var at: i64[1];
+    var n: i64[1];
+    if (agnostic_target_host(str_from(url), &at, &n) == 0) { return 0; }
+    return str_new(load64(&at), load64(&n));
+}
+
+fn _t_host_is(url, want) {
+    var h = _t_host(url);
+    if (h == 0) { return 0; }
+    return str_eq_cstr(h, want);
+}
+
+fn test_target_shape() {
+    test_group("target/shape");
+
+    assert_eq(_t_host_is("http://app.example", "app.example"), 1, "a scheme and a host");
+    assert_eq(_t_host_is("https://app.example/", "app.example"), 1, "https, and a path");
+    assert_eq(_t_host_is("https://app.example:8443/a/b?c=d#e", "app.example"), 1, "a port, path, query and fragment");
+    assert_eq(_t_host_is("http://127.0.0.1:8080/", "127.0.0.1"), 1, "an IPv4 address");
+    assert_eq(_t_host_is("http://[::1]:3000/x", "[::1]"), 1, "a bracketed IPv6 address, its colons its own");
+    assert_eq(_t_host_is("https://[2001:db8::1]/", "[2001:db8::1]"), 1, "with no port");
+    assert_eq(_t_host_is("http://my_service:80/", "my_service"), 1, "a container's name, underscore and all");
+    assert_eq(_t_host_is("http://App.Example/", "App.Example"), 1, "the host is found as it was written");
+
+    # ⭐ The strings two parsers read differently. Each names `listed.example` to one reader and
+    # another host to another, so none may pass a list that holds `listed.example`.
+    assert_eq(_t_host("http://listed.example\\@other.example/"), 0, "⭐ a backslash before an @");
+    assert_eq(_t_host("http://listed.example@other.example/"), 0, "⭐ user info: which is the host?");
+    assert_eq(_t_host("http://other.example@listed.example/"), 0, "⭐ and the other way about");
+    assert_eq(_t_host("http://user:pw@app.example/"), 0, "⭐ a password, which would reach the model");
+    assert_eq(_t_host("http://listed.example%2f@other.example/"), 0, "percent-encoding in the authority");
+    assert_eq(_t_host("http://listed%2eexample/"), 0, "and in a host");
+    assert_eq(_t_host("http://listed.example /"), 0, "a space");
+    assert_eq(_t_host_is("http://other.example/@listed.example/", "other.example"), 1,
+      "an @ in a path is a path's, and the host is the first");
+    assert_eq(_t_host_is("http://listed.example#@other.example/", "listed.example"), 1,
+      "a fragment ends the authority, as a browser reads it");
+    assert_eq(_t_host_is("http://listed.example?@other.example/", "listed.example"), 1, "and so does a query");
+
+    assert_eq(_t_host(""), 0, "nothing");
+    assert_eq(_t_host("app.example"), 0, "no scheme");
+    assert_eq(_t_host("ftp://app.example/"), 0, "another scheme");
+    assert_eq(_t_host("file:///etc/passwd"), 0, "the file system");
+    assert_eq(_t_host("HTTP://app.example/"), 0, "one spelling of a scheme");
+    assert_eq(_t_host("http://"), 0, "no host");
+    assert_eq(_t_host("http:///path"), 0, "an empty authority");
+    assert_eq(_t_host("http://:80/"), 0, "a port and no host");
+    assert_eq(_t_host("http://a..b/"), 0, "an empty label");
+    assert_eq(_t_host("http://.a/"), 0, "a leading dot");
+    assert_eq(_t_host("http://a./"), 0, "⭐ a trailing dot, the same host in another spelling");
+    assert_eq(_t_host("http://a:0/"), 0, "port 0");
+    assert_eq(_t_host("http://a:65536/"), 0, "a port past the last");
+    assert_eq(_t_host_is("http://a:65535/", "a"), 1, "the last port");
+    assert_eq(_t_host("http://a:/"), 0, "a colon and no port");
+    assert_eq(_t_host("http://a:80a/"), 0, "a port that is not a number");
+    assert_eq(_t_host("http://a:080/"), 0, "a port with a leading zero");
+    assert_eq(_t_host("http://[::1/"), 0, "an unclosed bracket");
+    assert_eq(_t_host("http://[::1]x/"), 0, "text after the bracket");
+    assert_eq(_t_host("http://[::1]:/"), 0, "a colon after it and no port");
+    assert_eq(_t_host("http://[1]/"), 0, "a bracket holding no IPv6 address");
+    assert_eq(_t_host("http://[1234]/"), 0, "⭐ however long it is: an IPv6 address has colons");
+    assert_eq(_t_host("http://[]/"), 0, "and an empty one");
+    assert_eq(_t_host("http://caf\xc3\xa9.example/"), 0, "a raw non-ASCII name");
+    assert_eq(_t_host("http://a.example/caf\xc3\xa9"), 0, "or anything raw past it");
+    assert_eq(_t_host("http://a.example/\x7f"), 0, "a control byte");
+    assert_eq(_t_host("http://a.example/x\\y"), 0, "⭐ a backslash anywhere: some parsers read it as a slash");
+
+    var n = AGNOSTIC_TARGET_URL_MAX;
+    var long = alloc(n + 2);
+    memcpy(long, "http://a/", 9);
+    memset(long + 9, 120, n - 9);
+    store8(long + n, 0);
+    assert_eq(_t_host_is(long, "a"), 1, "a URL of the longest length");
+    store8(long + n, 120);
+    store8(long + n + 1, 0);
+    assert_eq(_t_host(long), 0, "and one byte more");
+}
+
+fn test_target_list() {
+    test_group("target/list");
+    _t_open();
+    var a = arena_allocator(4194304);
+    var crew = _t_crew(_T_AG, "{\"description\":\"t\"}", _t_target("https://staging.example/"));
+
+    # ⭐ The door: WRITE alone chooses no host.
+    var none = _t_post(a, crew, 0);
+    assert_eq(_t_st(none), HTTP_FORBIDDEN, "⭐ with no list, every target is refused");
+    assert_eq(_t_has(_t_msg(none), "AGNOSTIC_TARGET_HOSTS"), 1, "and it says who decides");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_TARGET), 1, "⭐ and the trail hears of it");
+
+    var plain = _t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", ""), 0);
+    assert_eq(_t_st(plain), AGNOSTIC_HTTP_ACCEPTED, "a crew with no target is unaffected");
+
+    _t_hosts("staging.example, 127.0.0.1,[::1]");
+    assert_eq(_t_st(_t_post(a, crew, 0)), AGNOSTIC_HTTP_ACCEPTED, "a listed host is accepted");
+    assert_eq(_t_st(_t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", _t_target("https://STAGING.Example:8443/p")), 0)), #skip-lint
+      AGNOSTIC_HTTP_ACCEPTED, "in any case, at any port");
+    assert_eq(_t_st(_t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", _t_target("http://[::1]:3000/")), 0)),
+      AGNOSTIC_HTTP_ACCEPTED, "an IPv6 literal on the list");
+
+    var off = _t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", _t_target("https://other.example/")), 0);
+    assert_eq(_t_st(off), HTTP_FORBIDDEN, "⭐ a host off the list is a 403");
+    assert_eq(_t_has(_t_msg(off), "other.example"), 0, "and the refusal does not echo it");
+    assert_eq(_t_st(_t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", _t_target("https://a.staging.example/")), 0)),
+      HTTP_FORBIDDEN, "⭐ nor is a subdomain of a listed host listed");
+    assert_eq(_t_st(_t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", _t_target("https://staging.example.evil.test/")), 0)), #skip-lint
+      HTTP_FORBIDDEN, "⭐ nor a name that starts with one");
+    assert_eq(_t_st(_t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", _t_target("http://localhost/")), 0)),
+      HTTP_FORBIDDEN, "⭐ and loopback is listed like anything else: `127.0.0.1` is not `localhost`");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_TARGET), 5, "each is counted");
+
+    # A task's target goes through the same door.
+    var task_off = _t_post(a, _t_crew(_T_AG, "{\"description\":\"t\",\"target\":{\"url\":\"https://other.example/\"}}", ""), 0); #skip-lint
+    assert_eq(_t_st(task_off), HTTP_FORBIDDEN, "⭐ a task cannot point past the list its crew must keep to");
+    assert_eq(_t_has(_t_msg(task_off), "tasks[0]: "), 1, "and the refusal says which task");
+
+    assert_eq(_t_st(_t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", ",\"target\":{\"url\":\"ftp://staging.example/\"}"), 0)), #skip-lint
+      HTTP_BAD_REQUEST, "a malformed URL is a 400, whatever the list");
+    assert_eq(_t_st(_t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", ",\"target\":{\"url\":\"https://staging.example/\",\"x\":1}"), 0)), #skip-lint
+      AGNOSTIC_HTTP_UNPROCESSABLE, "an unknown key in a target is a 422");
+    assert_eq(_t_st(_t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", ",\"target\":{}"), 0)), HTTP_BAD_REQUEST,
+      "a target with no url is refused");
+    assert_eq(_t_st(_t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", ",\"target\":\"https://staging.example/\""), 0)), #skip-lint
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a bare string is not a target: it is an object, so it can grow");
+    assert_eq(_t_st(_t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", ",\"target\":null"), 0)),
+      AGNOSTIC_HTTP_ACCEPTED, "null is a target left out");
+}
+
+fn test_target_reaches_the_task() {
+    test_group("target/forwarded");
+    _t_open();
+    _t_hosts("crew.example,task.example");
+    var a = arena_allocator(4194304);
+    var r = _t_post(a, _t_crew(_T_AG,
+        "{\"description\":\"inherits\"},{\"description\":\"overrides\",\"target\":{\"url\":\"https://task.example/\"}}",
+        _t_target("https://crew.example/app")), 0);
+    assert_eq(_t_st(r), AGNOSTIC_HTTP_ACCEPTED, "accepted");
+    var id = _t_id(r);
+
+    var e = agnostic_ledger_entry(id);
+    assert_neq(e, 0, "the ledger holds it");
+    assert_eq(str_eq_cstr(agnostic_ledger_target(e), "https://crew.example/app"), 1,
+      "the crew's target is on its entry");
+    var tasks = agnosai_crew_tasks(agnostic_ledger_spec(e));
+    var c0 = agnosai_task_context(vec_get(tasks, 0));
+    var c1 = agnosai_task_context(vec_get(tasks, 1));
+    assert_eq(str_eq_cstr(agnostic_req_str(map_get(c0, AGNOSTIC_JK_TARGET), AGNOSTIC_JK_URL), "https://crew.example/app"), 1, #skip-lint
+      "⭐ a task with none of its own runs against its crew's");
+    assert_eq(str_eq_cstr(agnostic_req_str(map_get(c1, AGNOSTIC_JK_TARGET), AGNOSTIC_JK_URL), "https://task.example/"), 1, #skip-lint
+      "⭐ and one with its own overrides it");
+
+    var plan = agnostic_response_body(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(id, "/plan"), "", 0));
+    assert_eq(str_eq_cstr(_t_target_of(plan), "https://crew.example/app"), 1, "the plan shows the crew's");
+    var pt = bayan_json_v_obj_get_by_str(plan, AGNOSTIC_JK_TASKS);
+    assert_eq(str_eq_cstr(_t_target_of(bayan_json_v_arr_get(pt, 0)), "https://crew.example/app"), 1, "and each task's");
+    assert_eq(str_eq_cstr(_t_target_of(bayan_json_v_arr_get(pt, 1)), "https://task.example/"), 1, "overrides included");
+
+    var done = _t_end(a, id, 0);
+    assert_neq(done, 0, "the crew ends");
+    assert_eq(str_eq_cstr(_t_target_of(done), "https://crew.example/app"), 1, "the outcome says what it ran against");
+
+    var listed = agnostic_response_body(_t_req(a, AGNOSTIC_METHOD_GET, str_from(_T_CREWS), "", 0));
+    var row = bayan_json_v_arr_get(bayan_json_v_obj_get_by_str(listed, AGNOSTIC_JK_CREWS), 0);
+    assert_eq(str_eq_cstr(_t_target_of(row), "https://crew.example/app"), 1, "and so does the listing");
+
+    # A crew with no target has the prompt it always had: hoosh's cache key depends on it.
+    var plain = _t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", ""), 0);
+    var pe = agnostic_ledger_entry(_t_id(plain));
+    var pc = agnosai_task_context(vec_get(agnosai_crew_tasks(agnostic_ledger_spec(pe)), 0));
+    assert_eq(pc == 0 || map_get(pc, AGNOSTIC_JK_TARGET) == 0, 1, "⭐ no target, no key in the context");
+    _t_end(a, _t_id(plain), 0);
+
+    # ⭐ What was tested survives the process that tested it.
+    agnostic_ledger_reset();
+    agnostic_engine_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+    var after = agnostic_decode_a(a, agnostic_crews_doc_a(a, id));
+    assert_eq(str_eq_cstr(_t_target_of(after), "https://crew.example/app"), 1, "⭐ a stored outcome keeps its target");
+    assert_eq(_t_st(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(id, ""), "", 0)), HTTP_OK, "and the route answers it");
+    var kept = agnostic_response_body(_t_req(a, AGNOSTIC_METHOD_GET, str_from(_T_CREWS), "", 0));
+    var ck = bayan_json_v_obj_get_by_str(kept, AGNOSTIC_JK_CREWS);
+    var found = 0;
+    var i = 0;
+    while (i < bayan_json_v_arr_len(ck)) {
+        var u = _t_target_of(bayan_json_v_arr_get(ck, i));
+        if (u != 0) { found = found + 1; }
+        i = i + 1;
+    }
+    assert_eq(found, 1, "⭐ and the durable listing keeps it, for the crew that had one");
+}
+
+fn test_target_is_on_the_entry_before_it_is_published() {
+    test_group("target/published");
+    _t_open();
+    var e = agnostic_ledger_record_crew(str_from("11111111-1111-4111-8111-111111111111"), str_from("c"), 0,
+      AGNOSTIC_SCOPE_DEFAULT, 0, 0, str_from("https://t.example/"), AGNOSTIC_UNFORWARDED_FOCUS);
+    assert_eq(str_eq_cstr(agnostic_ledger_target(agnostic_ledger_entry(str_from("11111111-1111-4111-8111-111111111111"))), #skip-lint
+        "https://t.example/"), 1, "⭐ an entry the moment it is found has its target");
+    assert_eq(agnostic_ledger_unforwarded(e), AGNOSTIC_UNFORWARDED_FOCUS, "and what it carries to no effect");
+    assert_eq(agnostic_ledger_target(agnostic_ledger_record(str_from("22222222-2222-4222-8222-222222222222"), str_from("c"), 0)), 0, #skip-lint
+      "a crew with none has none");
+}
+
+fn test_a_target_past_a_restart() {
+    test_group("target/interrupted");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var id = "33333333-3333-4333-8333-333333333333";
+    assert_eq(agnostic_crews_mark_inflight(str_from(id), AGNOSTIC_SCOPE_DEFAULT, str_from("cut short"), 1759000000000, 1, #skip-lint
+        str_from("placeholder"), str_from("sequential"), str_from("https://t.example/")), 1, "in flight, with a target"); #skip-lint
+    assert_eq(agnostic_crews_interrupt_inflight(), 1, "the next start interrupts it");
+    var got = agnostic_decode_a(a, agnostic_crews_doc_a(a, str_from(id)));
+    assert_eq(str_eq_cstr(_t_target_of(got), "https://t.example/"), 1,
+      "⭐ an interrupted crew says what it was pointed at");
+    var listed = agnostic_response_body(_t_req(a, AGNOSTIC_METHOD_GET, str_from(_T_CREWS), "", 0));
+    var row = bayan_json_v_arr_get(bayan_json_v_obj_get_by_str(listed, AGNOSTIC_JK_CREWS), 0);
+    assert_eq(str_eq_cstr(_t_target_of(row), "https://t.example/"), 1, "and so does its listing row");
+}
+
+# ⭐ A database from 0.3.1: tables as they were, rows in them. `agnostic_crews_ensure` adds the column
+# and the rows stay.
+fn test_a_database_older_than_the_target() {
+    test_group("target/migration");
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    patra_init();
+    agnostic_store_open(str_from(_T_DB));
+    agnostic_store_ensure(AGNOSTIC_CREW_TABLE_SQL);
+    agnostic_store_ensure(AGNOSTIC_CREW_INDEX_SQL);
+    agnostic_store_ensure(AGNOSTIC_CREW_IDX_TABLE_SQL);
+    agnostic_store_ensure(AGNOSTIC_CREW_IDX_INDEX_SQL);
+    agnostic_store_ensure(AGNOSTIC_CREW_INFLIGHT_TABLE_SQL);
+    agnostic_store_ensure(AGNOSTIC_CREW_PARTIAL_TABLE_SQL);
+    agnostic_store_lock();
+    var db = agnostic_store_db();
+    var wrote_index = patra_exec(db, "INSERT INTO agnostic_crew_index \
+(crew_id, scope, cname, cstatus, submitted, started, finished, ntasks, mode, tokens, cost) \
+VALUES ('44444444-4444-4444-8444-444444444444', '_', 'old crew', 2, 1000, 1001, 1002, 1, 'placeholder', 7, 9)");
+    var wrote_flight = patra_exec(db, "INSERT INTO agnostic_crew_inflight \
+(crew_id, scope, cname, submitted, ntasks, mode, process) \
+VALUES ('55555555-5555-4555-8555-555555555555', '_', 'old flight', 1000, 1, 'live', 'dag')");
+    agnostic_store_unlock();
+    assert_eq(wrote_index, PATRA_OK, "a listing row from before the target");
+    assert_eq(wrote_flight, PATRA_OK, "and a crew in flight from then");
+
+    assert_eq(agnostic_crews_ensure(), 1, "⭐ the columns are added");
+    assert_eq(agnostic_crews_ensure(), 1, "and a second start finds them there");
+
+    var a = arena_allocator(1048576);
+    var page = agnostic_crews_index_page_a(a, AGNOSTIC_SCOPE_DEFAULT, 0 - 1, 0 - 1, 10);
+    assert_eq(vec_len(page), 1, "⭐ the old row is still listed");
+    var r = vec_get(page, 0);
+    assert_eq(str_eq_cstr(agnostic_crew_row_get(r, AGNOSTIC_CR_NAME), "old crew"), 1, "whole");
+    assert_eq(agnostic_crew_row_get(r, AGNOSTIC_CR_FINISHED), 1002, "every column where it was");
+    assert_eq(agnostic_crew_row_get(r, AGNOSTIC_CR_TARGET), 0, "⭐ and with no target, not an empty one");
+    var f = agnostic_crews_inflight_a(a);
+    assert_eq(vec_len(f), 1, "the crew in flight is kept");
+    assert_eq(agnostic_crew_row_get(vec_get(f, 0), AGNOSTIC_CR_TARGET), 0, "with no target");
+    assert_eq(str_eq_cstr(agnostic_crew_row_get(vec_get(f, 0), AGNOSTIC_CR_PROCESS), "dag"), 1, "and its process");
+
+    var v = _t_row_value(a, r);
+    assert_eq(bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_TARGET), 0, "⭐ the wire leaves the key out");
+}
+
+fn _t_row_value(a, r) { return _agnostic_crews_row_to_value_a(a, r); }
+
+# An operator's token for an account in `tenant`, as a request context in `a`.
+fn _t_as(a, email, tenant) {
+    var uid = agnostic_users_create_a(a, str_from(email), str_from("pw"), AGNOSTIC_ROLE_OPERATOR, tenant);
+    var token = agnostic_jwt_issue_a(a, uid, AGNOSTIC_ROLE_OPERATOR, tenant, 600);
+    var h = alloc_via(a, 7 + str_len(token));
+    memcpy(h, "Bearer ", 7);
+    memcpy(h + 7, str_data(token), str_len(token));
+    return agnostic_reqctx_new_a(a, str_new_a(a, h, 7 + str_len(token)), 0);
+}
+
+fn _t_def_post(a, key, role, ctx) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"key\":\"");
+    str_builder_add_cstr(sb, key);
+    str_builder_add_cstr(sb, "\",\"name\":\"N\",\"role\":\"");
+    str_builder_add_cstr(sb, role);
+    str_builder_add_cstr(sb, "\",\"goal\":\"g\",\"focus\":\"f\"}");
+    return _t_req(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/agents/definitions"), str_cstr(str_builder_build(sb)), ctx); #skip-lint
+}
+
+fn test_a_crew_names_a_stored_definition() {
+    test_group("definition/named");
+    _t_open();
+    var a = arena_allocator(4194304);
+    assert_eq(_t_st(_t_def_post(a, "reviewer", "senior reviewer", 0)), AGNOSTIC_HTTP_CREATED, "a definition is stored");
+
+    var r = _t_post(a, _t_crew("{\"definition\":\"reviewer\"}", "{\"description\":\"t\"}", ""), 0);
+    assert_eq(_t_st(r), AGNOSTIC_HTTP_ACCEPTED, "⭐ a crew names it instead of sending it");
+    var e = agnostic_ledger_entry(_t_id(r));
+    var ag = vec_get(agnosai_crew_agents(agnostic_ledger_spec(e)), 0);
+    assert_eq(str_eq_cstr(agnosai_agent_key(ag), "reviewer"), 1, "the agent is the stored one");
+    assert_eq(str_eq_cstr(agnosai_agent_role(ag), "senior reviewer"), 1, "with what it says");
+    var unf = bayan_json_v_obj_get_by_str(agnostic_response_body(r), AGNOSTIC_JK_UNFORWARDED);
+    assert_eq(bayan_json_v_arr_len(unf), 1, "⭐ and `unforwarded` counts what the stored one carries");
+
+    var mixed = _t_post(a, _t_crew("{\"definition\":\"reviewer\"},{\"key\":\"a2\",\"role\":\"r\",\"goal\":\"g\"}",
+        "{\"description\":\"t\"}", ""), 0);
+    assert_eq(_t_st(mixed), AGNOSTIC_HTTP_ACCEPTED, "named and spelled-out agents mix");
+    var me = agnostic_ledger_entry(_t_id(mixed));
+    assert_eq(vec_len(agnosai_crew_agents(agnostic_ledger_spec(me))), 2, "in one roster");
+
+    # A crew runs what the definition said when it was accepted.
+    var edit = "{\"key\":\"reviewer\",\"name\":\"N\",\"role\":\"changed\",\"goal\":\"g\"}";
+    assert_eq(_t_st(_t_req(a, AGNOSTIC_METHOD_PUT, str_from("/api/v1/agents/definitions/reviewer"), edit, 0)), HTTP_OK,
+      "the definition is edited");
+    assert_eq(str_eq_cstr(agnosai_agent_role(ag), "senior reviewer"), 1,
+      "⭐ the crew already accepted keeps what it was given");
+    var after = _t_post(a, _t_crew("{\"definition\":\"reviewer\"}", "{\"description\":\"t\"}", ""), 0);
+    var ae = agnostic_ledger_entry(_t_id(after));
+    assert_eq(str_eq_cstr(agnosai_agent_role(vec_get(agnosai_crew_agents(agnostic_ledger_spec(ae)), 0)), "changed"), 1,
+      "and the next crew gets the edit");
+
+    var missing = _t_post(a, _t_crew("{\"definition\":\"nobody\"}", "{\"description\":\"t\"}", ""), 0);
+    assert_eq(_t_st(missing), AGNOSTIC_HTTP_UNPROCESSABLE, "a key nothing is stored under is a 422");
+    assert_eq(_t_has(_t_msg(missing), "agents[0]: "), 1, "at its place in the array");
+    assert_eq(_t_has(_t_msg(missing), "nobody"), 1, "naming the key");
+    assert_eq(_t_st(_t_post(a, _t_crew("{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\"},{\"definition\":\"nobody\"}",
+            "{\"description\":\"t\"}", ""), 0)), AGNOSTIC_HTTP_UNPROCESSABLE, "wherever it stands");
+    var extra = _t_post(a, _t_crew("{\"definition\":\"reviewer\",\"role\":\"r\"}", "{\"description\":\"t\"}", ""), 0);
+    assert_eq(_t_st(extra), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "⭐ a reference does not override: anything beside it is a 422");
+    assert_eq(_t_has(_t_msg(extra), "'role'"), 1, "naming what was sent");
+    assert_eq(_t_st(_t_post(a, _t_crew("{\"definition\":\"NOT VALID\"}", "{\"description\":\"t\"}", ""), 0)), HTTP_BAD_REQUEST, #skip-lint
+      "a key that could not be stored is a 400");
+    assert_eq(_t_st(_t_post(a, _t_crew("{\"definition\":7}", "{\"description\":\"t\"}", ""), 0)), HTTP_BAD_REQUEST,
+      "and one that is not a string is refused");
+    assert_eq(_t_st(_t_post(a, _t_crew("7", "{\"description\":\"t\"}", ""), 0)), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "an element that is neither stays the decoder's to refuse");
+
+    # ⭐ The cap comes first: references past it must not cost a store read each.
+    var sb = str_builder_new();
+    var n = 0;
+    while (n < AGNOSTIC_REQ_MAX_AGENTS + 1) {
+        if (n > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "{\"definition\":\"nobody\"}");
+        n = n + 1;
+    }
+    var over = _t_post(a, _t_crew(str_cstr(str_builder_build(sb)), "{\"description\":\"t\"}", ""), 0);
+    assert_eq(_t_st(over), HTTP_BAD_REQUEST, "⭐ 101 references are refused by the cap");
+    assert_eq(_t_has(_t_msg(over), "at most 100 agents"), 1, "before any of them is read");
+}
+
+fn test_a_replay_says_what_the_crew_carried() {
+    test_group("definition/replay");
+    _t_open();
+    var a = arena_allocator(4194304);
+    assert_eq(_t_st(_t_def_post(a, "focused", "r", 0)), AGNOSTIC_HTTP_CREATED, "a definition carrying `focus`");
+    var body = _t_crew("{\"definition\":\"focused\"}", "{\"description\":\"t\"}", "");
+    var ctx = agnostic_reqctx_new_a(a, 0, 0);
+    agnostic_reqctx_set_headers(ctx, str_from("replay-key-1"), 0, 0, 0);
+    var first = _t_post(a, body, ctx);
+    assert_eq(_t_st(first), AGNOSTIC_HTTP_ACCEPTED, "submitted under a key");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(agnostic_response_body(first), AGNOSTIC_JK_UNFORWARDED)), 1, #skip-lint
+      "and `focus` shaped nothing");
+
+    assert_eq(_t_st(_t_req(a, AGNOSTIC_METHOD_PUT, str_from("/api/v1/agents/definitions/focused"),
+          "{\"key\":\"focused\",\"role\":\"r\",\"goal\":\"g\"}", 0)), HTTP_OK, "the definition loses its `focus`");
+    var again = _t_post(a, body, ctx);
+    assert_eq(_t_st(again), AGNOSTIC_HTTP_ACCEPTED, "the same key and body");
+    assert_eq(str_eq(_t_id(again), _t_id(first)), 1, "answers the same crew");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(agnostic_response_body(again), AGNOSTIC_JK_UNFORWARDED)), 1, #skip-lint
+      "⭐ and says what that crew carried, not what the definition says now");
+}
+
+fn test_a_definition_is_its_tenants() {
+    test_group("definition/tenancy");
+    _t_open();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    agnostic_jwt_init_random();
+    agnostic_argon_pool_init();
+    var a = arena_allocator(4194304);
+    var ca = _t_as(a, "a@example.com", str_from("tenant-a"));
+    var cb = _t_as(a, "b@example.com", str_from("tenant-b"));
+    assert_eq(_t_st(_t_def_post(a, "shared", "a's", ca)), AGNOSTIC_HTTP_CREATED, "tenant-a stores a definition");
+    var body = _t_crew("{\"definition\":\"shared\"}", "{\"description\":\"t\"}", "");
+    assert_eq(_t_st(_t_post(a, body, ca)), AGNOSTIC_HTTP_ACCEPTED, "tenant-a names it");
+    var other = _t_post(a, body, cb);
+    assert_eq(_t_st(other), AGNOSTIC_HTTP_UNPROCESSABLE, "⭐ tenant-b cannot: to it the key is not there");
+    assert_eq(_t_has(_t_msg(other), "no agent definition is stored"), 1, "and it is told so, as for any absent key");
+
+    assert_eq(_t_st(_t_def_post(a, "shared", "b's", cb)), AGNOSTIC_HTTP_CREATED,
+      "tenant-b stores its own under the key");
+    var r = _t_post(a, body, cb);
+    var e = agnostic_ledger_entry(_t_id(r));
+    assert_eq(str_eq_cstr(agnosai_agent_role(vec_get(agnosai_crew_agents(agnostic_ledger_spec(e)), 0)), "b's"), 1,
+      "⭐ and naming it gets its own");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
+# `{"description":"t","output_schema":<schema>}`, as a C string.
+fn _t_schema_task(schema) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"description\":\"t\",\"output_schema\":");
+    str_builder_add_cstr(sb, schema);
+    str_builder_add_cstr(sb, "}");
+    return str_cstr(str_builder_build(sb));
+}
+
+fn _t_schema_status(a, schema) {
+    return _t_st(_t_post(a, _t_crew(_T_AG, _t_schema_task(schema), ""), 0));
+}
+
+fn test_output_schema_door() {
+    test_group("output-schema/door");
+    _t_open();
+    var a = arena_allocator(8388608);
+
+    assert_eq(_t_schema_status(a, "{\"type\":\"object\",\"required\":[\"verdict\"]}"), AGNOSTIC_HTTP_ACCEPTED,
+      "the two keys agnosai checks");
+    assert_eq(_t_schema_status(a, "{}"), AGNOSTIC_HTTP_ACCEPTED, "none: the answer must be JSON");
+    assert_eq(_t_schema_status(a, "{\"required\":[\"verdict\"]}"), AGNOSTIC_HTTP_ACCEPTED, "`required` alone");
+    assert_eq(_t_schema_status(a, "{\"type\":\"string\",\"required\":[]}"), AGNOSTIC_HTTP_ACCEPTED,
+      "an empty `required` under any type");
+    assert_eq(_t_schema_status(a, "null"), AGNOSTIC_HTTP_ACCEPTED, "null is a schema left out");
+    var kinds = "object array string number boolean null";
+    var parts = str_split(str_from(kinds), 32);
+    var known = 0;
+    var i = 0;
+    while (i < vec_len(parts)) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "{\"type\":\"");
+        str_builder_add(sb, vec_get(parts, i));
+        str_builder_add_cstr(sb, "\"}");
+        if (_t_schema_status(a, str_cstr(str_builder_build(sb))) == AGNOSTIC_HTTP_ACCEPTED) { known = known + 1; }
+        i = i + 1;
+    }
+    assert_eq(known, 6, "agnosai's six type names");
+
+    assert_eq(_t_schema_status(a, "{\"type\":\"integer\"}"), HTTP_BAD_REQUEST,
+      "⭐ `integer` is a type agnosai would never match, so every answer would fail");
+    assert_eq(_t_schema_status(a, "{\"type\":\"string\",\"required\":[\"x\"]}"), HTTP_BAD_REQUEST,
+      "⭐ `required` under a type with no fields can never pass");
+    var props = _t_post(a, _t_crew(_T_AG, _t_schema_task("{\"type\":\"object\",\"properties\":{\"x\":{}}}"), ""), 0);
+    assert_eq(_t_st(props), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "⭐ `properties` is refused: agnosai would ignore it, silently");
+    assert_eq(_t_has(_t_msg(props), "'properties' would do nothing"), 1, "and it says why, by name");
+    assert_eq(_t_has(_t_msg(props), "tasks[0]: "), 1, "at its task");
+    assert_eq(_t_schema_status(a, "[]"), AGNOSTIC_HTTP_UNPROCESSABLE, "an array is no schema");
+    assert_eq(_t_schema_status(a, "{\"type\":7}"), AGNOSTIC_HTTP_UNPROCESSABLE, "nor a `type` that is no string");
+    assert_eq(_t_schema_status(a, "{\"required\":[1]}"), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "⭐ agnosai skips a non-string in `required`, so it is refused here");
+    assert_eq(_t_schema_status(a, "{\"required\":[\"\"]}"), HTTP_BAD_REQUEST, "an empty name");
+
+    var sb2 = str_builder_new();
+    str_builder_add_cstr(sb2, "{\"required\":[");
+    var k = 0;
+    while (k < AGNOSTIC_REQ_MAX_TOOLS + 1) {
+        if (k > 0) { str_builder_add_cstr(sb2, ","); }
+        str_builder_add_cstr(sb2, "\"f\"");
+        k = k + 1;
+    }
+    str_builder_add_cstr(sb2, "]}");
+    assert_eq(_t_schema_status(a, str_cstr(str_builder_build(sb2))), HTTP_BAD_REQUEST, "too many names");
+
+    # It reaches the engine, and the plan says so.
+    var r = _t_post(a, _t_crew(_T_AG, _t_schema_task("{\"type\":\"object\",\"required\":[\"verdict\",\"why\"]}"), ""), 0); #skip-lint
+    var id = _t_id(r);
+    var e = agnostic_ledger_entry(id);
+    var es = agnosai_task_output_schema(vec_get(agnosai_crew_tasks(agnostic_ledger_spec(e)), 0));
+    assert_neq(es, 0, "⭐ the engine's task holds it");
+    assert_eq(str_eq_cstr(agnostic_req_str(es, str_from("type")), "object"), 1, "with its type");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_cstr(es, "required")), 2, "and its names");
+    var plan = agnostic_response_body(_t_req(a, AGNOSTIC_METHOD_GET, _t_url(id, "/plan"), "", 0));
+    var pt = bayan_json_v_arr_get(bayan_json_v_obj_get_by_str(plan, AGNOSTIC_JK_TASKS), 0);
+    assert_neq(bayan_json_v_obj_get_by_cstr(pt, "output_schema"), 0, "and the plan shows it");
+
+    var off = _t_post(a, _t_crew(_T_AG, "{\"description\":\"t\"}", ""), 0);
+    assert_eq(agnosai_task_output_schema(vec_get(agnosai_crew_tasks(agnostic_ledger_spec(
+              agnostic_ledger_entry(_t_id(off)))), 0)), 0, "a task that declares none has none");
+
+    # A placeholder run answers with the task's own words, which are not JSON.
+    var done = _t_end(a, id, 0);
+    var res = bayan_json_v_arr_get(bayan_json_v_obj_get_by_str(done, AGNOSTIC_JK_RESULTS), 0);
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(res, AGNOSTIC_JK_OUTPUT_VALID)), 0,
+      "⭐ a task that did not meet its shape says so, though the crew reads `completed`");
+    assert_eq(str_eq_cstr(agnostic_req_str(done, AGNOSTIC_JK_STATUS), "completed"), 1,
+      "as it does: that is agnosai's word");
+}
+
+# A crew entry with one task of each sort, holding `results`, and the JSON its document renders.
+fn _t_checked(a, id, output, status, schema_json) {
+    var spec = agnosai_crew_new(str_from("c"));
+    var t = agnosai_task_new(str_from("t"));
+    if (schema_json != 0) {
+        agnosai_task_with_output_schema(t, agnostic_decode_a(default_alloc(), str_from(schema_json)));
+    }
+    var tasks = vec_new();
+    vec_push(tasks, t);
+    agnosai_crew_with_tasks(spec, tasks);
+    var results = vec_new();
+    vec_push(results, agnosai_task_result_new(agnosai_task_id(t), str_from(output), status));
+    var e = agnostic_ledger_record(str_from(id), str_from("c"), 0);
+    agnostic_ledger_set_plan(e, spec, str_from("live"));
+    agnostic_ledger_latch(e, AGNOSTIC_CREW_COMPLETED, 0, results);
+    var o = agnostic_ledger_outcome_a(a, e);
+    var v = agnostic_outcome_to_value_a(a, o);
+    agnostic_ledger_describe_a(a, e, v);
+    return v;
+}
+
+# `output_valid` of the first result of crew document `v`: 1, 0, or -1 when it has none.
+fn _t_valid(v) {
+    var r = bayan_json_v_arr_get(bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_RESULTS), 0);
+    var f = bayan_json_v_obj_get_by_str(r, AGNOSTIC_JK_OUTPUT_VALID);
+    if (f == 0) { return 0 - 1; }
+    return bayan_json_v_bool(f);
+}
+
+fn test_output_valid() {
+    test_group("output-schema/valid");
+    _t_open();
+    var a = arena_allocator(4194304);
+    var verdict = "{\"type\":\"object\",\"required\":[\"verdict\"]}";
+    var ok = AGNOSAI_STATUS_COMPLETED;
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000001", "{\"verdict\":\"pass\"}", ok, verdict)), 1,
+      "⭐ an answer in the shape is valid");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000002", "```json\n{\"verdict\":\"pass\"}\n```", ok, verdict)), 1, #skip-lint
+      "⭐ a fenced one too: agnosai's check reads the fence, and this is that check");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000003", "{\"other\":1}", ok, verdict)), 0,
+      "⭐ a required key missing is not");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000004", "[1]", ok, verdict)), 0,
+      "nor the wrong type");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000005", "all passed", ok, verdict)), 0,
+      "nor prose");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000009", "```json\n{\"other\":1}\n```", ok, verdict)), 0, #skip-lint
+      "nor a fenced answer missing the key");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-00000000000a", "```json\nnot json\n```", ok, verdict)), 0, #skip-lint
+      "nor a fence around something that is not JSON");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-00000000000b", "```json\n{\"verdict\":1", ok, verdict)), 0, #skip-lint
+      "nor one never closed");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000006", "{\"verdict\":\"pass\"}", ok, 0)), 0 - 1,
+      "a task that declared no shape says nothing");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000007", "boom", AGNOSAI_STATUS_FAILED, verdict)), 0 - 1, #skip-lint
+      "and neither does one that failed: it has no answer to judge");
+
+    # ⭐ What cannot be read is not judged: `output_valid` is left out.
+    var spec0 = agnosai_crew_new(str_from("c"));
+    var t0 = agnosai_task_new(str_from("t"));
+    agnosai_task_with_output_schema(t0, agnostic_decode_a(default_alloc(), str_from(verdict)));
+    var ts0 = vec_new();
+    vec_push(ts0, t0);
+    agnosai_crew_with_tasks(spec0, ts0);
+    var long = alloc(100003);
+    store8(long, 91);
+    memset(long + 1, 49, 100000);
+    store8(long + 100001, 93);
+    store8(long + 100002, 0);
+    var res0 = vec_new();
+    vec_push(res0, agnosai_task_result_new(agnosai_task_id(t0), str_new(long, 100002), ok));
+    var e0 = agnostic_ledger_record(str_from("a0000000-0000-4000-8000-00000000000c"), str_from("c"), 0);
+    agnostic_ledger_set_plan(e0, spec0, str_from("live"));
+    agnostic_ledger_latch_unwritten(e0, AGNOSTIC_CREW_COMPLETED, 0, res0);
+    var tiny = arena_allocator(512);
+    var marks = _agnostic_ledger_output_checks_a(tiny, e0);
+    assert_neq(marks, 0, "the map is built");
+    assert_eq(map_get(marks, agnosai_task_id(t0)), 0, "⭐ an answer it could not read has no verdict");
+
+    var e = agnostic_ledger_entry(str_from("a0000000-0000-4000-8000-000000000003"));
+    var first = _agnostic_ledger_output_checks_a(a, e);
+    assert_eq(_agnostic_ledger_output_checks_a(a, e), first, "⭐ read once: a second reader gets the same map");
+    var none = agnostic_ledger_entry(str_from("a0000000-0000-4000-8000-000000000006"));
+    assert_eq(load64(none + AGNOSTIC_LE_CHECKS), 0 - 1, "and a crew with no shapes remembers it has none");
+
+    # A cancelled crew takes its results after it latched, so it must not have settled on none.
+    var spec = agnosai_crew_new(str_from("c"));
+    var t = agnosai_task_new(str_from("t"));
+    agnosai_task_with_output_schema(t, agnostic_decode_a(default_alloc(), str_from(verdict)));
+    var tasks = vec_new();
+    vec_push(tasks, t);
+    agnosai_crew_with_tasks(spec, tasks);
+    var c = agnostic_ledger_record(str_from("a0000000-0000-4000-8000-000000000008"), str_from("c"), 0);
+    agnostic_ledger_set_plan(c, spec, str_from("live"));
+    agnostic_ledger_latch(c, AGNOSTIC_CREW_CANCELLED, 0, 0);
+    assert_eq(_agnostic_ledger_output_checks_a(a, c), 0, "a crew with no results yet has nothing to check");
+    var late = vec_new();
+    vec_push(late, agnosai_task_result_new(agnosai_task_id(t), str_from("{\"verdict\":\"x\"}"), ok));
+    agnostic_ledger_latch(c, AGNOSTIC_CREW_CANCELLED, 0, late);
+    assert_neq(_agnostic_ledger_output_checks_a(a, c), 0, "⭐ and checks them when they come");
+}
+
+fn test_tools_route() {
+    test_group("tools/route");
+    _t_open();
+    var a = arena_allocator(4194304);
+    var r = _t_req(a, AGNOSTIC_METHOD_GET, str_from("/api/v1/tools"), "", 0);
+    assert_eq(_t_st(r), HTTP_OK, "the route answers");
+    var b = agnostic_response_body(r);
+    var tools = bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_TOOLS);
+    assert_eq(bayan_json_v_arr_len(tools), 38, "the 38 names the presets use");
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_TOTAL)), 38, "and says how many");
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_RESOLVED)), 2,
+      "⭐ the gate's number, on the wire");
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_UNRESOLVED)), 36,
+      "and the one M6 takes to 0");
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_CALL_TOOLS)), 0,
+      "⭐ and no crew calls any of them yet, which every answer says");
+
+    var ticked = 0;
+    var backed = 0;
+    var load = 0;
+    var i = 0;
+    while (i < bayan_json_v_arr_len(tools)) {
+        var o = bayan_json_v_arr_get(tools, i);
+        var ok = bayan_json_v_bool(bayan_json_v_obj_get_by_str(o, AGNOSTIC_JK_RESOLVED));
+        var be = bayan_json_v_obj_get_by_str(o, AGNOSTIC_JK_BACKEND);
+        ticked = ticked + ok;
+        if (be != 0) { backed = backed + 1; }
+        if (str_eq_cstr(agnostic_req_str(o, AGNOSTIC_JK_NAME), "LoadTestingTool") == 1) {
+            load = 1;
+            assert_eq(ok, 1, "LoadTestingTool resolves");
+            assert_eq(str_eq_cstr(bayan_json_v_str(be), "load_testing"), 1, "to the engine's load_testing");
+        }
+        if (str_eq_cstr(agnostic_req_str(o, AGNOSTIC_JK_NAME), "RiskScoringTool") == 1) {
+            assert_eq(ok, 0, "RiskScoringTool does not");
+            assert_eq(be, 0, "and has no backend, rather than a guessed one");
+        }
+        i = i + 1;
+    }
+    assert_eq(load, 1, "LoadTestingTool is listed");
+    assert_eq(ticked, 2, "the ticks add up to the count");
+    assert_eq(backed, 2, "and only a resolved name names a backend");
+
+    var engine = bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_ENGINE_TOOLS);
+    assert_gt(bayan_json_v_arr_len(engine), 2, "the engine's own tools are listed apart");
+    var sorted = 1;
+    var has_load = 0;
+    i = 0;
+    while (i < bayan_json_v_arr_len(engine)) {
+        var en = agnostic_req_str(bayan_json_v_arr_get(engine, i), AGNOSTIC_JK_NAME);
+        if (str_eq_cstr(en, "load_testing") == 1) { has_load = 1; }
+        if (i > 0) {
+            var prev = agnostic_req_str(bayan_json_v_arr_get(engine, i - 1), AGNOSTIC_JK_NAME);
+            if (_agnostic_str_order(prev, en) >= 0) { sorted = 0; }
+        }
+        i = i + 1;
+    }
+    assert_eq(has_load, 1, "holding the backend the gate named");
+    assert_eq(sorted, 1, "by name, so an answer can be diffed");
+    assert_eq(AGNOSTIC_CREWS_CALL_TOOLS, 0, "⭐ pinned: turning this on is M6's, with agnosai's loop");
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    agnostic_crypto_main_init();
+    test_target_shape();
+    test_target_list();
+    test_target_reaches_the_task();
+    test_target_is_on_the_entry_before_it_is_published();
+    test_a_target_past_a_restart();
+    test_a_database_older_than_the_target();
+    test_a_crew_names_a_stored_definition();
+    test_a_replay_says_what_the_crew_carried();
+    test_a_definition_is_its_tenants();
+    test_output_schema_door();
+    test_output_valid();
+    test_tools_route();
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    _tt_unlink_store(_T_AUDIT);
+    return assert_summary();
+}
+
+var _agnostic_crew_body_test_exit = main();
+if (_agnostic_crew_body_test_exit > 0) { _agnostic_crew_body_test_exit = 1; }
+sys_exit_group(_agnostic_crew_body_test_exit);

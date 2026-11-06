@@ -15,11 +15,10 @@
 # ## The three-way signal these helpers exist to preserve
 #
 # `absent`, `present-but-wrong-type` and `present-and-valid` are three different
-# facts, and collapsing any two is how a typo becomes a silent default. The
-# optional readers below answer `AGNOSTIC_REQ_UNSET` for absent and
-# `AGNOSTIC_REQ_UNSET - 1` for a type error, so a caller can tell them apart —
-# which is what lets the decoders answer 422 for `{"gpu_required": "false"}`
-# instead of quietly reading a non-empty string as true.
+# facts, and collapsing any two is how a typo becomes a silent default. A door has
+# refused a field of the wrong type by the time it reads one (`agnostic_field_bad`,
+# 0.4.0), so the optional readers below see `AGNOSTIC_REQ_UNSET - 1` only from a caller
+# that skipped its row, and they still say so rather than read `"false"` as true.
 
 # A rejected request — 16 bytes.
 #
@@ -110,6 +109,17 @@ fn _agnostic_reject_at(a, out, status, prefix, index, suffix): i64 {
     str_builder_add_cstr_a(a, sb, prefix);
     str_builder_add_int_a(a, sb, index);
     str_builder_add_cstr_a(a, sb, suffix);
+    return _agnostic_reject(a, out, status, str_builder_build_a(a, sb));
+}
+
+# A rejection naming an indexed element's field, as `<prefix><index>]: <message>`.
+fn _agnostic_reject_in(a, out, status, prefix, index, message: Str): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return _agnostic_reject(a, out, status, message); }
+    str_builder_add_cstr_a(a, sb, prefix);
+    str_builder_add_int_a(a, sb, index);
+    str_builder_add_cstr_a(a, sb, "]: ");
+    str_builder_add_a(a, sb, message);
     return _agnostic_reject(a, out, status, str_builder_build_a(a, sb));
 }
 

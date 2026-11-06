@@ -140,6 +140,7 @@
           "engine_mode?",
           "name?",
           "scope?",
+          "target?",
           "process?",
           "tasks_submitted?",
           "submitted_at?",
@@ -236,6 +237,7 @@
           "name?",
           "process",
           "max_concurrency?",
+          "target?",
           "agents",
           "tasks",
           "scorer?",
@@ -769,6 +771,36 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/tools",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [
+        {
+          "name": "tools:read",
+          "self": []
+        }
+      ],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "tools",
+          "total",
+          "resolved",
+          "unresolved",
+          "engine_tools",
+          "crews_call_tools"
+        ]
+      }
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/agents/definitions",
       "auth": true,
       "permission": "read",
@@ -1216,12 +1248,45 @@
         "name",
         "process",
         "max_concurrency",
+        "target",
         "agents",
         "tasks"
       ],
+      "types": {
+        "name": {
+          "type": "string",
+          "required": true
+        },
+        "process": {
+          "type": "string",
+          "required": false
+        },
+        "max_concurrency": {
+          "type": "integer",
+          "required": false
+        },
+        "target": {
+          "type": "object",
+          "required": false
+        },
+        "agents": {
+          "type": "array",
+          "required": true
+        },
+        "tasks": {
+          "type": "array",
+          "required": true
+        }
+      },
       "items": {
-        "agents": "agent_definition",
+        "agents": [
+          "agent_definition",
+          "agent_reference"
+        ],
         "tasks": "task"
+      },
+      "objects": {
+        "target": "target"
       }
     },
     "task": {
@@ -1234,8 +1299,62 @@
         "required_tools",
         "complexity",
         "domain",
-        "gpu_required"
-      ]
+        "gpu_required",
+        "target",
+        "output_schema"
+      ],
+      "types": {
+        "description": {
+          "type": "string",
+          "required": true
+        },
+        "expected_output": {
+          "type": "string",
+          "required": false
+        },
+        "priority": {
+          "type": "string",
+          "required": false
+        },
+        "risk": {
+          "type": "string",
+          "required": false
+        },
+        "dependencies": {
+          "type": "array",
+          "items": "integer",
+          "required": false
+        },
+        "required_tools": {
+          "type": "array",
+          "items": "string",
+          "required": false
+        },
+        "complexity": {
+          "type": "string",
+          "required": false
+        },
+        "domain": {
+          "type": "string",
+          "required": false
+        },
+        "gpu_required": {
+          "type": "boolean",
+          "required": false
+        },
+        "target": {
+          "type": "object",
+          "required": false
+        },
+        "output_schema": {
+          "type": "object",
+          "required": false
+        }
+      },
+      "objects": {
+        "target": "target",
+        "output_schema": "output_schema"
+      }
     },
     "agent_definition": {
       "fields": [
@@ -1254,6 +1373,65 @@
         "focus",
         "allow_delegation"
       ],
+      "types": {
+        "key": {
+          "type": "string",
+          "required": true
+        },
+        "name": {
+          "type": "string",
+          "required": false
+        },
+        "role": {
+          "type": "string",
+          "required": true
+        },
+        "goal": {
+          "type": "string",
+          "required": true
+        },
+        "backstory": {
+          "type": "string",
+          "required": false
+        },
+        "domain": {
+          "type": "string",
+          "required": false
+        },
+        "tools": {
+          "type": "array",
+          "items": "string",
+          "required": false
+        },
+        "complexity": {
+          "type": "string",
+          "required": false
+        },
+        "llm_model": {
+          "type": "string",
+          "required": false
+        },
+        "gpu_required": {
+          "type": "boolean",
+          "required": false
+        },
+        "gpu_preferred": {
+          "type": "boolean",
+          "required": false
+        },
+        "gpu_memory_min_mb": {
+          "type": "integer",
+          "required": false
+        },
+        "focus": {
+          "type": "string",
+          "required": false
+        },
+        "allow_delegation": {
+          "type": "boolean",
+          "required": false
+        }
+      },
       "refused": [
         "gpu_strict",
         "llm_temperature",
@@ -1269,22 +1447,87 @@
         "workflow_mode"
       ]
     },
+    "agent_reference": {
+      "fields": [
+        "definition"
+      ],
+      "types": {
+        "definition": {
+          "type": "string",
+          "required": true
+        }
+      }
+    },
+    "target": {
+      "fields": [
+        "url"
+      ],
+      "types": {
+        "url": {
+          "type": "string",
+          "required": true
+        }
+      }
+    },
+    "output_schema": {
+      "fields": [
+        "type",
+        "required"
+      ],
+      "types": {
+        "type": {
+          "type": "string",
+          "required": false
+        },
+        "required": {
+          "type": "array",
+          "items": "string",
+          "required": false
+        }
+      }
+    },
     "login": {
       "fields": [
         "email",
         "password"
-      ]
+      ],
+      "types": {
+        "email": {
+          "type": "string",
+          "required": true
+        },
+        "password": {
+          "type": "string",
+          "required": true
+        }
+      }
     },
     "password_change": {
       "fields": [
         "current_password",
         "new_password"
-      ]
+      ],
+      "types": {
+        "current_password": {
+          "type": "string",
+          "required": true
+        },
+        "new_password": {
+          "type": "string",
+          "required": true
+        }
+      }
     },
     "api_key": {
       "fields": [
         "label"
-      ]
+      ],
+      "types": {
+        "label": {
+          "type": "string",
+          "required": false
+        }
+      }
     },
     "user": {
       "fields": [
@@ -1292,17 +1535,47 @@
         "password",
         "role",
         "tenant"
-      ]
+      ],
+      "types": {
+        "email": {
+          "type": "string",
+          "required": true
+        },
+        "password": {
+          "type": "string",
+          "required": true
+        },
+        "role": {
+          "type": "string",
+          "required": true
+        },
+        "tenant": {
+          "type": "string",
+          "required": false
+        }
+      }
     },
     "user_role": {
       "fields": [
         "role"
-      ]
+      ],
+      "types": {
+        "role": {
+          "type": "string",
+          "required": true
+        }
+      }
     },
     "user_password": {
       "fields": [
         "password"
-      ]
+      ],
+      "types": {
+        "password": {
+          "type": "string",
+          "required": true
+        }
+      }
     },
     "tenant": {
       "fields": [
@@ -1310,19 +1583,57 @@
         "name",
         "rate_limit",
         "max_crews"
-      ]
+      ],
+      "types": {
+        "key": {
+          "type": "string",
+          "required": true
+        },
+        "name": {
+          "type": "string",
+          "required": false
+        },
+        "rate_limit": {
+          "type": "integer",
+          "required": false
+        },
+        "max_crews": {
+          "type": "integer",
+          "required": false
+        }
+      }
     },
     "tenant_update": {
       "fields": [
         "name",
         "rate_limit",
         "max_crews"
-      ]
+      ],
+      "types": {
+        "name": {
+          "type": "string",
+          "required": false
+        },
+        "rate_limit": {
+          "type": "integer",
+          "required": false
+        },
+        "max_crews": {
+          "type": "integer",
+          "required": false
+        }
+      }
     },
     "plugin_switch": {
       "fields": [
         "enabled"
-      ]
+      ],
+      "types": {
+        "enabled": {
+          "type": "boolean",
+          "required": true
+        }
+      }
     },
     "plugin_document": {
       "kind": "object",
@@ -1454,6 +1765,7 @@
     "plugin_permissions": [
       "storage",
       "presets:read",
+      "tools:read",
       "definitions:read",
       "definitions:write",
       "crews:read",

@@ -9,7 +9,8 @@
 #
 # | Route | Codes |
 # |---|---|
-# | `POST /api/v1/crews` | **202** accepted · 400 semantic · 422 shape · 503 engine down · 500 |
+# | `POST /api/v1/crews` | **202** accepted · 400 semantic · 403 a target off the list · 422 shape |
+# |  | 503 engine down · 500 |
 # | `GET /api/v1/crews/{id}` | 200 · 404 never submitted · 422 malformed id |
 # |  | 200 `interrupted` for a crew a restart cut short (0.1.13, ADR 0013) |
 # | `POST /api/v1/crews/{id}/cancel` | 200 cancelled · 404 never submitted |
@@ -51,7 +52,6 @@
 # The wire keys this module owns, interned once at load time.
 var AGNOSTIC_JK_EVENTS  = str_from("events");
 var AGNOSTIC_JK_DROPPED = str_from("dropped_events");
-var AGNOSTIC_JK_TYPE    = str_from("type");
 var AGNOSTIC_JK_DATA    = str_from("data");
 var AGNOSTIC_JK_MODE    = str_from("engine_mode");
 
@@ -72,6 +72,7 @@ var AGNOSTIC_JK_EXPECTED     = str_from("expected_output");
 var AGNOSTIC_JK_PRIORITY     = str_from("priority");
 var AGNOSTIC_JK_DEPENDENCIES = str_from("dependencies");
 var AGNOSTIC_JK_MAX_CONC     = str_from("max_concurrency");
+var AGNOSTIC_JK_OUTPUT_SCHEMA = str_from("output_schema");
 
 # The plan route's selection explanation (0.1.14, ADR 0016).
 var AGNOSTIC_JK_SELECTION       = str_from("selection");
@@ -320,10 +321,17 @@ fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, pri
 
         var reject: i64[1];
         store64(&reject, 0);
-        req = agnostic_crew_req_from_value_a(a, v, &reject);
+        var agents = agnostic_crew_agents_resolve_a(a, v, scope, &reject);
+        if (load64(&reject) == 0) { req = agnostic_crew_req_from_value_a(a, v, agents, &reject); }
         if (req == 0) {
             agnostic_tenant_unadmit(scope);
             var rj = load64(&reject);
+            # The one 403 a body earns: a target off the operator's list. Someone tried to aim
+            # this server at a host, so it goes in the trail (ADR 0029).
+            if (agnostic_reject_status(rj) == HTTP_FORBIDDEN) {
+                agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_TARGET, ctx,
+                  agnostic_principal_uid(agnostic_reqctx_principal(ctx)));
+            }
             return agnostic_response_error_a(a, agnostic_reject_status(rj),
               agnostic_reject_message(rj));
         }
@@ -383,10 +391,8 @@ fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, pri
     # Additive at M3, when the crew and definition surfaces became one agent
     # model: `focus` and `allow_delegation` are accepted on a crew's agents and
     # shape nothing, so the caller is told rather than left to discover it.
-    var unforwarded = 0;
-    if (req != 0) { unforwarded = agnostic_crew_req_unforwarded_a(a, req); }
-    else { unforwarded = agnostic_crew_value_unforwarded_a(a, v); }
-    bayan_json_v_obj_set_a(a, accepted, AGNOSTIC_JK_UNFORWARDED, unforwarded);
+    bayan_json_v_obj_set_a(a, accepted, AGNOSTIC_JK_UNFORWARDED,
+      agnostic_unforwarded_value_a(a, agnostic_ledger_unforwarded(e)));
     # The engine's id for each task, in REQUEST order (0.1.9). Every progress event and
     # every result names a task by this id, so a client binds them to its own tasks by
     # position — never by matching descriptions, which two tasks may share.
@@ -608,16 +614,18 @@ fn _agnostic_crew_plan_hints_a(a, to, t): i64 {
     _agnostic_crew_plan_hint_a(a, to, ctx, AGNOSTIC_JK_COMPLEXITY);
     _agnostic_crew_plan_hint_a(a, to, ctx, AGNOSTIC_JK_DOMAIN);
     _agnostic_crew_plan_hint_a(a, to, ctx, AGNOSTIC_JK_GPU_REQ);
+    _agnostic_crew_plan_hint_a(a, to, ctx, AGNOSTIC_JK_TARGET);
     return to;
 }
 
 # `GET /api/v1/crews/{id}/plan` — what a crew was asked to do (0.1.9).
 #
-# `{crew_id, name, process, max_concurrency?, agents[], tasks[]}`: the crew as the engine
+# `{crew_id, name, process, max_concurrency?, target?, agents[], tasks[]}`: the crew as the engine
 # holds it — the agents it was given (`key, name, role, llm_model?`) and its tasks in
 # REQUEST order (`task_id, index, description, expected_output?, priority,
-# dependencies[]`, and since 0.1.14 the selection hints it was given: `required_tools?,
-# complexity?, domain?, gpu_required?`), each dependency an index into `tasks`. `task_id` is the engine's id,
+# dependencies[]`, since 0.1.14 the selection hints it was given: `required_tools?,
+# complexity?, domain?, gpu_required?`, and since 0.4.0 `target?`, its own or its crew's, and
+# `output_schema?`), each dependency an index into `tasks`. `task_id` is the engine's id,
 # the one every progress event and result names, so a watcher binds the events of ANY
 # crew to its tasks by id — without having submitted it, and without matching
 # descriptions, which two tasks may share.
@@ -707,6 +715,8 @@ fn agnostic_route_crew_plan_a(a, id: Str, path: Str, ctx): i64 {
         bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_MAX_CONC,
           bayan_json_v_int_new_a(a, agnosai_process_max_concurrency(proc)));
     }
+    var target = agnostic_ledger_target(entry);
+    if (target != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TARGET, agnostic_target_value_a(a, target)); }
 
     var agents = bayan_json_v_arr_new_a(a);
     if (agents == 0) { return 0; }
@@ -775,6 +785,8 @@ fn agnostic_route_crew_plan_a(a, id: Str, path: Str, ctx): i64 {
         }
         bayan_json_v_obj_set_a(a, to, AGNOSTIC_JK_DEPENDENCIES, deps);
         _agnostic_crew_plan_hints_a(a, to, t);
+        var schema = agnosai_task_output_schema(t);
+        if (schema != 0) { bayan_json_v_obj_set_a(a, to, AGNOSTIC_JK_OUTPUT_SCHEMA, schema); }
         if (explain == 1) {
             if (only < 0 || only == j) {
                 var sel = agnostic_crew_explain_task_a(a, spec, j, limit);
@@ -798,7 +810,7 @@ fn agnostic_route_crew_plan_a(a, id: Str, path: Str, ctx): i64 {
 # `GET /api/v1/crews[?limit=N&before=CURSOR]` — the caller's crews, newest first (0.1.9).
 #
 # `{crews: [...], scope, next?}`. Each crew is `{crew_id, name, status, submitted_at,
-# started_at?, finished_at?, tasks_submitted?, engine_mode?, total_tokens?,
+# started_at?, finished_at?, tasks_submitted?, engine_mode?, target?, total_tokens?,
 # cost_micro_usd?}` — the last two only when the crew's tasks were metered, or priced.
 #
 # **Only the caller's tenant.** A crew belongs to the scope it was submitted in, and no
@@ -1105,6 +1117,8 @@ fn _agnostic_crews_row_to_value_a(a, r): i64 {
     if (nt >= 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_TASKS_SUB, bayan_json_v_int_new_a(a, nt)); }
     var mode = agnostic_crew_row_get(r, AGNOSTIC_CR_MODE);
     if (mode != 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_MODE, bayan_json_v_str_new_a(a, mode)); }
+    var target = agnostic_crew_row_get(r, AGNOSTIC_CR_TARGET);
+    if (target != 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_TARGET, agnostic_target_value_a(a, target)); }
     var tok = agnostic_crew_row_get(r, AGNOSTIC_CR_TOKENS);
     if (tok >= 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_TOTAL_TOK, bayan_json_v_int_new_a(a, tok)); }
     var cost = agnostic_crew_row_get(r, AGNOSTIC_CR_COST);

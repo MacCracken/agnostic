@@ -48,3 +48,7 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0025](0025-a-refusal-always-counts-and-is-written-within-a-budget.md) | A refusal always counts, and is written within a budget |
 | [0026](0026-a-tenants-limits-are-on-crews-and-a-place-is-reserved.md) | A tenant's limits are on crews, and a place is reserved before the crew is built |
 | [0027](0027-a-scraper-has-a-credential-of-its-own.md) | A scraper has a credential of its own, and metrics stay in the request's arena |
+| [0028](0028-a-field-row-says-what-it-holds.md) | A field's row says what it holds, and one check reads it |
+| [0029](0029-the-operator-lists-the-hosts-a-crew-may-test.md) | A crew's target is checked at the door, and the operator lists the hosts it may name |
+| [0030](0030-a-crew-names-a-stored-definition-and-copies-it.md) | A crew can name a stored definition, and copies it when it is accepted |
+| [0031](0031-output-schema-takes-what-the-engine-checks.md) | `output_schema` takes what the engine checks, and a result says whether it was met |

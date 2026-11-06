@@ -66,12 +66,12 @@ Nothing to port.
 | Item | agnostic today | Release |
 |---|---|---|
 | Identity provisioning (G1) and the JWT secret (G2) | Done at 0.3.0, see §1 | 0.3.0 |
-| A crew's target (G4) | A QA tool needs one, and the crew body is `name`, `process`, `max_concurrency`, `agents`, `tasks` | 0.4.x |
-| `GET /tools` (G10) | `src/engine/tools.cyr` resolves names, and no route shows them | 0.4.x |
+| A crew's target (G4) | Done at 0.4.0: `target`, and `AGNOSTIC_TARGET_HOSTS` | 0.4.0 |
+| `GET /tools` (G10) | Done at 0.4.0 | 0.4.0 |
 | Completion webhook (G3) | `src/auth/webhook.cyr` signs and verifies with a signed timestamp, tested in `tests/loginguard.tcyr`. Nothing sends one, and the crew body has no callback field | 0.5.x |
 | A boot-and-probe CI step (G17) | Suites run on socketpairs, and CI never boots the binary and probes it | 0.2.x |
 | Issue and PR templates (G17) | `.github` holds workflows only | 0.2.x |
-| Stored definitions in a crew body (G4) | A client reads a definition and re-sends it | 0.4.x |
+| Stored definitions in a crew body (G4) | Done at 0.4.0: `{"definition": "<key>"}` | 0.4.0 |
 | Engine features with no route (G10) | Definition versions and rollback, package export and import, tool upload, GPU, fleet, the `team` crew spec and `recommend_preset`, which has no owner | 0.4.x |
 | The AGNOS clients (G13) | Memory, RAG, reasoning, recording, RPC, screen and vector: none here | 0.5.x |
 | Scheduled reports and delivery (G6) | None. The former default jobs raised on construction, so there is nothing to copy | 0.5.x |
@@ -350,7 +350,7 @@ Routes only agnostic has: `GET /api/v1/crews/:id/events`, `GET /api/v1/crews/:id
 | `routes/definitions.py:595` | POST | `/api/v1/packages/export` | not ported | G10 |  |
 | `routes/definitions.py:627` | POST | `/api/v1/packages/import` | not ported | G10 |  |
 | `routes/definitions.py:682` | POST | `/api/v1/tools/upload` | not ported | G10 |  |
-| `routes/definitions.py:716` | GET | `/api/v1/tools` | not ported | G10 |  |
+| `routes/definitions.py:716` | GET | `/api/v1/tools` | ported | `GET /api/v1/tools` | The 38 preset names, what resolves, and that no crew calls a tool yet |
 | `routes/fleet.py:28` | GET | `/api/v1/fleet/nodes` | not ported | G10 |  |
 | `routes/fleet.py:51` | GET | `/api/v1/fleet/nodes/{node_id}` | not ported | G10 |  |
 | `routes/fleet.py:66` | GET | `/api/v1/fleet/groups` | not ported | G10 |  |

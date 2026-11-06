@@ -138,6 +138,7 @@ server enforces it, and the shell reads it from `GET /api/v1/plugins` (`catalogu
 |---|---|
 | `storage` | `GET /api/v1/plugins/<own id>/data` · `GET`, `PUT`, `DELETE /api/v1/plugins/<own id>/data/<key>` |
 | `presets:read` | `GET /api/v1/presets` · `GET /api/v1/presets/<name>` |
+| `tools:read` | `GET /api/v1/tools` |
 | `definitions:read` | `GET /api/v1/agents/definitions` · `GET /api/v1/agents/definitions/<key>` |
 | `definitions:write` | `POST /api/v1/agents/definitions` · `PUT`, `DELETE /api/v1/agents/definitions/<key>` |
 | `crews:read` | `GET /api/v1/crews` · `GET /api/v1/crews/<uuid>` · `…/events` · `…/plan` |

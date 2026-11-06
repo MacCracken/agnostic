@@ -34,8 +34,8 @@ var AGNOSTIC_TOKEN_TTL_SECS = 3600;
 # 0.1.13: the API schema lists the login body from this list (`src/http/schema.cyr`).
 fn agnostic_login_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "email");
-    agnostic_field_a(a, f, "password");
+    agnostic_field_req_a(a, f, "email", AGNOSTIC_FK_STRING);
+    agnostic_field_req_a(a, f, "password", AGNOSTIC_FK_STRING);
     return f;
 }
 
@@ -61,13 +61,13 @@ fn agnostic_route_login_a(a, body: Str, ctx): i64 {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "unknown field in request body"));
     }
+    var bad = agnostic_field_bad(v, allowed);
+    if (bad != 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE, agnostic_field_refusal_a(a, bad));
+    }
 
     var email = agnostic_req_str(v, str_from_a(a, "email"));
     var password = agnostic_req_str(v, str_from_a(a, "password"));
-    if (email == 0 || password == 0) {
-        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "email and password are required"));
-    }
 
     var status: i64[1];
     store64(&status, 0);

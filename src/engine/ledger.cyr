@@ -92,7 +92,10 @@ enum AgnosticLedgerEntryOff {
     AGNOSTIC_LE_RETIRED   = 144;  # 1 once the engine's registry has been told to forget it
     AGNOSTIC_LE_PENDING   = 152;  # AGNOSTIC_PENDING_* bits: durable writes not done yet
     AGNOSTIC_LE_ADMITTED  = 160;  # 1 once it holds a place in its tenant's `max_crews` (0.3.1)
-    AGNOSTIC_LE_SIZE      = 168;
+    AGNOSTIC_LE_TARGET    = 168;  # the crew's target URL, or 0 (0.4.0, ADR 0029)
+    AGNOSTIC_LE_UNFORWARD = 176;  # AGNOSTIC_UNFORWARDED_* bits: what its agents carry to no effect
+    AGNOSTIC_LE_CHECKS    = 184;  # task id -> AGNOSTIC_OUTPUT_*, once read; -1 when no task declares a shape
+    AGNOSTIC_LE_SIZE      = 192;
 }
 
 # The event type that carries a finished task's output (0.1.15, ADR 0019).
@@ -387,14 +390,25 @@ fn agnostic_ledger_record(crew_id: Str, name: Str, sub): i64 {
     return agnostic_ledger_record_owned(crew_id, name, sub, AGNOSTIC_SCOPE_DEFAULT, 0, 0);
 }
 
+# `agnostic_ledger_record_crew` for a crew with no target and nothing unforwarded.
+fn agnostic_ledger_record_owned(crew_id: Str, name: Str, sub, scope: Str, idem: Str, fprint: Str): i64 {
+    return agnostic_ledger_record_crew(crew_id, name, sub, scope, idem, fprint, 0, 0);
+}
+
 # `agnostic_ledger_record` for a crew that belongs to `scope` (0.1.9), submitted with the
 # `Idempotency-Key` `idem` and a body whose hex SHA-256 is `fprint` (both 0 without a key).
+# `target` is the crew's target URL or 0, and `unforwarded` its `AGNOSTIC_UNFORWARDED_*` bits.
 #
 # ⚠ **The owner is set BEFORE the entry is published.** An entry that reached the map
 # first and learned its scope after would, for that instant, read as `_` — visible to
 # every tenantless caller. So everything a lookup filters on is in place before
 # `map_set`. All three strings are copied: they arrive in a request arena.
-fn agnostic_ledger_record_owned(crew_id: Str, name: Str, sub, scope: Str, idem: Str, fprint: Str): i64 {
+#
+# ⚠ **The target too.** A placeholder crew ends in under a millisecond, and the collector can store
+# its outcome and listing row the moment the entry is published: set after, a target would go
+# missing from the record of what was tested. It is the request's, and outlives this.
+fn agnostic_ledger_record_crew(crew_id: Str, name: Str, sub, scope: Str, idem: Str, fprint: Str, target: Str,
+  unforwarded): i64 {
     agnostic_ledger_init();
     var e = alloc(AGNOSTIC_LE_SIZE);
     if (e == 0) { return 0; }
@@ -424,6 +438,9 @@ fn agnostic_ledger_record_owned(crew_id: Str, name: Str, sub, scope: Str, idem: 
     store64(e + AGNOSTIC_LE_RETIRED, 0);
     store64(e + AGNOSTIC_LE_PENDING, 0);
     store64(e + AGNOSTIC_LE_ADMITTED, 0);
+    store64(e + AGNOSTIC_LE_TARGET, target);
+    store64(e + AGNOSTIC_LE_UNFORWARD, unforwarded);
+    store64(e + AGNOSTIC_LE_CHECKS, 0);
     if (idem != 0) { store64(e + AGNOSTIC_LE_IDEM, str_clone(idem)); }
     if (fprint != 0) { store64(e + AGNOSTIC_LE_FPRINT, str_clone(fprint)); }
 
@@ -654,6 +671,19 @@ fn agnostic_ledger_set_plan(e, spec, mode: Str): i64 {
     return e;
 }
 
+# The crew's target URL, or 0. Set before the entry was published and never changed.
+fn agnostic_ledger_target(e): i64 {
+    if (e == 0) { return 0; }
+    return load64(e + AGNOSTIC_LE_TARGET);
+}
+
+# What the crew's agents carry that shapes nothing: `AGNOSTIC_UNFORWARDED_*` bits. Kept with the
+# entry since 0.4.0: a replay's body can name stored definitions that have changed since.
+fn agnostic_ledger_unforwarded(e): i64 {
+    if (e == 0) { return 0; }
+    return load64(e + AGNOSTIC_LE_UNFORWARD);
+}
+
 # The engine's crew spec, or 0 when none was recorded.
 fn agnostic_ledger_spec(e): i64 {
     if (e == 0) { return 0; }
@@ -691,6 +721,9 @@ fn agnostic_ledger_describe_a(a, e, obj): i64 {
     if (scope != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREW_SCOPE, bayan_json_v_str_new_a(a, scope)); }
     var mode = agnostic_ledger_mode(e);
     if (mode != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_MODE, bayan_json_v_str_new_a(a, mode)); }
+    var target = agnostic_ledger_target(e);
+    if (target != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TARGET, agnostic_target_value_a(a, target)); }
+    _agnostic_ledger_mark_outputs_a(a, e, obj);
     var spec = agnostic_ledger_spec(e);
     if (spec != 0) {
         bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_PROCESS, bayan_json_v_str_new_a(a,
@@ -706,6 +739,135 @@ fn agnostic_ledger_describe_a(a, e, obj): i64 {
     if (st != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_STARTED_AT, bayan_json_v_int_new_a(a, st)); }
     var fin = agnostic_ledger_finished_ms(e);
     if (fin != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_FINISHED_AT, bayan_json_v_int_new_a(a, fin)); }
+    return obj;
+}
+
+# Whether a task answered in the shape its `output_schema` declared.
+enum AgnosticOutputCheck {
+    AGNOSTIC_OUTPUT_VALID   = 1;
+    AGNOSTIC_OUTPUT_INVALID = 2;
+}
+
+# The map of what entry `e`'s finished tasks answered against the shape each declared, task id to
+# `AGNOSTIC_OUTPUT_*`, or 0: no task declared one, or the crew has no results yet.
+#
+# ## ⚠ agnosai says `completed` whether or not the shape was met
+#
+# A task with an `output_schema` is re-asked twice, and the last answer is never checked, so a model
+# that never meets the shape completes all the same (filed with agnosai). So `output_valid` on a
+# task's result is what says it, and agnostic reads it with the engine's own check.
+#
+# ## ⚠ Once per crew, by the first reader once it has results
+#
+# A poll reads this, so nothing here may keep anything per read: a crew still running leaves before
+# anything is built, and the map, once built, is what later reads answer from. A reader that loses
+# the race does the work once more and drops it. The map is complete before it is published and never
+# changes. The engine's result objects are not marked instead: a poll and the collector read them at
+# once, and writing into their metadata would race both.
+#
+# ⚠ **The pointer is read under the lock it is written under.** Without it, an aarch64 reader can see
+# the pointer before what it points at. x86 cannot show this, and no suite here would.
+fn _agnostic_ledger_output_checks_a(a, e): i64 {
+    mutex_lock(_agnostic_ledger_mutex);
+    var seen = load64(e + AGNOSTIC_LE_CHECKS);
+    var results = load64(e + AGNOSTIC_LE_RESULTS);
+    var spec = load64(e + AGNOSTIC_LE_SPEC);
+    mutex_unlock(_agnostic_ledger_mutex);
+    if (seen == 0 - 1) { return 0; }
+    if (seen != 0) { return seen; }
+    if (spec == 0) { return 0; }
+    if (_agnostic_results_count(results) == 0) { return 0; }
+
+    var tasks = agnosai_crew_tasks(spec);
+    var shapes = 0;
+    var i = 0;
+    while (tasks != 0 && i < vec_len(tasks)) {
+        var t = vec_get(tasks, i);
+        if (agnosai_task_output_schema(t) != 0) {
+            if (shapes == 0) { shapes = map_new_str_a(a); }
+            map_set_a(a, shapes, agnosai_task_id(t), t);
+        }
+        i = i + 1;
+    }
+    if (shapes == 0) {
+        mutex_lock(_agnostic_ledger_mutex);
+        store64(e + AGNOSTIC_LE_CHECKS, 0 - 1);
+        mutex_unlock(_agnostic_ledger_mutex);
+        return 0;
+    }
+
+    var checks = map_new_str();
+    var r = 0;
+    while (r < vec_len(results)) {
+        var res = vec_get(results, r);
+        var t2 = map_get(shapes, agnosai_task_result_task_id(res));
+        if (t2 != 0 && agnosai_task_result_status(res) == AGNOSAI_STATUS_COMPLETED) {
+            var met = _agnostic_output_in_shape_a(a, agnosai_task_result_output(res), agnosai_task_output_schema(t2));
+            if (met == 1) { map_set(checks, agnosai_task_result_task_id(res), AGNOSTIC_OUTPUT_VALID); }
+            if (met == 0) { map_set(checks, agnosai_task_result_task_id(res), AGNOSTIC_OUTPUT_INVALID); }
+        }
+        r = r + 1;
+    }
+    mutex_lock(_agnostic_ledger_mutex);
+    store64(e + AGNOSTIC_LE_CHECKS, checks);
+    mutex_unlock(_agnostic_ledger_mutex);
+    return checks;
+}
+
+# Whether `text`, parsed in `a`, passes the engine's check of `schema`: 1 or 0, or -1 when it could
+# not be read.
+#
+# ⚠ **A parse that fails is not a verdict.** bayan answers 0 for text that is not JSON and for an
+# arena that ran out, and an arena that ran out says nothing about what the model answered. So a parse
+# that fails on text the no-allocation scanner calls well-formed is -1, and `output_valid` is left out
+# rather than say `false` of an answer that may be right. The arenas that read this grow (ADR 0021), so
+# it takes a request that cannot get memory.
+fn _agnostic_output_parsed_ok_a(a, text: Str, schema): i64 {
+    var v = bayan_json_v_parse_buf_a(a, str_data(text), str_len(text));
+    if (v == 0) {
+        if (agnostic_json_kind(text) == AGNOSTIC_JSON_MALFORMED) { return 0; }
+        return 0 - 1;
+    }
+    if (agnosai_validate_value(v, schema) == 0) { return 1; }
+    return 0;
+}
+
+# Whether a task's `output` meets `schema`, read as `agnosai_extract_and_validate` reads it: the
+# text as it is, then a fenced block in it.
+#
+# ⚠ **Parsed in `a`, not by that function.** It parses onto the global heap, and a parse tree runs to
+# twenty times its text, for a model's whole answer, for the life of the process. The fence is the
+# engine's own reader: what it copies is no longer than the output the crew keeps anyway.
+#
+# 1 or 0, or -1 when it could not be read.
+fn _agnostic_output_in_shape_a(a, output: Str, schema): i64 {
+    var raw = _agnostic_output_parsed_ok_a(a, output, schema);
+    if (raw == 1) { return 1; }
+    var block = agnosai_extract_json_block(output);
+    if (block == 0) { return raw; }
+    return _agnostic_output_parsed_ok_a(a, block, schema);
+}
+
+# Each result in the crew document `obj` gains `output_valid` when its task declared a shape.
+fn _agnostic_ledger_mark_outputs_a(a, e, obj): i64 {
+    var checks = _agnostic_ledger_output_checks_a(a, e);
+    if (checks == 0) { return obj; }
+    var results = bayan_json_v_obj_get_by_str(obj, AGNOSTIC_JK_RESULTS);
+    if (bayan_json_v_is_arr(results) != 1) { return obj; }
+    var i = 0;
+    while (i < bayan_json_v_arr_len(results)) {
+        var r = bayan_json_v_arr_get(results, i);
+        var id = bayan_json_v_obj_get_by_str(r, AGNOSTIC_JK_TASK_ID);
+        if (bayan_json_v_is_str(id) == 1) {
+            var state = map_get(checks, bayan_json_v_str(id));
+            if (state != 0) {
+                var valid = 0;
+                if (state == AGNOSTIC_OUTPUT_VALID) { valid = 1; }
+                bayan_json_v_obj_set_a(a, r, AGNOSTIC_JK_OUTPUT_VALID, bayan_json_v_bool_new_a(a, valid));
+            }
+        }
+        i = i + 1;
+    }
     return obj;
 }
 
@@ -968,7 +1130,8 @@ fn agnostic_ledger_mark_inflight(e): i64 {
         if (tasks != 0) { ntasks = vec_len(tasks); }
     }
     return agnostic_crews_mark_inflight(agnostic_ledger_crew_id(e), agnostic_ledger_scope(e),
-      agnostic_ledger_name(e), agnostic_ledger_submitted_ms(e), ntasks, agnostic_ledger_mode(e), process);
+      agnostic_ledger_name(e), agnostic_ledger_submitted_ms(e), ntasks, agnostic_ledger_mode(e), process,
+      agnostic_ledger_target(e));
 }
 
 # The stored document for a crew a restart interrupted, in `a` (0.1.13, ADR 0013): `row`
@@ -1000,6 +1163,8 @@ fn agnostic_crew_interrupted_doc_with_a(a, row, at_ms, results): i64 {
     if (mode != 0) { bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_MODE, bayan_json_v_str_new_a(a, mode)); }
     var proc = agnostic_crew_row_get(row, AGNOSTIC_CR_PROCESS);
     if (proc != 0) { bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_PROCESS, bayan_json_v_str_new_a(a, proc)); }
+    var target = agnostic_crew_row_get(row, AGNOSTIC_CR_TARGET);
+    if (target != 0) { bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_TARGET, agnostic_target_value_a(a, target)); }
     var nt = agnostic_crew_row_get(row, AGNOSTIC_CR_NTASKS);
     if (nt >= 0) { bayan_json_v_obj_set_a(a, v, AGNOSTIC_JK_TASKS_SUB, bayan_json_v_int_new_a(a, nt)); }
     var sub = agnostic_crew_row_get(row, AGNOSTIC_CR_SUBMITTED);
@@ -1047,6 +1212,7 @@ fn agnostic_ledger_row_a(a, e): i64 {
     agnostic_crew_row_set(row, AGNOSTIC_CR_STARTED, started);
     agnostic_crew_row_set(row, AGNOSTIC_CR_FINISHED, finished);
     agnostic_crew_row_set(row, AGNOSTIC_CR_MODE, agnostic_ledger_mode(e));
+    agnostic_crew_row_set(row, AGNOSTIC_CR_TARGET, agnostic_ledger_target(e));
     var spec = agnostic_ledger_spec(e);
     if (spec != 0) {
         var tasks = agnosai_crew_tasks(spec);

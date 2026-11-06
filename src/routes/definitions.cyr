@@ -49,7 +49,6 @@
 # through `_agnostic_definitions`, so M4 can replace the storage without touching
 # a handler.
 
-var AGNOSTIC_JK_DEFINITION  = str_from("definition");
 var AGNOSTIC_JK_DEFINITIONS = str_from("definitions");
 var AGNOSTIC_JK_STORAGE     = str_from("storage");
 var AGNOSTIC_JV_PATRA       = str_from("patra");

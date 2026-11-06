@@ -38,7 +38,8 @@ enum AgnosticRefusalKind {
     AGNOSTIC_REFUSAL_SHED            = 3;   # 429: a login with the Argon2 pool full
     AGNOSTIC_REFUSAL_TENANT_RATE     = 4;   # 429: a tenant over its crews a minute
     AGNOSTIC_REFUSAL_TENANT_CREWS    = 5;   # 429: a tenant at its unfinished crews
-    AGNOSTIC_REFUSAL_KINDS           = 6;
+    AGNOSTIC_REFUSAL_TARGET          = 6;   # 403: a crew naming a host off the operator's list
+    AGNOSTIC_REFUSAL_KINDS           = 7;
 }
 
 var AGNOSTIC_REFUSAL_WINDOW_MS = 60000;
@@ -92,6 +93,7 @@ fn agnostic_refusal_action(kind): i64 {
     if (kind == AGNOSTIC_REFUSAL_SHED) { return "auth.shed"; }
     if (kind == AGNOSTIC_REFUSAL_TENANT_RATE) { return "tenant.throttled"; }
     if (kind == AGNOSTIC_REFUSAL_TENANT_CREWS) { return "tenant.crews_full"; }
+    if (kind == AGNOSTIC_REFUSAL_TARGET) { return "crew.target_refused"; }
     return 0;
 }
 

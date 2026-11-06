@@ -462,6 +462,11 @@ fn agnostic_serve_mount(cfg): i64 {
     # operator named one: every client behind an unnamed proxy shares the proxy's login bucket.
     var proxies = agnostic_config_proxies(cfg);
     agnostic_forwarded_set_proxies(proxies);
+    var target_hosts = agnostic_config_target_hosts(cfg);
+    agnostic_target_set_hosts(target_hosts);
+    if (target_hosts != 0) {
+        agnostic_log_kv_int(SK_INFO, "target hosts", 12, "entries", 7, vec_len(target_hosts));
+    }
     if (proxies != 0) {
         agnostic_log_kv_int(SK_INFO, "trusted proxies", 15, "entries", 7, load64(proxies + AGNOSTIC_PXT_COUNT));
     }

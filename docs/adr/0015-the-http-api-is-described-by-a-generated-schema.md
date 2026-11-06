@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-10-04
-**Note**: reviewed by the user on 2026-11-05 and accepted. The vocabularies below gained `complexity` at [ADR 0017](0017-a-task-carries-selection-hints.md). What the schema leaves out now has a release: field types and required-ness on 0.4.x, the rest before the 1.0 freeze (roadmap, *API schema*). Since 0.3.0 a route nobody classified shows up as `super`, not `admin` ([ADR 0023](0023-provisioning-is-routes-and-one-recovery-command.md)).
+**Note**: reviewed by the user on 2026-11-05 and accepted. The vocabularies below gained `complexity` at [ADR 0017](0017-a-task-carries-selection-hints.md). What the schema leaves out now has a release: field types and required-ness landed at 0.4.0 ([ADR 0028](0028-a-field-row-says-what-it-holds.md)), and the rest is before the 1.0 freeze (roadmap, *API schema*). Since 0.3.0 a route nobody classified shows up as `super`, not `admin` ([ADR 0023](0023-provisioning-is-routes-and-one-recovery-command.md)).
 
 ## Context
 

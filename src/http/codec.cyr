@@ -21,8 +21,8 @@
 #   1. `bayan_json_v_is_obj` — reject a non-object outright.
 #   2. `agnostic_no_unknown_fields` — BEFORE reading any field. Validating the
 #      shape first means a request is rejected whole rather than half-applied.
-#   3. Required fields.
-#   4. Optional fields.
+#   3. `agnostic_field_bad` — every field against its row: required, and of its kind.
+#   4. What each field means.
 #
 # ## Why this ships in M1 with no route consumer
 #
@@ -30,15 +30,182 @@
 # field-forwarding gate is built on it — and retrofitting an allow-list after
 # decoders exist means auditing every one of them instead of writing them right.
 
+# ## A row says what the field holds (0.4.0, ADR 0028)
+#
+# An allow-list row is a name, a kind and whether the field is required, and **one check reads
+# them**: `agnostic_field_bad`. Every door calls it after the allow-list and before reading a
+# field, so a decoder holds no type check of its own, and the API schema prints the same rows
+# (`src/http/schema.cyr`). When types lived in decoder code the schema could say nothing about
+# them, and M7's tools, which mirror the routes, would have had to hand-write a copy.
+#
+# JSON `null` in an optional field is the field left out, as `agnostic_opt_str` reads it. In a
+# required field it is the field missing.
+
+# What a field holds.
+enum AgnosticFieldKind {
+    AGNOSTIC_FK_STRING  = 1;
+    AGNOSTIC_FK_INT     = 2;
+    AGNOSTIC_FK_BOOL    = 3;
+    AGNOSTIC_FK_OBJECT  = 4;
+    AGNOSTIC_FK_ARRAY   = 5;    # an array whose elements its decoder walks: crews' agents and tasks
+    AGNOSTIC_FK_STRINGS = 6;    # an array of strings
+    AGNOSTIC_FK_INTS    = 7;    # an array of integers
+}
+
+# One row of an allow-list.
+enum AgnosticFieldOff {
+    AGNOSTIC_FD_NAME     = 0;
+    AGNOSTIC_FD_KIND     = 8;
+    AGNOSTIC_FD_REQUIRED = 16;
+    AGNOSTIC_FD_SIZE     = 24;
+}
+
 # A new, empty allow-list, in arena `a`.
 fn agnostic_fields_a(a): i64 {
     return vec_new_a(a);
 }
 
-# Add a permitted field name to an allow-list, returning the list for chaining.
-fn agnostic_field_a(a, allowed, name): i64 {
-    vec_push_a(a, allowed, str_from_a(a, name));
+# Add a row, answering the list for chaining.
+fn _agnostic_field_add_a(a, allowed, name, kind, required): i64 {
+    var r = alloc_via(a, AGNOSTIC_FD_SIZE);
+    if (r == 0) { return allowed; }
+    store64(r + AGNOSTIC_FD_NAME, str_from_a(a, name));
+    store64(r + AGNOSTIC_FD_KIND, kind);
+    store64(r + AGNOSTIC_FD_REQUIRED, required);
+    vec_push_a(a, allowed, r);
     return allowed;
+}
+
+# Permit an optional field of `kind`.
+fn agnostic_field_a(a, allowed, name, kind): i64 {
+    return _agnostic_field_add_a(a, allowed, name, kind, 0);
+}
+
+# Permit a field of `kind` that a body must carry.
+fn agnostic_field_req_a(a, allowed, name, kind): i64 {
+    return _agnostic_field_add_a(a, allowed, name, kind, 1);
+}
+
+# A row's name.
+fn agnostic_field_name(r): i64 { return load64(r + AGNOSTIC_FD_NAME); }
+
+# A row's `AGNOSTIC_FK_*`.
+fn agnostic_field_kind(r): i64 { return load64(r + AGNOSTIC_FD_KIND); }
+
+# Whether a body must carry the row's field. 1 or 0.
+fn agnostic_field_required(r): i64 { return load64(r + AGNOSTIC_FD_REQUIRED); }
+
+# The kind's JSON type, as the API schema names it.
+fn agnostic_field_kind_type(kind): i64 {
+    if (kind == AGNOSTIC_FK_STRING) { return "string"; }
+    if (kind == AGNOSTIC_FK_INT) { return "integer"; }
+    if (kind == AGNOSTIC_FK_BOOL) { return "boolean"; }
+    if (kind == AGNOSTIC_FK_OBJECT) { return "object"; }
+    return "array";
+}
+
+# The type of an array kind's elements, or 0 when the kind names none.
+fn agnostic_field_kind_items(kind): i64 {
+    if (kind == AGNOSTIC_FK_STRINGS) { return "string"; }
+    if (kind == AGNOSTIC_FK_INTS) { return "integer"; }
+    return 0;
+}
+
+# The kind as a refusal says it.
+fn _agnostic_field_kind_words(kind): i64 {
+    if (kind == AGNOSTIC_FK_STRING) { return "a string"; }
+    if (kind == AGNOSTIC_FK_INT) { return "an integer"; }
+    if (kind == AGNOSTIC_FK_BOOL) { return "a boolean"; }
+    if (kind == AGNOSTIC_FK_OBJECT) { return "an object"; }
+    if (kind == AGNOSTIC_FK_STRINGS) { return "an array of strings"; }
+    if (kind == AGNOSTIC_FK_INTS) { return "an array of integers"; }
+    return "an array";
+}
+
+# Whether every element of the array `v` is a string.
+fn _agnostic_field_all_strs(v): i64 {
+    var i = 0;
+    while (i < bayan_json_v_arr_len(v)) {
+        if (bayan_json_v_is_str(bayan_json_v_arr_get(v, i)) != 1) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Whether every element of the array `v` is an integer.
+fn _agnostic_field_all_ints(v): i64 {
+    var i = 0;
+    while (i < bayan_json_v_arr_len(v)) {
+        if (bayan_json_v_is_int(bayan_json_v_arr_get(v, i)) != 1) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Whether the value `v` is what `kind` says.
+#
+# ⚠ `"true"` is not a boolean and `"7"` is not an integer: coercing either is how
+# `{"gpu_required": "false"}` reads as true. bayan's float is not an integer, so `1.0` is refused
+# where an integer is asked for.
+fn _agnostic_field_kind_ok(kind, v): i64 {
+    if (kind == AGNOSTIC_FK_STRING) { return bayan_json_v_is_str(v); }
+    if (kind == AGNOSTIC_FK_INT) { return bayan_json_v_is_int(v); }
+    if (kind == AGNOSTIC_FK_BOOL) { return bayan_json_v_is_bool(v); }
+    if (kind == AGNOSTIC_FK_OBJECT) { return bayan_json_v_is_obj(v); }
+    if (bayan_json_v_is_arr(v) != 1) { return 0; }
+    if (kind == AGNOSTIC_FK_STRINGS) { return _agnostic_field_all_strs(v); }
+    if (kind == AGNOSTIC_FK_INTS) { return _agnostic_field_all_ints(v); }
+    return 1;
+}
+
+# The first row of `allowed` that the object `obj` does not satisfy, or 0: a required field
+# missing or null, or a field of the wrong type. A body is checked against its row before a decoder
+# reads a field.
+fn agnostic_field_bad(obj, allowed): i64 {
+    var i = 0;
+    while (i < vec_len(allowed)) {
+        var r = vec_get(allowed, i);
+        var f = bayan_json_v_obj_get_by_str(obj, agnostic_field_name(r));
+        if (f == 0 || bayan_json_v_is_null(f) == 1) {
+            if (agnostic_field_required(r) == 1) { return r; }
+        } elif (_agnostic_field_kind_ok(agnostic_field_kind(r), f) != 1) {
+            return r;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# What a refusal of row `r` says: `'x' is required and must be a string`, or `'x' must be a string`.
+fn agnostic_field_refusal_a(a, r): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return agnostic_field_name(r); }
+    str_builder_add_cstr_a(a, sb, "'");
+    str_builder_add_a(a, sb, agnostic_field_name(r));
+    if (agnostic_field_required(r) == 1) {
+        str_builder_add_cstr_a(a, sb, "' is required and must be ");
+    } else {
+        str_builder_add_cstr_a(a, sb, "' must be ");
+    }
+    str_builder_add_cstr_a(a, sb, _agnostic_field_kind_words(agnostic_field_kind(r)));
+    return str_builder_build_a(a, sb);
+}
+
+# The status the crew, task and agent bodies refuse row `r` with: 400 for a required field, as
+# every door here has answered since M2, and 422 for an optional field of the wrong type.
+fn agnostic_field_status(r): i64 {
+    if (agnostic_field_required(r) == 1) { return HTTP_BAD_REQUEST; }
+    return AGNOSTIC_HTTP_UNPROCESSABLE;
+}
+
+# Whether `key` is a row of `allowed`.
+fn _agnostic_field_listed(allowed, key: Str): i64 {
+    var i = 0;
+    while (i < vec_len(allowed)) {
+        if (str_eq(key, agnostic_field_name(vec_get(allowed, i))) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
 }
 
 # 1 when every key in `obj` appears in `allowed`; 0 when any key does not.
@@ -48,20 +215,7 @@ fn agnostic_field_a(a, allowed, name): i64 {
 fn agnostic_no_unknown_fields(obj, allowed): i64 {
     if (obj == 0) { return 0; }
     if (allowed == 0) { return 0; }
-    var n = bayan_json_v_obj_len(obj);
-    var i = 0;
-    while (i < n) {
-        var key = bayan_json_v_obj_key(obj, i);
-        var m = vec_len(allowed);
-        var j = 0;
-        var found = 0;
-        while (j < m) {
-            if (str_eq(key, vec_get(allowed, j)) == 1) { found = 1; break; }
-            j = j + 1;
-        }
-        if (found == 0) { return 0; }
-        i = i + 1;
-    }
+    if (agnostic_unknown_field(obj, allowed) != 0) { return 0; }
     return 1;
 }
 
@@ -77,14 +231,7 @@ fn agnostic_unknown_field(obj, allowed): i64 {
     var i = 0;
     while (i < n) {
         var key = bayan_json_v_obj_key(obj, i);
-        var m = vec_len(allowed);
-        var j = 0;
-        var found = 0;
-        while (j < m) {
-            if (str_eq(key, vec_get(allowed, j)) == 1) { found = 1; break; }
-            j = j + 1;
-        }
-        if (found == 0) { return key; }
+        if (_agnostic_field_listed(allowed, key) == 0) { return key; }
         i = i + 1;
     }
     return 0;

@@ -65,6 +65,9 @@ AGNOSTIC_LLM_API_KEY=change-me
 
 # A scraper's own credential. `openssl rand -hex 32`.
 AGNOSTIC_METRICS_TOKEN=change-me
+
+# The hosts crews may name as their target. Unset, none may.
+AGNOSTIC_TARGET_HOSTS=staging.example.com
 ```
 
 A value that cannot be read stops the server with a message, rather than falling back to a default.

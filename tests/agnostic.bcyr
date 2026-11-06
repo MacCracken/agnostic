@@ -209,7 +209,7 @@ fn _agnostic_bench_inflight(): i64 {
     bench_batch_start(bi);
     var i = 0;
     while (i < 1000) {
-        n = n + agnostic_crews_mark_inflight(id, scope, name, 1000 + i, 3, mode, proc);
+        n = n + agnostic_crews_mark_inflight(id, scope, name, 1000 + i, 3, mode, proc, 0);
         agnostic_store_lock();
         _agnostic_crews_inflight_drop_locked(id);
         agnostic_store_unlock();
@@ -313,7 +313,7 @@ fn _agnostic_bench_crew_decode(): i64 {
     while (i < 2000) {
         reset_via(a);
         store64(&rj, 0);
-        if (agnostic_crew_req_from_value_a(a, v, &rj) != 0) { ok = ok + 1; }
+        if (agnostic_crew_req_from_value_a(a, v, 0, &rj) != 0) { ok = ok + 1; }
         i = i + 1;
     }
     bench_batch_stop(b, 2000);
@@ -357,7 +357,7 @@ fn _agnostic_bench_ledger_row(): i64 {
 fn _agnostic_bench_json_build(): i64 {
     var a = arena_allocator_growable(65536);
     var arr = bayan_json_v_arr_new();
-    var item = str_from("a string of about one hundred bytes, which is what a crew's listing row comes to, more or less");
+    var item = str_from("a string of about one hundred bytes, which is what a crew's listing row comes to, more or less"); #skip-lint
     var i = 0;
     while (i < 640) {
         bayan_json_v_arr_push(arr, bayan_json_v_str_new(item));
@@ -729,6 +729,48 @@ fn _agnostic_bench_operations(): i64 {
     }
     bench_batch_stop(bm, 20000);
     bench_report(bm);
+
+    # 0.4.0: what the crew body added at the door.
+    agnostic_target_set_hosts(agnostic_config_parse_target_hosts(str_from("a.example,b.example,sut.example")));
+    var url = str_from("https://sut.example:8443/app/login?next=/home");
+    var at: i64[1];
+    var hn: i64[1];
+    var bt = bench_new("target_checked");
+    bench_batch_start(bt);
+    i = 0;
+    while (i < 200000) {
+        agnostic_target_host(url, &at, &hn);
+        n = n + agnostic_target_host_listed(load64(&at), load64(&hn));
+        i = i + 1;
+    }
+    bench_batch_stop(bt, 200000);
+    bench_report(bt);
+
+    var fv = agnostic_decode_a(a, str_from("{\"key\":\"a1\",\"name\":\"n\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"x\",\"y\"],\"gpu_required\":true}")); #skip-lint
+    var bf = bench_new("field_rows_agent");
+    bench_batch_start(bf);
+    i = 0;
+    while (i < 200000) {
+        if (agnostic_field_bad(fv, _agnostic_agent_def_rows) == 0) { n = n + 1; }
+        i = i + 1;
+        if ((i & 1023) == 0) {
+            reset_via(a);
+            fv = agnostic_decode_a(a, str_from("{\"key\":\"a1\",\"name\":\"n\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"x\",\"y\"],\"gpu_required\":true}")); #skip-lint
+        }
+    }
+    bench_batch_stop(bf, 200000);
+    bench_report(bf);
+
+    var bl = bench_new("tools_route");
+    bench_batch_start(bl);
+    i = 0;
+    while (i < 20000) {
+        if (agnostic_route_tools_a(a) != 0) { n = n + 1; }
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(bl, 20000);
+    bench_report(bl);
     return n;
 }
 

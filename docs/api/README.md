@@ -62,7 +62,12 @@ there. Any other parameter of a granted route takes any value. A grant does not 
 plugin, and auth and the role check still apply after it.
 
 `bodies.<name>.fields` is the decoder's own allow-list, in its order: a key outside it is a 422 that
-names it. `bodies.crew.items` says what each element of a crew's `agents` and `tasks` is decoded as.
+names it. `bodies.<name>.types` holds each field's row (0.4.0, ADR 0028): its `type`, one of `string`,
+`integer`, `boolean`, `object` and `array`; `items`, the type of an array's elements where its row says;
+and `required`. Every door reads the same rows, and `null` in an optional field is the field left out.
+`bodies.crew.items` says what each element of a crew's `agents` and `tasks` is decoded as: an agent is
+an `agent_definition`, or an `agent_reference` naming a stored one. `objects`, on `crew` and `task`,
+says which body an object field is decoded as.
 `bodies.agent_definition.refused` lists fields that are refused with a reason of their own rather
 than as unknown. `bodies.plugin_document` is any JSON object of at most `max_bytes`.
 
@@ -118,7 +123,7 @@ that applies answers:
 - **Left out on purpose** — the binary's version (the snapshot would change every release), anything
   read from `AGNOSTIC_*`, the permissions' `grants` wording, plugin manifests, per-handler 4xx
   statuses and messages (the route modules' "Route | Codes" headers and `state.md` keep those),
-  field types and required-ness, nested response shapes, and response headers other than a
+  nested response shapes, and response headers other than a
   document's `ETag`.
 
 ## How it is checked
@@ -148,11 +153,11 @@ list it under the skill's "Routes this skill does not teach".
   or header a handler starts reading without declaring it is caught only when it is one of the six
   parameter names the suite knows (`limit`, `status`, `before`, `after`, `explain`, `task`) on a GET
   route.
-- No field types or required-ness, no nested response shapes, and no machine-readable code for the
-  422 refusals (unknown or refused field): they live in decoder code, not in a table. So the shape of the
-  plan's per-task `selection` and the types of a task's selection hints (0.1.14) are documented in
-  SKILL.md and ADRs 0016–0017; the schema lists the hints' names and `complexity`'s values. Each of
-  these has a release: the roadmap's *API schema*.
+- No nested response shapes, and no machine-readable code for the 422 refusals (unknown or refused
+  field): they live in decoder code, not in a table. So the shape of the plan's per-task `selection` is
+  documented in SKILL.md and ADR 0016. Each of these has a release: the roadmap's *API schema*.
+- `types` says what a field is, not its bounds: a length, a range and a closed set of words are still
+  decoder code, though `vocabularies` lists the sets.
 - Response keys are declared, not read from the handlers. `api/responses` checks them both ways, but
   only on the answers it drives: a key a handler writes only in a state the sweep does not reach
   would not be seen.

@@ -16,8 +16,8 @@ cyrius test                              # run [build].test + tests/*.tcyr
 that an administrator switches on in its Settings tab — see
 [`docs/guides/webgui-plugins.md`](docs/guides/webgui-plugins.md):
 
-- **Crews** — every crew of your tenant by status; a crew's plan, live progress, results and real
-  cost; cancel one that is running.
+- **Crews** — every crew of your tenant by status; a crew's plan, what it was pointed at, live progress,
+  results and real cost; cancel one that is running.
 - **Library** — the preset crews built in, and the agent definitions stored here, which it can write.
 - **Audit trail** — whether the tamper-evident chain verified, and its newest entries (administrators).
 - **Swarm Command** — keeps swarms on the server, per tenant, prices them with headless simulations
@@ -42,6 +42,10 @@ says what it covers and what it leaves out ([ADR 0015](docs/adr/0015-the-http-ap
 Every `POST` and `PUT` must send `Content-Type: application/json` — **415** otherwise. With
 `AGNOSTIC_AUTH=off` (loopback only), address the server as `127.0.0.1`, `localhost` or `[::1]`; any
 other `Host` is refused (**403**). Both are in [ADR 0006](docs/adr/0006-loopback-host-and-json-only-writes.md).
+
+A crew can name its `target`, within the hosts its operator lists in `AGNOSTIC_TARGET_HOSTS`, name a stored
+definition in place of an agent, and hold a task's answer to an `output_schema`.
+`GET /api/v1/tools` says which of the presets' tools have an engine tool behind them; no crew calls one yet.
 
 Crews belong to the tenant that submitted them, and `GET /api/v1/crews` lists yours; send an
 `Idempotency-Key` header with `POST /api/v1/crews` to make a retry safe

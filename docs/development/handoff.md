@@ -506,6 +506,10 @@ internally — so there is currently nowhere to put a QA tool that the
 orchestrator's agents would actually read. The gate is therefore a library
 question, not a served one, and is not wired into mount.
 
+Since 0.4.0 `agnostic_qa_catalog_init` keeps a registry of its own for `GET /api/v1/tools` to read.
+⚠ That is a catalogue, not an answer to this: nothing runs it, and it is not the
+orchestrator's registry.
+
 **Implementing tools before settling this means writing 36 of them against a seam
 that may not exist.** The options, none chosen:
 

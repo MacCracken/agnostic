@@ -69,17 +69,18 @@
 # all live in `src/engine/reject.cyr` — extracted at M3 so `agentdef.cyr` can
 # share them without inverting the include order. See that file's header.
 
-# A decoded crew submission — 40 bytes.
+# A decoded crew submission — 48 bytes.
 enum AgnosticCrewReqOff {
     AGNOSTIC_CQ_NAME        = 0;
     AGNOSTIC_CQ_PROCESS     = 8;
     AGNOSTIC_CQ_CONCURRENCY = 16;
     AGNOSTIC_CQ_AGENTS      = 24;
     AGNOSTIC_CQ_TASKS       = 32;
-    AGNOSTIC_CQ_SIZE        = 40;
+    AGNOSTIC_CQ_TARGET      = 40;   # the crew's target URL, a Str, or 0 (0.4.0, ADR 0029)
+    AGNOSTIC_CQ_SIZE        = 48;
 }
 
-# A decoded task — 72 bytes. `dependencies` is a vec of **indices into the
+# A decoded task — 88 bytes. `dependencies` is a vec of **indices into the
 # request's task list**, resolved to engine task ids only when the spec is built.
 #
 # The last four are the task's **selection hints** (0.1.14, ADR 0017): what the
@@ -95,7 +96,9 @@ enum AgnosticTaskReqOff {
     AGNOSTIC_TQ_COMPLEXITY      = 48;   # AGNOSTIC_COMPLEXITY_*, or AGNOSTIC_REQ_UNSET
     AGNOSTIC_TQ_DOMAIN          = 56;   # Str, or 0
     AGNOSTIC_TQ_GPU_REQUIRED    = 64;   # 1, 0, or AGNOSTIC_REQ_UNSET
-    AGNOSTIC_TQ_SIZE            = 72;
+    AGNOSTIC_TQ_TARGET          = 72;   # the task's own target URL, a Str, or 0 (0.4.0, ADR 0029)
+    AGNOSTIC_TQ_OUTPUT_SCHEMA   = 80;   # a JSON object of `type` and `required`, or 0 (0.4.0, ADR 0031)
+    AGNOSTIC_TQ_SIZE            = 88;
 }
 
 # A task's complexity, as the selector compares it with an agent's (0.1.14, ADR 0017).
@@ -204,27 +207,41 @@ fn agnostic_risk_from_wire(s: Str): i64 {
 # The crew-level allow-list. Every key a submission may carry, and no others.
 fn agnostic_crew_req_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "name");
-    agnostic_field_a(a, f, "process");
-    agnostic_field_a(a, f, "max_concurrency");
-    agnostic_field_a(a, f, "agents");
-    agnostic_field_a(a, f, "tasks");
+    agnostic_field_req_a(a, f, "name", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "process", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "max_concurrency", AGNOSTIC_FK_INT);
+    agnostic_field_a(a, f, "target", AGNOSTIC_FK_OBJECT);
+    agnostic_field_req_a(a, f, "agents", AGNOSTIC_FK_ARRAY);
+    agnostic_field_req_a(a, f, "tasks", AGNOSTIC_FK_ARRAY);
     return f;
 }
 
 # The task allow-list.
 fn agnostic_task_req_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "description");
-    agnostic_field_a(a, f, "expected_output");
-    agnostic_field_a(a, f, "priority");
-    agnostic_field_a(a, f, "risk");
-    agnostic_field_a(a, f, "dependencies");
+    agnostic_field_req_a(a, f, "description", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "expected_output", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "priority", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "risk", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "dependencies", AGNOSTIC_FK_INTS);
     # The selection hints (0.1.14, ADR 0017).
-    agnostic_field_a(a, f, "required_tools");
-    agnostic_field_a(a, f, "complexity");
-    agnostic_field_a(a, f, "domain");
-    agnostic_field_a(a, f, "gpu_required");
+    agnostic_field_a(a, f, "required_tools", AGNOSTIC_FK_STRINGS);
+    agnostic_field_a(a, f, "complexity", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "domain", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "gpu_required", AGNOSTIC_FK_BOOL);
+    agnostic_field_a(a, f, "target", AGNOSTIC_FK_OBJECT);
+    agnostic_field_a(a, f, "output_schema", AGNOSTIC_FK_OBJECT);
+    return f;
+}
+
+# The task allow-list, built once: a crew reads it for every task. At load, on the one thread.
+var _agnostic_task_req_rows = agnostic_task_req_fields_a(default_alloc());
+
+# The fields of a task's `output_schema` (ADR 0031): the two agnosai checks.
+fn agnostic_output_schema_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_a(a, f, "type", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "required", AGNOSTIC_FK_STRINGS);
     return f;
 }
 
@@ -246,6 +263,12 @@ fn agnostic_crew_req_process(r): i64 {
 fn agnostic_crew_req_concurrency(r): i64 {
     if (r == 0) { return AGNOSTIC_REQ_UNSET; }
     return load64(r + AGNOSTIC_CQ_CONCURRENCY);
+}
+
+# The crew's target URL, or 0.
+fn agnostic_crew_req_target(r): i64 {
+    if (r == 0) { return 0; }
+    return load64(r + AGNOSTIC_CQ_TARGET);
 }
 
 # The vec of `AgnosticAgentDef` records the submission carries.
@@ -319,6 +342,122 @@ fn agnostic_task_req_gpu_required(t): i64 {
     return load64(t + AGNOSTIC_TQ_GPU_REQUIRED);
 }
 
+# A task's own target URL, or 0: its crew's applies when it has none.
+fn agnostic_task_req_target(t): i64 {
+    if (t == 0) { return 0; }
+    return load64(t + AGNOSTIC_TQ_TARGET);
+}
+
+# A task's `output_schema` as a JSON object, or 0.
+fn agnostic_task_req_output_schema(t): i64 {
+    if (t == 0) { return 0; }
+    return load64(t + AGNOSTIC_TQ_OUTPUT_SCHEMA);
+}
+
+# The JSON types `agnosai_validate_value` compares a schema's `type` with. Its own words: a type it
+# does not know, such as `integer`, matches no answer ever, so every attempt would fail.
+fn _agnostic_output_type_known(s: Str): i64 {
+    if (str_eq_cstr(s, "object") == 1) { return 1; }
+    if (str_eq_cstr(s, "array") == 1) { return 1; }
+    if (str_eq_cstr(s, "string") == 1) { return 1; }
+    if (str_eq_cstr(s, "number") == 1) { return 1; }
+    if (str_eq_cstr(s, "boolean") == 1) { return 1; }
+    if (str_eq_cstr(s, "null") == 1) { return 1; }
+    return 0;
+}
+
+# `type` and `required` of the checked schema `v`, as an object in allocator `al`, every string
+# copied there: `bayan_json_v_str_new_a` keeps the Str it is given, so nothing here may point into a
+# request's arena when `al` is the global heap. The engine reads this on a retry, long after. 0 when
+# `al` ran out.
+fn _agnostic_output_schema_build_a(al, v): i64 {
+    var o = bayan_json_v_obj_new_a(al);
+    if (o == 0) { return 0; }
+    var ty = bayan_json_v_obj_get_by_cstr(v, "type");
+    if (ty != 0 && bayan_json_v_is_null(ty) != 1) {
+        bayan_json_v_obj_set_a(al, o, AGNOSTIC_JK_TYPE,
+          bayan_json_v_str_new_a(al, str_clone_a(al, bayan_json_v_str(ty))));
+    }
+    var rq = bayan_json_v_obj_get_by_cstr(v, "required");
+    if (rq != 0 && bayan_json_v_is_null(rq) != 1) {
+        var arr = bayan_json_v_arr_new_a(al);
+        if (arr == 0) { return 0; }
+        var i = 0;
+        while (i < bayan_json_v_arr_len(rq)) {
+            bayan_json_v_arr_push_a(al, arr,
+              bayan_json_v_str_new_a(al, str_clone_a(al, bayan_json_v_str(bayan_json_v_arr_get(rq, i)))));
+            i = i + 1;
+        }
+        bayan_json_v_obj_set_a(al, o, AGNOSTIC_JK_REQUIRED, arr);
+    }
+    return o;
+}
+
+# Decode a task's `output_schema` onto `t` (0.4.0, ADR 0031). Returns 1, or 0 with a rejection stored.
+#
+# ## ⚠ Only what agnosai checks
+#
+# It is called a schema and agnosai reads two things of one: the top-level `type`, and that each
+# name in `required` is present. Everything else in the object it ignores, so `properties` would
+# be accepted and enforce nothing, and the caller would believe it had. Refused by name instead, as
+# `gpu_strict` is: a refusal can be relaxed the day the engine acts on it, and a key accepted
+# before then cannot be taken back.
+#
+# Inside that, three shapes would fail every attempt or pass none: a `type` agnosai does not know,
+# `required` under any `type` but `object`, and a `required` of non-strings, which it skips.
+fn _agnostic_task_req_output_schema_a(a, al, v, index, t, out): i64 {
+    var sv = bayan_json_v_obj_get_by_cstr(v, "output_schema");
+    if (sv == 0 || bayan_json_v_is_null(sv) == 1) { return 1; }
+    var allowed = agnostic_output_schema_fields_a(a);
+    var unknown = agnostic_unknown_field(sv, allowed);
+    if (unknown != 0) {
+        var sb = str_builder_new_a(a);
+        if (sb == 0) { return _agnostic_task_req_oom_a(a, out, index); }
+        str_builder_add_cstr_a(a, sb, "'output_schema' takes only 'type' and 'required', all the engine checks; '");
+        str_builder_add_a(a, sb, unknown);
+        str_builder_add_cstr_a(a, sb, "' would do nothing");
+        _agnostic_reject_in(a, out, AGNOSTIC_HTTP_UNPROCESSABLE, "tasks[", index, str_builder_build_a(a, sb));
+        return 0;
+    }
+    var bad = agnostic_field_bad(sv, allowed);
+    if (bad != 0) {
+        _agnostic_reject_in(a, out, agnostic_field_status(bad), "tasks[", index, agnostic_field_refusal_a(a, bad));
+        return 0;
+    }
+    var ty = agnostic_opt_str(sv, str_from_a(a, "type"), 0 - 1);
+    if (ty != 0 - 1 && _agnostic_output_type_known(ty) == 0) {
+        _agnostic_reject_at(a, out, HTTP_BAD_REQUEST, "tasks[", index,
+          "]: 'type' must be one of object, array, string, number, boolean, null");
+        return 0;
+    }
+    var rq = bayan_json_v_obj_get_by_cstr(sv, "required");
+    if (rq != 0 && bayan_json_v_is_null(rq) != 1) {
+        if (ty != 0 - 1 && str_eq_cstr(ty, "object") == 0 && bayan_json_v_arr_len(rq) > 0) {
+            _agnostic_reject_at(a, out, HTTP_BAD_REQUEST, "tasks[", index,
+              "]: 'required' applies only to type 'object'");
+            return 0;
+        }
+        if (bayan_json_v_arr_len(rq) > AGNOSTIC_REQ_MAX_TOOLS) {
+            _agnostic_reject_at(a, out, HTTP_BAD_REQUEST, "tasks[", index, "]: too many names in 'required'");
+            return 0;
+        }
+        var i = 0;
+        while (i < bayan_json_v_arr_len(rq)) {
+            var name = bayan_json_v_str(bayan_json_v_arr_get(rq, i));
+            if (str_len(name) == 0 || str_len(name) > AGNOSTIC_REQ_MAX_HINT) {
+                _agnostic_reject_at(a, out, HTTP_BAD_REQUEST, "tasks[", index,
+                  "]: each of 'required' must be 1 to 256 bytes");
+                return 0;
+            }
+            i = i + 1;
+        }
+    }
+    var built = _agnostic_output_schema_build_a(al, sv);
+    if (built == 0) { return _agnostic_task_req_oom_a(a, out, index); }
+    store64(t + AGNOSTIC_TQ_OUTPUT_SCHEMA, built);
+    return 1;
+}
+
 # Decode a task's four selection hints onto `t` (0.1.14, ADR 0017). Returns 1, or 0
 # with a rejection stored.
 #
@@ -327,33 +466,27 @@ fn agnostic_task_req_gpu_required(t): i64 {
 # coverage, complexity alignment, domain match and GPU capability. Every one is
 # checked at the door, because the engine checks none in a way a caller would see:
 #
-#   * `required_tools`: an array of strings of 1 to `AGNOSTIC_REQ_MAX_HINT` bytes, at most
-#     `AGNOSTIC_REQ_MAX_TOOLS` of them. The
-#     engine reads an array holding anything but strings as **no requirement** and
-#     scores every agent full coverage — a malformed list makes every agent look
-#     MORE suitable. An empty array is accepted and means what it says: no
-#     requirement. Names are carried verbatim, like an agent's `tools`: there is no
-#     tool registry to check them against yet (M6).
+#   * `required_tools`: strings of 1 to `AGNOSTIC_REQ_MAX_HINT` bytes, at most
+#     `AGNOSTIC_REQ_MAX_TOOLS` of them. The engine reads an array holding anything but
+#     strings as **no requirement** and scores every agent full coverage — a malformed list
+#     makes every agent look MORE suitable, so the field's row is `AGNOSTIC_FK_STRINGS`. An
+#     empty array is accepted and means what it says: no requirement. Names are carried
+#     verbatim, like an agent's `tools`: there is no tool registry to check them against yet
+#     (M6).
 #   * `complexity`: `low`, `medium` or `high`. The engine reads anything else as
 #     medium, silently.
 #   * `domain`: 1 to `AGNOSTIC_REQ_MAX_HINT` bytes, compared case-insensitively with each
 #     agent's.
 #
-# And all four together, rendered as the engine renders a task's context, must fit the
-# engine's prompt-input cap — past it the model would see them cut off.
-#   * `gpu_required`: a boolean. `"true"` is a 422, as everywhere here.
+# And all four together, with the target the task runs against, rendered as the engine renders a
+# task's context, must fit the engine's prompt-input cap — past it the model would see them cut off.
 #
 # Built in `al` (0.1.17): the global heap when the hints become the engine task's context,
 # which outlives the request, or the request's arena while a door checks the body.
-fn _agnostic_task_req_hints_a(a, al, v, index, t, out): i64 {
+fn _agnostic_task_req_hints_a(a, al, v, index, t, crew_target: Str, out): i64 {
     var tv = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_REQ_TOOLS);
     if (tv != 0) {
         if (bayan_json_v_is_null(tv) != 1) {
-            if (bayan_json_v_is_arr(tv) != 1) {
-                _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-                  "tasks[", index, "]: 'required_tools' must be an array of strings");
-                return 0;
-            }
             var n = bayan_json_v_arr_len(tv);
             if (n > AGNOSTIC_REQ_MAX_TOOLS) {
                 _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
@@ -364,13 +497,7 @@ fn _agnostic_task_req_hints_a(a, al, v, index, t, out): i64 {
             if (tools == 0) { return _agnostic_task_req_oom_a(a, out, index); }
             var i = 0;
             while (i < n) {
-                var e = bayan_json_v_arr_get(tv, i);
-                if (bayan_json_v_is_str(e) != 1) {
-                    _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-                      "tasks[", index, "]: 'required_tools' must be an array of strings");
-                    return 0;
-                }
-                var name = bayan_json_v_str(e);
+                var name = bayan_json_v_str(bayan_json_v_arr_get(tv, i));
                 if (str_len(name) == 0 || str_len(name) > AGNOSTIC_REQ_MAX_HINT) {
                     _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
                       "tasks[", index, "]: each of 'required_tools' must be 1 to 256 bytes");
@@ -386,11 +513,6 @@ fn _agnostic_task_req_hints_a(a, al, v, index, t, out): i64 {
     }
 
     var cx = agnostic_opt_str(v, AGNOSTIC_JK_COMPLEXITY, 0 - 1);
-    if (cx == 0) {
-        _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-          "tasks[", index, "]: 'complexity' must be a string");
-        return 0;
-    }
     if (cx != 0 - 1) {
         var level = agnostic_complexity_from_wire(cx);
         if (level < 0) {
@@ -402,11 +524,6 @@ fn _agnostic_task_req_hints_a(a, al, v, index, t, out): i64 {
     }
 
     var dom = agnostic_opt_str(v, AGNOSTIC_JK_DOMAIN, 0 - 1);
-    if (dom == 0) {
-        _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-          "tasks[", index, "]: 'domain' must be a string");
-        return 0;
-    }
     if (dom != 0 - 1) {
         if (str_len(dom) == 0 || str_len(dom) > AGNOSTIC_REQ_MAX_HINT) {
             _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
@@ -416,20 +533,14 @@ fn _agnostic_task_req_hints_a(a, al, v, index, t, out): i64 {
         store64(t + AGNOSTIC_TQ_DOMAIN, str_clone_a(al, dom));
     }
 
-    var gpu = _agnostic_opt_bool(v, "gpu_required");
-    if (gpu == AGNOSTIC_REQ_UNSET - 1) {
-        _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-          "tasks[", index, "]: 'gpu_required' must be a boolean");
-        return 0;
-    }
-    store64(t + AGNOSTIC_TQ_GPU_REQUIRED, gpu);
+    store64(t + AGNOSTIC_TQ_GPU_REQUIRED, _agnostic_opt_bool(v, "gpu_required"));
 
     # ⚠ **Measured as the engine will render them.** The hints are the task's context, and
     # agnosai renders the context into the prompt pretty-printed (`_agnosai_crew_build_request`)
     # and then cuts it at `AGNOSAI_MAX_INPUT_LENGTH` with a log warning only — selection would
     # use every hint while the model saw a JSON array cut in half. 64 names of 256 bytes fit
     # unless escaping inflates them, so the rendering itself is what is checked.
-    var size = _agnostic_task_req_hints_rendered_len_a(a, t);
+    var size = _agnostic_task_req_hints_rendered_len_a(a, t, crew_target);
     if (size < 0) {
         _agnostic_reject_at(a, out, HTTP_INTERNAL,
           "tasks[", index, "]: could not measure the selection hints");
@@ -437,19 +548,19 @@ fn _agnostic_task_req_hints_a(a, al, v, index, t, out): i64 {
     }
     if (size > AGNOSAI_MAX_INPUT_LENGTH) {
         _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
-          "tasks[", index, "]: the selection hints exceed the engine's 50000-byte context once rendered");
+          "tasks[", index, "]: the selection hints and target exceed the engine's 50000-byte context once rendered");
         return 0;
     }
     return 1;
 }
 
-# How long task `t`'s selection hints are once rendered as the engine renders a task's
-# context — pretty JSON, indent 2 — or 0 when it has none. The JSON is built in `a`; key
-# order may differ from the engine's map order, which changes no length.
+# How long task `t`'s context is once rendered as the engine renders it — pretty JSON, indent 2 —
+# with `crew_target` standing for a target of its own, or 0 when it has none. The JSON is built in
+# `a`; key order may differ from the engine's map order, which changes no length.
 #
 # ⚠ **-1 when `a` ran out, never 0.** 0 means "nothing to render", which passes the cap; an
 # exhausted arena reading as 0 would wave through exactly the oversized hints this measures.
-fn _agnostic_task_req_hints_rendered_len_a(a, t): i64 {
+fn _agnostic_task_req_hints_rendered_len_a(a, t, crew_target: Str): i64 {
     var obj = bayan_json_v_obj_new_a(a);
     if (obj == 0) { return 0 - 1; }
     var any = 0;
@@ -478,6 +589,12 @@ fn _agnostic_task_req_hints_rendered_len_a(a, t): i64 {
     var gpu = load64(t + AGNOSTIC_TQ_GPU_REQUIRED);
     if (gpu != AGNOSTIC_REQ_UNSET) {
         bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_GPU_REQ, bayan_json_v_bool_new_a(a, gpu));
+        any = 1;
+    }
+    var target = load64(t + AGNOSTIC_TQ_TARGET);
+    if (target == 0) { target = crew_target; }
+    if (target != 0) {
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TARGET, agnostic_target_value_a(a, target));
         any = 1;
     }
     if (any == 0) { return 0; }
@@ -527,6 +644,15 @@ fn _agnostic_task_req_copy(t): i64 {
     if (dom != 0) { dom = str_clone(dom); }
     store64(c + AGNOSTIC_TQ_DOMAIN, dom);
     store64(c + AGNOSTIC_TQ_GPU_REQUIRED, load64(t + AGNOSTIC_TQ_GPU_REQUIRED));
+    var target = load64(t + AGNOSTIC_TQ_TARGET);
+    if (target != 0) { target = str_clone(target); }
+    store64(c + AGNOSTIC_TQ_TARGET, target);
+    var schema = load64(t + AGNOSTIC_TQ_OUTPUT_SCHEMA);
+    if (schema != 0) {
+        schema = _agnostic_output_schema_build_a(default_alloc(), schema);
+        if (schema == 0) { return 0; }
+    }
+    store64(c + AGNOSTIC_TQ_OUTPUT_SCHEMA, schema);
     return c;
 }
 
@@ -541,13 +667,12 @@ fn _agnostic_task_req_oom_a(a, out, index): i64 {
 # check — is made before anything reaches the global heap; only a body that passed is decoded
 # again into the global heap, which the engine's tasks outlive the request in. `a` holds the
 # rejection either way.
-fn agnostic_task_req_decode_in_a(a, al, v, index, count, out): i64 {
+fn agnostic_task_req_decode_in_a(a, al, v, index, count, crew_target: Str, out): i64 {
     if (bayan_json_v_is_obj(v) != 1) {
         return _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
           "tasks[", index, "] is not an object");
     }
-    var allowed = agnostic_task_req_fields_a(a);
-    var unknown = agnostic_unknown_field(v, allowed);
+    var unknown = agnostic_unknown_field(v, _agnostic_task_req_rows);
     if (unknown != 0) {
         var sb = str_builder_new_a(a);
         if (sb == 0) { return _agnostic_reject(a, out, AGNOSTIC_HTTP_UNPROCESSABLE, unknown); }
@@ -558,12 +683,13 @@ fn agnostic_task_req_decode_in_a(a, al, v, index, count, out): i64 {
         str_builder_add_cstr_a(a, sb, "'");
         return _agnostic_reject(a, out, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sb));
     }
+    var bad = agnostic_field_bad(v, _agnostic_task_req_rows);
+    if (bad != 0) {
+        return _agnostic_reject_in(a, out, agnostic_field_status(bad), "tasks[", index,
+          agnostic_field_refusal_a(a, bad));
+    }
 
     var desc = agnostic_req_str(v, str_from_a(a, "description"));
-    if (desc == 0) {
-        return _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
-          "tasks[", index, "]: 'description' is required and must be a string");
-    }
     if (str_len(desc) == 0) {
         return _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
           "tasks[", index, "]: 'description' must not be empty");
@@ -585,12 +711,10 @@ fn agnostic_task_req_decode_in_a(a, al, v, index, count, out): i64 {
     store64(t + AGNOSTIC_TQ_COMPLEXITY, AGNOSTIC_REQ_UNSET);
     store64(t + AGNOSTIC_TQ_DOMAIN, 0);
     store64(t + AGNOSTIC_TQ_GPU_REQUIRED, AGNOSTIC_REQ_UNSET);
+    store64(t + AGNOSTIC_TQ_TARGET, 0);
+    store64(t + AGNOSTIC_TQ_OUTPUT_SCHEMA, 0);
 
     var eo = agnostic_opt_str(v, str_from_a(a, "expected_output"), 0 - 1);
-    if (eo == 0) {
-        return _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-          "tasks[", index, "]: 'expected_output' must be a string");
-    }
     if (eo != 0 - 1) {
         if (_agnostic_str_field_ok(eo) < 0) {
             return _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
@@ -603,10 +727,6 @@ fn agnostic_task_req_decode_in_a(a, al, v, index, count, out): i64 {
     # the integer too would give two spellings for one value and make the
     # enum's numbering part of the public contract.
     var pri = agnostic_opt_str(v, str_from_a(a, "priority"), 0 - 1);
-    if (pri == 0) {
-        return _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-          "tasks[", index, "]: 'priority' must be a string");
-    }
     if (pri != 0 - 1) {
         var p = agnostic_priority_from_wire(pri);
         if (p < 0) {
@@ -617,10 +737,6 @@ fn agnostic_task_req_decode_in_a(a, al, v, index, count, out): i64 {
     }
 
     var rk = agnostic_opt_str(v, str_from_a(a, "risk"), 0 - 1);
-    if (rk == 0) {
-        return _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-          "tasks[", index, "]: 'risk' must be a string");
-    }
     if (rk != 0 - 1) {
         var rv = agnostic_risk_from_wire(rk);
         if (rv < 0) {
@@ -630,15 +746,15 @@ fn agnostic_task_req_decode_in_a(a, al, v, index, count, out): i64 {
         store64(t + AGNOSTIC_TQ_RISK, rv);
     }
 
-    if (_agnostic_task_req_hints_a(a, al, v, index, t, out) == 0) { return 0; }
+    var own = agnostic_target_read_a(a, v, index, out);
+    if (own == 0) { return 0; }
+    if (own != 0 - 1) { store64(t + AGNOSTIC_TQ_TARGET, str_clone_a(al, own)); }
+    if (_agnostic_task_req_output_schema_a(a, al, v, index, t, out) == 0) { return 0; }
+    if (_agnostic_task_req_hints_a(a, al, v, index, t, crew_target, out) == 0) { return 0; }
 
     var deps_v = bayan_json_v_obj_get_by_str(v, str_from_a(a, "dependencies"));
     if (deps_v != 0) {
         if (bayan_json_v_is_null(deps_v) != 1) {
-            if (bayan_json_v_is_arr(deps_v) != 1) {
-                return _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-                  "tasks[", index, "]: 'dependencies' must be an array of task indices");
-            }
             var dn = bayan_json_v_arr_len(deps_v);
             if (dn > AGNOSTIC_REQ_MAX_DEPS) {
                 return _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
@@ -647,12 +763,7 @@ fn agnostic_task_req_decode_in_a(a, al, v, index, count, out): i64 {
             var deps = load64(t + AGNOSTIC_TQ_DEPENDENCIES);
             var di = 0;
             while (di < dn) {
-                var dv = bayan_json_v_arr_get(deps_v, di);
-                if (bayan_json_v_is_int(dv) != 1) {
-                    return _agnostic_reject_at(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-                      "tasks[", index, "]: 'dependencies' must be an array of task indices");
-                }
-                var d = bayan_json_v_int(dv);
+                var d = bayan_json_v_int(bayan_json_v_arr_get(deps_v, di));
                 if (d < 0 || d >= count) {
                     return _agnostic_reject_at(a, out, HTTP_BAD_REQUEST,
                       "tasks[", index, "]: dependency index out of range");
@@ -734,7 +845,9 @@ fn agnostic_crew_req_has_cycle_a(a, tasks): i64 {
     return 0;
 }
 
-# Decode a crew submission from a parsed JSON body.
+# Decode a crew submission from a parsed JSON body. `agents` is the array its agents are read from
+# when a door has read stored definitions into them (`agnostic_crew_agents_resolve_a`), or 0 for
+# the body's own: this module touches no store.
 #
 # Returns the request record, or 0 with a rejection stored through `out`.
 #
@@ -742,7 +855,7 @@ fn agnostic_crew_req_has_cycle_a(a, tasks): i64 {
 # non-object, then check the shape with the allow-list **before reading any
 # field**, then required fields, then optional. Validating the shape first means
 # a request is refused whole rather than half-applied.
-fn agnostic_crew_req_from_value_a(a, v, out): i64 {
+fn agnostic_crew_req_from_value_a(a, v, agents, out): i64 {
     if (bayan_json_v_is_obj(v) != 1) {
         return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
           str_from_a(a, "request body must be a JSON object"));
@@ -754,12 +867,12 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
         return _agnostic_reject_field(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
           "unknown field '", unknown, "'");
     }
+    var bad = agnostic_field_bad(v, allowed);
+    if (bad != 0) {
+        return _agnostic_reject(a, out, agnostic_field_status(bad), agnostic_field_refusal_a(a, bad));
+    }
 
     var name = agnostic_req_str(v, str_from_a(a, "name"));
-    if (name == 0) {
-        return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
-          str_from_a(a, "'name' is required and must be a string"));
-    }
     if (str_len(name) == 0 || _agnostic_str_field_ok(name) < 0) {
         return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
           str_from_a(a, "'name' must be between 1 and 10000 characters"));
@@ -767,10 +880,6 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
 
     var process = AGNOSTIC_PROCESS_SEQUENTIAL;
     var pw = agnostic_opt_str(v, str_from_a(a, "process"), 0 - 1);
-    if (pw == 0) {
-        return _agnostic_reject(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'process' must be a string"));
-    }
     if (pw != 0 - 1) {
         process = agnostic_process_from_wire(pw);
         if (process < 0) {
@@ -780,10 +889,6 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
     }
 
     var concurrency = _agnostic_opt_int(v, "max_concurrency");
-    if (concurrency == AGNOSTIC_REQ_UNSET - 1) {
-        return _agnostic_reject(a, out, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'max_concurrency' must be an integer"));
-    }
     if (concurrency != AGNOSTIC_REQ_UNSET) {
         if (concurrency < 1 || concurrency > AGNOSTIC_REQ_MAX_CONCURRENCY) {
             return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
@@ -799,11 +904,12 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
         }
     }
 
-    var agents_v = bayan_json_v_obj_get_by_str(v, str_from_a(a, "agents"));
-    if (agents_v == 0 || bayan_json_v_is_arr(agents_v) != 1) {
-        return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
-          str_from_a(a, "'agents' is required and must be an array"));
-    }
+    var target = agnostic_target_read_a(a, v, 0 - 1, out);
+    if (target == 0) { return 0; }
+    if (target == 0 - 1) { target = 0; }
+
+    var agents_v = agents;
+    if (agents_v == 0) { agents_v = bayan_json_v_obj_get_by_str(v, str_from_a(a, "agents")); }
     var an = bayan_json_v_arr_len(agents_v);
     if (an == 0) {
         return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
@@ -814,14 +920,10 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
           str_from_a(a, "at most 100 agents are allowed"));
     }
 
-    # ⚠ `tasks` is REQUIRED. `ORACLE-AUDIT.md` §3.3 is what a missing-but-ignored
+    # ⚠ `tasks` is REQUIRED, by its row. `ORACLE-AUDIT.md` §3.3 is what a missing-but-ignored
     # `tasks` field cost: the array was dropped and a single-task fallback ran
     # instead, silently, on every request. There is no fallback to fall into here.
     var tasks_v = bayan_json_v_obj_get_by_str(v, str_from_a(a, "tasks"));
-    if (tasks_v == 0 || bayan_json_v_is_arr(tasks_v) != 1) {
-        return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
-          str_from_a(a, "'tasks' is required and must be an array"));
-    }
     var tn = bayan_json_v_arr_len(tasks_v);
     if (tn == 0) {
         return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
@@ -849,7 +951,7 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
     }
     var ti = 0;
     while (ti < tn) {
-        var ct = agnostic_task_req_decode_in_a(a, a, bayan_json_v_arr_get(tasks_v, ti), ti, tn, out);
+        var ct = agnostic_task_req_decode_in_a(a, a, bayan_json_v_arr_get(tasks_v, ti), ti, tn, target, out);
         if (ct == 0) { return 0; }
         if (vec_push_a(a, checked, ct) < 0) { return _agnostic_task_req_oom_a(a, out, ti); }
         ti = ti + 1;
@@ -876,12 +978,12 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
     }
 
     # Built — nothing below refuses but an allocation that fails.
-    var agents = vec_new();
+    var built = vec_new();
     ai = 0;
     while (ai < an) {
         var def = agnostic_agent_def_decode_a(a, bayan_json_v_arr_get(agents_v, ai), ai, out);
         if (def == 0) { return 0; }
-        vec_push(agents, def);
+        vec_push(built, def);
         ai = ai + 1;
     }
     var tasks = vec_new();
@@ -901,64 +1003,51 @@ fn agnostic_crew_req_from_value_a(a, v, out): i64 {
     store64(r + AGNOSTIC_CQ_NAME, str_clone(name));
     store64(r + AGNOSTIC_CQ_PROCESS, process);
     store64(r + AGNOSTIC_CQ_CONCURRENCY, concurrency);
-    store64(r + AGNOSTIC_CQ_AGENTS, agents);
+    store64(r + AGNOSTIC_CQ_AGENTS, built);
     store64(r + AGNOSTIC_CQ_TASKS, tasks);
+    var crew_target = 0;
+    if (target != 0) { crew_target = str_clone(target); }
+    store64(r + AGNOSTIC_CQ_TARGET, crew_target);
     return r;
 }
 
-# `agnostic_crew_req_unforwarded_a` read straight off a body already checked, with nothing built:
-# what a replay answers.
-fn agnostic_crew_value_unforwarded_a(a, v): i64 {
-    var arr = bayan_json_v_arr_new_a(a);
-    if (arr == 0 || v == 0) { return arr; }
-    var agents = bayan_json_v_obj_get_by_str(v, str_from_a(a, "agents"));
-    if (bayan_json_v_is_arr(agents) != 1) { return arr; }
-    var focus = 0;
-    var deleg = 0;
-    var i = 0;
-    while (i < bayan_json_v_arr_len(agents)) {
-        var ag = bayan_json_v_arr_get(agents, i);
-        var fv = bayan_json_v_obj_get_by_str(ag, AGNOSTIC_JK_FOCUS);
-        if (fv != 0 && bayan_json_v_is_null(fv) != 1) { focus = 1; }
-        var dv = bayan_json_v_obj_get_by_str(ag, AGNOSTIC_JK_DELEGATION);
-        if (dv != 0 && bayan_json_v_is_null(dv) != 1) { deleg = 1; }
-        i = i + 1;
-    }
-    if (focus == 1) {
-        bayan_json_v_arr_push_a(a, arr, bayan_json_v_str_new_a(a, AGNOSTIC_JK_FOCUS));
-    }
-    if (deleg == 1) {
-        bayan_json_v_arr_push_a(a, arr, bayan_json_v_str_new_a(a, AGNOSTIC_JK_DELEGATION));
-    }
-    return arr;
+# The retained fields a crew's agents can carry, as bits.
+enum AgnosticUnforwarded {
+    AGNOSTIC_UNFORWARDED_FOCUS      = 1;
+    AGNOSTIC_UNFORWARDED_DELEGATION = 2;
 }
 
-# Which retained-but-unforwarded fields this submission's agents carry, as a
-# JSON array of names.
+# Which retained-but-unforwarded fields this submission's agents carry, as
+# `AGNOSTIC_UNFORWARDED_*` bits.
 #
 # ⚠ The **union** across the roster, not per agent. A caller who sent `focus` on
 # one of five agents needs to know it shaped nothing; which agent carried it is
-# already visible in what they sent. Always present, even when empty, so
-# `len(unforwarded)` is an unconditional read.
-fn agnostic_crew_req_unforwarded_a(a, r): i64 {
-    var arr = bayan_json_v_arr_new_a(a);
-    if (arr == 0 || r == 0) { return arr; }
+# already visible in what they sent. Read from the decoded agents and not the body, because a
+# stored definition an agent names carries them too. Kept with the crew, so a replay says what the
+# crew it replays carried.
+fn agnostic_crew_req_unforwarded_bits(r): i64 {
     var agents = agnostic_crew_req_agents(r);
-    if (agents == 0) { return arr; }
-
-    var focus = 0;
-    var deleg = 0;
+    if (agents == 0) { return 0; }
+    var bits = 0;
     var i = 0;
     while (i < vec_len(agents)) {
         var d = vec_get(agents, i);
-        if (agnostic_agent_def_focus(d) != 0) { focus = 1; }
-        if (agnostic_agent_def_delegation(d) != AGNOSTIC_REQ_UNSET) { deleg = 1; }
+        if (agnostic_agent_def_focus(d) != 0) { bits = bits | AGNOSTIC_UNFORWARDED_FOCUS; }
+        if (agnostic_agent_def_delegation(d) != AGNOSTIC_REQ_UNSET) { bits = bits | AGNOSTIC_UNFORWARDED_DELEGATION; }
         i = i + 1;
     }
-    if (focus == 1) {
+    return bits;
+}
+
+# `bits` as the `unforwarded` JSON array of names. Always present, even when empty, so
+# `len(unforwarded)` is an unconditional read.
+fn agnostic_unforwarded_value_a(a, bits): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0) { return 0; }
+    if ((bits & AGNOSTIC_UNFORWARDED_FOCUS) != 0) {
         bayan_json_v_arr_push_a(a, arr, bayan_json_v_str_new_a(a, AGNOSTIC_JK_FOCUS));
     }
-    if (deleg == 1) {
+    if ((bits & AGNOSTIC_UNFORWARDED_DELEGATION) != 0) {
         bayan_json_v_arr_push_a(a, arr, bayan_json_v_str_new_a(a, AGNOSTIC_JK_DELEGATION));
     }
     return arr;
@@ -974,7 +1063,7 @@ fn agnostic_crew_req_unforwarded_a(a, r): i64 {
 # what it was hinted with — and that request is also hoosh's cache key. ADR 0017 records it.
 #
 # Global allocator: the values are the engine task's, and outlive the request.
-fn _agnostic_task_spec_hints(t, tr): i64 {
+fn _agnostic_task_spec_hints(t, tr, crew_target: Str): i64 {
     var tools = agnostic_task_req_required_tools(tr);
     if (tools != 0) {
         var arr = bayan_json_v_arr_new();
@@ -995,6 +1084,13 @@ fn _agnostic_task_spec_hints(t, tr): i64 {
     var gpu = agnostic_task_req_gpu_required(tr);
     if (gpu != AGNOSTIC_REQ_UNSET) {
         agnosai_task_with_context(t, AGNOSTIC_JK_GPU_REQ, bayan_json_v_bool_new(gpu));
+    }
+    # The task's own target, else its crew's (ADR 0029). Left out with neither, so a crew with no
+    # target has the prompt it always had, and hoosh the same cache key.
+    var target = agnostic_task_req_target(tr);
+    if (target == 0) { target = crew_target; }
+    if (target != 0) {
+        agnosai_task_with_context(t, AGNOSTIC_JK_TARGET, agnostic_target_value_a(default_alloc(), target));
     }
     return t;
 }
@@ -1054,7 +1150,9 @@ fn agnostic_crew_spec_build(r): i64 {
         if (p != AGNOSTIC_REQ_UNSET) { agnosai_task_with_priority(t, p); }
         var rk = agnostic_task_req_risk(tr);
         if (rk != AGNOSTIC_REQ_UNSET) { agnosai_task_with_risk(t, rk); }
-        _agnostic_task_spec_hints(t, tr);
+        _agnostic_task_spec_hints(t, tr, agnostic_crew_req_target(r));
+        var schema = agnostic_task_req_output_schema(tr);
+        if (schema != 0) { agnosai_task_with_output_schema(t, schema); }
         vec_push(tasks, t);
         i = i + 1;
     }

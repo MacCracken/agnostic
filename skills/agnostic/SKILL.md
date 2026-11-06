@@ -156,6 +156,7 @@ curl -sS -X POST "$AGNOSTIC_URL/api/v1/crews" \
 | `tasks` | required | 1 to 1,000 task objects |
 | `process` | optional | `sequential` (the default), `parallel` or `dag` |
 | `max_concurrency` | optional | 1 to 64, only with `parallel` (default 4) |
+| `target` | optional | `{"url": "https://…"}`: what the crew tests. See below. |
 
 <!-- schema: bodies.agent_definition.fields -->
 **Agent**: `key`, `role` and `goal` are required. `key` matches `[a-z0-9][a-z0-9-]*`, at most 100
@@ -165,7 +166,13 @@ of 0 or more), `focus`, `allow_delegation` (a boolean).
 
 - `focus` and `allow_delegation` are kept but shape nothing; the 202 names them in `unforwarded`.
 - `complexity` is `low`, `medium` or `high`, lowercase, as on a task; anything else is a **400**.
-- `tools` are names only. The engine does not call tools yet.
+- `tools` are names only. The engine does not call tools yet. `GET /api/v1/tools` lists the names the
+  presets use and which have an engine tool behind them, and its `crews_call_tools` says whether any
+  crew calls one, which today none does.
+- Instead of an agent, an element of `agents` may name a stored definition:
+  `{"definition": "<key>"}`, and nothing else beside it. It runs what the definition says when the crew
+  is accepted, so a later edit reaches the next crew and not this one. A key nothing is stored under is
+  a **422**.
 - You do not assign agents to tasks. The engine picks an agent for each task by scoring every agent
   against the task's hints (below): tools, complexity, domain and GPU. Without hints the agents tie
   on everything but complexity, and the first agent whose complexity is medium (or unset) wins
@@ -178,10 +185,20 @@ of 0 or more), `focus`, `allow_delegation` (a boolean).
 `tasks`, at most 64, never itself, no cycles, `dag` only; it runs a task after the tasks it depends on).
 Hints for choosing its agent: `required_tools` (an array of tool names, at most 64), `complexity`
 (`low`, `medium`, `high`), `domain` (compared with each agent's, ignoring case) and `gpu_required`
-(a boolean).
+(a boolean). `target` (as on the crew) overrides the crew's for this task. `output_schema` holds the
+answer to a shape.
 
 - Hints are also shown to the model: they go into the task's context, which the engine puts in the
-  prompt. Send only what you would let the model read.
+  prompt. Send only what you would let the model read. So does a `target`.
+- **`output_schema`** takes `type` (`object`, `array`, `string`, `number`, `boolean`, `null`) and
+  `required` (names, with `type` `object` or none). Those are all the engine checks, so anything else,
+  `properties` included, is a **422**, not a silent no-op. The model is shown the schema only after it
+  has failed one, so describe the shape in `expected_output` too. A task that never meets it still
+  reads `completed`: section 7's `output_valid` is what says.
+- **`target`**: `http` or `https`, no user name or password, at most 2048 bytes. The operator names the
+  hosts a deployment may test with `AGNOSTIC_TARGET_HOSTS`. A host off that list, or any host when
+  there is no list, is a **403**: do not try another spelling of it, tell the user. Nothing calls the
+  target yet: it is shown to the model, and recorded with the crew.
 
 **The 202:**
 
@@ -216,6 +233,7 @@ same key starts a new crew.
   `llm_temperature`, `verbose`, `metadata`, `personality`, `hardware`, `tool_instances`,
   `workflow_mode`, `celery_queue`, `celery_task`, `redis_prefix`.
 
+- **403**: a `target` this deployment may not test. The operator decides that, not a request.
 - **`"process": "hierarchical"` is refused** with a 400, because the engine does not implement it.
   Do not switch modes quietly. Tell the user, and offer `dag` with an explicit coordinating task.
 - **429** with `Retry-After`: your tenant is over its crews a minute or its unfinished crews. Wait that
@@ -306,6 +324,10 @@ curl -sS "$AGNOSTIC_URL/api/v1/crews/$CREW" -H "Authorization: Bearer $AGNOSTIC_
   reason. Read each result's `status` and `error` as well. A crew times out after an hour by
   default.
 - A `cancelled` crew keeps the results of the tasks that had finished.
+- A crew given a `target` says so here, and in its listing row and plan.
+- A completed task that declared an `output_schema` has `output_valid`, `true` or `false`. `false`
+  means the task completed and its answer is not in that shape: `completed` means the model answered.
+  Report it, and do not treat its `output` as structured.
 - `submitted_at`, `started_at` and `finished_at` are epoch milliseconds. An event's `at_ms` is
   milliseconds since the crew was accepted.
 - **`interrupted`**: the server restarted while the crew was in flight. It cannot be resumed. Its
@@ -396,12 +418,12 @@ build the crew yourself:
    `allow_delegation`.
 4. Write the crew's `name` and its `tasks`; a preset has no tasks.
 
-**Agent definitions** are stored agents, shared by the whole deployment rather than per tenant.
+**Agent definitions** are stored agents, each belonging to its tenant.
 `GET /api/v1/agents/definitions` returns `{"definitions":[…],"total":…,"storage":"patra"}` with
 `key`, `name`, `role` and, when set, `domain` for each. `GET /api/v1/agents/definitions/{key}`
 returns `{"definition":{…},"unforwarded":[…],"etag":"…","storage":"patra"}`, and the same `etag` as
-an `ETag` header. A crew cannot name a definition by key: copy the `definition` object into
-`agents`, where it is already in the right shape. Writing one (`POST /api/v1/agents/definitions`
+an `ETag` header. A crew names one with `{"definition": "<key>"}` in `agents` (section 4), and the
+`definition` object is also the right shape to copy there and change. Writing one (`POST /api/v1/agents/definitions`
 answers 201, or 409 when the key exists; `PUT /api/v1/agents/definitions/{key}` answers 200, or 404
 when it is absent, and the body's `key` must match the path; `DELETE /api/v1/agents/definitions/{key}`
 answers 200) changes what every user sees. Do it only when asked (guardrail 8). To change one you
@@ -410,8 +432,9 @@ means someone changed it since — read it again rather than overwrite their cha
 
 ## 11. Limits
 
-- Only login is rate-limited. The crew routes are not, but every client shares a small worker pool
-  (16 by default) with the WebGUI, so poll gently and never run two pollers for one crew.
+- Login is rate-limited, and an operator may limit a tenant's crews (a 429 with `Retry-After`). Reads
+  are not, but every client shares a small worker pool (16 by default) with the WebGUI, so poll gently
+  and never run two pollers for one crew.
 - A crew has at most 100 agents and 1,000 tasks, 10,000 bytes per string, 64 dependencies per
   task and 64 tools per agent.
 

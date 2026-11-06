@@ -89,6 +89,42 @@ fn _t_same_list(arr, v) {
     return 1;
 }
 
+# A vec of `x` and `y`.
+fn _t_vec2(x, y) {
+    var v = vec_new();
+    vec_push(v, x);
+    vec_push(v, y);
+    return v;
+}
+
+# 1 when body `b` of the document is exactly allow-list `v`: its names in order, and each one's
+# `types` entry the type, element type and required-ness of the row.
+fn _t_same_rows(b, v) {
+    var names = vec_new();
+    var i = 0;
+    while (i < vec_len(v)) {
+        vec_push(names, agnostic_field_name(vec_get(v, i)));
+        i = i + 1;
+    }
+    if (_t_same_list(_t_get(b, "fields"), names) != 1) { return 0; }
+    var types = _t_get(b, "types");
+    if (bayan_json_v_obj_len(types) != vec_len(v)) { return 0; }
+    i = 0;
+    while (i < vec_len(v)) {
+        var r = vec_get(v, i);
+        var t = bayan_json_v_obj_get_by_str(types, agnostic_field_name(r));
+        if (t == 0) { return 0; }
+        var kind = agnostic_field_kind(r);
+        if (_t_is(t, "type", agnostic_field_kind_type(kind)) != 1) { return 0; }
+        var items = agnostic_field_kind_items(kind);
+        if (items != 0 && _t_is(t, "items", items) != 1) { return 0; }
+        if (items == 0 && _t_get(t, "items") != 0) { return 0; }
+        if (bayan_json_v_bool(_t_get(t, "required")) != agnostic_field_required(r)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
 # The route with this method and path (C strings), or 0.
 fn _t_route(routes, method, path) {
     var i = 0;
@@ -372,7 +408,7 @@ fn test_routes() {
     assert_eq(bayan_json_v_int(_t_get(doc, "schema")), 1, "it is format 1");
     var routes = _t_get(doc, "routes");
     var n = bayan_json_v_arr_len(routes);
-    assert_eq(n, 46, "46 routes: one per method each of the router's 33 rows answers");
+    assert_eq(n, 47, "47 routes: one per method each of the router's 34 rows answers");
 
     var shape = 0;
     var unresolved = 0;
@@ -597,27 +633,27 @@ fn test_bodies() {
     var a = default_alloc();
     var doc = agnostic_api_schema_a(a);
     var b = _t_get(doc, "bodies");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "crew"), "fields"), agnostic_crew_req_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "crew"), agnostic_crew_req_fields_a(a)), 1,
       "crew: the crew decoder's allow-list, in order");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "task"), "fields"), agnostic_task_req_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "task"), agnostic_task_req_fields_a(a)), 1,
       "task: the task decoder's");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "agent_definition"), "fields"), agnostic_agent_def_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "agent_definition"), agnostic_agent_def_fields_a(a)), 1,
       "agent_definition: the definition decoder's");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "login"), "fields"), agnostic_login_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "login"), agnostic_login_fields_a(a)), 1,
       "login: the login route's");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "plugin_switch"), "fields"), agnostic_plugin_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "plugin_switch"), agnostic_plugin_fields_a(a)), 1,
       "plugin_switch: the switch route's");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "password_change"), "fields"), agnostic_password_change_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "password_change"), agnostic_password_change_fields_a(a)), 1,
       "password_change: its route's");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "api_key"), "fields"), agnostic_apikey_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "api_key"), agnostic_apikey_fields_a(a)), 1,
       "api_key: its route's");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "user"), "fields"), agnostic_user_create_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "user"), agnostic_user_create_fields_a(a)), 1,
       "user: its route's");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "user_role"), "fields"), agnostic_user_role_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "user_role"), agnostic_user_role_fields_a(a)), 1,
       "user_role: its route's");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "user_password"), "fields"), agnostic_user_password_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "user_password"), agnostic_user_password_fields_a(a)), 1,
       "user_password: its route's");
-    assert_eq(_t_same_list(_t_get(_t_get(b, "tenant"), "fields"), agnostic_tenant_fields_a(a)), 1,
+    assert_eq(_t_same_rows(_t_get(b, "tenant"), agnostic_tenant_fields_a(a)), 1,
       "tenant: its route's");
 
     var refused = _t_get(_t_get(b, "agent_definition"), "refused");
@@ -643,7 +679,8 @@ fn test_bodies() {
       "of at most AGNOSTIC_PLUGINDATA_DOC_MAX bytes");
 
     var items = _t_get(_t_get(b, "crew"), "items");
-    assert_eq(_t_is(items, "agents", "agent_definition"), 1, "a crew's agents are agent definitions");
+    assert_eq(_t_same_list(_t_get(items, "agents"), _t_vec2(str_from("agent_definition"), str_from("agent_reference"))), 1, #skip-lint
+      "a crew's agents are agent definitions, or name one");
     assert_eq(_t_is(items, "tasks", "task"), 1, "and its tasks are tasks");
 
     # Every body named is a body listed, and every body listed is taken somewhere.
@@ -651,6 +688,9 @@ fn test_bodies() {
     var dangling = 0;
     var used = vec_new();
     vec_push(used, str_from("agent_definition"));
+    vec_push(used, str_from("agent_reference"));
+    vec_push(used, str_from("target"));
+    vec_push(used, str_from("output_schema"));
     vec_push(used, str_from("task"));
     var r = 0;
     while (r < bayan_json_v_arr_len(routes)) {
@@ -1556,7 +1596,7 @@ fn _t_seed_lost(db) {
     agnostic_store_open(str_from(db));
     agnostic_crews_ensure();
     var n = agnostic_crews_mark_inflight(str_from(_T_LOST), AGNOSTIC_SCOPE_DEFAULT, str_from("lost work"),
-      1759000000000, 1, str_from("placeholder"), str_from("sequential"));
+      1759000000000, 1, str_from("placeholder"), str_from("sequential"), 0);
     agnostic_store_close();
     return n;
 }
@@ -1600,6 +1640,137 @@ fn _t_tamper(path, needle) {
     return 1;
 }
 
+# --- field types: what the schema says each field is, proved at its door (0.4.0, ADR 0028) ------
+
+# A JSON value of the type row `t` of a body's `types` names.
+fn _t_sample(t) {
+    var ty = _t_s(t, "type");
+    if (str_eq_cstr(ty, "string") == 1) { return "\"x\""; }
+    if (str_eq_cstr(ty, "integer") == 1) { return "1"; }
+    if (str_eq_cstr(ty, "boolean") == 1) { return "true"; }
+    if (str_eq_cstr(ty, "object") == 1) { return "{}"; }
+    return "[]";
+}
+
+# A JSON value of the wrong type for row `t`: an array's is the right container holding the wrong
+# element when the row names one, so a row that checks only the container fails too.
+fn _t_wrong(t) {
+    var ty = _t_s(t, "type");
+    if (str_eq_cstr(ty, "string") == 1) { return "1"; }
+    if (str_eq_cstr(ty, "integer") == 1) { return "\"1\""; }
+    if (str_eq_cstr(ty, "boolean") == 1) { return "\"true\""; }
+    if (str_eq_cstr(ty, "object") == 1) { return "[]"; }
+    var items = _t_get(t, "items");
+    if (items == 0) { return "\"x\""; }
+    if (str_eq_cstr(bayan_json_v_str(items), "string") == 1) { return "[1]"; }
+    return "[\"x\"]";
+}
+
+# A body of `types` with every field a value of its type, but field `skip`, which holds `wrong`,
+# or is left out when `wrong` is 0.
+fn _t_typed_body(types, skip: Str, wrong) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{");
+    var first = 1;
+    var i = 0;
+    while (i < bayan_json_v_obj_len(types)) {
+        var k = bayan_json_v_obj_key(types, i);
+        var v = _t_sample(bayan_json_v_obj_get_by_str(types, k));
+        if (str_eq(k, skip) == 1) { v = wrong; }
+        if (v != 0) {
+            if (first == 0) { str_builder_add_cstr(sb, ","); }
+            first = 0;
+            str_builder_add_cstr(sb, "\"");
+            str_builder_add(sb, k);
+            str_builder_add_cstr(sb, "\":");
+            str_builder_add_cstr(sb, v);
+        }
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+# Body `b` as the route takes it: `pre` and `post` wrap an element of a crew's arrays.
+fn _t_wrapped(pre, b: Str, post) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, pre);
+    str_builder_add(sb, b);
+    str_builder_add_cstr(sb, post);
+    return _t_cstr(str_builder_build(sb));
+}
+
+var _t_types_checked = 0;
+var _t_types_broken = 0;
+
+# Every field of `types` at `path`: of the wrong type it is refused by name, and a required one
+# left out is refused as required. `pre` and `post` wrap the body; `ctx` is a principal's.
+fn _t_prove_types(a, method, path: Str, types, pre, post, ctx) {
+    var i = 0;
+    while (i < bayan_json_v_obj_len(types)) {
+        var k = bayan_json_v_obj_key(types, i);
+        var t = bayan_json_v_obj_get_by_str(types, k);
+        var named = _t_body("'", k, "'");
+        var wrong = _t_req(a, method, path, _t_wrapped(pre, _t_typed_body(types, k, _t_wrong(t)), post), ctx);
+        _t_types_checked = _t_types_checked + 1;
+        var msg = _t_msg(wrong);
+        if (agnostic_response_status(wrong) < 400 || msg == 0 || _t_has(msg, named) != 1) {
+            _t_types_broken = _t_types_broken + 1;
+            _t_say("the wrong type is not refused by name: ", _t_cstr(path), _t_cstr(k));
+        }
+        if (bayan_json_v_bool(_t_get(t, "required")) == 1) {
+            var gone = _t_req(a, method, path, _t_wrapped(pre, _t_typed_body(types, k, 0), post), ctx);
+            _t_types_checked = _t_types_checked + 1;
+            var why = _t_msg(gone);
+            if (agnostic_response_status(gone) < 400 || why == 0 || _t_has(why, named) != 1
+              || _t_has(why, "is required") != 1) {
+                _t_types_broken = _t_types_broken + 1;
+                _t_say("a required field left out is not refused by name: ", _t_cstr(path), _t_cstr(k));
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ⭐ What the schema says about each field is what its door does. Run with a principal: with
+# authentication off the identity routes answer 409 before they read a body.
+fn _t_prove_every_body(a, doc, ctx) {
+    var routes = _t_get(doc, "routes");
+    var bodies = _t_get(doc, "bodies");
+    var seen = vec_new();
+    var i = 0;
+    while (i < bayan_json_v_arr_len(routes)) {
+        var rt = bayan_json_v_arr_get(routes, i);
+        var bname = _t_s(rt, "body");
+        var types = 0;
+        if (bname != 0) { types = _t_get(bayan_json_v_obj_get_by_str(bodies, bname), "types"); }
+        if (types != 0 && _t_vec_has_str(seen, bname) == 0) {
+            vec_push(seen, bname);
+            _t_prove_types(a, _t_method_of(rt), _t_concrete(_t_sz(rt, "path")), types, "", "", ctx);
+        }
+        i = i + 1;
+    }
+    # What a crew's elements are decoded as, reached through a crew past everything before them.
+    var crews = str_from("/api/v1/crews");
+    _t_prove_types(a, AGNOSTIC_METHOD_POST, crews, _t_get(_t_get(bodies, "agent_definition"), "types"),
+      "{\"name\":\"p\",\"agents\":[", "],\"tasks\":[{\"description\":\"d\"}]}", ctx);
+    _t_prove_types(a, AGNOSTIC_METHOD_POST, crews, _t_get(_t_get(bodies, "task"), "types"),
+      "{\"name\":\"p\",\"agents\":[{\"key\":\"k\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[", "]}", ctx);
+    # What the bodies nested in those are decoded as (0.4.0).
+    _t_prove_types(a, AGNOSTIC_METHOD_POST, crews, _t_get(_t_get(bodies, "target"), "types"),
+      "{\"name\":\"p\",\"agents\":[{\"key\":\"k\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"d\"}],\"target\":", "}", ctx); #skip-lint
+    _t_prove_types(a, AGNOSTIC_METHOD_POST, crews, _t_get(_t_get(bodies, "output_schema"), "types"),
+      "{\"name\":\"p\",\"agents\":[{\"key\":\"k\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"d\",\"output_schema\":", "}]}", ctx); #skip-lint
+    var ref = _t_req(a, AGNOSTIC_METHOD_POST, crews,
+      "{\"name\":\"p\",\"agents\":[{\"definition\":7}],\"tasks\":[{\"description\":\"d\"}]}", ctx);
+    assert_eq(_t_has(_t_msg(ref), "'definition' is required and must be a string"), 1,
+      "an agent_reference's field is its door's too");
+    assert_gt(_t_types_checked, 0, "fields were probed");
+    assert_eq(_t_types_broken, 0, "each field's declared type and required-ness is its door's");
+    return 0;
+}
+
 fn test_responses() {
     test_group("api/responses");
     var a = default_alloc();
@@ -1634,11 +1805,20 @@ fn test_responses() {
     assert_neq(token, 0, "the bootstrap administrator logs in");
     if (token == 0) { return 0; }
     var cx = _t_ctx_as(a, token, 0, 0);
+    _t_prove_every_body(a, doc, cx);
 
     # A crew, submitted twice under one Idempotency-Key: the second is the replay.
     var sub = _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", "/api/v1/crews", _T_CREW,
       _t_ctx_as(a, token, "schema-sweep-key", 0));
     var cid = _t_crew_id(sub);
+    # And one with a target, so that what a crew pointed at is seen on each route that says it.
+    agnostic_target_set_hosts(agnostic_config_parse_target_hosts(str_from("sut.example")));
+    var aimed = _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", "/api/v1/crews",
+      "{\"name\":\"aimed\",\"target\":{\"url\":\"https://sut.example/\"},\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"t\"}]}", cx); #skip-lint
+    var aimed_id = _t_s(agnostic_response_body(aimed), "crew_id");
+    _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id", _t_crew_url(aimed_id, ""), "", cx);
+    _t_go_s(a, AGNOSTIC_METHOD_GET, "/api/v1/crews/:id/plan", _t_crew_url(aimed_id, "/plan"), "", cx);
+
     var rep = _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", "/api/v1/crews", _T_CREW,
       _t_ctx_as(a, token, "schema-sweep-key", 0));
     assert_eq(bayan_json_v_bool(_t_get(agnostic_response_body(rep), "replayed")), 1,
@@ -1749,6 +1929,7 @@ fn test_responses() {
     assert_neq(token, 0, "a password change answers a new token");
     cx = _t_ctx_as(a, token, 0, 0);
 
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/tools", "/api/v1/tools", "", cx);
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit", "/api/v1/audit", "", cx);
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "/api/v1/audit/entries", "", cx);
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "/api/v1/audit/entries?limit=1", "", cx);

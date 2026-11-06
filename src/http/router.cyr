@@ -90,6 +90,7 @@ enum AgnosticRouteId {
     AGNOSTIC_ROUTE_TENANT_DELETE = 43;
     AGNOSTIC_ROUTE_TENANT_UPDATE = 44;   # 0.3.1
     AGNOSTIC_ROUTE_METRICS       = 45;   # 0.3.1
+    AGNOSTIC_ROUTE_TOOLS         = 46;   # 0.4.0
 }
 
 var AGNOSTIC_METHOD_NONE   = 0;
@@ -394,6 +395,7 @@ fn _agnostic_route_table_build(): i64 {
     # not. Creating a preset is a durable object, which is M4's.
     n = _agnostic_route_add(n, "/api/v1/presets", AGNOSTIC_ROUTE_PRESET_LIST, none, none, none);
     n = _agnostic_route_add(n, "/api/v1/presets/:name", AGNOSTIC_ROUTE_PRESET_GET, none, none, none);
+    n = _agnostic_route_add(n, "/api/v1/tools", AGNOSTIC_ROUTE_TOOLS, none, none, none);
 
     # Agent definitions (M3). Two paths, five methods — the first rows where one path
     # carries more than one verb.
@@ -765,6 +767,7 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     }
 
     if (id == AGNOSTIC_ROUTE_PRESET_LIST) { return agnostic_route_presets_list_a(a); }
+    if (id == AGNOSTIC_ROUTE_TOOLS) { return agnostic_route_tools_a(a); }
     if (id == AGNOSTIC_ROUTE_PRESET_GET) {
         return agnostic_route_preset_get_a(a, agnostic_route_match_param(m));
     }

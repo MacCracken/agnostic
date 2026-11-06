@@ -54,7 +54,8 @@ enum AgnosticConfigOff {
     AGNOSTIC_CFG_TENANT_RATE = 192;  # a tenant's crews a minute, 0 for no limit (0.3.1)
     AGNOSTIC_CFG_TENANT_CREWS = 200; # a tenant's unfinished crews, 0 for no limit (0.3.1)
     AGNOSTIC_CFG_METRICS_TOKEN = 208; # the scraper's bearer token, a Str, 0 unset, -1 refused (0.3.1)
-    AGNOSTIC_CFG_SIZE      = 216;
+    AGNOSTIC_CFG_TARGET_HOSTS = 216; # the hosts a target may name, a vec, 0 for none, -1 refused (0.4.0)
+    AGNOSTIC_CFG_SIZE      = 224;
 }
 
 # The service name agnostic's spans are exported under when `OTEL_SERVICE_NAME` is unset or
@@ -363,6 +364,94 @@ fn agnostic_proxy_trusted(t, ip): i64 {
     return 0;
 }
 
+# The most entries `AGNOSTIC_TARGET_HOSTS` takes. A target is checked against each one.
+var AGNOSTIC_TARGET_HOSTS_MAX = 64;
+
+# The longest host name DNS can answer.
+var AGNOSTIC_HOST_MAX = 253;
+
+# Whether `d` to `d + n` is a bracketed IPv6 address's text: hex digits, colons and dots.
+fn _agnostic_host_v6(d, n): i64 {
+    if (n < 4 || (load8(d + n - 1) & 255) != 93) { return 0; }
+    var colons = 0;
+    var i = 1;
+    while (i < n - 1) {
+        var c = load8(d + i) & 255;
+        var ok = 0;
+        if (c >= 48 && c <= 57) { ok = 1; }
+        if (c >= 97 && c <= 102) { ok = 1; }
+        if (c >= 65 && c <= 70) { ok = 1; }
+        if (c == 46) { ok = 1; }
+        if (c == 58) { ok = 1; colons = colons + 1; }
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    if (colons < 2) { return 0; }
+    return 1;
+}
+
+# Whether `d` to `d + n` is a host as a target URL and `AGNOSTIC_TARGET_HOSTS` may spell one: a name
+# or IPv4 address of dot-separated labels of letters, digits, `-` and `_`, or a bracketed IPv6
+# address. No port, no trailing dot, no percent-encoding and nothing outside ASCII: two hosts are
+# compared as text, so each host has one spelling (`src/engine/target.cyr`).
+fn agnostic_host_valid(d, n): i64 {
+    if (n < 1 || n > AGNOSTIC_HOST_MAX) { return 0; }
+    if ((load8(d) & 255) == 91) { return _agnostic_host_v6(d, n); }
+    var label = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        if (c == 46) {
+            if (label == 0) { return 0; }
+            label = 0;
+        } else {
+            var ok = 0;
+            if (c >= 97 && c <= 122) { ok = 1; }
+            if (c >= 65 && c <= 90) { ok = 1; }
+            if (c >= 48 && c <= 57) { ok = 1; }
+            if (c == 45 || c == 95) { ok = 1; }
+            if (ok == 0) { return 0; }
+            label = label + 1;
+        }
+        i = i + 1;
+    }
+    if (label == 0) { return 0; }
+    return 1;
+}
+
+# `AGNOSTIC_TARGET_HOSTS`, a comma-separated list of hosts, as a vec of lowercase Strs: 0 when it is
+# empty, or -1 for an entry `agnostic_host_valid` refuses, a port among them, or too many. A list the
+# server cannot read refuses to start, rather than run with fewer hosts than its operator wrote.
+fn agnostic_config_parse_target_hosts(v: Str): i64 {
+    var n = str_len(v);
+    if (n == 0) { return 0; }
+    var d = str_data(v);
+    var hosts = vec_new();
+    var i = 0;
+    while (i <= n) {
+        var e = i;
+        while (e < n && load8(d + e) != 44) { e = e + 1; }
+        var s = i;
+        var f = e;
+        while (s < f && load8(d + s) == 32) { s = s + 1; }
+        while (f > s && load8(d + f - 1) == 32) { f = f - 1; }
+        if (vec_len(hosts) >= AGNOSTIC_TARGET_HOSTS_MAX) { return 0 - 1; }
+        if (agnostic_host_valid(d + s, f - s) == 0) { return 0 - 1; }
+        var h = alloc(f - s + 1);
+        var k = 0;
+        while (k < f - s) {
+            var c = load8(d + s + k) & 255;
+            if (c >= 65 && c <= 90) { c = c + 32; }
+            store8(h + k, c);
+            k = k + 1;
+        }
+        store8(h + k, 0);
+        vec_push(hosts, str_new(h, k));
+        i = e + 1;
+    }
+    return hosts;
+}
+
 # The shortest `AGNOSTIC_JWT_SECRET`. This module is included on its own by `tests/config.tcyr`, so
 # it cannot read `AGNOSTIC_JWT_SECRET_MIN`; `tests/authn.tcyr` holds the two equal.
 var AGNOSTIC_CONFIG_JWT_SECRET_MIN = 32;
@@ -599,6 +688,13 @@ fn agnostic_config_from_env(): i64 {
     if (raw_mt != 0) { metrics_token = agnostic_config_parse_jwt_secret(str_from(raw_mt)); }
     store64(c + AGNOSTIC_CFG_METRICS_TOKEN, metrics_token);
 
+    # ⚠ **Unset, no crew may name a target.** A target is where load and security tools point, so
+    # the hosts are the operator's to name, and WRITE alone chooses none: `src/engine/target.cyr`.
+    var target_hosts = 0;
+    var raw_th = getenv("AGNOSTIC_TARGET_HOSTS");
+    if (raw_th != 0) { target_hosts = agnostic_config_parse_target_hosts(str_from(raw_th)); }
+    store64(c + AGNOSTIC_CFG_TARGET_HOSTS, target_hosts);
+
     # A tenant's limits, when its row sets none: `src/auth/tenantlimit.cyr`. 0 is no limit.
     store64(c + AGNOSTIC_CFG_TENANT_RATE, _agnostic_config_int_env("AGNOSTIC_TENANT_RATE_LIMIT", 0, 1000000));
     store64(c + AGNOSTIC_CFG_TENANT_CREWS, _agnostic_config_int_env("AGNOSTIC_TENANT_MAX_CREWS", 0, 1000000));
@@ -706,6 +802,12 @@ fn agnostic_config_tenant_crews(c): i64 {
 fn agnostic_config_metrics_token(c): i64 {
     if (c == 0) { return 0; }
     return load64(c + AGNOSTIC_CFG_METRICS_TOKEN);
+}
+
+# The hosts a crew's target may name, a vec of lowercase Strs, or 0 for none.
+fn agnostic_config_target_hosts(c): i64 {
+    if (c == 0) { return 0; }
+    return load64(c + AGNOSTIC_CFG_TARGET_HOSTS);
 }
 
 # The trusted proxies, a table `agnostic_proxy_trusted` reads, or 0 for none.
@@ -829,6 +931,7 @@ fn agnostic_config_invalid(c): i64 {
     if (load64(c + AGNOSTIC_CFG_JWT_SECRET) == 0 - 1) { return 1; }
     if (load64(c + AGNOSTIC_CFG_PROXIES) == 0 - 1) { return 1; }
     if (load64(c + AGNOSTIC_CFG_METRICS_TOKEN) == 0 - 1) { return 1; }
+    if (load64(c + AGNOSTIC_CFG_TARGET_HOSTS) == 0 - 1) { return 1; }
     if (load64(c + AGNOSTIC_CFG_TENANT_RATE) < 0) { return 1; }
     if (load64(c + AGNOSTIC_CFG_TENANT_CREWS) < 0) { return 1; }
     if (load64(c + AGNOSTIC_CFG_ADDR) == 0 - 1) { return 1; }

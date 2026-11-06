@@ -300,6 +300,88 @@ fn test_refused_bodies_keep_nothing() {
       "a lookup that misses keeps nothing");
 }
 
+# ⭐ 0.4.0: everything the crew body gained is refused before anything is built, and reading a
+# crew that declared a shape checks it once.
+fn test_the_crew_body_keeps_nothing() {
+    test_group("alloc/crew-body");
+    var crew = "/api/v1/crews";
+    var malformed = "{\"name\":\"c\",\"target\":{\"url\":\"ftp://x/\"},\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"t\"}]}"; #skip-lint
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, crew, malformed, 1, 0), 0, "⭐ a malformed target keeps nothing");
+    var reference = "{\"name\":\"c\",\"agents\":[{\"definition\":\"nobody\"}],\"tasks\":[{\"description\":\"t\"}]}"; #skip-lint
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, crew, reference, 1, 0), 0, "⭐ nor a reference to nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, crew,
+        _t_crew(_T_AG, "{\"description\":\"t\",\"output_schema\":{\"properties\":{}}}"), 1, 0), 0,
+      "⭐ nor an output schema that asks for what the engine ignores");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, crew,
+        _t_crew(_T_AG, "{\"description\":\"t\",\"output_schema\":{\"type\":\"integer\"}}"), 1, 0), 0,
+      "nor one of a type it never matches");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, crew, "{\"name\":7}", 1, 0), 0, "nor a field of the wrong type");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/tools", "", 1, 0), 0, "⭐ and reading the tools keeps nothing");
+
+    # ⭐ A crew still running has nothing to check, and a poller asks often.
+    var live_spec = agnosai_crew_new(str_from("c"));
+    var lt = agnosai_task_new(str_from("t"));
+    agnosai_task_with_output_schema(lt, bayan_json_v_obj_new());
+    var lts = vec_new();
+    vec_push(lts, lt);
+    agnosai_crew_with_tasks(live_spec, lts);
+    var live_id = "b0000000-0000-4000-8000-000000000002";
+    var le = agnostic_ledger_record_owned(str_from(live_id), str_from("c"), 0, str_from("acme"), 0, 0);
+    agnostic_ledger_set_plan(le, live_spec, str_from("live"));
+    var ls = str_builder_new();
+    str_builder_add_cstr(ls, "/api/v1/crews/");
+    str_builder_add_cstr(ls, live_id);
+    var live_path = str_cstr(str_builder_build(ls));
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, live_path, "", 1, 0), 0, "⭐ a poll of a crew still running keeps nothing");
+
+    # ⭐ What a poll of a finished one costs: the check is read once.
+    var spec = agnosai_crew_new(str_from("c"));
+    var t = agnosai_task_new(str_from("t"));
+    agnosai_task_with_output_schema(t, bayan_json_v_obj_new());
+    var tasks = vec_new();
+    vec_push(tasks, t);
+    agnosai_crew_with_tasks(spec, tasks);
+    var results = vec_new();
+    vec_push(results, agnosai_task_result_new(agnosai_task_id(t), str_from("not json"), AGNOSAI_STATUS_COMPLETED));
+    var id = "b0000000-0000-4000-8000-000000000001";
+    var e = agnostic_ledger_record_owned(str_from(id), str_from("c"), 0, str_from("acme"), 0, 0);
+    agnostic_ledger_set_plan(e, spec, str_from("live"));
+    agnostic_ledger_latch(e, AGNOSTIC_CREW_COMPLETED, 0, results);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/crews/");
+    str_builder_add_cstr(sb, id);
+    var path = str_cstr(str_builder_build(sb));
+
+    # ⭐ An answer is parsed in the reader's arena: on the global heap its tree would be kept for life.
+    var n = 200000;
+    var text = alloc(n * 2 + 3);
+    store8(text, 91);
+    var k = 0;
+    while (k < n) {
+        store8(text + 1 + k * 2, 49);
+        store8(text + 2 + k * 2, 44);
+        k = k + 1;
+    }
+    store8(text + n * 2, 93);
+    var answer = str_new(text, n * 2 + 1);
+    var shape = bayan_json_v_obj_new();
+    var ga = arena_allocator_growable(1048576);
+    assert_eq(_agnostic_output_in_shape_a(ga, answer, shape), 1, "a 400 KB answer is read");
+    # The second read, in the arena the first grew: ADR 0021's high-water mark, then nothing.
+    reset_via(ga);
+    var used = alloc_used();
+    assert_eq(_agnostic_output_in_shape_a(ga, answer, shape), 1, "and again");
+    assert_lt(alloc_used() - used, 2048, "⭐ and keeps its parse tree for no longer than the read");
+    # ⭐ An arena that ran out says nothing of what the model answered.
+    assert_eq(_agnostic_output_in_shape_a(arena_allocator(65536), answer, shape), 0 - 1,
+      "⭐ a well-formed answer that could not be read is not called invalid");
+    assert_eq(_agnostic_output_in_shape_a(ga, str_from("[1,"), shape), 0, "and one that is not JSON is");
+
+    _t_cost_once(AGNOSTIC_METHOD_GET, path, "", 1, 0);
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, path, "", 1, 0), 0,
+      "⭐ a poll of a crew with a declared shape keeps nothing");
+}
+
 # ⭐ Past the cache a definition is decoded for the reader, not for the process: through 0.2.1 each
 # read kept it on the global heap, 12.8 KB a GET and 778 KB a listing, for anyone with READ.
 fn test_definitions_past_the_cache_keep_nothing() {
@@ -343,6 +425,7 @@ fn main() {
     test_a_refusal_past_the_budget_keeps_nothing();
     test_a_crew_over_its_limit_keeps_nothing();
     test_a_scrape_keeps_nothing();
+    test_the_crew_body_keeps_nothing();
     agnostic_audit_close();
     agnostic_store_close();
     _tt_unlink_store(_T_RADB);

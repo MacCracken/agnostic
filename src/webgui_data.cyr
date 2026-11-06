@@ -8592,7 +8592,7 @@ if (typeof document !== 'undefined' && document.getElementById('map')) {
 </html>
 ";
 
-# --- src/webgui/plugins/crews/index.html — 49422 bytes -----------------------
+# --- src/webgui/plugins/crews/index.html — 50514 bytes -----------------------
 var _AGNOSTIC_WEBGUI_ASSET_02 = "<!doctype html>
 <html lang=\"en\">
 <head>
@@ -8908,6 +8908,12 @@ function fmtAgo(ms, now) {
 function validRow(c) {
   return !!c && typeof c === 'object' && typeof c.crew_id === 'string' && RE_CREW_ID.test(c.crew_id) && typeof c.status === 'string';
 }
+/** The URL of the `target` on crew or task object `o`, or '' (agnostic 0.4.0). */
+function targetOf(o) {
+  const t = o && typeof o === 'object' ? o.target : null;
+  return t && typeof t === 'object' && typeof t.url === 'string' ? t.url : '';
+}
+
 /** Whether listing row `x` comes before `y` — the server's order: newer `submitted_at` first, then the higher id. */
 function listsBefore(x, y) {
   const xs = int(x.submitted_at) || 0, ys = int(y.submitted_at) || 0;
@@ -9092,7 +9098,7 @@ class CrewDetail {
       const desc = typeof t.description === 'string' ? t.description : '';
       this.addTask({ task_id: t.task_id, index: int(t.index) ?? i, description: desc, title: taskTitle(desc, i),
         deps: Array.isArray(t.dependencies) ? t.dependencies.filter(Number.isInteger) : [],
-        priority: typeof t.priority === 'string' ? t.priority : '' });
+        priority: typeof t.priority === 'string' ? t.priority : '', target: targetOf(t) });
     });
   }
   addTask(t) {
@@ -9122,6 +9128,9 @@ class CrewDetail {
       // The agent the engine gave it (agnostic 0.1.15): the outcome's word over the event's,
       // and the only word for a crew whose events are no longer held.
       if (typeof r.agent_key === 'string') t.agent = r.agent_key;
+      // Only a task that declared a shape has one (agnostic 0.4.0): `completed` is the engine's
+      // word that the model answered, and this is whether the answer was in that shape.
+      if (typeof r.output_valid === 'boolean') t.outputValid = r.output_valid;
     }
   }
   /** One engine event, applied to the tasks, as a feed line — or null for one not shown. */
@@ -9239,6 +9248,7 @@ class CrewDetail {
       tokens: int(u.metered_tasks) > 0 ? int(u.total_tokens) : null,
       cost: int(u.cost_micro_usd),
       mode: typeof d.engine_mode === 'string' ? d.engine_mode : '',
+      target: targetOf(d) || targetOf(this.plan),
       error: typeof d.error === 'string' ? d.error : '',
     };
   }
@@ -9389,6 +9399,7 @@ class CrewsView {
       if (int(c.total_tokens) !== null) sub.append(el('span', null, fmtTokens(c.total_tokens) + ' tok'));
       if (int(c.cost_micro_usd) !== null) sub.append(el('span', null, fmtMicro(c.cost_micro_usd)));
       if (c.engine_mode === 'placeholder') sub.append(el('span', null, 'placeholder'));
+      if (targetOf(c)) sub.append(el('span', null, targetOf(c)));
       b.append(top, sub);
       b.addEventListener('click', () => this.app.go(l.filter, c.crew_id));
       box.append(b);
@@ -9478,6 +9489,8 @@ class CrewsView {
     // A crew a restart cut short says when that was declared; its error box says what it means.
     if (s.interrupted !== null) fact('Interrupted', fmtAgo(s.interrupted), new Date(s.interrupted).toLocaleString());
     fact('Process', s.process ? s.process + (s.maxConcurrency ? ' · ' + s.maxConcurrency + ' at once' : '') : '—');
+    // Text, never a link: it came in a request body, and it is the system under test.
+    if (s.target) fact('Target', s.target, 'what this crew was pointed at');
     fact('Tasks', s.tasks ? s.done + ' / ' + s.tasks + ' done' + (s.failed ? ' · ' + s.failed + ' failed' : '') + (s.running ? ' · ' + s.running + ' running' : '') : '—');
     fact('Tokens', s.tokens !== null ? fmtTokens(s.tokens) : 'not metered', 'what the engine metered for this crew’s tasks');
     fact('Cost', s.cost !== null ? fmtMicro(s.cost) : 'not priced', 'only a priced call has a cost: an unpriced one is not $0');
@@ -9501,7 +9514,10 @@ class CrewsView {
         if (task.deps.length) meta.push('after ' + task.deps.map((i) => '#' + (i + 1)).join(', '));
         if (task.agent) meta.push('by ' + task.agent);
         if (task.priority && task.priority !== 'normal') meta.push(task.priority + ' priority');
+        // A task's own target, when it differs from its crew's.
+        if (task.target && task.target !== s.target) meta.push('against ' + task.target);
         if (meta.length) main.append(el('div', 'muted', meta.join(' · ')));
+        if (task.outputValid === false) main.append(el('div', 'err', 'Its output is not in the shape this task declared.'));
         if (task.error) main.append(el('div', 'err', task.error));
         if (task.output) {
           const det = el('details');
@@ -11580,7 +11596,7 @@ fn agnostic_webgui_asset_bytes(i): i64 {
 fn agnostic_webgui_asset_len(i): i64 {
     if (i == 0) { return 39983; }
     if (i == 1) { return 452787; }
-    if (i == 2) { return 49422; }
+    if (i == 2) { return 50514; }
     if (i == 3) { return 40065; }
     if (i == 4) { return 37362; }
     if (i == 5) { return 28195; }
@@ -11591,7 +11607,7 @@ fn agnostic_webgui_asset_len(i): i64 {
 fn agnostic_webgui_asset_sha256(i): i64 {
     if (i == 0) { return "dc913347dc4792f23cf53933435b28e45ecb9cd6143a62656e6b57bcb853daa3"; }
     if (i == 1) { return "411669d9469395104380f00c572f29a2777104126e4efd3aa441ab4e0df83409"; }
-    if (i == 2) { return "c2200c085910f796d5535a15a0dd405808cb327feab8ac14ab3786a541ea1797"; }
+    if (i == 2) { return "ba999dca1a040e35ea602316df1a4acb8eb41f2aa603e46461ccaaac35982d60"; }
     if (i == 3) { return "a950f9468c64f6ba5b3fab044283395e20c4fc79b607735f105332b847a8a339"; }
     if (i == 4) { return "d300a8c4e05a25f554f7cf1b4ee34eb810f60e8aef36ab031ec5b5551ff00426"; }
     if (i == 5) { return "217bcba94e6358660d18422b83a9719d35c536f3b04e76bf3a3e466b177f3783"; }
@@ -11613,7 +11629,7 @@ fn agnostic_webgui_asset_path(i): i64 {
 fn agnostic_webgui_asset_csp(i): i64 {
     if (i == 0) { return "default-src 'none'; script-src 'sha256-bYYKB5LjVZ9/bMt48VUA0ybhegZ34CAu8JB5qDsSeh0=' 'sha256-dyhYShGgsIUjrvKxTR1+2p/XFwXvirrew4+7gYf+K4c='; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"; }
     if (i == 1) { return "default-src 'none'; script-src 'sha256-T3C81vESEyEVff9yhaaRS1UkhRRM7amk1ZHTXmA27Xc='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
-    if (i == 2) { return "default-src 'none'; script-src 'sha256-hk+5dtT8fds4ZJG3YGyOPNwKB4TREhZ1uzyb3QtBSxw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
+    if (i == 2) { return "default-src 'none'; script-src 'sha256-rV6nakDVHvsxzQ4RPdXi2keyV/iAnHR0FxXDJShI24M='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 3) { return "default-src 'none'; script-src 'sha256-wbYQVCh7XgC++N8NdS6axkB+bC4t9m5Vlq/EHlHuFQo='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 4) { return "default-src 'none'; script-src 'sha256-VZ9hskYmvqt2Fc/f40xVp1Xt2VABksTtNr0E3udhb3A='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
     if (i == 5) { return "default-src 'none'; script-src 'sha256-ygOLjo69VvU6TJuRQrR+k8WSexF9CTmT6UOafnBBeWw='; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"; }
@@ -11624,14 +11640,14 @@ fn agnostic_webgui_asset_csp(i): i64 {
 # `{name: {grants, routes[]}}`. Parsed once at mount (`src/webgui/plugins.cyr`), which
 # enforces it on every request a plugin makes (ADR 0007).
 fn agnostic_webgui_permissions_json(): i64 {
-    return "{\"storage\":{\"grants\":\"keep its own documents\",\"routes\":[\"GET /api/v1/plugins/:self/data\",\"GET /api/v1/plugins/:self/data/:key\",\"PUT /api/v1/plugins/:self/data/:key\",\"DELETE /api/v1/plugins/:self/data/:key\"]},\"presets:read\":{\"grants\":\"read the preset library\",\"routes\":[\"GET /api/v1/presets\",\"GET /api/v1/presets/:name\"]},\"definitions:read\":{\"grants\":\"read agent definitions\",\"routes\":[\"GET /api/v1/agents/definitions\",\"GET /api/v1/agents/definitions/:key\"]},\"definitions:write\":{\"grants\":\"create, change and delete agent definitions\",\"routes\":[\"POST /api/v1/agents/definitions\",\"PUT /api/v1/agents/definitions/:key\",\"DELETE /api/v1/agents/definitions/:key\"]},\"crews:read\":{\"grants\":\"list crews and read their plans, progress and results\",\"routes\":[\"GET /api/v1/crews\",\"GET /api/v1/crews/:id\",\"GET /api/v1/crews/:id/events\",\"GET /api/v1/crews/:id/plan\"]},\"crews:write\":{\"grants\":\"start and cancel crews\",\"routes\":[\"POST /api/v1/crews\",\"POST /api/v1/crews/:id/cancel\"]},\"audit:read\":{\"grants\":\"read the audit trail, which records every user's actions\",\"routes\":[\"GET /api/v1/audit\",\"GET /api/v1/audit/entries\"]},\"users:read\":{\"grants\":\"list users and their API keys\",\"routes\":[\"GET /api/v1/users\",\"GET /api/v1/users/:id\",\"GET /api/v1/users/:id/api-keys\"]},\"users:write\":{\"grants\":\"create, change and delete users, set their passwords and revoke their keys\",\"routes\":[\"POST /api/v1/users\",\"PUT /api/v1/users/:id\",\"DELETE /api/v1/users/:id\",\"PUT /api/v1/users/:id/password\",\"DELETE /api/v1/users/:id/api-keys/:key\"]},\"tenants:read\":{\"grants\":\"list tenants and their limits\",\"routes\":[\"GET /api/v1/tenants\",\"GET /api/v1/tenants/:key\"]},\"tenants:write\":{\"grants\":\"create, change and delete tenants\",\"routes\":[\"POST /api/v1/tenants\",\"PUT /api/v1/tenants/:key\",\"DELETE /api/v1/tenants/:key\"]}}";
+    return "{\"storage\":{\"grants\":\"keep its own documents\",\"routes\":[\"GET /api/v1/plugins/:self/data\",\"GET /api/v1/plugins/:self/data/:key\",\"PUT /api/v1/plugins/:self/data/:key\",\"DELETE /api/v1/plugins/:self/data/:key\"]},\"presets:read\":{\"grants\":\"read the preset library\",\"routes\":[\"GET /api/v1/presets\",\"GET /api/v1/presets/:name\"]},\"tools:read\":{\"grants\":\"read which preset tools have an engine tool behind them\",\"routes\":[\"GET /api/v1/tools\"]},\"definitions:read\":{\"grants\":\"read agent definitions\",\"routes\":[\"GET /api/v1/agents/definitions\",\"GET /api/v1/agents/definitions/:key\"]},\"definitions:write\":{\"grants\":\"create, change and delete agent definitions\",\"routes\":[\"POST /api/v1/agents/definitions\",\"PUT /api/v1/agents/definitions/:key\",\"DELETE /api/v1/agents/definitions/:key\"]},\"crews:read\":{\"grants\":\"list crews and read their plans, progress and results\",\"routes\":[\"GET /api/v1/crews\",\"GET /api/v1/crews/:id\",\"GET /api/v1/crews/:id/events\",\"GET /api/v1/crews/:id/plan\"]},\"crews:write\":{\"grants\":\"start and cancel crews\",\"routes\":[\"POST /api/v1/crews\",\"POST /api/v1/crews/:id/cancel\"]},\"audit:read\":{\"grants\":\"read the audit trail, which records every user's actions\",\"routes\":[\"GET /api/v1/audit\",\"GET /api/v1/audit/entries\"]},\"users:read\":{\"grants\":\"list users and their API keys\",\"routes\":[\"GET /api/v1/users\",\"GET /api/v1/users/:id\",\"GET /api/v1/users/:id/api-keys\"]},\"users:write\":{\"grants\":\"create, change and delete users, set their passwords and revoke their keys\",\"routes\":[\"POST /api/v1/users\",\"PUT /api/v1/users/:id\",\"DELETE /api/v1/users/:id\",\"PUT /api/v1/users/:id/password\",\"DELETE /api/v1/users/:id/api-keys/:key\"]},\"tenants:read\":{\"grants\":\"list tenants and their limits\",\"routes\":[\"GET /api/v1/tenants\",\"GET /api/v1/tenants/:key\"]},\"tenants:write\":{\"grants\":\"create, change and delete tenants\",\"routes\":[\"POST /api/v1/tenants\",\"PUT /api/v1/tenants/:key\",\"DELETE /api/v1/tenants/:key\"]}}";
 }
 
 # The `i`th plugin's manifest as compact JSON, or 0. `asset` is the page the
 # generator resolved its `entry` to.
 fn agnostic_webgui_plugin_manifest(i): i64 {
     if (i == 0) { return "{\"id\":\"swarm\",\"name\":\"Swarm Command\",\"description\":\"An RTS-style command view of an agent swarm: every unit is an agent, every objective a task, every structure a tool. Save swarms, simulate them or estimate their cost beside what one agent would do with the same tokens, run one as a live crew and see what it really cost, and watch any crew on this server. Each mission is labelled simulated or live.\",\"version\":\"0.5.1\",\"data\":\"mixed\",\"entry\":\"index.html\",\"permissions\":[\"storage\",\"presets:read\",\"crews:read\",\"crews:write\"],\"asset\":1}"; }
-    if (i == 1) { return "{\"id\":\"crews\",\"name\":\"Crews\",\"description\":\"Every crew in your tenant, live: filter by status, open one to see its plan, its progress as it happens, each task's result and what it cost — and cancel one that is still running.\",\"version\":\"0.1.2\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"crews:read\",\"crews:write\"],\"asset\":2}"; }
+    if (i == 1) { return "{\"id\":\"crews\",\"name\":\"Crews\",\"description\":\"Every crew in your tenant, live: filter by status, open one to see its plan, its progress as it happens, each task's result and what it cost — and cancel one that is still running.\",\"version\":\"0.1.3\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"crews:read\",\"crews:write\"],\"asset\":2}"; }
     if (i == 2) { return "{\"id\":\"library\",\"name\":\"Library\",\"description\":\"The preset crews built into this server and the agent definitions stored in it: browse both, save a preset's agent as a definition, and create, edit or delete definitions.\",\"version\":\"0.1.1\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"presets:read\",\"definitions:read\",\"definitions:write\"],\"asset\":3}"; }
     if (i == 3) { return "{\"id\":\"users\",\"name\":\"Users\",\"description\":\"Who can sign in, and with what role: create users, change a role, set a password, revoke an API key, and, for a super administrator, tenants and their limits. Administrators only.\",\"version\":\"0.1.0\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"users:read\",\"users:write\",\"tenants:read\",\"tenants:write\"],\"asset\":4}"; }
     if (i == 4) { return "{\"id\":\"audit\",\"name\":\"Audit trail\",\"description\":\"The tamper-evident audit trail: whether its chain verified, whether any record was dropped, and its newest entries — who did what, and when. Administrators only.\",\"version\":\"0.1.1\",\"data\":\"live\",\"entry\":\"index.html\",\"permissions\":[\"audit:read\"],\"asset\":5}"; }

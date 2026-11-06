@@ -229,6 +229,8 @@ refused() {
 refused "a proxy list of /0" AGNOSTIC_TRUSTED_PROXIES=0.0.0.0/0
 refused "a proxy list with a typo" AGNOSTIC_TRUSTED_PROXIES=10.1.2.3/8
 refused "a short metrics token" AGNOSTIC_METRICS_TOKEN=short
+refused "a target host with a port" AGNOSTIC_TARGET_HOSTS=staging.example.com:8080
+refused "a wildcard target host" 'AGNOSTIC_TARGET_HOSTS=*.example.com'
 refused "a tenant limit that is not a number" AGNOSTIC_TENANT_MAX_CREWS=many
 
 SCRAPE=scrape-0123456789abcdef0123456789abcdef
@@ -360,6 +362,48 @@ TOKEN="$(sed -E 's/.*"token":"([^"]+)".*/\1/' "$WORK/body")"
 expect 200 "the trail again" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/audit/entries?limit=100"
 grep -q '"audit.refusals_held"' "$WORK/body" || fail "the stop did not write what was held"
 echo "  ok: a stop writes what the budget held back"
+stop
+
+# --- what a crew's body can say (0.4.0) ------------------------------------------------------------
+
+start_proxied crewbody crewbody AGNOSTIC_TARGET_HOSTS=sut.example
+wait_up
+expect 200 "a sign-in" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"probe@example.com","password":"probe-password-12"}' "$BASE/api/v1/auth/login"
+TOKEN="$(sed -E 's/.*"token":"([^"]+)".*/\1/' "$WORK/body")"
+# The crew body (0.4.0): a target, a stored definition, a declared shape, and the tools route.
+CREW_TASK='{"description":"check it","output_schema":{"type":"object","required":["verdict"]}}'
+submit() { status_of -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$1" "$BASE/api/v1/crews"; }
+expect 201 "a definition to name" -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"key":"probe-agent","role":"tester","goal":"find bugs"}' "$BASE/api/v1/agents/definitions"
+[ "$(submit '{"name":"aimed","target":{"url":"https://sut.example/app"},"agents":[{"definition":"probe-agent"}],"tasks":['"$CREW_TASK"']}')" = "202" ] \
+  || { cat "$WORK/body"; fail "a crew with a listed target, a named agent and a shape was not accepted"; }
+AIMED="$(sed -E 's/.*"crew_id":"([^"]+)".*/\1/' "$WORK/body")"
+echo "  ok: a crew names a listed target, a stored agent and a shape"
+[ "$(submit '{"name":"away","target":{"url":"https://elsewhere.example/"},"agents":[{"definition":"probe-agent"}],"tasks":[{"description":"t"}]}')" = "403" ] \
+  || fail "a target off the list was not refused"
+grep -q 'elsewhere' "$WORK/body" && fail "the refusal echoes the host"
+[ "$(submit '{"name":"sly","target":{"url":"https://sut.example\\@elsewhere.example/"},"agents":[{"definition":"probe-agent"}],"tasks":[{"description":"t"}]}')" = "400" ] \
+  || fail "a URL two parsers read differently was not refused"
+[ "$(submit '{"name":"lost","agents":[{"definition":"nobody"}],"tasks":[{"description":"t"}]}')" = "422" ] \
+  || fail "a definition nothing is stored under was not refused"
+echo "  ok: off the list, a confusing URL and an absent definition are refused"
+tries=0
+until [ "$(status_of -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/crews/$AIMED")" = "200" ] && grep -q '"finished_at"' "$WORK/body"; do
+  tries=$((tries + 1))
+  [ "$tries" -lt 100 ] || fail "the aimed crew did not finish"
+  read -r -t 0.1 _ < <(tail -f /dev/null) || true
+done
+grep -q '"target":{"url":"https://sut.example/app"}' "$WORK/body" || fail "the outcome does not say what the crew ran against"
+grep -q '"output_valid":false' "$WORK/body" || fail "a placeholder answer was not reported out of shape"
+echo "  ok: the outcome says what it ran against, and that the answer is out of shape"
+expect 200 "the tools" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/tools"
+grep -q '"unresolved":36' "$WORK/body" || fail "the gate's number is not on the wire"
+grep -q '"crews_call_tools":false' "$WORK/body" || fail "the tools route does not say no crew calls them"
+
+expect 200 "the trail" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/audit/entries?limit=100"
+grep -q '"crew.target_refused"' "$WORK/body" || fail "a refused target left nothing in the trail"
+echo "  ok: a refused target is in the trail"
 stop
 
 echo "boot-probe: OK"

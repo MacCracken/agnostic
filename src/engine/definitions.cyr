@@ -538,3 +538,100 @@ fn _agnostic_definitions_keys_locked_a(a): i64 {
     patra_result_free(rs);
     return out;
 }
+
+# --- an agent named in a crew's body (0.4.0, ADR 0030) ------------------------------------------
+
+# The fields of an element of `agents` that names a stored definition.
+fn agnostic_agent_ref_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_req_a(a, f, "definition", AGNOSTIC_FK_STRING);
+    return f;
+}
+
+# The stored definition the reference `ag` names, as the JSON a crew's agent is decoded from. 0
+# with a rejection stored.
+#
+# ⚠ **Read here, and copied into the crew.** From here the definition takes the same check and
+# decoder as one spelled out, and a crew runs what its definition said when it was accepted: a
+# later edit changes the next crew, not this one. A definition saved before 0.1.15 with another
+# `complexity` is refused until it is given one of the three, as any door refuses it.
+#
+# Another tenant's definition is one that is not there, as every read of a definition answers it.
+fn _agnostic_crew_agent_ref_a(a, ag, index, scope: Str, out): i64 {
+    var allowed = agnostic_agent_ref_fields_a(a);
+    var unknown = agnostic_unknown_field(ag, allowed);
+    if (unknown != 0) {
+        var sb = str_builder_new_a(a);
+        if (sb == 0) { return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, unknown); }
+        str_builder_add_cstr_a(a, sb, "'definition' names a stored agent and takes no other field: '");
+        str_builder_add_a(a, sb, unknown);
+        str_builder_add_cstr_a(a, sb, "'");
+        return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sb));
+    }
+    var bad = agnostic_field_bad(ag, allowed);
+    if (bad != 0) {
+        return _agnostic_ad_reject(a, out, index, agnostic_field_status(bad), agnostic_field_refusal_a(a, bad));
+    }
+    var key = agnostic_req_str(ag, AGNOSTIC_JK_DEFINITION);
+    if (agnostic_key_is_valid(key) == 0) {
+        return _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
+          str_from_a(a, "'definition' must match [a-z0-9][a-z0-9-]* and be at most 100 characters"));
+    }
+    var dkey = agnostic_definition_dkey_a(a, scope, key);
+    var d = 0;
+    if (dkey != 0) { d = agnostic_definitions_get_a(a, dkey); }
+    if (d == 0) {
+        var sm = str_builder_new_a(a);
+        if (sm == 0) { return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, key); }
+        str_builder_add_cstr_a(a, sm, "no agent definition is stored as '");
+        str_builder_add_a(a, sm, key);
+        str_builder_add_cstr_a(a, sm, "'");
+        return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sm));
+    }
+    return agnostic_agent_def_to_value_a(a, d);
+}
+
+# Whether element `ag` of a crew's `agents` names a stored definition.
+fn _agnostic_crew_agent_is_ref(ag): i64 {
+    if (bayan_json_v_is_obj(ag) != 1) { return 0; }
+    if (bayan_json_v_obj_get_by_str(ag, AGNOSTIC_JK_DEFINITION) == 0) { return 0; }
+    return 1;
+}
+
+# The `agents` the crew body `v` asks for, in `a`, with each `{"definition": "<key>"}` replaced by
+# the stored definition it names in `scope` — what `agnostic_crew_req_from_value_a` reads. A crew
+# names one so that a client does not read a definition to send it back.
+#
+# Answers 0 with nothing stored when no element is a reference, which leaves the decoder reading the
+# body, as it does when `agents` is not an array it would accept: an array past the cap is the
+# decoder's to refuse, and must not cost a read of the store per element first. 0 with a rejection
+# stored when a reference is refused.
+fn agnostic_crew_agents_resolve_a(a, v, scope: Str, out): i64 {
+    if (bayan_json_v_is_obj(v) != 1) { return 0; }
+    var given = bayan_json_v_obj_get_by_cstr(v, "agents");
+    if (given == 0 || bayan_json_v_is_arr(given) != 1) { return 0; }
+    var n = bayan_json_v_arr_len(given);
+    if (n > AGNOSTIC_REQ_MAX_AGENTS) { return 0; }
+    var any = 0;
+    var i = 0;
+    while (i < n) {
+        if (_agnostic_crew_agent_is_ref(bayan_json_v_arr_get(given, i)) == 1) { any = 1; }
+        i = i + 1;
+    }
+    if (any == 0) { return 0; }
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0) { return _agnostic_reject(a, out, HTTP_INTERNAL, str_from_a(a, "could not read the agents")); }
+    i = 0;
+    while (i < n) {
+        var ag = bayan_json_v_arr_get(given, i);
+        if (_agnostic_crew_agent_is_ref(ag) == 1) {
+            ag = _agnostic_crew_agent_ref_a(a, ag, i, scope, out);
+            if (ag == 0) { return 0; }
+        }
+        if (bayan_json_v_arr_push_a(a, arr, ag) < 0) {
+            return _agnostic_reject(a, out, HTTP_INTERNAL, str_from_a(a, "could not read the agents"));
+        }
+        i = i + 1;
+    }
+    return arr;
+}

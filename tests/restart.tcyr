@@ -37,9 +37,9 @@ fn _t_seed() {
     agnostic_store_open(str_from(_T_RDB));
     agnostic_crews_ensure();
     agnostic_crews_mark_inflight(str_from(_T_A), str_from("_"), str_from("lost work"), 1759000000000, 2,
-      str_from("live"), str_from("dag"));
+      str_from("live"), str_from("dag"), 0);
     agnostic_crews_mark_inflight(str_from(_T_B), str_from("_"), str_from("finished work"), 1759000000001, 1,
-      str_from("live"), str_from("sequential"));
+      str_from("live"), str_from("sequential"), 0);
     agnostic_crews_save(str_from(_T_B), str_from("finished work"), AGNOSTIC_CREW_COMPLETED,
       str_from("{\"crew_id\":\"c0ffee00-0000-4000-8000-00000000000b\",\"status\":\"completed\",\"task_count\":1}"));
     var n = agnostic_crews_inflight_count();

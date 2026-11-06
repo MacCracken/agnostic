@@ -14,7 +14,9 @@
 #     role `agnostic_role_can` grants that permission to;
 #   * which plugin permissions grant a route, and which of its parameters a grant pins to the
 #     plugin's own id (`:self`): the embedded `permissions.json`, parsed here;
-#   * the request fields: the decoders' own allow-list functions, and the refused agent fields;
+#   * the request fields, each one's type and whether it is required: the decoders' own
+#     allow-list rows, which one check reads for every door (ADR 0028), and the refused agent
+#     fields;
 #   * the error codes: the catalogue in `src/http/response.cyr`;
 #   * the vocabularies: each `*_to_wire`, walked until it repeats (`_agnostic_sch_vocab_a`).
 #
@@ -32,7 +34,7 @@
 #
 # The version (it would change the snapshot every release), anything read from `AGNOSTIC_*`,
 # the permissions' `grants` wording, plugin manifests, per-handler 4xx statuses and messages,
-# field types and required-ness, and nested response shapes.
+# and nested response shapes.
 #
 # ## Pure
 #
@@ -101,21 +103,48 @@ fn _agnostic_sch_name_a(a, arr, s): i64 {
     return _agnostic_sch_add_a(a, arr, _agnostic_sch_cstr_a(a, s));
 }
 
-# An array of the `Str`s in vec `v` — an allow-list, in its own order. 0 for a 0 vec.
-fn _agnostic_sch_strs_a(a, v): i64 {
+# The names of allow-list `v`, in its own order. 0 for a 0 vec.
+fn _agnostic_sch_names_a(a, v): i64 {
     if (v == 0) { return 0; }
     var arr = bayan_json_v_arr_new_a(a);
     var i = 0;
     while (i < vec_len(v)) {
-        arr = _agnostic_sch_add_a(a, arr, bayan_json_v_str_new_a(a, vec_get(v, i)));
+        arr = _agnostic_sch_add_a(a, arr, bayan_json_v_str_new_a(a, agnostic_field_name(vec_get(v, i))));
         i = i + 1;
     }
     return arr;
 }
 
-# `{"fields": [...]}` for allow-list vec `v`.
+# `{"type": …, "items"?: …, "required": …}` for one row of an allow-list (0.4.0, ADR 0028).
+fn _agnostic_sch_field_type_a(a, r): i64 {
+    var kind = agnostic_field_kind(r);
+    var t = bayan_json_v_obj_new_a(a);
+    t = _agnostic_sch_put_a(a, t, "type", _agnostic_sch_cstr_a(a, agnostic_field_kind_type(kind)));
+    if (agnostic_field_kind_items(kind) != 0) {
+        t = _agnostic_sch_put_a(a, t, "items", _agnostic_sch_cstr_a(a, agnostic_field_kind_items(kind)));
+    }
+    return _agnostic_sch_put_a(a, t, "required", bayan_json_v_bool_new_a(a, agnostic_field_required(r)));
+}
+
+# Each row of allow-list `v`, as an object keyed by field name. 0 for a 0 vec.
+fn _agnostic_sch_types_a(a, v): i64 {
+    if (v == 0) { return 0; }
+    var o = bayan_json_v_obj_new_a(a);
+    var i = 0;
+    while (i < vec_len(v)) {
+        var r = vec_get(v, i);
+        var t = _agnostic_sch_field_type_a(a, r);
+        if (t == 0 || o == 0) { return 0; }
+        if (bayan_json_v_obj_set_a(a, o, agnostic_field_name(r), t) != 0) { return 0; }
+        i = i + 1;
+    }
+    return o;
+}
+
+# `{"fields": [...], "types": {...}}` for allow-list vec `v`.
 fn _agnostic_sch_fields_body_a(a, v): i64 {
-    return _agnostic_sch_put_a(a, bayan_json_v_obj_new_a(a), "fields", _agnostic_sch_strs_a(a, v));
+    var b = _agnostic_sch_put_a(a, bayan_json_v_obj_new_a(a), "fields", _agnostic_sch_names_a(a, v));
+    return _agnostic_sch_put_a(a, b, "types", _agnostic_sch_types_a(a, v));
 }
 
 # 1 when array `arr` holds a string equal to `s`.
@@ -419,7 +448,7 @@ fn _agnostic_sch_keys_a(a, id): i64 {
         # a crew this process holds or stored (`agnostic_ledger_describe_a`), the in-flight
         # row for one a restart interrupted (`agnostic_crew_interrupted_doc_with_a`).
         k = _agnostic_sch_words_a(a, k, "crew_id status task_count results usage error? engine_mode?");
-        k = _agnostic_sch_words_a(a, k, "name? scope? process? tasks_submitted? submitted_at?");
+        k = _agnostic_sch_words_a(a, k, "name? scope? target? process? tasks_submitted? submitted_at?");
         return _agnostic_sch_words_a(a, k, "started_at? finished_at? interrupted_at?");
     }
     if (id == AGNOSTIC_ROUTE_CREW_CANCEL) { return _agnostic_sch_words_a(a, k, "crew_id status"); }
@@ -427,7 +456,7 @@ fn _agnostic_sch_keys_a(a, id): i64 {
         return _agnostic_sch_words_a(a, k, "crew_id status events next missed lost_events dropped_events");
     }
     if (id == AGNOSTIC_ROUTE_CREW_PLAN) {
-        k = _agnostic_sch_words_a(a, k, "crew_id name? process max_concurrency? agents tasks");
+        k = _agnostic_sch_words_a(a, k, "crew_id name? process max_concurrency? target? agents tasks");
         # Only with `?explain=selection` (0.1.14, ADR 0016).
         return _agnostic_sch_words_a(a, k, "scorer? candidate_limit?");
     }
@@ -451,6 +480,9 @@ fn _agnostic_sch_keys_a(a, id): i64 {
     if (id == AGNOSTIC_ROUTE_TENANT_UPDATE) { return _agnostic_sch_words_a(a, k, "tenant"); }
     if (id == AGNOSTIC_ROUTE_TENANT_DELETE) { return _agnostic_sch_words_a(a, k, "key status"); }
     if (id == AGNOSTIC_ROUTE_PRESET_LIST) { return _agnostic_sch_words_a(a, k, "presets total"); }
+    if (id == AGNOSTIC_ROUTE_TOOLS) {
+        return _agnostic_sch_words_a(a, k, "tools total resolved unresolved engine_tools crews_call_tools");
+    }
     if (id == AGNOSTIC_ROUTE_PRESET_GET) {
         # The compiled-in document itself (`src/presets/*.json`), not a wrapper.
         return _agnostic_sch_words_a(a, k, "name description domain size version workflow_mode? agents");
@@ -538,11 +570,25 @@ fn _agnostic_sch_refused_a(a): i64 {
 # outside a list is a 422 naming it. A plugin document is any JSON object up to a size.
 fn _agnostic_sch_bodies_a(a): i64 {
     var crew = _agnostic_sch_fields_body_a(a, agnostic_crew_req_fields_a(a));
-    # What each element of the crew's two arrays is decoded as.
+    # What each element of the crew's two arrays is decoded as: an agent is spelled out, or it
+    # names a stored definition.
+    var agent_items = bayan_json_v_arr_new_a(a);
+    agent_items = _agnostic_sch_name_a(a, agent_items, "agent_definition");
+    agent_items = _agnostic_sch_name_a(a, agent_items, "agent_reference");
     var items = bayan_json_v_obj_new_a(a);
-    items = _agnostic_sch_put_a(a, items, "agents", _agnostic_sch_cstr_a(a, "agent_definition"));
+    items = _agnostic_sch_put_a(a, items, "agents", agent_items);
     items = _agnostic_sch_put_a(a, items, "tasks", _agnostic_sch_cstr_a(a, "task"));
     crew = _agnostic_sch_put_a(a, crew, "items", items);
+    # And what the object fields are.
+    var objects = bayan_json_v_obj_new_a(a);
+    objects = _agnostic_sch_put_a(a, objects, "target", _agnostic_sch_cstr_a(a, "target"));
+    crew = _agnostic_sch_put_a(a, crew, "objects", objects);
+
+    var task = _agnostic_sch_fields_body_a(a, agnostic_task_req_fields_a(a));
+    var task_objects = bayan_json_v_obj_new_a(a);
+    task_objects = _agnostic_sch_put_a(a, task_objects, "target", _agnostic_sch_cstr_a(a, "target"));
+    task_objects = _agnostic_sch_put_a(a, task_objects, "output_schema", _agnostic_sch_cstr_a(a, "output_schema"));
+    task = _agnostic_sch_put_a(a, task, "objects", task_objects);
 
     var def = _agnostic_sch_fields_body_a(a, agnostic_agent_def_fields_a(a));
     def = _agnostic_sch_put_a(a, def, "refused", _agnostic_sch_refused_a(a));
@@ -553,8 +599,11 @@ fn _agnostic_sch_bodies_a(a): i64 {
 
     var b = bayan_json_v_obj_new_a(a);
     b = _agnostic_sch_put_a(a, b, "crew", crew);
-    b = _agnostic_sch_put_a(a, b, "task", _agnostic_sch_fields_body_a(a, agnostic_task_req_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "task", task);
     b = _agnostic_sch_put_a(a, b, "agent_definition", def);
+    b = _agnostic_sch_put_a(a, b, "agent_reference", _agnostic_sch_fields_body_a(a, agnostic_agent_ref_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "target", _agnostic_sch_fields_body_a(a, agnostic_target_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "output_schema", _agnostic_sch_fields_body_a(a, agnostic_output_schema_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "login", _agnostic_sch_fields_body_a(a, agnostic_login_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "password_change", _agnostic_sch_fields_body_a(a,
         agnostic_password_change_fields_a(a)));

@@ -5,7 +5,7 @@ WHAT IT GUARDS. A suite runs one thread with no store contention, so it cannot s
 does at 200 crews a second. The first version of ADR 0022's fix passed every suite and lost most of
 its crews under this load, and only a real server with concurrent clients showed it.
 
-Six steps, the first four of which have lost crews before:
+Seven steps, the first four of which have lost crews before:
 
   1. a burst from `--clients` clients, past the engine's registry of 1,000, none of it polled;
   2. every crew read back, while the outcome writes are still behind;
@@ -16,6 +16,9 @@ Six steps, the first four of which have lost crews before:
      across its eviction is too short to hit on demand, so `ledger/ring-recycled` holds that rule;
   6. the same clients against a tenant cap, where a crew can end before its submit returns. A place
      not given back shows up as a tenant refused for crews it no longer has.
+  7. crews with a target of their own, a stored agent and a shape, polled as they end and read back
+     after a restart: each must say its own target and its `output_valid`, whichever thread read the
+     shape first, and a placeholder crew ending under a millisecond must not lose its target.
 
 The second burst is there because reading the first takes long enough for the writes to catch up,
 and a stop with nothing outstanding proves nothing. A crew that reads `interrupted` after the
@@ -307,13 +310,140 @@ def step_six(args, work, bad):
             server.kill()
 
 
+def aimed_crew(n):
+    """Step 7's crew: a target only it has, a stored agent, and a shape a placeholder answer fails."""
+    return json.dumps({
+        "name": f"aimed-{n}",
+        "target": {"url": f"https://sut.example/crew-{n}"},
+        "agents": [{"definition": "load-agent"}],
+        "tasks": [{"description": "one", "output_schema": {"type": "object", "required": ["verdict"]}}],
+    })
+
+
+def aimed_fault(crew, n, text):
+    """What is wrong with crew `crew`'s document `text`, for its number `n`, or None."""
+    doc = json.loads(text)
+    if doc.get("status") != "completed":
+        return f"{crew} ended {doc.get('status')}"
+    if doc.get("target", {}).get("url") != f"https://sut.example/crew-{n}":
+        return f"{crew} says it ran against {doc.get('target')}"
+    results = doc.get("results", [])
+    if len(results) != 1 or results[0].get("output_valid") is not False:
+        return f"{crew} results say {[r.get('output_valid') for r in results]}"
+    return None
+
+
+def aimed_race(port, total, clients):
+    """Step 7's burst, with half as many pollers. Crew id to number, the reads, and every fault."""
+    known, lock, taken, done = {}, threading.Lock(), [0], threading.Event()
+    reads, faults = [0], []
+
+    def writer():
+        while True:
+            with lock:
+                if taken[0] >= total:
+                    return
+                taken[0] += 1
+                n = taken[0]
+            status, text = request(port, "POST", "/api/v1/crews", aimed_crew(n))
+            if status == 202:
+                with lock:
+                    known[json.loads(text)["crew_id"]] = n
+            else:
+                with lock:
+                    faults.append(f"submit {n} answered {status}")
+
+    def reader():
+        rng = random.Random()
+        while not done.is_set():
+            with lock:
+                if not known:
+                    continue
+                crew = rng.choice(list(known.keys())[-64:])
+                n = known[crew]
+            status, text = request(port, "GET", f"/api/v1/crews/{crew}")
+            if status != 200 or json.loads(text).get("status") in ("pending", "running"):
+                continue
+            fault = aimed_fault(crew, n, text)
+            with lock:
+                reads[0] += 1
+                if fault:
+                    faults.append(fault)
+
+    writers = [threading.Thread(target=writer) for _ in range(clients)]
+    readers = [threading.Thread(target=reader) for _ in range(clients // 2)]
+    for t in writers + readers:
+        t.start()
+    for t in writers:
+        t.join()
+    done.set()
+    for t in readers:
+        t.join()
+    return known, reads[0], faults
+
+
+def read_aimed(port, known, settle_s):
+    """Every crew of step 7, read until it ends. Its faults."""
+    faults = []
+    deadline = time.monotonic() + settle_s
+    for crew, n in known.items():
+        while True:
+            status, text = request(port, "GET", f"/api/v1/crews/{crew}")
+            ended = status == 200 and json.loads(text).get("status") not in ("pending", "running")
+            if ended or time.monotonic() > deadline:
+                break
+            time.sleep(0.02)
+        fault = aimed_fault(crew, n, text) if status == 200 else f"{crew} answered {status}"
+        if fault:
+            faults.append(fault)
+    return faults
+
+
+def step_seven(args, work, bad):
+    hosts = {"AGNOSTIC_TARGET_HOSTS": "sut.example"}
+    server = start(args.binary, work, args.port, "aimed.log", db="aimed", **hosts)
+    try:
+        status, _ = request(args.port, "POST", "/api/v1/agents/definitions",
+                            json.dumps({"key": "load-agent", "role": "r", "goal": "g", "focus": "f"}))
+        if status != 201:
+            bad.append(f"the stored agent answered {status}")
+            return
+        total = max(args.crews // 3, 1500)
+        known, reads, faults = aimed_race(args.port, total, args.clients)
+        faults += read_aimed(args.port, known, 120)
+        print(f"{len(known)} aimed crews, {reads} reads of a finished one beside them: {len(faults)} faults")
+        if faults:
+            bad.append(f"aimed crews: {faults[:3]}")
+        if reads == 0:
+            bad.append("no read reached a finished crew")
+        server.terminate()
+        code = server.wait(300)
+        if code != 0:
+            bad.append(f"exit {code} after the aimed crews")
+    finally:
+        if server.poll() is None:
+            server.kill()
+
+    server = start(args.binary, work, args.port, "aimed-again.log", db="aimed", **hosts)
+    try:
+        faults = read_aimed(args.port, known, 30)
+        print(f"after a restart: {len(known) - len(faults)} of {len(known)} say what they ran against and how it read")
+        if faults:
+            bad.append(f"aimed crews after a restart: {faults[:3]}")
+        server.terminate()
+        server.wait(300)
+    finally:
+        if server.poll() is None:
+            server.kill()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("binary", nargs="?", default="build/agnostic")
     parser.add_argument("--crews", type=int, default=6000)
     parser.add_argument("--clients", type=int, default=16)
     parser.add_argument("--port", type=int, default=18732)
-    parser.add_argument("--steps", default="1-6")
+    parser.add_argument("--steps", default="1-7")
     args = parser.parse_args()
     steps = wanted(args.steps)
 
@@ -326,6 +456,8 @@ def main():
             step_five(args, work, bad)
         if 6 in steps:
             step_six(args, work, bad)
+        if 7 in steps:
+            step_seven(args, work, bad)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

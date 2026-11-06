@@ -40,6 +40,11 @@ var AGNOSTIC_JK_VERSION   = str_from("version");
 # happened to need it first — and this file is included before both, so a
 # top-level initialiser reading it cannot silently evaluate to 0.
 var AGNOSTIC_JK_NAME      = str_from("name");
+var AGNOSTIC_JK_TARGET    = str_from("target");       # a crew's or a task's (0.4.0)
+var AGNOSTIC_JK_URL       = str_from("url");
+var AGNOSTIC_JK_DEFINITION = str_from("definition");  # an agent named, not spelled (0.4.0)
+var AGNOSTIC_JK_TYPE      = str_from("type");
+var AGNOSTIC_JK_REQUIRED  = str_from("required");
 var AGNOSTIC_JK_TOOLS     = str_from("tools");
 var AGNOSTIC_JK_DOMAIN    = str_from("domain");
 var AGNOSTIC_JK_CHECKS    = str_from("checks");

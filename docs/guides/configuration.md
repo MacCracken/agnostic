@@ -30,6 +30,7 @@ for about 70 KB/s.
 | `AGNOSTIC_BOOTSTRAP_PASSWORD` | none | At least 12 characters. It is read, never logged, and has no effect once any user exists. Change it with `PUT /api/v1/auth/password` and unset it ([Users and tenants](users-and-tenants.md)). |
 | `AGNOSTIC_JWT_SECRET` | random per process | At least 32 bytes, or the server refuses to start. It is read and never logged. Unset, a restart ends every session. Set it, and tokens survive a restart. Anyone who holds it can forge a token for any user. Changing it ends every session. |
 | `AGNOSTIC_TRUSTED_PROXIES` | none | Who may say who the client is: IPv4 addresses and networks, comma-separated, up to 32. Unset, `X-Forwarded-For` is ignored. `/0` and host bits under a mask are refused. See [below](#behind-a-reverse-proxy). |
+| `AGNOSTIC_TARGET_HOSTS` | none | The hosts a crew's `target` may name, comma-separated, up to 64. Unset, every target is refused, and a crew with no target is unaffected. See [below](#what-crews-may-test). |
 | `AGNOSTIC_METRICS_TOKEN` | none | A scraper's bearer token, at least 32 bytes. It opens `GET /api/v1/metrics` and nothing else. Unset, only a super administrator can read it. It is read and never logged. |
 | `AGNOSTIC_TENANT_RATE_LIMIT` | `0` | Crews one tenant may submit in a minute, unless its own limit says otherwise. 0 is no limit. |
 | `AGNOSTIC_TENANT_MAX_CREWS` | `0` | Crews of one tenant that may be unfinished at once, unless its own limit says otherwise. 0 is no limit. |
@@ -61,6 +62,25 @@ for about 70 KB/s.
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | none | A base URL for OTLP span export. Unset, nothing is exported. |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | none | A complete traces URL, used as it is. It wins over the base URL. |
 | `OTEL_SERVICE_NAME` | `agnostic` | The service name on exported spans. |
+
+## What crews may test
+
+A crew can name a `target`, the system it tests, and that is where its load and security tools will
+point. So the hosts are the operator's to name, not the caller's: permission to submit a crew does not
+choose one.
+
+```sh
+AGNOSTIC_TARGET_HOSTS=staging.example.com,10.0.0.5,[::1]
+```
+
+- An entry is a host, and a target must name exactly that host, ignoring case. `example.com` does not
+  cover `www.example.com`, and `localhost` is not `127.0.0.1`. List what your targets spell.
+- There are no ports and no wildcards. An entry with either stops the server from starting, as does
+  anything else it cannot read, because a server with fewer hosts than you wrote is worse than one that
+  says so.
+- A refused target answers 403, and the audit trail records `crew.target_refused`.
+- Today this bounds what a crew says it is testing: no crew calls a tool yet. It is on the list now
+  so that a tool, when one runs, has a list to be held to.
 
 ## Behind a reverse proxy
 

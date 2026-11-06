@@ -44,8 +44,8 @@ budgets, 2.5.x the durable crew log, and 2.6.x MCP 2026-07-28 and A2A v1.0.x.
 
 ### 0.4.x — the QA tool surface and the crew body (M6)
 
-Waits on agnosai 2.3.x: F1, and B33. M6 says "preset-declared intent", and a preset declares only a
-class name and a `focus`, so each tool is designed for agnostic as it is written.
+The tools wait on agnosai 2.3.x: F1, and B33. M6 says "preset-declared intent", and a preset declares
+only a class name and a `focus`, so each tool is designed for agnostic as it is written.
 
 - [ ] **M6**: every one of the 38 names resolved, written or struck, with a miss an error.
 - [ ] **Hold a tool to the crew's target.** agnosai 2.2.4 has the gate (its ADR 025): a consumer's
@@ -54,17 +54,16 @@ class name and a `focus`, so each tool is designed for agnostic as it is written
   its task. Nothing here sets a gate yet.
 - [ ] **The tool-registry seam** (`handoff.md` §8), decided with F1.
 - [ ] **The reviewer preset**, once F9 hands a dependent task its dependencies' outputs (agnosai 2.4.x).
-- [ ] **A crew's target** (G4): a checked `target` on the crew that a task may override, and the
-  operator's list of hosts a deployment may test. Details under M6.
-- [ ] **Stored definitions in a crew body** (G4), so a client names one and does not re-send it.
-- [ ] **A task's `output_schema`**, forwarded to agnosai, which the reviewer preset and M8's structured
-  result both need.
-- [ ] **Field types and required-ness in the API schema**, as tables the decoders and the schema both
-  read. M7's input schemas need them, and the crew body widens on this line anyway. Details under
-  *API schema*.
-- [ ] **`GET /tools`** (G10), which the viability gate wants.
-- [ ] **The engine features with no route** (G10): definition versions and rollback, package export and
-  import, GPU, fleet, the `team` crew spec and `recommend_preset`, which needs an owner.
+- [ ] **The engine features with no route** (G10), none of which waits on agnosai:
+  - definition versions and rollback, on a history table here, since agnosai's store is in memory;
+  - package export and import;
+  - the `team` crew spec;
+  - `recommend_preset`. Its owner is agnostic, whose preset library is canonical (Settled decisions,
+    2026-08-20).
+  - ⚠ **GPU and fleet need a decision before a route.** Nothing in agnosai outside `src/fleet/` calls its
+    schedulers or registry, and agnostic is one process on one database, so a fleet route would have
+    nothing to read and would answer empty for ever. GPU has a source (`lib/ai-hwaccel.cyr` detects this
+    host's devices), and a route over it would say what a crew's `gpu_required` can find here.
 - [ ] **Tool upload** (G10), once it has a sandbox.
 - [ ] **The model picker** (M9), on B33.
 
@@ -177,23 +176,10 @@ and an agent's `focus`. The rest of that intent is in the Python tool classes, t
     only to decide what is ready). So the review task would have nothing to review.
   - Needs, in order: (1) agnosai hands a dependent task its dependencies' outputs, as data, in its
     context — the first half of agnosai **F9**, whose harness rule (a hand-off is as untrusted as
-    what it summarised) applies; (2) agnostic forwards a task's `output_schema` (agnosai validates
-    and retries against it already; agnostic's task allow-list has no slot), a widening of the
-    public request ahead of the v1.0 freeze; (3) the preset and its documentation.
-- [ ] **A crew's target (G4).** The form is settled (see *Settled decisions*); the ADR comes with the
-  work.
-  - **`"target": {"url": "…"}` on the crew body, and the same field on a task overrides it for that
-    task.** One checker serves both: `http` or `https` only, a length cap, and userinfo refused,
-    because the context reaches the model. It is an object so that a target that is not a URL can add
-    a key without a break.
-  - **It takes ADR 0017's path:** checked at the door, forwarded into each task's context, shown by the
-    plan route. agnosai renders the context into the prompt, so the model reads it with no change
-    there. The crew's target also goes in `agnostic_crew_index`, so a listing and a report can say what
-    was tested. That needs a store migration.
-  - **`AGNOSTIC_TARGET_HOSTS`:** the hosts a deployment may test, set by its operator. A target outside
-    the list is refused at the door, and with no list set every target is. A target is where load and
-    security tools point, so WRITE alone must not choose any host the server can reach, or someone
-    else's site. A crew with no target is unaffected.
+    what it summarised) applies; (2) the preset and its documentation. A task's `output_schema` is
+    forwarded since 0.4.0 ([ADR 0031](../adr/0031-output-schema-takes-what-the-engine-checks.md)).
+- [ ] **What a crew's target still needs** ([ADR 0029](../adr/0029-the-operator-lists-the-hosts-a-crew-may-test.md)
+  has the rest):
   - **A tool call is held to the target** once F1 lets agnostic refuse a call, and a declared private
     host gets past `agnosai_is_safe_url` the same way. Both are under *Waiting on agnosai*.
   - **A target behind a login** needs a credential that never enters the crew body, the task context or
@@ -287,8 +273,8 @@ there is no separate result model and no route that writes results. What that ne
 - [ ] **Measured numbers from tools.** A load test's p99 is a measurement and a model saying "all passed"
   is a claim, and a report labels which is which, as the swarm views label SIM and LIVE. It needs F1 to
   keep each tool's result on the task result (*Waiting on agnosai*).
-- [ ] **Counts in `agnostic_crew_index`,** beside the crew's `target` (M6) and in the same store
-  migration, so trends read small rows and do not parse every outcome under the store lock.
+- [ ] **Counts in `agnostic_crew_index`,** beside the crew's `target`, so trends read small rows and do
+  not parse every outcome under the store lock. Each `ADD COLUMN` rewrites the table once at mount.
 - [ ] **Rendered on request, as HTML, CSV, JSON or PDF.** Outcomes are write-once, so a report can be built
   from one whenever it is asked for. No file is stored, and a report in another tenant answers 404 like
   the crew does.
@@ -424,9 +410,6 @@ From [ADR 0015](../adr/0015-the-http-api-is-described-by-a-generated-schema.md)'
 Each needs its source made a table first, or it would be a hand-kept copy, which is what the ADR exists
 to remove.
 
-- [ ] **Field types and required-ness of each request field (0.4.x).** Today they are decoder code
-  (`src/engine/request.cyr`, `src/engine/agentdef.cyr`), not data. The first-party rule gives every MCP
-  tool a JSON input schema, and M7's tools mirror the routes, so without these M7 hand-writes them.
 - [ ] **Nested response shapes (before the freeze).** H5's fourth change covers only top-level keys.
 - [ ] **Per-handler 4xx statuses (before the freeze).** The route modules' "Route | Codes" headers and
   `state.md` keep them today.
@@ -527,6 +510,10 @@ Each is fixed at its source and reaches agnostic by a re-pin. Filings are in eac
   one page since 0.2.3 and patra still scans and sorts the tenant's history first: 55 ms a request at
   10,000 crews, under the store lock, and it grows with the history. A second index on a table, or a
   composite one on (`scope`, `submitted`), ends it. Filed with patra.
+- [ ] → **agnosai**: a task with an `output_schema` is not held to it. Its last answer is never checked,
+  so a task that never meets the shape completes, and the model first sees the schema after it has
+  failed. agnostic reports `output_valid` meanwhile, and its documentation says to describe the shape in
+  `expected_output`. Filed with agnosai (`2026-11-06-agnostic-output-schema-is-not-held-to.md`).
 - [ ] → **agnosai**: what a crew keeps after it is forgotten (audit P2). 11,080 B a crew for life, about 11 GB
   per million crews, plus 1.6× its output. Needs a crew-scoped arena, and a release call beside
   `forget_crew`, because agnostic reads a crew's spec and results after forgetting it. agnostic gave back
@@ -562,14 +549,14 @@ None open. The answers are under *Settled decisions*.
   structured JSON-RPC peers, not by scraping a PTY. This is a strategic option, not a
   commitment, and it only makes sense after F1.
 - **What the API schema leaves out, beyond the freeze** (ADR 0015; `docs/api/README.md`, "Known
-  gaps"). What the freeze and M7 need is scheduled under *API schema*. Neither of these can break a
+  gaps"). What the freeze needs is scheduled under *API schema*. Neither of these can break a
   client, so neither is:
   - the reverse of the declared parts: a query parameter or header a handler starts reading without
     declaring it is caught only for the six known parameter names on GET routes
     (`tests/api_schema.tcyr`, `api/probes`). Closing it means handlers read parameters and headers
     through a per-route table the schema also reads;
-  - an OpenAPI 3.1 rendering, which needs the field types above — ADR 0015 rejected it until then.
-    After that it is one more generator over the same data, and standard tooling can produce
+  - an OpenAPI 3.1 rendering, which needed the field types ADR 0015 rejected it for want of, and has
+    them since 0.4.0 (ADR 0028). It is one more generator over the same data, and standard tooling can produce
     clients from it, as turnstone produces its Python and TypeScript SDKs from its specs.
 - **Agent skills, narrowed to the work** (recorded 2026-10-07; a maybe). A skill is a named
   procedure, instructions plus the tools it needs, in the SKILL.md shape `skills/agnostic/SKILL.md`

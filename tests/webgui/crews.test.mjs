@@ -300,6 +300,35 @@ test('cost is shown only when a call was priced; tokens only when metered', asyn
   assert.equal(d.planNote.includes('no longer held'), true, 'a crew with no plan says why');
 });
 
+test('a crew\'s target is shown, a task\'s own beside it, and so is an answer out of shape', async () => {
+  const fake = new FakeAgnostic();
+  const id = fake.addCrew(1, 'running', { target: { url: 'https://crew.example/app' } });
+  fake.plans.set(id, { crew_id: id, process: 'sequential', agents: [], target: { url: 'https://crew.example/app' },
+    tasks: [{ task_id: 't-a', index: 0, description: 'Check it', priority: 'normal', dependencies: [], target: { url: 'https://crew.example/app' } },
+            { task_id: 't-b', index: 1, description: 'Compare', priority: 'normal', dependencies: [], target: { url: 'https://other.example/' } }] });
+  const d = new C.CrewDetail(hostFor(fake), id, { pollMs: 5 });
+  await d.start();
+  assert.equal(d.summary().target, 'https://crew.example/app', 'the outcome says what it ran against');
+  assert.equal(d.tasks[1].target, 'https://other.example/', 'and a task keeps its own');
+
+  Object.assign(fake.docs.get(id), { status: 'completed', results: [
+    { task_id: 't-a', status: 'completed', output: '{}', output_valid: true },
+    { task_id: 't-b', status: 'completed', output: 'prose', output_valid: false }] });
+  fake.status.set(id, 'completed');
+  await tick(30);
+  assert.equal(d.tasks[0].outputValid, true);
+  assert.equal(d.tasks[1].outputValid, false, 'completed, and not in the shape it declared');
+  assert.equal(d.tasks[0].status, 'completed');
+
+  const none = fake.addCrew(2, 'completed');
+  fake.plans.set(none, { crew_id: none, process: 'sequential', agents: [], tasks: [] });
+  const p = new C.CrewDetail(hostFor(fake), none, { pollMs: 5 });
+  await p.start();
+  assert.equal(p.summary().target, '', 'a crew with none shows none');
+  p.stop && p.stop();
+  d.stop && d.stop();
+});
+
 test('cancel: the crew stays watched until its last tasks report, and their results show', async () => {
   const fake = new FakeAgnostic();
   const id = fake.addCrew(3, 'running');

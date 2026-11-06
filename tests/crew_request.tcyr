@@ -15,6 +15,7 @@ include "src/http/status.cyr"
 include "src/http/response.cyr"
 include "src/http/codec.cyr"
 include "src/engine/reject.cyr"
+include "src/engine/target.cyr"
 include "src/engine/agentdef.cyr"
 include "src/engine/request.cyr"
 
@@ -42,7 +43,7 @@ fn _t_decode(a, body, out): i64 {
     store64(out, 0);
     var v = agnostic_decode_a(a, str_from(body));
     if (v == 0) { return 0; }
-    return agnostic_crew_req_from_value_a(a, v, out);
+    return agnostic_crew_req_from_value_a(a, v, 0, out);
 }
 
 # A minimal valid submission with one agent and one task.
@@ -575,9 +576,9 @@ fn test_selection_hints() {
     var hr = _t_decode(big, _t_hinted(",\"domain\":\"performance\""), &rj);
     assert_neq(hr, 0, "a hinted task decodes");
     var ht = vec_get(agnostic_crew_req_tasks(hr), 0);
-    assert_eq(_agnostic_task_req_hints_rendered_len_a(arena_allocator(64), ht), 0 - 1,
+    assert_eq(_agnostic_task_req_hints_rendered_len_a(arena_allocator(64), ht, 0), 0 - 1,
       "measuring in an arena that runs out is -1, not 'fits'");
-    assert_eq(_agnostic_task_req_hints_rendered_len_a(big, ht) > 0, 1, "and in one that does not, a length");
+    assert_eq(_agnostic_task_req_hints_rendered_len_a(big, ht, 0) > 0, 1, "and in one that does not, a length");
     reset_via(big);
 
     reset_via(a);
@@ -679,7 +680,7 @@ fn test_an_accepted_crew_outlives_the_arena() {
     test_group("request/outlives-arena");
     var a = arena_allocator(65536);
     var rj: i64[1];
-    var r = _t_decode(a, "{\"name\":\"keep\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"tools\":[\"k6\"],\"focus\":\"api\"}],\"tasks\":[{\"description\":\"first\",\"expected_output\":\"a report\",\"required_tools\":[\"k6\"],\"domain\":\"performance\",\"complexity\":\"high\",\"priority\":\"high\",\"risk\":\"low\",\"gpu_required\":true},{\"description\":\"second\",\"dependencies\":[0]}]}", &rj); #skip-lint
+    var r = _t_decode(a, "{\"name\":\"keep\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"tools\":[\"k6\"],\"focus\":\"api\"}],\"tasks\":[{\"description\":\"first\",\"expected_output\":\"a report\",\"required_tools\":[\"k6\"],\"domain\":\"performance\",\"complexity\":\"high\",\"priority\":\"high\",\"risk\":\"low\",\"gpu_required\":true,\"output_schema\":{\"type\":\"object\",\"required\":[\"verdict\"]}},{\"description\":\"second\",\"dependencies\":[0]}]}", &rj); #skip-lint
     assert_neq(r, 0, "the crew is accepted");
     if (r == 0) { return 0; }
     reset_via(a);
@@ -698,11 +699,45 @@ fn test_an_accepted_crew_outlives_the_arena() {
     assert_eq(agnostic_task_req_priority(t0), agnostic_priority_from_wire(str_from("high")), "its priority");
     assert_eq(agnostic_task_req_risk(t0), agnostic_risk_from_wire(str_from("low")), "its risk");
     assert_eq(agnostic_task_req_gpu_required(t0), 1, "its GPU requirement");
+    var sch = agnostic_task_req_output_schema(t0);
+    assert_neq(sch, 0, "its output schema");
+    assert_eq(str_eq_cstr(agnostic_req_str(sch, str_from("type")), "object"), 1, "with its type");
+    var names = bayan_json_v_obj_get_by_cstr(sch, "required");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_arr_get(names, 0)), "verdict"), 1, "and its names");
     var deps = agnostic_task_req_dependencies(t1);
     assert_eq(vec_len(deps) == 1 && vec_get(deps, 0) == 0, 1, "and the second task's dependency");
     assert_eq(str_eq_cstr(agnostic_crew_req_name(r), "keep"), 1, "the crew's name");
     var e = agnostic_agent_def_engine(vec_get(agnostic_crew_req_agents(r), 0));
     assert_eq(str_eq_cstr(agnosai_agent_key(e), "a1"), 1, "and its agent's key");
+}
+
+# A target outlives the request like the rest of a crew, and is measured with the hints it joins.
+fn test_a_target_outlives_the_arena() {
+    test_group("request/target-outlives");
+    agnostic_target_set_hosts(agnostic_config_parse_target_hosts(str_from("crew.example,task.example")));
+    var a = arena_allocator(1048576);
+    var rj: i64[1];
+    var r = _t_decode(a, "{\"name\":\"keep\",\"target\":{\"url\":\"https://crew.example/a\"},\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"one\",\"target\":{\"url\":\"https://task.example/b\"}},{\"description\":\"two\"}]}", &rj); #skip-lint
+    assert_neq(r, 0, "accepted");
+    if (r == 0) { return 0; }
+    reset_via(a);
+    var junk = alloc_via(a, 60000);
+    memset(junk, 120, 60000);
+    assert_eq(str_eq_cstr(agnostic_crew_req_target(r), "https://crew.example/a"), 1,
+      "⭐ the crew's target is its own copy");
+    var t0 = vec_get(agnostic_crew_req_tasks(r), 0);
+    var t1 = vec_get(agnostic_crew_req_tasks(r), 1);
+    assert_eq(str_eq_cstr(agnostic_task_req_target(t0), "https://task.example/b"), 1, "⭐ and so is a task's");
+    assert_eq(agnostic_task_req_target(t1), 0, "a task with none has none: its crew's applies at the spec");
+
+    # ⚠ The rendered context counts the target: hints that fit alone may not fit with it.
+    var big = arena_allocator(1048576);
+    var ht = vec_get(agnostic_crew_req_tasks(_t_decode(big, _t_hinted(",\"domain\":\"performance\""), &rj)), 0);
+    var bare = _agnostic_task_req_hints_rendered_len_a(big, ht, 0);
+    var with = _agnostic_task_req_hints_rendered_len_a(big, ht, str_from("https://crew.example/a"));
+    assert_gt(with, bare, "⭐ a crew's target is measured in each task's context");
+    agnostic_target_set_hosts(0);
+    return 0;
 }
 
 # A dependency means something only to `dag`. Anywhere else it was accepted and ignored, and a task
@@ -730,6 +765,7 @@ fn test_dependencies_need_a_dag() {
 
 fn main() {
     alloc_init();
+    test_a_target_outlives_the_arena();
     test_dependencies_need_a_dag();
     thread_local_init();
     test_valid_minimum();

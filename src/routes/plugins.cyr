@@ -23,7 +23,7 @@
 # body from this list (`src/http/schema.cyr`).
 fn agnostic_plugin_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "enabled");
+    agnostic_field_req_a(a, f, "enabled", AGNOSTIC_FK_BOOL);
     return f;
 }
 
@@ -70,18 +70,19 @@ fn agnostic_route_plugin_set_a(a, id: Str, body: Str): i64 {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "the body must be a JSON object: {\"enabled\": true|false}"));
     }
-    var unknown = agnostic_unknown_field(v, agnostic_plugin_fields_a(a));
+    var allowed = agnostic_plugin_fields_a(a);
+    var unknown = agnostic_unknown_field(v, allowed);
     if (unknown != 0) {
         var sb = str_builder_new_a(a);
         str_builder_add_cstr_a(a, sb, "unknown field in request body: ");
         str_builder_add_a(a, sb, unknown);
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sb));
     }
-    var on = agnostic_req_bool(v, AGNOSTIC_JK_ENABLED, 0 - 1);
-    if (on < 0) {
-        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'enabled' is required and must be a JSON boolean"));
+    var bad = agnostic_field_bad(v, allowed);
+    if (bad != 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE, agnostic_field_refusal_a(a, bad));
     }
+    var on = agnostic_req_bool(v, AGNOSTIC_JK_ENABLED, 0 - 1);
 
     var rc = agnostic_plugin_set_enabled(p, on);
     if (rc == AGNOSTIC_PLUGIN_SET_FAILED) {

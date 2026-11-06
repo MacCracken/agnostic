@@ -81,6 +81,64 @@ fn agnostic_qa_tools_reset(): i64 {
     return 0;
 }
 
+# The engine tools a preset name can resolve to, for `GET /api/v1/tools` to read (0.4.0).
+#
+# ⚠ **A catalogue, not the seam.** It says what exists: nothing runs these, the orchestrator holds a
+# registry of its own that this is not, and where QA tools register is decided with agnosai's loop
+# (`handoff.md` §8). Built once at mount and only read after.
+var _agnostic_qa_registry = 0;
+
+# The catalogue's tools as schemas, by name, or 0 before mount.
+#
+# ⚠ **Taken once, here.** A tool's schema callback is the tool's own code, and one of the builtins
+# keeps 160 B on the global heap each time it is asked: asked per request, that was anyone with READ
+# growing the heap. The list cannot change after mount, so it is read once.
+var _agnostic_qa_engine_tools = 0;
+
+# Schemas of `reg`'s tools, on the global heap, ordered by name: the registry is a map, and its
+# order is not one to publish. A handful of tools.
+fn _agnostic_qa_engine_schemas(reg): i64 {
+    var schemas = agnosai_tool_registry_list_a(default_alloc(), reg);
+    var i = 1;
+    while (i < vec_len(schemas)) {
+        var s = vec_get(schemas, i);
+        var j = i;
+        while (j > 0) {
+            var prev = vec_get(schemas, j - 1);
+            if (_agnostic_str_order(agnosai_tool_schema_name(prev), agnosai_tool_schema_name(s)) <= 0) { break; }
+            vec_set(schemas, j, prev);
+            j = j - 1;
+        }
+        vec_set(schemas, j, s);
+        i = i + 1;
+    }
+    return schemas;
+}
+
+# Build the catalogue and the alias table. Mount time, on the one thread.
+fn agnostic_qa_catalog_init(): i64 {
+    agnostic_qa_tools_init();
+    if (_agnostic_qa_registry != 0) { return _agnostic_qa_registry; }
+    var r = agnosai_tool_registry_new();
+    if (r == 0) { return 0; }
+    agnosai_register_basic_builtins(r);
+    agnosai_register_load_testing_builtin(r);
+    agnosai_register_security_audit_builtin(r);
+    _agnostic_qa_engine_tools = _agnostic_qa_engine_schemas(r);
+    _agnostic_qa_registry = r;
+    return r;
+}
+
+# The catalogue, or 0 before mount.
+fn agnostic_qa_catalog(): i64 {
+    return _agnostic_qa_registry;
+}
+
+# The catalogue's tools as schemas, by name, or 0 before mount.
+fn agnostic_qa_engine_tools(): i64 {
+    return _agnostic_qa_engine_tools;
+}
+
 # How many preset names have a declared backend.
 fn agnostic_qa_alias_count(): i64 {
     if (_agnostic_qa_alias == 0) { return 0; }

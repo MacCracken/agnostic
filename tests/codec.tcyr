@@ -47,8 +47,8 @@ fn test_allow_list_accepts_known() {
     var v = _t_parse(a, "{\"name\":\"crew-1\",\"count\":3}");
 
     var allowed = agnostic_fields_a(a);
-    agnostic_field_a(a, allowed, "name");
-    agnostic_field_a(a, allowed, "count");
+    agnostic_field_a(a, allowed, "name", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, allowed, "count", AGNOSTIC_FK_INT);
 
     assert_eq(agnostic_no_unknown_fields(v, allowed), 1, "every key is permitted");
     assert_eq(agnostic_unknown_field(v, allowed), 0, "no unknown field to report");
@@ -57,6 +57,66 @@ fn test_allow_list_accepts_known() {
     # appear, not what must.
     var v2 = _t_parse(a, "{\"name\":\"crew-1\"}");
     assert_eq(agnostic_no_unknown_fields(v2, allowed), 1, "a subset of permitted keys is fine");
+}
+
+# Every kind, required or not, and what a refusal says. `tests/api_schema.tcyr` proves each real
+# body's rows at its door; this proves the rules those rows are read by.
+fn test_field_rows() {
+    test_group("codec/field-rows");
+    var a = arena_allocator(65536);
+    var f = agnostic_fields_a(a);
+    agnostic_field_req_a(a, f, "name", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "count", AGNOSTIC_FK_INT);
+    agnostic_field_a(a, f, "on", AGNOSTIC_FK_BOOL);
+    agnostic_field_a(a, f, "doc", AGNOSTIC_FK_OBJECT);
+    agnostic_field_a(a, f, "list", AGNOSTIC_FK_ARRAY);
+    agnostic_field_a(a, f, "names", AGNOSTIC_FK_STRINGS);
+    agnostic_field_a(a, f, "ints", AGNOSTIC_FK_INTS);
+
+    assert_eq(agnostic_field_bad(_t_parse(a, "{\"name\":\"x\"}"), f), 0, "the required field alone passes");
+    assert_eq(agnostic_field_bad(_t_parse(a,
+          "{\"name\":\"x\",\"count\":1,\"on\":true,\"doc\":{},\"list\":[1,\"a\"],\"names\":[\"a\"],\"ints\":[1]}"), f), 0, #skip-lint
+      "every kind, as itself");
+    assert_eq(agnostic_field_bad(_t_parse(a, "{\"name\":\"x\",\"names\":[],\"ints\":[]}"), f), 0,
+      "an empty array of either is an array of it");
+    assert_eq(agnostic_field_bad(_t_parse(a, "{\"name\":\"x\",\"count\":null,\"doc\":null}"), f), 0,
+      "null in an optional field is the field left out");
+
+    var missing = agnostic_field_bad(_t_parse(a, "{}"), f);
+    assert_eq(str_eq_cstr(agnostic_field_name(missing), "name"), 1, "a required field left out is refused");
+    assert_eq(str_eq_cstr(agnostic_field_refusal_a(a, missing), "'name' is required and must be a string"), 1,
+      "and says so");
+    assert_eq(agnostic_field_status(missing), HTTP_BAD_REQUEST, "400 at the crew doors");
+    var nul = agnostic_field_bad(_t_parse(a, "{\"name\":null}"), f);
+    assert_eq(str_eq_cstr(agnostic_field_name(nul), "name"), 1, "and null in it is the field missing");
+
+    var wrong = agnostic_field_bad(_t_parse(a, "{\"name\":\"x\",\"count\":\"7\"}"), f);
+    assert_eq(str_eq_cstr(agnostic_field_refusal_a(a, wrong), "'count' must be an integer"), 1,
+      "\"7\" is not an integer");
+    assert_eq(agnostic_field_status(wrong), AGNOSTIC_HTTP_UNPROCESSABLE, "422 for an optional field");
+    var flt = agnostic_field_bad(_t_parse(a, "{\"name\":\"x\",\"count\":1.5}"), f);
+    assert_eq(str_eq_cstr(agnostic_field_name(flt), "count"), 1, "nor is 1.5");
+    var tru = agnostic_field_bad(_t_parse(a, "{\"name\":\"x\",\"on\":\"true\"}"), f);
+    assert_eq(str_eq_cstr(agnostic_field_refusal_a(a, tru), "'on' must be a boolean"), 1,
+      "\"true\" is not a boolean");
+    var o = agnostic_field_bad(_t_parse(a, "{\"name\":\"x\",\"doc\":[]}"), f);
+    assert_eq(str_eq_cstr(agnostic_field_refusal_a(a, o), "'doc' must be an object"), 1, "an array is not an object");
+    var arr = agnostic_field_bad(_t_parse(a, "{\"name\":\"x\",\"list\":{}}"), f);
+    assert_eq(str_eq_cstr(agnostic_field_refusal_a(a, arr), "'list' must be an array"), 1, "an object is not an array");
+    var ns = agnostic_field_bad(_t_parse(a, "{\"name\":\"x\",\"names\":[\"a\",1]}"), f);
+    assert_eq(str_eq_cstr(agnostic_field_refusal_a(a, ns), "'names' must be an array of strings"), 1,
+      "one element of the wrong type is enough");
+    var nc = agnostic_field_bad(_t_parse(a, "{\"name\":\"x\",\"names\":\"a\"}"), f);
+    assert_eq(str_eq_cstr(agnostic_field_name(nc), "names"), 1, "and a bare string is not an array of them");
+    var is = agnostic_field_bad(_t_parse(a, "{\"name\":\"x\",\"ints\":[1,\"2\"]}"), f);
+    assert_eq(str_eq_cstr(agnostic_field_refusal_a(a, is), "'ints' must be an array of integers"), 1,
+      "of integers too");
+
+    assert_eq(str_eq_cstr(str_from(agnostic_field_kind_type(AGNOSTIC_FK_STRINGS)), "array"), 1,
+      "the schema calls an array of strings an array");
+    assert_eq(str_eq_cstr(str_from(agnostic_field_kind_items(AGNOSTIC_FK_INTS)), "integer"), 1,
+      "and names what it holds");
+    assert_eq(agnostic_field_kind_items(AGNOSTIC_FK_ARRAY), 0, "an array its decoder walks names nothing");
 }
 
 fn test_allow_list_rejects_unknown() {
@@ -75,7 +135,7 @@ fn test_allow_list_rejects_unknown() {
     var v = _t_parse(a, "{\"name\":\"crew-1\",\"gpu_strict\":true}");
 
     var allowed = agnostic_fields_a(a);
-    agnostic_field_a(a, allowed, "name");
+    agnostic_field_a(a, allowed, "name", AGNOSTIC_FK_STRING);
 
     assert_eq(agnostic_no_unknown_fields(v, allowed), 0,
       "an unlisted field is rejected, not silently dropped");
@@ -91,7 +151,7 @@ fn test_allow_list_edges() {
 
     var a = arena_allocator(65536);
     var allowed = agnostic_fields_a(a);
-    agnostic_field_a(a, allowed, "name");
+    agnostic_field_a(a, allowed, "name", AGNOSTIC_FK_STRING);
 
     # An empty object trivially satisfies any allow-list.
     var empty = _t_parse(a, "{}");
@@ -219,6 +279,7 @@ fn main() {
     thread_local_init();
     test_decode_basics();
     test_allow_list_accepts_known();
+    test_field_rows();
     test_allow_list_rejects_unknown();
     test_allow_list_edges();
     test_required_str();

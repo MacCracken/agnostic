@@ -2,7 +2,16 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-06, at **0.3.1** — agnostic can be deployed. A trusted-proxy setting
+> Last refreshed: 2026-11-06, at **0.4.0** — a crew can say what it is for: a checked `target` under
+> `AGNOSTIC_TARGET_HOSTS` ([ADR 0029](../adr/0029-the-operator-lists-the-hosts-a-crew-may-test.md)), a
+> stored definition named in its body ([ADR 0030](../adr/0030-a-crew-names-a-stored-definition-and-copies-it.md)),
+> and a task's `output_schema` with `output_valid` on its result
+> ([ADR 0031](../adr/0031-output-schema-takes-what-the-engine-checks.md)). Every request field has a typed row
+> that every door reads and the API schema prints
+> ([ADR 0028](../adr/0028-a-field-row-says-what-it-holds.md)), and `GET /api/v1/tools` shows the M6 gate. No
+> dependency moved: agnosai 2.3.x is not out. Version, Source, the route table, the WebGUI section, Tests,
+> Persistence and Next were refreshed then.
+> Before that, 2026-11-06, at **0.3.1** — agnostic can be deployed. A trusted-proxy setting
 > ([ADR 0024](../adr/0024-the-client-is-the-rightmost-address-no-listed-proxy-added.md)), refusals in the
 > trail within a budget ([ADR 0025](../adr/0025-a-refusal-always-counts-and-is-written-within-a-budget.md)),
 > tenant limits on crews ([ADR 0026](../adr/0026-a-tenants-limits-are-on-crews-and-a-place-is-reserved.md)),
@@ -94,7 +103,7 @@
 
 ## Version
 
-**0.3.1** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.4.0** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -160,14 +169,14 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 55 files, 33,520 lines, 1,420 top-level definitions (0.3.1; 31,488 and 1,331 at
-0.3.0), all `agnostic_*`-prefixed. 12,476 of those lines are generated:
-`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (11,639 — six embedded pages and the plugin
+the real surface (0.1.10)** — 57 files, 34,564 lines, 1,503 top-level definitions (0.4.0; 33,520 and 1,420 at
+0.3.1), all `agnostic_*`-prefixed. 12,492 of those lines are generated:
+`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (11,655 — six embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 38 suites, 3,569 assertions, 0 failed** (`cyrius test`, 0.3.1; 3,273 at 0.3.0), plus
-**96 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.3.0) — **and the
-same 38 suites natively on aarch64** (Raspberry Pi 4). Their counts match but for `crews_route`, 247 or 248
+**Tests: 39 suites, 3,820 assertions, 0 failed** (`cyrius test`, 0.4.0; 3,569 at 0.3.1), plus
+**97 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 96 at 0.3.1) — **and the
+same 39 suites natively on aarch64** (Raspberry Pi 4). Their counts match but for `crews_route`, 247 or 248
 from run to run, because two loops assert once per poll. Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
 shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
@@ -205,9 +214,12 @@ NOT aliased onto `security_audit`.
 
 ⚠ **NEXT DECISION, and it gates everything else: who owns the tool registry.**
 `agnostic_engine_init` exposes no registry handle — the orchestrator owns one
-internally — so the gate is not wired into mount and agnostic's QA tools have
-nowhere to register that the orchestrator's agents would read. Settle that before
-implementing tools, or they will be written against the wrong seam.
+internally — so agnostic's QA tools have nowhere to register that the
+orchestrator's agents would read. Settle that before implementing tools, or they
+will be written against the wrong seam. Since 0.4.0 the gate is on the wire
+(`GET /api/v1/tools`), read from a catalogue built at mount
+(`agnostic_qa_catalog_init`). ⚠ That catalogue is not the seam: nothing runs it, and
+`crews_call_tools` says so on every answer.
 
 ⚠ **`agnostic_response_json_a` takes the bayan OBJECT, not an encoded `Str`.**
 `_agnostic_serve_send` serialises it. Handing it a `Str` double-encodes the
@@ -235,7 +247,8 @@ refactor of any of it.
 | `src/http/{status,response,codec,router}.cyr` | status table, response records, JSON allow-list codec, route matching |
 | `src/engine/outcome.cyr` | the result type carrying status + error + engine id + results |
 | `src/engine/ledger.cyr` | what Agnostic remembers about submitted crews; the terminal latch; the numbered event ring, scope and idempotency key (0.1.9) |
-| `src/engine/request.cyr` | one task model, allow-list decoded, DAG validated |
+| `src/engine/request.cyr` | one task model, allow-list decoded, DAG validated; touches no store, so references are read before it (`agnostic_crew_agents_resolve_a`) |
+| `src/engine/target.cyr` | what a crew's `target` may be, and the operator's host list (0.4.0, ADR 0029) |
 | `src/engine/crew.cyr` | the orchestrator bridge — submit, poll, cancel |
 | `src/engine/collector.cyr` | the thread that keeps every live crew's ledger entry current (0.1.9, ADR 0009) |
 | `src/engine/reject.cyr` | how a request says no; the typed-field readers |
@@ -260,6 +273,7 @@ refactor of any of it.
 | `src/routes/crews.cyr` | the crew surface |
 | `src/routes/definitions.cyr` | agent definition CRUD |
 | `src/routes/presets.cyr` | the preset surface, read-only |
+| `src/routes/tools.cyr` | `GET /api/v1/tools`: the M6 gate on the wire (0.4.0) |
 | `src/routes/plugins.cyr` | list plugins, switch one on or off (0.1.7) |
 | `src/routes/webgui.cyr` | `/ui` and `/ui/plugins/{id}` — the pages (0.1.7) |
 | `src/routes/plugindata.cyr` | a plugin's documents — list, read, write, delete (0.1.8) |
@@ -294,7 +308,7 @@ The crew surface, and what each code means:
 
 | route | codes |
 |---|---|
-| `POST /api/v1/crews` | **202** accepted (`task_ids`; `replayed` for a repeated `Idempotency-Key`); a task may carry selection hints — `required_tools`, `complexity`, `domain`, `gpu_required` (0.1.14, ADR 0017); the crew joins the request's trace (0.1.14, ADR 0018) · 400 semantic · 422 shape or key reused over another body · 503 engine down |
+| `POST /api/v1/crews` | **202** accepted (`task_ids`; `replayed` for a repeated `Idempotency-Key`); a task may carry selection hints — `required_tools`, `complexity`, `domain`, `gpu_required` (0.1.14, ADR 0017); the crew joins the request's trace (0.1.14, ADR 0018) ; since 0.4.0 a `target`, a stored definition named in `agents`, and a task's `output_schema` · 400 semantic · 403 a target off `AGNOSTIC_TARGET_HOSTS` · 422 shape or key reused over another body · 503 engine down |
 | `GET /api/v1/crews` | 200 — the caller's tenant's crews, newest first; `?limit=` `?before=` (0.1.9), `?status=` (0.1.10; `interrupted` since 0.1.13) · 422 |
 | `GET /api/v1/crews/{id}` | 200 (with `usage`, times, `scope`); **`interrupted`** for a crew a restart cut short, where it answered 404 before 0.1.13 (ADR 0013) · 404 never submitted **or another tenant's** · 422 malformed id |
 | `POST /api/v1/crews/{id}/cancel` | 200 · 404 · **409 already terminal** — also for a crew stored before a restart, `interrupted` included (0.1.15) · 422 · 503 |
@@ -303,6 +317,7 @@ The crew surface, and what each code means:
 | `GET /api/v1/crews/{id}/plan` | 200 — agents and tasks with engine ids (0.1.9) and each task's hints (0.1.14); `?explain=selection[&task=N]`: each task's ranked candidates with their five scores, the `scorer`, a `candidate_limit` (0.1.14, ADR 0016) · 404 not held · 422 (also a bad `explain` or `task`) |
 | `GET /api/v1/presets` | 200 — summaries, not documents |
 | `GET /api/v1/presets/{name}` | 200 · 404 unknown name |
+| `GET /api/v1/tools` | 200 — the 38 names, what resolves, the engine's tools, and `crews_call_tools` |
 | `GET /api/v1/agents/definitions` | 200 |
 | `POST /api/v1/agents/definitions` | **201** · 400 (also an unknown `complexity`, 0.1.15) · **409** · 422 · **507** |
 | `GET /api/v1/agents/definitions/{key}` | 200 — with its revision, `etag` and an `ETag` header (0.1.15) · 404 · 422 |
@@ -327,7 +342,7 @@ CHANGELOG (0.1.13, Verified) records the live run that confirmed it, and a chang
 should re-read the skill.
 
 The table is a flat scan of 32 paths (33 patterns; 21 until 0.3.0). Since 0.1.13 (H5) it is literally a table
-— 33 rows of a pattern and the route id per method, built once at load, which the resolver walks
+— 34 rows of a pattern and the route id per method, built once at load, which the resolver walks
 in the old order and `agnostic_route_row_pattern` / `agnostic_route_row_id` expose. Re-measured then,
 in interleaved runs against a copy of the tree with the if-chain restored: 0.107 / 0.87 / 0.72 /
 2.15 µs against 0.108 / 0.92 / 0.78 / 2.19 µs — no slower, a miss ~7% faster, because the walk calls
@@ -388,7 +403,7 @@ and carries query strings, revisions and idempotency keys. Plugin documents have
   `POST /api/v1/auth/login` and keeps the token per tab (`sessionStorage`). It is also the
   **host bridge**: it answers a plugin's `postMessage` requests that its manifest permits,
   with the user's token, which the plugin never sees.
-- **Crews 0.1.2** (`crews`, 49,422 B, `data: live`, `crews:read`, `crews:write`) — the tenant's
+- **Crews 0.1.3** (`crews`, 50,514 B, `data: live`, `crews:read`, `crews:write`) — the tenant's
   crews by status, a page at a time; a crew's plan, progress by cursor, each task's result with its
   tokens, cost and time, the totals (tokens only when metered, cost only when priced); cancel, asked
   inline; a cancelled crew followed until its finished tasks' results arrive; links to Swarm Command.
@@ -486,8 +501,16 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**38 suites, 3,569 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.3.1, 2026-11-06),
-with `CYRIUS_DCE=1` as CI runs them. 0.3.1's additions, the rules mutation-checked (51 mutants, CHANGELOG
+**39 suites, 3,820 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.0, 2026-11-06),
+with `CYRIUS_DCE=1` as CI runs them. 0.4.0's additions, the rules mutation-checked (97 mutants, CHANGELOG
+[0.4.0]): `tests/crew_body.tcyr` (191: the target and its list, stored definitions, `output_schema`,
+`output_valid`, a database older than the target, and the tools route), `codec/field-rows`,
+`config/target-hosts`, `request/target-outlives`, `alloc/crew-body`, and in `api/responses` a proof that
+sends every declared field of every body the wrong type through its real route, and leaves out each
+required one. `scripts/boot-probe.sh` drives the crew body over a real socket, `scripts/load-test.py`
+gains step 7, and `tests/webgui/browser/crews.e2e.mjs` runs the Crews view in real Chromium, by hand.
+`cyrius coverage --exec` reads 98%, against a gate of 95%.
+At 0.3.1: 38 suites and 3,569 assertions. Its additions, the rules mutation-checked (51 mutants, CHANGELOG
 [0.3.1]): `tests/forwarded.tcyr` (65), `tests/refusal.tcyr` (54), `tests/tenantlimit.tcyr` (95),
 `tests/metrics.tcyr` (41), `ledger/ring-recycled`, `ledger/ring-clean`, `crews/gateway-address` and the
 `alloc/refusal-budget`, `alloc/tenant-limit` and `alloc/metrics` groups. `scripts/boot-probe.sh` drives the
@@ -805,9 +828,10 @@ if that changes the cache goes rather than gets patched.
 read, holds at most the name's first 255 bytes, cut on a character, since 0.1.13),
 the identity tables `agnostic_users`, `agnostic_apikeys` and `agnostic_tenants` (M5),
 `agnostic_settings (skey, sval)` (0.1.7), `agnostic_plugin_data` (0.1.8),
-`agnostic_crew_index` (0.1.9 — one row per terminal crew, indexed on `scope`, what the listing reads), and
+`agnostic_crew_index` (0.1.9 — one row per terminal crew, indexed on `scope`, what the listing reads;
+`target` since 0.4.0), and
 `agnostic_crew_inflight` (0.1.13 — one status-less row per accepted crew with no outcome
-yet, ADR 0013), and `agnostic_crew_partial` (0.1.15 — the output of each task the model answered,
+yet, ADR 0013; `target` since 0.4.0), and `agnostic_crew_partial` (0.1.15 — the output of each task the model answered,
 while its crew has no outcome, ADR 0019). patra allows exactly **one index per
 table** — `SCH_IDX_COL` is a single slot in the schema page — so each gets it on the
 column everything looks up by, except `agnostic_crew_inflight` and `agnostic_crew_partial`, which
@@ -880,7 +904,14 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 ## Next
 
 See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x and holds every gap the
-parity review found. `python-port/` is removed once that plan is finished and tagged. The notes below were written for M5 and remain true.
+parity review found. `python-port/` is removed once that plan is finished and tagged.
+
+**At 0.4.0:** what is left of the 0.4.x line divides in two. Definition versions and rollback, packages, the
+`team` crew spec and `recommend_preset` wait on nothing. M6 proper, holding a tool to its target, the
+registry seam, the reviewer preset and the model picker wait on agnosai 2.3.x and 2.4.x, whose tag is not
+out: `git tag` there still ends at 2.2.4. GPU and fleet want a decision first: see the roadmap.
+
+The notes below were written for M5 and remain true.
 
 ✅ **patra's single index per table does NOT bind here — corrected 2026-08-21.**
 The earlier note said M5 needs users by id *and* by email and would therefore

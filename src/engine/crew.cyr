@@ -209,6 +209,7 @@ fn agnostic_engine_init(cfg): i64 {
     # Made here, on the one thread: it is not safe to create concurrently, and `GET /api/v1/metrics`
     # would otherwise race the first crew to it.
     agnosai_metrics_global();
+    agnostic_qa_catalog_init();
 
     # The engine's own audit chain is agnostic's to switch off: libro holds the trail here and
     # nothing reads this one. It cost 9.6 KB per crew, and past 10,000 entries its eviction
@@ -342,7 +343,8 @@ fn agnostic_crew_submit_owned(r, out_entry, scope: Str, idem: Str, fprint: Str):
 
     var assigned = agnosai_orchestrator_submit_crew(_agnostic_orchestrator, spec);
 
-    var entry = agnostic_ledger_record_owned(crew_id, agnostic_crew_req_name(r), sub, scope, idem, fprint);
+    var entry = agnostic_ledger_record_crew(crew_id, agnostic_crew_req_name(r), sub, scope, idem, fprint,
+      agnostic_crew_req_target(r), agnostic_crew_req_unforwarded_bits(r));
     # What ran and how (0.1.9): the plan route, the 202's task ids and the persisted
     # outcome all read the engine's spec from here, and the mode it was accepted under.
     agnostic_ledger_set_plan(entry, spec, agnostic_engine_mode());

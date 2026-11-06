@@ -55,63 +55,66 @@ var AGNOSTIC_IDENTITY_MAX_BODY = 4096;
 # `agnostic_login_fields_a`: the API schema lists each body from them (`src/http/schema.cyr`).
 fn agnostic_password_change_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "current_password");
-    agnostic_field_a(a, f, "new_password");
+    agnostic_field_req_a(a, f, "current_password", AGNOSTIC_FK_STRING);
+    agnostic_field_req_a(a, f, "new_password", AGNOSTIC_FK_STRING);
     return f;
 }
 
 # The fields of `POST /api/v1/auth/api-keys`.
 fn agnostic_apikey_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "label");
+    agnostic_field_a(a, f, "label", AGNOSTIC_FK_STRING);
     return f;
 }
 
 # The fields of `POST /api/v1/users`.
 fn agnostic_user_create_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "email");
-    agnostic_field_a(a, f, "password");
-    agnostic_field_a(a, f, "role");
-    agnostic_field_a(a, f, "tenant");
+    agnostic_field_req_a(a, f, "email", AGNOSTIC_FK_STRING);
+    agnostic_field_req_a(a, f, "password", AGNOSTIC_FK_STRING);
+    agnostic_field_req_a(a, f, "role", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "tenant", AGNOSTIC_FK_STRING);
     return f;
 }
 
 # The fields of `PUT /api/v1/users/{id}`.
 fn agnostic_user_role_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "role");
+    agnostic_field_req_a(a, f, "role", AGNOSTIC_FK_STRING);
     return f;
 }
 
 # The fields of `PUT /api/v1/users/{id}/password`.
 fn agnostic_user_password_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "password");
+    agnostic_field_req_a(a, f, "password", AGNOSTIC_FK_STRING);
     return f;
 }
 
 # The fields of `POST /api/v1/tenants`.
 fn agnostic_tenant_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "key");
-    agnostic_field_a(a, f, "name");
-    agnostic_field_a(a, f, "rate_limit");
-    agnostic_field_a(a, f, "max_crews");
+    agnostic_field_req_a(a, f, "key", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "name", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "rate_limit", AGNOSTIC_FK_INT);
+    agnostic_field_a(a, f, "max_crews", AGNOSTIC_FK_INT);
     return f;
 }
 
 # What `PUT /api/v1/tenants/:key` takes. A key is what names a tenant, so it does not change.
 fn agnostic_tenant_update_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "name");
-    agnostic_field_a(a, f, "rate_limit");
-    agnostic_field_a(a, f, "max_crews");
+    agnostic_field_a(a, f, "name", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "rate_limit", AGNOSTIC_FK_INT);
+    agnostic_field_a(a, f, "max_crews", AGNOSTIC_FK_INT);
     return f;
 }
 
 # Decode a body against `allowed`: the value, or 0 with a ready-made error through `out_resp`.
-fn _agnostic_idn_decode_a(a, body: Str, allowed, out_resp): i64 {
+#
+# ⚠ **The fields are checked only for a principal.** With authentication off every route here
+# answers 409, and a body it will never read must not turn that into a 422 about the body.
+fn _agnostic_idn_decode_a(a, body: Str, allowed, ctx, out_resp): i64 {
     store64(out_resp, 0);
     if (str_len(body) > AGNOSTIC_IDENTITY_MAX_BODY) {
         store64(out_resp, agnostic_response_error_a(a, HTTP_PAYLOAD_TOO_LARGE,
@@ -127,6 +130,13 @@ fn _agnostic_idn_decode_a(a, body: Str, allowed, out_resp): i64 {
     if (agnostic_no_unknown_fields(v, allowed) == 0) {
         store64(out_resp, agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
             str_from_a(a, "unknown field in request body")));
+        return 0;
+    }
+    if (agnostic_reqctx_principal(ctx) == 0) { return v; }
+    var bad = agnostic_field_bad(v, allowed);
+    if (bad != 0) {
+        store64(out_resp, agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+            agnostic_field_refusal_a(a, bad)));
         return 0;
     }
     return v;
@@ -219,11 +229,10 @@ fn _agnostic_idn_tenant_a(a, row): i64 {
     return o;
 }
 
-# Field `name` of body `v` as a limit: -1 when it is absent, -2 when it is not a whole number in range.
+# Field `name` of body `v` as a limit: -1 when it is absent, -2 when it is out of range.
 fn _agnostic_idn_limit_a(a, v, name): i64 {
     var f = bayan_json_v_obj_get_by_str(v, str_from_a(a, name));
-    if (f == 0) { return 0 - 1; }
-    if (bayan_json_v_is_int(f) != 1) { return 0 - 2; }
+    if (f == 0 || bayan_json_v_is_null(f) == 1) { return 0 - 1; }
     var n = bayan_json_v_int(f);
     if (n < 0 || n > AGNOSTIC_TENANT_LIMIT_MAX) { return 0 - 2; }
     return n;
@@ -374,17 +383,13 @@ fn agnostic_route_auth_me_a(a, ctx): i64 {
 # issued after the cut-off, in the same second or later.
 fn agnostic_route_auth_password_a(a, body: Str, ctx): i64 {
     var resp: i64[1];
-    var v = _agnostic_idn_decode_a(a, body, agnostic_password_change_fields_a(a), &resp);
+    var v = _agnostic_idn_decode_a(a, body, agnostic_password_change_fields_a(a), ctx, &resp);
     if (v == 0) { return load64(&resp); }
     var p = agnostic_reqctx_principal(ctx);
     if (p == 0) { return _agnostic_idn_off_a(a); }
 
     var cur = agnostic_req_str(v, str_from_a(a, "current_password"));
     var nxt = agnostic_req_str(v, str_from_a(a, "new_password"));
-    if (cur == 0 || nxt == 0) {
-        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "current_password and new_password are required"));
-    }
     if (agnostic_password_length_ok(nxt) == 0) { return _agnostic_idn_short_password_a(a); }
 
     var uid = agnostic_principal_uid(p);
@@ -431,7 +436,7 @@ fn agnostic_route_auth_keys_list_a(a, ctx): i64 {
 # key does not have. It says so rather than answering 401: the key is good, for everything else.
 fn agnostic_route_auth_key_create_a(a, body: Str, ctx): i64 {
     var resp: i64[1];
-    var v = _agnostic_idn_decode_a(a, body, agnostic_apikey_fields_a(a), &resp);
+    var v = _agnostic_idn_decode_a(a, body, agnostic_apikey_fields_a(a), ctx, &resp);
     if (v == 0) { return load64(&resp); }
     var p = agnostic_reqctx_principal(ctx);
     if (p == 0) { return _agnostic_idn_off_a(a); }
@@ -440,9 +445,9 @@ fn agnostic_route_auth_key_create_a(a, body: Str, ctx): i64 {
           str_from_a(a, "an API key cannot mint a key; log in to mint one"));
     }
     var label = agnostic_opt_str(v, str_from_a(a, "label"), str_from_a(a, ""));
-    if (label == 0 || str_len(label) > AGNOSTIC_EMAIL_MAX) {
+    if (str_len(label) > AGNOSTIC_EMAIL_MAX) {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'label' must be a string of at most 255 bytes"));
+          str_from_a(a, "'label' must be at most 255 bytes"));
     }
     var uid = agnostic_principal_uid(p);
     if (agnostic_apikeys_of(uid) >= AGNOSTIC_APIKEYS_PER_USER) {
@@ -502,11 +507,6 @@ fn _agnostic_idn_new_user_tenant_a(a, v, p, out_resp): i64 {
     store64(out_resp, 0);
     var empty = str_from_a(a, "");
     var named = agnostic_opt_str(v, str_from_a(a, "tenant"), empty);
-    if (named == 0) {
-        store64(out_resp, agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
-            str_from_a(a, "'tenant' must be a string")));
-        return 0;
-    }
     if (_agnostic_idn_is_super(p) == 0) {
         var own = agnostic_principal_tenant(p);
         if (str_len(named) != 0 && _agnostic_idn_same_tenant(named, own) == 0) {
@@ -531,7 +531,7 @@ fn _agnostic_idn_new_user_tenant_a(a, v, p, out_resp): i64 {
 # perhaps in another tenant. Login needs one address to mean one user, so that is the price.
 fn agnostic_route_user_create_a(a, body: Str, ctx): i64 {
     var resp: i64[1];
-    var v = _agnostic_idn_decode_a(a, body, agnostic_user_create_fields_a(a), &resp);
+    var v = _agnostic_idn_decode_a(a, body, agnostic_user_create_fields_a(a), ctx, &resp);
     if (v == 0) { return load64(&resp); }
     var p = agnostic_reqctx_principal(ctx);
     if (p == 0) { return _agnostic_idn_off_a(a); }
@@ -539,10 +539,6 @@ fn agnostic_route_user_create_a(a, body: Str, ctx): i64 {
     var email = agnostic_req_str(v, str_from_a(a, "email"));
     var password = agnostic_req_str(v, str_from_a(a, "password"));
     var role_name = agnostic_req_str(v, str_from_a(a, "role"));
-    if (email == 0 || password == 0 || role_name == 0) {
-        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "email, password and role are required"));
-    }
     if (_agnostic_idn_email_ok(email) == 0) {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "'email' must be an address of at most 255 bytes"));
@@ -590,7 +586,7 @@ fn agnostic_route_user_get_a(a, id: Str, ctx): i64 {
 # `PUT /api/v1/users/{id}` — change a user's role. Their next request reads the new one.
 fn agnostic_route_user_update_a(a, id: Str, body: Str, ctx): i64 {
     var resp: i64[1];
-    var v = _agnostic_idn_decode_a(a, body, agnostic_user_role_fields_a(a), &resp);
+    var v = _agnostic_idn_decode_a(a, body, agnostic_user_role_fields_a(a), ctx, &resp);
     if (v == 0) { return load64(&resp); }
     var row = _agnostic_idn_target_a(a, ctx, id, &resp);
     if (row == 0) { return load64(&resp); }
@@ -633,7 +629,7 @@ fn agnostic_route_user_delete_a(a, id: Str, ctx): i64 {
 # keys stand: revoke those separately if the account is compromised.
 fn agnostic_route_user_password_a(a, id: Str, body: Str, ctx): i64 {
     var resp: i64[1];
-    var v = _agnostic_idn_decode_a(a, body, agnostic_user_password_fields_a(a), &resp);
+    var v = _agnostic_idn_decode_a(a, body, agnostic_user_password_fields_a(a), ctx, &resp);
     if (v == 0) { return load64(&resp); }
     var row = _agnostic_idn_target_a(a, ctx, id, &resp);
     if (row == 0) { return load64(&resp); }
@@ -687,7 +683,7 @@ fn agnostic_route_tenants_list_a(a, ctx): i64 {
 # `POST /api/v1/tenants` — create a tenant.
 fn agnostic_route_tenant_create_a(a, body: Str, ctx): i64 {
     var resp: i64[1];
-    var v = _agnostic_idn_decode_a(a, body, agnostic_tenant_fields_a(a), &resp);
+    var v = _agnostic_idn_decode_a(a, body, agnostic_tenant_fields_a(a), ctx, &resp);
     if (v == 0) { return load64(&resp); }
     var p = agnostic_reqctx_principal(ctx);
     if (p == 0) { return _agnostic_idn_off_a(a); }
@@ -697,9 +693,9 @@ fn agnostic_route_tenant_create_a(a, body: Str, ctx): i64 {
           str_from_a(a, "key must match [a-z0-9][a-z0-9-]* and be at most 64 characters"));
     }
     var name = agnostic_opt_str(v, str_from_a(a, "name"), key);
-    if (name == 0 || str_len(name) > AGNOSTIC_EMAIL_MAX) {
+    if (str_len(name) > AGNOSTIC_EMAIL_MAX) {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'name' must be a string of at most 255 bytes"));
+          str_from_a(a, "'name' must be at most 255 bytes"));
     }
     var rate = _agnostic_idn_limit_a(a, v, "rate_limit");
     var crews = _agnostic_idn_limit_a(a, v, "max_crews");
@@ -723,14 +719,14 @@ fn agnostic_route_tenant_create_a(a, body: Str, ctx): i64 {
 # a limit hands it back to the server's default.
 fn agnostic_route_tenant_update_a(a, key: Str, body: Str, ctx): i64 {
     var resp: i64[1];
-    var v = _agnostic_idn_decode_a(a, body, agnostic_tenant_update_fields_a(a), &resp);
+    var v = _agnostic_idn_decode_a(a, body, agnostic_tenant_update_fields_a(a), ctx, &resp);
     if (v == 0) { return load64(&resp); }
     var p = agnostic_reqctx_principal(ctx);
     if (p == 0) { return _agnostic_idn_off_a(a); }
     var name = agnostic_opt_str(v, str_from_a(a, "name"), str_from_a(a, ""));
-    if (name == 0 || str_len(name) > AGNOSTIC_EMAIL_MAX) {
+    if (str_len(name) > AGNOSTIC_EMAIL_MAX) {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'name' must be a string of at most 255 bytes"));
+          str_from_a(a, "'name' must be at most 255 bytes"));
     }
     if (str_len(name) == 0) { name = 0; }
     var rate = _agnostic_idn_limit_a(a, v, "rate_limit");

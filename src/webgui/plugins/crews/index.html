@@ -313,6 +313,12 @@ function fmtAgo(ms, now) {
 function validRow(c) {
   return !!c && typeof c === 'object' && typeof c.crew_id === 'string' && RE_CREW_ID.test(c.crew_id) && typeof c.status === 'string';
 }
+/** The URL of the `target` on crew or task object `o`, or '' (agnostic 0.4.0). */
+function targetOf(o) {
+  const t = o && typeof o === 'object' ? o.target : null;
+  return t && typeof t === 'object' && typeof t.url === 'string' ? t.url : '';
+}
+
 /** Whether listing row `x` comes before `y` — the server's order: newer `submitted_at` first, then the higher id. */
 function listsBefore(x, y) {
   const xs = int(x.submitted_at) || 0, ys = int(y.submitted_at) || 0;
@@ -497,7 +503,7 @@ class CrewDetail {
       const desc = typeof t.description === 'string' ? t.description : '';
       this.addTask({ task_id: t.task_id, index: int(t.index) ?? i, description: desc, title: taskTitle(desc, i),
         deps: Array.isArray(t.dependencies) ? t.dependencies.filter(Number.isInteger) : [],
-        priority: typeof t.priority === 'string' ? t.priority : '' });
+        priority: typeof t.priority === 'string' ? t.priority : '', target: targetOf(t) });
     });
   }
   addTask(t) {
@@ -527,6 +533,9 @@ class CrewDetail {
       // The agent the engine gave it (agnostic 0.1.15): the outcome's word over the event's,
       // and the only word for a crew whose events are no longer held.
       if (typeof r.agent_key === 'string') t.agent = r.agent_key;
+      // Only a task that declared a shape has one (agnostic 0.4.0): `completed` is the engine's
+      // word that the model answered, and this is whether the answer was in that shape.
+      if (typeof r.output_valid === 'boolean') t.outputValid = r.output_valid;
     }
   }
   /** One engine event, applied to the tasks, as a feed line — or null for one not shown. */
@@ -644,6 +653,7 @@ class CrewDetail {
       tokens: int(u.metered_tasks) > 0 ? int(u.total_tokens) : null,
       cost: int(u.cost_micro_usd),
       mode: typeof d.engine_mode === 'string' ? d.engine_mode : '',
+      target: targetOf(d) || targetOf(this.plan),
       error: typeof d.error === 'string' ? d.error : '',
     };
   }
@@ -794,6 +804,7 @@ class CrewsView {
       if (int(c.total_tokens) !== null) sub.append(el('span', null, fmtTokens(c.total_tokens) + ' tok'));
       if (int(c.cost_micro_usd) !== null) sub.append(el('span', null, fmtMicro(c.cost_micro_usd)));
       if (c.engine_mode === 'placeholder') sub.append(el('span', null, 'placeholder'));
+      if (targetOf(c)) sub.append(el('span', null, targetOf(c)));
       b.append(top, sub);
       b.addEventListener('click', () => this.app.go(l.filter, c.crew_id));
       box.append(b);
@@ -883,6 +894,8 @@ class CrewsView {
     // A crew a restart cut short says when that was declared; its error box says what it means.
     if (s.interrupted !== null) fact('Interrupted', fmtAgo(s.interrupted), new Date(s.interrupted).toLocaleString());
     fact('Process', s.process ? s.process + (s.maxConcurrency ? ' · ' + s.maxConcurrency + ' at once' : '') : '—');
+    // Text, never a link: it came in a request body, and it is the system under test.
+    if (s.target) fact('Target', s.target, 'what this crew was pointed at');
     fact('Tasks', s.tasks ? s.done + ' / ' + s.tasks + ' done' + (s.failed ? ' · ' + s.failed + ' failed' : '') + (s.running ? ' · ' + s.running + ' running' : '') : '—');
     fact('Tokens', s.tokens !== null ? fmtTokens(s.tokens) : 'not metered', 'what the engine metered for this crew’s tasks');
     fact('Cost', s.cost !== null ? fmtMicro(s.cost) : 'not priced', 'only a priced call has a cost: an unpriced one is not $0');
@@ -906,7 +919,10 @@ class CrewsView {
         if (task.deps.length) meta.push('after ' + task.deps.map((i) => '#' + (i + 1)).join(', '));
         if (task.agent) meta.push('by ' + task.agent);
         if (task.priority && task.priority !== 'normal') meta.push(task.priority + ' priority');
+        // A task's own target, when it differs from its crew's.
+        if (task.target && task.target !== s.target) meta.push('against ' + task.target);
         if (meta.length) main.append(el('div', 'muted', meta.join(' · ')));
+        if (task.outputValid === false) main.append(el('div', 'err', 'Its output is not in the shape this task declared.'));
         if (task.error) main.append(el('div', 'err', task.error));
         if (task.output) {
           const det = el('details');

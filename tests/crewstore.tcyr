@@ -215,7 +215,7 @@ fn test_finished_outputs_survive_a_restart() {
     var ida = "99999999-9999-4999-8999-999999999991";
     var idb = "99999999-9999-4999-8999-999999999992";
     agnostic_crews_mark_inflight(str_from(ida), str_from("_"), str_from("half done"), 1759000000500, 3,
-      str_from("live"), str_from("sequential"));
+      str_from("live"), str_from("sequential"), 0);
     assert_eq(agnostic_crews_save_partial(str_from(ida), str_from("t-1"), str_from("the first answer")), 1,
       "a finished task's output is kept while its crew is in flight");
     var big = alloc(20001);
@@ -260,7 +260,7 @@ fn test_finished_outputs_survive_a_restart() {
     # An outcome written the ordinary way clears what was kept, and refuses more.
     var idc = "99999999-9999-4999-8999-999999999993";
     agnostic_crews_mark_inflight(str_from(idc), str_from("_"), str_from("finishing"), 1759000000600, 1,
-      str_from("live"), str_from("sequential"));
+      str_from("live"), str_from("sequential"), 0);
     agnostic_crews_save_partial(str_from(idc), str_from("t-1"), str_from("done"));
     var row = _t_row(a, idc, "_");
     agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_COMPLETED);
@@ -282,7 +282,7 @@ fn test_the_refresh_keeps_finished_outputs() {
     var a = arena_allocator(1048576);
     var id = str_from("99999999-9999-4999-8999-999999999994");
     agnostic_crews_mark_inflight(id, str_from("_"), str_from("watched"), 1759000000700, 2,
-      str_from("live"), str_from("sequential"));
+      str_from("live"), str_from("sequential"), 0);
     var bus = agnosai_event_bus_new();
     var e = agnostic_ledger_record(id, str_from("watched"), agnosai_event_bus_subscribe(bus, id));
     var tx = agnosai_event_bus_sender(bus, id);
@@ -320,7 +320,7 @@ fn test_inflight_is_cleared_by_the_outcome() {
     var id = "66666666-6666-4666-8666-666666666666";
     assert_eq(agnostic_crews_inflight_count(), 0, "nothing is in flight on a fresh store");
     assert_eq(agnostic_crews_mark_inflight(str_from(id), str_from("acme"), str_from("job"), 1000, 2,
-        str_from("live"), str_from("sequential")), 1, "an accepted crew is marked in flight");
+        str_from("live"), str_from("sequential"), 0), 1, "an accepted crew is marked in flight");
     assert_eq(agnostic_crews_inflight_count(), 1, "and counted");
     assert_eq(agnostic_crews_count(), 0, "with no outcome: the mark is not one");
 
@@ -344,7 +344,7 @@ fn test_a_finished_crew_is_never_marked() {
     var row = _t_row(a, id, "_");
     agnostic_crew_row_set(row, AGNOSTIC_CR_STATUS, AGNOSTIC_CREW_COMPLETED);
     agnostic_crews_save_row(row, str_from("{\"status\":\"completed\"}"));
-    assert_eq(agnostic_crews_mark_inflight(str_from(id), str_from("_"), str_from("fast"), 1000, 1, 0, 0), 2,
+    assert_eq(agnostic_crews_mark_inflight(str_from(id), str_from("_"), str_from("fast"), 1000, 1, 0, 0, 0), 2,
       "⭐ marking a crew whose outcome is already stored writes nothing, and says so");
     assert_eq(agnostic_crews_inflight_count(), 0, "so it is not in flight");
 }
@@ -362,9 +362,9 @@ fn test_the_sweep_interrupts_what_was_in_flight() {
     var idb = "88888888-8888-4888-8888-888888888882";
     var sub = 1759000000123;
     agnostic_crews_mark_inflight(str_from(ida), str_from("acme"), str_from("nightly sweep"), sub, 3,
-      str_from("live"), str_from("sequential"));
+      str_from("live"), str_from("sequential"), 0);
     agnostic_crews_mark_inflight(str_from(idb), str_from("_"), str_from("adhoc"), sub + 1, 1,
-      str_from("placeholder"), str_from("parallel"));
+      str_from("placeholder"), str_from("parallel"), 0);
 
     # The process died: a different handle, an empty ledger.
     _t_reopen();
@@ -432,7 +432,7 @@ fn test_the_sweep_keeps_an_outcome_already_written() {
     _t_open();
     var a = arena_allocator(262144);
     var id = "99999999-9999-4999-8999-999999999999";
-    agnostic_crews_mark_inflight(str_from(id), str_from("_"), str_from("done"), 1000, 1, 0, 0);
+    agnostic_crews_mark_inflight(str_from(id), str_from("_"), str_from("done"), 1000, 1, 0, 0, 0);
     agnostic_crews_save(str_from(id), str_from("done"), AGNOSTIC_CREW_COMPLETED,
       str_from("{\"crew_id\":\"99999999-9999-4999-8999-999999999999\",\"status\":\"completed\"}"));
     assert_eq(agnostic_crews_inflight_count(), 1, "precondition: the outcome is stored and the row is still there");
@@ -576,9 +576,9 @@ fn test_the_sweep_interrupts_a_long_named_crew() {
     var lname = _t_repeat("z", 300);
     var multi = _t_repeat("\xc3\xa9", 150);   # é, 2 bytes: 300 bytes, a cut at 255 inside one
     assert_eq(agnostic_crews_mark_inflight(str_from(ida), str_from("acme"), lname, 1000, 2,
-        str_from("live"), str_from("sequential")), 1, "a crew named in 300 bytes is marked in flight");
+        str_from("live"), str_from("sequential"), 0), 1, "a crew named in 300 bytes is marked in flight");
     assert_eq(agnostic_crews_mark_inflight(str_from(idb), str_from("_"), multi, 1001, 1,
-        str_from("live"), str_from("parallel")), 1, "and so is one named in 150 two-byte characters");
+        str_from("live"), str_from("parallel"), 0), 1, "and so is one named in 150 two-byte characters");
 
     _t_reopen();
     agnostic_ledger_reset();
@@ -616,7 +616,7 @@ fn test_a_lost_listing_row_keeps_what_repairs_it() {
     var a = arena_allocator(1048576);
     var id = str_from("0f0f0f0f-1111-4222-8333-444444444444");
     agnostic_crews_mark_inflight(id, str_from("_"), str_from("n"), 1759000000000, 1, str_from("live"),
-      str_from("sequential"));
+      str_from("sequential"), 0);
     assert_eq(agnostic_crews_inflight_count(), 1, "precondition: one crew is in flight");
 
     agnostic_store_lock();
@@ -646,7 +646,7 @@ fn test_no_database_is_not_a_silent_success() {
     assert_eq(agnostic_crews_doc_a(a, str_from("z")), 0, "and nothing reads back");
     assert_eq(agnostic_crews_count(), 0, "and the count is 0, not a fault");
     # 0.1.13: with no store, nothing is marked in flight and there is nothing to sweep.
-    assert_eq(agnostic_crews_mark_inflight(str_from("z"), 0, 0, 1, 1, 0, 0), 0, "marking reports failure");
+    assert_eq(agnostic_crews_mark_inflight(str_from("z"), 0, 0, 1, 1, 0, 0, 0), 0, "marking reports failure");
     assert_eq(agnostic_crews_inflight_count(), 0, "nothing is in flight");
     assert_eq(agnostic_crews_interrupt_inflight(), 0, "and the sweep interrupts nothing, without a fault");
 }

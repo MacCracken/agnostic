@@ -130,6 +130,7 @@ fn agnostic_perm_for_route(id): i64 {
     if (id == AGNOSTIC_ROUTE_CREW_LIST) { return AGNOSTIC_PERM_READ; }
 
     if (id == AGNOSTIC_ROUTE_PRESET_LIST) { return AGNOSTIC_PERM_READ; }
+    if (id == AGNOSTIC_ROUTE_TOOLS) { return AGNOSTIC_PERM_READ; }
     if (id == AGNOSTIC_ROUTE_PRESET_GET) { return AGNOSTIC_PERM_READ; }
 
     if (id == AGNOSTIC_ROUTE_DEF_LIST) { return AGNOSTIC_PERM_READ; }

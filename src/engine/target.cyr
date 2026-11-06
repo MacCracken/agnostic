@@ -1,0 +1,223 @@
+# agnostic/engine/target — where a crew points, and who says it may (0.4.0, ADR 0029).
+#
+# `"target": {"url": "…"}` on a crew body, and the same field on a task overrides it for that task.
+# It is an object so that a target that is not a URL can add a key without a break.
+#
+# ## ⚠ WRITE alone does not choose a host
+#
+# A target is where load and security tools point. `AGNOSTIC_TARGET_HOSTS` is the operator's list of
+# hosts this deployment may test: a target outside it is a 403 at the door, and with no list set
+# every target is. Without that, anyone who may submit a crew could aim the server at any host it
+# can reach, or at someone else's site. A crew with no target is unaffected.
+#
+# ## ⚠ One spelling, checked before it is compared
+#
+# Whatever calls a target later reads the URL with a parser of its own, and an allow-list is only
+# as good as the agreement between two parsers. `http://listed.example\@other.example/` is the
+# classic: one reads the host before the `\`, another after the `@`. So the check here takes the
+# narrow form both must agree on, and refuses the rest rather than normalising it: a lowercase
+# `http` or `https` scheme, printable ASCII with no backslash, no user name or password, and a host
+# of `agnostic_host_valid`'s shape, compared whole and without regard to case. Percent-encoding in
+# a host, a raw non-ASCII name and a trailing dot all fail that shape.
+#
+# User info is refused for a second reason: the URL reaches the model, in the task's context, and
+# is stored with the crew's outcome and its listing. A target behind a login takes a credential that
+# enters none of those, whose form is decided with the first tool that needs one.
+#
+# ## Where it goes
+#
+# Checked at the door, forwarded into each task's context, where agnosai renders it into the prompt
+# as ADR 0017's hints are. Shown by the plan route, and kept in the crew's outcome and in
+# `agnostic_crew_index`, so a listing and a report can say what was tested. What holds a tool's
+# calls to it is agnosai's gate, which waits on the tool loop (roadmap, M6).
+
+# The longest target URL. Long enough for a deep link, and it is stored and shown with every crew.
+var AGNOSTIC_TARGET_URL_MAX = 2048;
+
+# The operator's list: the vec `agnostic_config_parse_target_hosts` built, or 0 for none.
+var _agnostic_target_hosts = 0;
+
+# Set the hosts targets may name. Mount time only.
+fn agnostic_target_set_hosts(hosts): i64 {
+    _agnostic_target_hosts = hosts;
+    return 0;
+}
+
+# The fields of a `target` object.
+fn agnostic_target_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_req_a(a, f, "url", AGNOSTIC_FK_STRING);
+    return f;
+}
+
+# Whether `c` may appear in a target URL: printable ASCII but for the backslash.
+fn _agnostic_target_byte_ok(c): i64 {
+    if (c <= 32 || c >= 127) { return 0; }
+    if (c == 92) { return 0; }
+    return 1;
+}
+
+# How long the scheme and `://` of `url` are, or 0 when it is not `http://` or `https://`.
+fn _agnostic_target_scheme_len(url: Str): i64 {
+    var n = str_len(url);
+    if (n >= 7 && memeq(str_data(url), "http://", 7) == 1) { return 7; }
+    if (n >= 8 && memeq(str_data(url), "https://", 8) == 1) { return 8; }
+    return 0;
+}
+
+# Whether `d` to `d + n` is a port: 1 to 65535, in at most five digits, with no leading zero.
+fn _agnostic_target_port_ok(d, n): i64 {
+    if (n < 1 || n > 5) { return 0; }
+    if ((load8(d) & 255) == 48) { return 0; }
+    var v = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        if (c < 48 || c > 57) { return 0; }
+        v = v * 10 + (c - 48);
+        i = i + 1;
+    }
+    if (v > 65535) { return 0; }
+    return 1;
+}
+
+# The host of a URL's authority `d` to `d + n`: its length once a port is taken off, or 0 when the
+# authority is malformed. A bracketed IPv6 address holds colons of its own.
+fn _agnostic_target_host_len(d, n): i64 {
+    if (n < 1) { return 0; }
+    var end = n;
+    if ((load8(d) & 255) == 91) {
+        end = 0;
+        var k = 0;
+        while (k < n) {
+            if ((load8(d + k) & 255) == 93) { end = k + 1; break; }
+            k = k + 1;
+        }
+        if (end == 0) { return 0; }
+        if (end < n) {
+            if ((load8(d + end) & 255) != 58) { return 0; }
+            if (_agnostic_target_port_ok(d + end + 1, n - end - 1) == 0) { return 0; }
+        }
+    } else {
+        var i = 0;
+        while (i < n) {
+            if ((load8(d + i) & 255) == 58) {
+                if (_agnostic_target_port_ok(d + i + 1, n - i - 1) == 0) { return 0; }
+                end = i;
+                break;
+            }
+            i = i + 1;
+        }
+    }
+    if (agnostic_host_valid(d, end) == 0) { return 0; }
+    return end;
+}
+
+# Find the host of target URL `url`, through `out_at` and `out_len`. 1, or 0 when the URL is not
+# in the form the module header gives.
+fn agnostic_target_host(url: Str, out_at, out_len): i64 {
+    var n = str_len(url);
+    if (n < 1 || n > AGNOSTIC_TARGET_URL_MAX) { return 0; }
+    var d = str_data(url);
+    var i = 0;
+    while (i < n) {
+        if (_agnostic_target_byte_ok(load8(d + i) & 255) == 0) { return 0; }
+        i = i + 1;
+    }
+    var at = _agnostic_target_scheme_len(url);
+    if (at == 0) { return 0; }
+    # The authority ends at the first `/`, `?` or `#`. `@` in it is user info; past it, a path's.
+    var e = at;
+    while (e < n) {
+        var c = load8(d + e) & 255;
+        if (c == 47 || c == 63 || c == 35) { break; }
+        e = e + 1;
+    }
+    var hn = _agnostic_target_host_len(d + at, e - at);
+    if (hn == 0) { return 0; }
+    store64(out_at, d + at);
+    store64(out_len, hn);
+    return 1;
+}
+
+# The lowercase of ASCII byte `c`.
+fn _agnostic_target_lower(c): i64 {
+    if (c >= 65 && c <= 90) { return c + 32; }
+    return c;
+}
+
+# Whether host `d` to `d + n` is on the operator's list. The list is lowercase.
+fn agnostic_target_host_listed(d, n): i64 {
+    var hosts = _agnostic_target_hosts;
+    if (hosts == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(hosts)) {
+        var h = vec_get(hosts, i);
+        if (str_len(h) == n) {
+            var hd = str_data(h);
+            var k = 0;
+            while (k < n) {
+                if (_agnostic_target_lower(load8(d + k) & 255) != (load8(hd + k) & 255)) { break; }
+                k = k + 1;
+            }
+            if (k == n) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Refuse with `msg`: as the crew's when `index` is negative, else as task `index`'s.
+fn _agnostic_target_refuse(a, out, status, index, msg: Str): i64 {
+    if (index < 0) { return _agnostic_reject(a, out, status, msg); }
+    return _agnostic_reject_in(a, out, status, "tasks[", index, msg);
+}
+
+# The target `v` holds, its URL a Str in `a`: -1 when it has none, or 0 with a rejection stored.
+# `v`'s row has made `target` an object. `index` is the task's, or negative for the crew's.
+#
+# 403, not 400, for a host off the list: the request is well-formed and this deployment will not
+# act on it, and the route writes that to the audit trail.
+fn agnostic_target_read_a(a, v, index, out): i64 {
+    var tv = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_TARGET);
+    if (tv == 0 || bayan_json_v_is_null(tv) == 1) { return 0 - 1; }
+    var allowed = agnostic_target_fields_a(a);
+    var unknown = agnostic_unknown_field(tv, allowed);
+    if (unknown != 0) {
+        var sb = str_builder_new_a(a);
+        if (sb == 0) { return _agnostic_target_refuse(a, out, AGNOSTIC_HTTP_UNPROCESSABLE, index, unknown); }
+        str_builder_add_cstr_a(a, sb, "'target' has unknown field '");
+        str_builder_add_a(a, sb, unknown);
+        str_builder_add_cstr_a(a, sb, "'");
+        return _agnostic_target_refuse(a, out, AGNOSTIC_HTTP_UNPROCESSABLE, index, str_builder_build_a(a, sb));
+    }
+    var bad = agnostic_field_bad(tv, allowed);
+    if (bad != 0) {
+        return _agnostic_target_refuse(a, out, agnostic_field_status(bad), index,
+          agnostic_field_refusal_a(a, bad));
+    }
+    var url = agnostic_req_str(tv, AGNOSTIC_JK_URL);
+    var at: i64[1];
+    var hn: i64[1];
+    if (agnostic_target_host(url, &at, &hn) == 0) {
+        return _agnostic_target_refuse(a, out, HTTP_BAD_REQUEST, index, str_from_a(a,
+            "'url' must be an http or https URL with a host and no user name, of at most 2048 printable ASCII bytes"));
+    }
+    if (agnostic_target_host_listed(load64(&at), load64(&hn)) == 0) {
+        if (_agnostic_target_hosts == 0) {
+            return _agnostic_target_refuse(a, out, HTTP_FORBIDDEN, index, str_from_a(a,
+                "this deployment lists no hosts to test; its operator sets AGNOSTIC_TARGET_HOSTS"));
+        }
+        return _agnostic_target_refuse(a, out, HTTP_FORBIDDEN, index, str_from_a(a,
+            "this host is not one this deployment may test (AGNOSTIC_TARGET_HOSTS)"));
+    }
+    return str_clone_a(a, url);
+}
+
+# `{"url": …}` in allocator `al`, the form a target takes everywhere it is shown. 0 when it ran out.
+fn agnostic_target_value_a(al, url: Str): i64 {
+    var o = bayan_json_v_obj_new_a(al);
+    if (o == 0) { return 0; }
+    bayan_json_v_obj_set_a(al, o, AGNOSTIC_JK_URL, bayan_json_v_str_new_a(al, url));
+    return o;
+}

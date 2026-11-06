@@ -98,6 +98,7 @@ var AGNOSTIC_JK_TASK_COUNT = str_from("task_count");
 var AGNOSTIC_JK_TASK_ID    = str_from("task_id");
 var AGNOSTIC_JK_OUTPUT     = str_from("output");
 var AGNOSTIC_JK_AGENT_KEY  = str_from("agent_key");   # the task's agent (0.1.15)
+var AGNOSTIC_JK_OUTPUT_VALID = str_from("output_valid");   # met its `output_schema` (0.4.0)
 
 # Usage, per task and per crew (0.1.9) — agnostic's names for what the engine meters.
 var AGNOSTIC_JK_USAGE       = str_from("usage");

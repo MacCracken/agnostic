@@ -56,6 +56,8 @@ patch release; anything actively exploitable gets an out-of-band release.
 - agnostic serves plain HTTP. Terminate TLS in a reverse proxy, and set `AGNOSTIC_TRUSTED_PROXIES`, or
   every client shares its login limit. [Deployment](docs/guides/deployment.md) has a working setup.
 - `AGNOSTIC_TRUSTED_PROXIES` is a list of who may claim to be any client. Name only what you run.
+- `AGNOSTIC_TARGET_HOSTS` is what crews may name as a target, and it is compared by name: a listed name
+  resolves to whatever DNS says. Name only what you may test. Unset, no crew may name a target.
 - One connection holds one worker while it is read, so as many idle sockets as workers stall the
   server for `AGNOSTIC_REQUEST_MS` (15 s by default). A proxy that buffers requests removes this.
 - With `AGNOSTIC_AUTH=off` the server refuses any bind but loopback.

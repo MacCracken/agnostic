@@ -4,6 +4,132 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-06
+
+**A crew can say what it is for.** It can name its target, under a list of hosts its operator controls, name
+a stored agent instead of sending one, and hold a task's answer to a shape and report whether it was met.
+The API schema now says what type every request field is, from the same rows the doors read, and
+`GET /api/v1/tools` says which of the presets' 38 tools resolve and that no crew calls any of them yet. No
+dependency moved: agnosai 2.3.x, which the tool loop waits on, is not out, so this is the half of the 0.4.x
+line that does not need it. It closes G4's fields and the first of G10.
+
+### Breaking
+
+- **Some refusals read differently.** `email and password are required` is now
+  `'email' is required and must be a string`, and likewise across the identity routes and `enabled`. A body
+  with two faults can report a different one first. Every status is what it was.
+- **`null` in `rate_limit` or `max_crews` is that field left out,** as `null` is everywhere else. It was a 422.
+- **`GET /api/v1/crews/{id}`, its plan and the listing can carry `target`, a task's result can carry
+  `output_valid`, and a plan's task can carry `target` and `output_schema`.** A client that refuses unknown
+  keys has to take them.
+- **`POST /api/v1/crews` can answer 403,** for a target this deployment may not test. A crew with no target
+  cannot.
+- **A new action in the trail, `crew.target_refused`,** for a reader matching on actions.
+
+### Added
+
+- **A crew's target** (G4, [ADR 0029](docs/adr/0029-the-operator-lists-the-hosts-a-crew-may-test.md)):
+  `"target": {"url": "…"}` on a crew, and on a task to override it. It reaches each task's context, so the
+  model reads it, and it is on the plan, the outcome, the listing and an interrupted crew. A crew with no
+  target has the prompt it always had.
+- **`AGNOSTIC_TARGET_HOSTS`:** the hosts a deployment may test. WRITE alone chooses none: with no list every
+  target is refused, a host off the list is a 403 written to the trail, and a list the server cannot read
+  stops it. Hosts are exact, with no ports or wildcards, and URLs two parsers would read differently are
+  refused rather than normalised: a backslash, user info, a trailing dot, percent-encoding, raw non-ASCII.
+- **Stored definitions in a crew body** (G4, [ADR 0030](docs/adr/0030-a-crew-names-a-stored-definition-and-copies-it.md)):
+  `{"definition": "<key>"}` in `agents`, alone, beside agents spelled out, in the caller's tenant. It is read
+  at the door and copied, so a later edit reaches the next crew and not this one.
+- **A task's `output_schema`** ([ADR 0031](docs/adr/0031-output-schema-takes-what-the-engine-checks.md)):
+  `type` and `required`, forwarded to agnosai. Those are all it checks, so anything else, `properties`
+  included, is refused by name, and so are shapes that could never pass.
+- **`output_valid` on a task's result.** agnosai reads `completed` whether or not the shape was met, so
+  this is what says. Read once per crew, parsed in the reader's arena.
+- **Field types in the API schema** ([ADR 0028](docs/adr/0028-a-field-row-says-what-it-holds.md)):
+  `bodies.<name>.types` gives each field's `type`, `items` and `required`, for M7's input schemas. An
+  allow-list row is now a name, a kind and whether it is required, and **one check reads it at every door**,
+  so about 25 hand-written type checks came out and a schema entry cannot disagree with its door.
+- **`GET /api/v1/tools`** (G10), READ: the 38 preset names, each with the engine tool behind it, the count M6
+  takes to 0, the engine's own tools, and `crews_call_tools`, which is false. A resolved tool is not a tool a
+  crew calls, and the route says so on every answer. A new plugin permission, `tools:read`.
+- **The Crews view shows a target,** in the list and the detail, a task's own beside it, and says when an
+  answer is out of shape. A target is text, never a link: it came in a request body.
+- **`tests/crew_body.tcyr`**, a suite for all of this, and `tests/webgui/browser/crews.e2e.mjs`, the Crews view
+  in real Chromium, by hand.
+
+### Changed
+
+- **`unforwarded` is kept on the crew's ledger entry**, and a replay reads it there. A body no longer says what
+  its agents carry, and a replay answers for the crew it replays, even if a definition has changed since.
+- **`agnostic_crew_index` and `agnostic_crew_inflight` gain a `target` TEXT column** at mount. The first start on
+  an existing database rewrites both, once. Older rows read as having no target.
+- **The agent skill** teaches all of the above, and two things it had gone stale on: definitions belong to
+  a tenant since 0.3.0, and login is no longer the only limit.
+
+### Found while building, and fixed before release
+
+- **`output_schema` pointed into the request's arena.** `bayan_json_v_str_new_a` keeps the Str it is given, so
+  the copy that outlives the request did not own its strings, and the engine would have read garbage on a
+  retry. `tests/crew_request.tcyr` scribbles over the arena for exactly this, and caught it.
+- **A poll of a running crew with a schema kept a map on the global heap,** each poll, because the map was
+  built before asking whether there were results yet. Found reading the code back. `alloc/crew-body` holds it
+  now.
+- **The first check of a shape kept its parse tree for life,** 9 MB for a 400 KB answer, through agnosai's own
+  validator. It parses in the reader's arena now, and is held to under 2 KB on a repeat read.
+- **An arena that ran out would have read as an invalid answer.** bayan answers 0 for both. A well-formed
+  answer that could not be parsed has no `output_valid` now, rather than a `false` it did not earn. The arenas
+  that read it grow, so this took a mutant surviving to find: the test measuring the parse was measuring
+  nothing, because the latch had already run the check.
+- **`GET /api/v1/tools` kept 160 B on the global heap per request,** from a builtin's schema callback, on a route
+  anyone with READ can call. The list cannot change after mount, so it is read once.
+- **With authentication off, `POST /api/v1/users` answered 422 about its body** after the field check went in,
+  not the 409 that says why. Fields are checked only for a principal.
+- **Two duplicate symbols,** caught by `check-symbols.sh`, which would have resolved last-definition-wins.
+
+### Not done
+
+- **The tool surface:** M6, holding a tool to its target, the registry seam, the reviewer preset and the
+  model picker wait on agnosai F1, F9 and B33.
+- **What agnosai owes `output_schema`,** filed there: the last answer is never checked, and the model first
+  sees the schema after it has failed. Until then, describe the shape in `expected_output` too.
+- **The rest of G10:** definition versions, packages, `team` and `recommend_preset` wait on nothing, and are
+  next. GPU and fleet need a decision first: nothing in agnosai feeds a fleet route, and it would answer empty.
+
+### Performance
+
+- **A crew's decode:** `crew_decode_4a_8t` 42.9 to 51.8 µs. It is now 14 row checks an agent, twice. It read 59.8 µs
+  with the tables built per read, so the agent and task tables are built once at load.
+- `ledger_row` 242 to 275 ns, a wider row. `crew_save_row` 11.5 to 12.4 ms, one more column, and mostly the fsync.
+  No other row moved over 10%.
+- New rows: `target_checked` 555 ns, `field_rows_agent` 1.1 µs, `tools_route` 383 ns.
+
+### Verified
+
+- **x86_64, `CYRIUS_DCE=1`:** 39 suites, 3,820 assertions, 0 failed, and 97 JavaScript tests. Coverage 98%
+  (639 of 649) against the gate of 95. `check-clean.sh`, `check-symbols.sh`, `check-skill.py`, the schema check
+  and `deps --locked` pass.
+- **A Raspberry Pi 4, natively:** the same 39 suites and 3,820 assertions, the boot probe and the load test, on
+  binaries and a tree compared by hash, all 40 and 209 files, before anything was read from them.
+- **Load test, x86_64:** 7,500 crews at 217 a second, all `completed` through a stop and a restart. 2,000 crews
+  with a target, a stored agent and a shape, beside 2,115 reads: 0 faults, and all 2,000 correct after a restart.
+  **On the Pi:** 3,125 and 1,500 crews, the same, at 41 a second.
+- **The boot probe** drives the crew body over a real socket on the DCE binary, and a list the server cannot read
+  stops it. Two wiring mutants only it can see, the list never reaching the check and a bad list not refusing
+  to start, died there and not in a suite.
+- **97 mutants,** 96 caught by a named check. The other was equivalent: the NUL ending a list entry stops the
+  comparison anyway, so a stricter one replaced it and was caught. The suites left 7 standing: that one, the two
+  wiring mutants above, and 4 real gaps, one of them a test measuring nothing. Each gap has a test now. Run before
+  the last two changes, the read under the lock and the tables built at load.
+- **Real Chromium:** `crews.e2e.mjs`, 9 checks through the sandboxed frame, with no script error or CSP violation.
+- **A database from 0.3.1:** tables of the old shape, rows in them, then `agnostic_crews_ensure`. Every column
+  stayed where it was, and the new one reads as no target.
+
+**What this does not show.** No real gateway was involved, so `output_valid: true` is proved on results built by
+hand, and agnosai's retry was not driven: the filing with agnosai is from reading its source. No tool runs yet, so
+the host list has held no tool to anything: it bounds what a crew may name. The order that keeps a target on an
+entry before it is published is checked by reading the entry, and step 7 of the load test cannot force that race.
+No dependency moved, so the sibling-free replica was not run; `deps --locked` says `lib/` and the lock are what the
+tags resolve.
+
 ## [0.3.1] — 2026-11-06
 
 **agnostic can be deployed.** It runs behind a proxy without one client locking out the rest, a scraper

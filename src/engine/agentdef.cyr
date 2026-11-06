@@ -236,22 +236,26 @@ fn _agnostic_agent_def_refused(v): i64 {
 # The allow-list: every key an agent definition may carry.
 fn agnostic_agent_def_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
-    agnostic_field_a(a, f, "key");
-    agnostic_field_a(a, f, "name");
-    agnostic_field_a(a, f, "role");
-    agnostic_field_a(a, f, "goal");
-    agnostic_field_a(a, f, "backstory");
-    agnostic_field_a(a, f, "domain");
-    agnostic_field_a(a, f, "tools");
-    agnostic_field_a(a, f, "complexity");
-    agnostic_field_a(a, f, "llm_model");
-    agnostic_field_a(a, f, "gpu_required");
-    agnostic_field_a(a, f, "gpu_preferred");
-    agnostic_field_a(a, f, "gpu_memory_min_mb");
-    agnostic_field_a(a, f, "focus");
-    agnostic_field_a(a, f, "allow_delegation");
+    agnostic_field_req_a(a, f, "key", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "name", AGNOSTIC_FK_STRING);
+    agnostic_field_req_a(a, f, "role", AGNOSTIC_FK_STRING);
+    agnostic_field_req_a(a, f, "goal", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "backstory", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "domain", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "tools", AGNOSTIC_FK_STRINGS);
+    agnostic_field_a(a, f, "complexity", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "llm_model", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "gpu_required", AGNOSTIC_FK_BOOL);
+    agnostic_field_a(a, f, "gpu_preferred", AGNOSTIC_FK_BOOL);
+    agnostic_field_a(a, f, "gpu_memory_min_mb", AGNOSTIC_FK_INT);
+    agnostic_field_a(a, f, "focus", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "allow_delegation", AGNOSTIC_FK_BOOL);
     return f;
 }
+
+# The allow-list, built once. A crew reads it for every agent, twice, and it never changes: built per
+# read it took a crew's decode from 43 to 60 µs. At load, on the one thread.
+var _agnostic_agent_def_rows = agnostic_agent_def_fields_a(default_alloc());
 
 # Reject, prefixing `agents[N]: ` when `index` names a position in an array.
 #
@@ -366,7 +370,7 @@ fn _agnostic_agent_def_decode_as(a, al, v, index, out, build): i64 {
           agnostic_agent_def_refused_reason(refused));
     }
 
-    var unknown = agnostic_unknown_field(v, agnostic_agent_def_fields_a(a));
+    var unknown = agnostic_unknown_field(v, _agnostic_agent_def_rows);
     if (unknown != 0) {
         var sb = str_builder_new_a(a);
         if (sb == 0) { return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, unknown); }
@@ -376,22 +380,14 @@ fn _agnostic_agent_def_decode_as(a, al, v, index, out, build): i64 {
         return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_builder_build_a(a, sb));
     }
+    var bad = agnostic_field_bad(v, _agnostic_agent_def_rows);
+    if (bad != 0) {
+        return _agnostic_ad_reject(a, out, index, agnostic_field_status(bad), agnostic_field_refusal_a(a, bad));
+    }
 
     var key = agnostic_req_str(v, AGNOSTIC_JK_KEY);
-    if (key == 0) {
-        return _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
-          str_from_a(a, "'key' is required and must be a string"));
-    }
     var role = agnostic_req_str(v, AGNOSTIC_JK_ROLE);
-    if (role == 0) {
-        return _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
-          str_from_a(a, "'role' is required and must be a string"));
-    }
     var goal = agnostic_req_str(v, AGNOSTIC_JK_GOAL);
-    if (goal == 0) {
-        return _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
-          str_from_a(a, "'goal' is required and must be a string"));
-    }
     if (str_len(key) == 0) {
         return _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
           str_from_a(a, "'key' must not be empty"));
@@ -436,10 +432,6 @@ fn _agnostic_agent_def_decode_as(a, al, v, index, out, build): i64 {
     }
 
     var focus = agnostic_opt_str(v, AGNOSTIC_JK_FOCUS, 0 - 1);
-    if (focus == 0) {
-        return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'focus' must be a string"));
-    }
     if (focus != 0 - 1) {
         if (_agnostic_str_field_ok(focus) < 0) {
             return _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
@@ -448,13 +440,8 @@ fn _agnostic_agent_def_decode_as(a, al, v, index, out, build): i64 {
         if (d != 0) { store64(d + AGNOSTIC_AD_FOCUS, str_clone_a(al, focus)); }
     }
 
-    var deleg = _agnostic_opt_bool(v, "allow_delegation");
-    if (deleg == AGNOSTIC_REQ_UNSET - 1) {
-        return _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'allow_delegation' must be a boolean"));
-    }
     if (d == 0) { return 1; }
-    store64(d + AGNOSTIC_AD_DELEGATION, deleg);
+    store64(d + AGNOSTIC_AD_DELEGATION, _agnostic_opt_bool(v, "allow_delegation"));
     return d;
 }
 
@@ -466,15 +453,6 @@ fn _agnostic_agent_def_decode_as(a, al, v, index, out, build): i64 {
 # keeps the call sites readable and costs one compare.
 fn _agnostic_ad_opt_str(a, al, out, index, v, key: Str, e, which): i64 {
     var s = agnostic_opt_str(v, key, 0 - 1);
-    if (s == 0) {
-        var sb = str_builder_new_a(a);
-        if (sb == 0) { _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, key); return 0; }
-        str_builder_add_cstr_a(a, sb, "'");
-        str_builder_add_a(a, sb, key);
-        str_builder_add_cstr_a(a, sb, "' must be a string");
-        _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sb));
-        return 0;
-    }
     if (s == 0 - 1) { return 1; }
     if (_agnostic_str_field_ok(s) < 0) {
         var sb2 = str_builder_new_a(a);
@@ -511,11 +489,6 @@ fn _agnostic_ad_tools(a, al, out, index, v, e): i64 {
     var tv = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_TOOLS);
     if (tv == 0) { return 1; }
     if (bayan_json_v_is_null(tv) == 1) { return 1; }
-    if (bayan_json_v_is_arr(tv) != 1) {
-        _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'tools' must be an array of strings"));
-        return 0;
-    }
     var n = bayan_json_v_arr_len(tv);
     if (n > AGNOSTIC_REQ_MAX_TOOLS) {
         _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
@@ -525,14 +498,8 @@ fn _agnostic_ad_tools(a, al, out, index, v, e): i64 {
     var tools = 0;
     if (e != 0) { tools = vec_new_a(al); }
     var i = 0;
-    while (i < n) {
-        var t = bayan_json_v_arr_get(tv, i);
-        if (bayan_json_v_is_str(t) != 1) {
-            _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
-              str_from_a(a, "'tools' must be an array of strings"));
-            return 0;
-        }
-        if (e != 0) { vec_push_a(al, tools, str_clone_a(al, bayan_json_v_str(t))); }
+    while (e != 0 && i < n) {
+        vec_push_a(al, tools, str_clone_a(al, bayan_json_v_str(bayan_json_v_arr_get(tv, i))));
         i = i + 1;
     }
     if (e != 0) { agnosai_agent_with_tools(e, tools); }
@@ -544,23 +511,8 @@ fn _agnostic_ad_tools(a, al, out, index, v, e): i64 {
 # rejection stored.
 fn _agnostic_ad_gpu(a, out, index, v, e): i64 {
     var rq = _agnostic_opt_bool(v, "gpu_required");
-    if (rq == AGNOSTIC_REQ_UNSET - 1) {
-        _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'gpu_required' must be a boolean"));
-        return 0;
-    }
     var pf = _agnostic_opt_bool(v, "gpu_preferred");
-    if (pf == AGNOSTIC_REQ_UNSET - 1) {
-        _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'gpu_preferred' must be a boolean"));
-        return 0;
-    }
     var mm = _agnostic_opt_int(v, "gpu_memory_min_mb");
-    if (mm == AGNOSTIC_REQ_UNSET - 1) {
-        _agnostic_ad_reject(a, out, index, AGNOSTIC_HTTP_UNPROCESSABLE,
-          str_from_a(a, "'gpu_memory_min_mb' must be an integer"));
-        return 0;
-    }
     if (mm != AGNOSTIC_REQ_UNSET && mm < 0) {
         _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST,
           str_from_a(a, "'gpu_memory_min_mb' must not be negative"));
