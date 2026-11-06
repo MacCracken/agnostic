@@ -246,9 +246,21 @@ fn test_parse_target_hosts() {
     assert_eq(agnostic_config_parse_target_hosts(str_builder_build(sb)), 0 - 1, "and one more");
 }
 
+# A switch that spawns processes takes the two words it says it takes. A `yes` must not read as no.
+fn test_parse_gpu_tools() {
+    test_group("config/gpu-tools");
+    assert_eq(agnostic_config_parse_gpu_tools(str_from("")), 0, "empty is off");
+    assert_eq(agnostic_config_parse_gpu_tools(str_from("off")), 0, "off");
+    assert_eq(agnostic_config_parse_gpu_tools(str_from("on")), 1, "on");
+    assert_eq(agnostic_config_parse_gpu_tools(str_from("ON")), 1, "in any case");
+    assert_eq(agnostic_config_parse_gpu_tools(str_from("yes")), 0 - 1, "⭐ anything else refuses to start");
+    assert_eq(agnostic_config_parse_gpu_tools(str_from("1")), 0 - 1, "a number too");
+}
+
 fn main() {
     alloc_init();
     test_parse_target_hosts();
+    test_parse_gpu_tools();
     test_parse_auth();
     test_parse_jwt_secret();
     test_parse_addr();

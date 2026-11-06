@@ -231,6 +231,7 @@ refused "a proxy list with a typo" AGNOSTIC_TRUSTED_PROXIES=10.1.2.3/8
 refused "a short metrics token" AGNOSTIC_METRICS_TOKEN=short
 refused "a target host with a port" AGNOSTIC_TARGET_HOSTS=staging.example.com:8080
 refused "a wildcard target host" 'AGNOSTIC_TARGET_HOSTS=*.example.com'
+refused "a GPU tools switch that is neither word" AGNOSTIC_GPU_TOOLS=yes
 refused "a tenant limit that is not a number" AGNOSTIC_TENANT_MAX_CREWS=many
 
 SCRAPE=scrape-0123456789abcdef0123456789abcdef
@@ -401,9 +402,61 @@ expect 200 "the tools" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/tools"
 grep -q '"unresolved":36' "$WORK/body" || fail "the gate's number is not on the wire"
 grep -q '"crews_call_tools":false' "$WORK/body" || fail "the tools route does not say no crew calls them"
 
+# 0.4.1: the host's own accelerators, whatever they are here. Bytes a JSON string may not hold raw are
+# what a row overrunning its allocation looks like, as it did on the first real GPU this ran on.
+expect 200 "the accelerators" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/gpu"
+grep -q '"gpu_required_enforced":false' "$WORK/body" || fail "the GPU route does not say a crew is not held to it"
+grep -q '"vendor_tools":false' "$WORK/body" || fail "a tool ran that nobody allowed"
+grep -q 'u0000' "$WORK/body" && fail "a device's words are damaged: $(cat "$WORK/body")"
+grep -qE '"detected_at":[1-9]' "$WORK/body" || fail "the mount did not read the host"
+echo "  ok: this host: $(sed -E 's/"detected_at".*//' "$WORK/body")"
+
 expect 200 "the trail" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/audit/entries?limit=100"
 grep -q '"crew.target_refused"' "$WORK/body" || fail "a refused target left nothing in the trail"
 echo "  ok: a refused target is in the trail"
+stop
+
+# --- what may run at start (0.4.1) -----------------------------------------------------------------
+
+# ⭐ From outside, because `vendor_tools` is the server's own word for it: a tool on the PATH that
+# leaves a mark when it runs, and fails.
+FAKE="$WORK/tools"
+mkdir -p "$FAKE"
+printf '#!/bin/sh\ntouch "%s/spawned"\nexit 3\n' "$WORK" > "$FAKE/nvidia-smi"
+chmod +x "$FAKE/nvidia-smi"
+
+start_proxied tools-off tools PATH="$FAKE:$PATH"
+wait_up
+[ ! -e "$WORK/spawned" ] || fail "a vendor tool ran with AGNOSTIC_GPU_TOOLS unset"
+echo "  ok: with tools off, nothing is spawned"
+stop
+
+start_proxied tools-on tools PATH="$FAKE:$PATH" AGNOSTIC_GPU_TOOLS=on
+wait_up
+[ -e "$WORK/spawned" ] || fail "AGNOSTIC_GPU_TOOLS=on ran no tool"
+expect 200 "a sign-in" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"probe@example.com","password":"probe-password-12"}' "$BASE/api/v1/auth/login"
+TOKEN="$(sed -E 's/.*"token":"([^"]+)".*/\1/' "$WORK/body")"
+expect 200 "the accelerators" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/gpu"
+grep -q '"vendor_tools":true' "$WORK/body" || fail "tools ran and the answer does not say so"
+grep -qE '"warnings":[1-9]' "$WORK/body" || fail "a tool that failed is not counted"
+grep -q 'nvidia' "$WORK/body" && fail "a tool's words reached the answer"
+echo "  ok: with tools on, they run, and a failure is counted and not quoted"
+stop
+
+# ⭐ A tool that hangs delays the start by its deadline, and is killed, and the server comes up.
+printf '#!/bin/sh\nexec sleep 8642\n' > "$FAKE/nvidia-smi"
+began=$(date +%s)
+start_proxied tools-hung tools PATH="$FAKE:$PATH" AGNOSTIC_GPU_TOOLS=on
+tries=0
+until [ "$(status_of "$BASE/health")" = "200" ]; do
+  tries=$((tries + 1))
+  [ "$tries" -lt 600 ] || fail "a hung tool held the start past 60 s"
+  kill -0 "$PID" 2>/dev/null || fail "the server exited behind a hung tool"
+  sleep 0.1
+done
+echo "  ok: a hung tool held the start for $(($(date +%s) - began)) s"
+ps -eo args | grep -q '^sleep 8642' && fail "a hung tool was left running"
 stop
 
 echo "boot-probe: OK"

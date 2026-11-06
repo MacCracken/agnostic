@@ -801,6 +801,31 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/gpu",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "devices",
+          "total",
+          "detected_at",
+          "vendor_tools",
+          "warnings",
+          "gpu_required_enforced"
+        ]
+      }
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/agents/definitions",
       "auth": true,
       "permission": "read",

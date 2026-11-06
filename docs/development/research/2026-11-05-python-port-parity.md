@@ -72,7 +72,9 @@ Nothing to port.
 | A boot-and-probe CI step (G17) | Suites run on socketpairs, and CI never boots the binary and probes it | 0.2.x |
 | Issue and PR templates (G17) | `.github` holds workflows only | 0.2.x |
 | Stored definitions in a crew body (G4) | Done at 0.4.0: `{"definition": "<key>"}` | 0.4.0 |
-| Engine features with no route (G10) | Definition versions and rollback, package export and import, tool upload, GPU, fleet, the `team` crew spec and `recommend_preset`, which has no owner | 0.4.x |
+| GPU (G10) | Done at 0.4.1: `GET /api/v1/gpu`, one read of this host at mount | 0.4.1 |
+| Fleet (G10) | Waits for a fleet: nothing feeds one, and agnostic is one process on one database | With a fleet |
+| Engine features with no route (G10) | Definition versions and rollback, package export and import, tool upload, the `team` crew spec and `recommend_preset` | 0.4.x |
 | The AGNOS clients (G13) | Memory, RAG, reasoning, recording, RPC, screen and vector: none here | 0.5.x |
 | Scheduled reports and delivery (G6) | None. The former default jobs raised on construction, so there is nothing to copy | 0.5.x |
 | Health alerts (G8) | None | 0.5.x |
@@ -351,17 +353,17 @@ Routes only agnostic has: `GET /api/v1/crews/:id/events`, `GET /api/v1/crews/:id
 | `routes/definitions.py:627` | POST | `/api/v1/packages/import` | not ported | G10 |  |
 | `routes/definitions.py:682` | POST | `/api/v1/tools/upload` | not ported | G10 |  |
 | `routes/definitions.py:716` | GET | `/api/v1/tools` | ported | `GET /api/v1/tools` | The 38 preset names, what resolves, and that no crew calls a tool yet |
-| `routes/fleet.py:28` | GET | `/api/v1/fleet/nodes` | not ported | G10 |  |
-| `routes/fleet.py:51` | GET | `/api/v1/fleet/nodes/{node_id}` | not ported | G10 |  |
-| `routes/fleet.py:66` | GET | `/api/v1/fleet/groups` | not ported | G10 |  |
-| `routes/fleet.py:78` | GET | `/api/v1/fleet/status` | not ported | G10 |  |
-| `routes/fleet.py:106` | GET | `/api/v1/fleet/gpu` | not ported | G10 |  |
-| `routes/fleet.py:139` | POST | `/api/v1/fleet/evict` | not ported | G10 |  |
-| `routes/gpu.py:18` | GET | `/api/v1/gpu/status` | not ported | G10 |  |
-| `routes/gpu.py:33` | GET | `/api/v1/gpu/devices/{device_index}` | not ported | G10 |  |
-| `routes/gpu.py:48` | GET | `/api/v1/gpu/memory` | not ported | G10 |  |
-| `routes/gpu.py:84` | GET | `/api/v1/gpu/slots` | not ported | G10 |  |
-| `routes/gpu.py:104` | GET | `/api/v1/gpu/inference` | not ported | G10 |  |
+| `routes/fleet.py:28` | GET | `/api/v1/fleet/nodes` | scheduled | Roadmap, Settled 2026-11-06 | Waits for a fleet |
+| `routes/fleet.py:51` | GET | `/api/v1/fleet/nodes/{node_id}` | scheduled | Roadmap, Settled 2026-11-06 | Waits for a fleet |
+| `routes/fleet.py:66` | GET | `/api/v1/fleet/groups` | scheduled | Roadmap, Settled 2026-11-06 | Waits for a fleet |
+| `routes/fleet.py:78` | GET | `/api/v1/fleet/status` | scheduled | Roadmap, Settled 2026-11-06 | Waits for a fleet |
+| `routes/fleet.py:106` | GET | `/api/v1/fleet/gpu` | scheduled | Roadmap, Settled 2026-11-06 | Waits for a fleet |
+| `routes/fleet.py:139` | POST | `/api/v1/fleet/evict` | scheduled | Roadmap, Settled 2026-11-06 | Waits for a fleet |
+| `routes/gpu.py:18` | GET | `/api/v1/gpu/status` | replaced | `GET /api/v1/gpu` | One read at mount (ADR 0032). `force` has no meaning: no request touches the hardware |
+| `routes/gpu.py:33` | GET | `/api/v1/gpu/devices/{device_index}` | replaced | `GET /api/v1/gpu` | A short list, so no route per device |
+| `routes/gpu.py:48` | GET | `/api/v1/gpu/memory` | replaced | `GET /api/v1/gpu` | Each device's size. Used and free are left out: they go stale |
+| `routes/gpu.py:84` | GET | `/api/v1/gpu/slots` | scheduled | Roadmap, Settled 2026-11-06 | Waits on something that places work on a GPU |
+| `routes/gpu.py:104` | GET | `/api/v1/gpu/inference` | scheduled | Roadmap, Settled 2026-11-06 | As above. Inference happens at the gateway |
 | `routes/integration.py:31` | GET | `/api/v1/results/structured/{session_id}` | replaced | Brief §7.3; roadmap Out of scope | The result model is worth keeping: §10 |
 | `routes/mcp.py:626` | GET | `/api/v1/mcp/tools` | scheduled | M7 | `tools/list` at `/mcp` |
 | `routes/mcp.py:650` | GET | `/api/v1/mcp/server-info` | scheduled | M7 | MCP 2026-07-28 has no handshake |

@@ -1,0 +1,192 @@
+# agnostic/engine/gpu — what `GET /api/v1/gpu` says about this host (0.4.1, ADR 0032).
+#
+# What the machine running this holds is not a thing a suite can pin, so these feed hand-built
+# registries to the same function the mount does. `scripts/boot-probe.sh` asks the real binary on real
+# hardware, on both the machines a release is certified on.
+#
+# What this suite holds:
+#
+#   1. Every accelerator is listed, and the CPU is not one.
+#   2. Nothing is listed that goes stale: no free memory, no utilization, no temperature.
+#   3. What was asked of the hardware is on the answer, so an empty list reads as what it is.
+#   4. The answer says a crew is not held to it, and that is pinned.
+#   5. A read costs the arena, and the words of a tool stay out of it.
+include "src/app.cyr"
+
+fn _t_key(o, name) { return bayan_json_v_obj_get_by_cstr(o, name); }
+
+fn _t_answer(a) {
+    var r = agnostic_route_gpu_a(a);
+    assert_eq(agnostic_response_status(r), HTTP_OK, "the route answers");
+    return agnostic_response_body(r);
+}
+
+# A registry of a CPU and the profiles in vec `extra`.
+fn _t_registry(extra) {
+    var v = vec_new();
+    vec_push(v, profile_cpu(32 * 1073741824));
+    var i = 0;
+    while (i < vec_len(extra)) {
+        vec_push(v, vec_get(extra, i));
+        i = i + 1;
+    }
+    return registry_from_profiles(v);
+}
+
+fn test_a_host_with_none() {
+    test_group("gpu/none");
+    var a = arena_allocator(1048576);
+    agnostic_gpu_reset();
+    var before = _t_answer(a);
+    assert_eq(bayan_json_v_int(_t_key(before, "total")), 0, "before mount there is nothing");
+    assert_eq(bayan_json_v_int(_t_key(before, "detected_at")), 0, "and it says nothing was read");
+
+    assert_eq(agnostic_gpu_take(_t_registry(vec_new()), 0), 0, "a host with only a CPU has no accelerators");
+    var b = _t_answer(a);
+    assert_eq(bayan_json_v_arr_len(_t_key(b, "devices")), 0, "⭐ the CPU is not listed as a device");
+    assert_eq(bayan_json_v_int(_t_key(b, "total")), 0, "and is not counted");
+    assert_gt(bayan_json_v_int(_t_key(b, "detected_at")), 0,
+      "an empty list has a time: it was read, and found nothing");
+    assert_eq(bayan_json_v_bool(_t_key(b, "vendor_tools")), 0, "⭐ and it says no tool ran, so NVIDIA was not seen");
+}
+
+fn test_devices_are_listed() {
+    test_group("gpu/devices");
+    var a = arena_allocator(1048576);
+    var extra = vec_new();
+    var nv = profile_cuda(0, 24 * 1073741824);
+    profile_set_device_name(nv, "NVIDIA GeForce RTX 4090");
+    profile_set_driver_version(nv, "550.54");
+    vec_push(extra, nv);
+    var igpu = profile_rocm(1, 1073741824);
+    profile_set_shared_mem(igpu, 1073741824);
+    vec_push(extra, igpu);
+    vec_push(extra, profile_tpu(0, 4, TPU_V5E));
+
+    assert_eq(agnostic_gpu_take(_t_registry(extra), 1), 3, "three accelerators");
+    var b = _t_answer(a);
+    assert_eq(bayan_json_v_int(_t_key(b, "total")), 3, "and the answer counts them");
+    assert_eq(bayan_json_v_bool(_t_key(b, "vendor_tools")), 1, "it says the tools ran");
+    var d = _t_key(b, "devices");
+    assert_eq(bayan_json_v_arr_len(d), 3, "each is listed");
+
+    var d0 = bayan_json_v_arr_get(d, 0);
+    assert_eq(str_eq_cstr(agnostic_req_str(d0, str_from("type")), "CUDA GPU"), 1, "its type");
+    assert_eq(str_eq_cstr(agnostic_req_str(d0, str_from("name")), "NVIDIA GeForce RTX 4090"), 1, "⭐ its name, whole");
+    assert_eq(str_eq_cstr(agnostic_req_str(d0, str_from("driver")), "550.54"), 1, "its driver");
+    assert_eq(bayan_json_v_int(_t_key(d0, "memory_mb")), 24576, "its memory, in MiB");
+    assert_eq(bayan_json_v_bool(_t_key(d0, "shared_memory")), 0, "which is its own");
+
+    var d1 = bayan_json_v_arr_get(d, 1);
+    assert_eq(bayan_json_v_bool(_t_key(d1, "shared_memory")), 1, "⭐ an integrated GPU's is the host's");
+    assert_eq(_t_key(d1, "name"), 0, "a name the host did not give is left out");
+    assert_eq(_t_key(d1, "driver"), 0, "and a driver");
+
+    var keys = "memory_used memory_free memory_used_mb memory_free_mb utilization_pct temperature_c";
+    var parts = str_split(str_from(keys), 32);
+    var stale = 0;
+    var i = 0;
+    while (i < vec_len(parts)) {
+        if (bayan_json_v_obj_get_by_str(d0, vec_get(parts, i)) != 0) { stale = stale + 1; }
+        i = i + 1;
+    }
+    assert_eq(stale, 0, "⭐ nothing that goes stale is on the answer");
+    assert_eq(bayan_json_v_obj_len(d0), 5, "only what stays true");
+}
+
+# ⭐ A row outlives what it was read from. ai-hwaccel's registry may be dropped, and a name built in a
+# row too small for it is how the real hardware showed a bug here, in the probe, at 0.4.1.
+fn test_a_row_owns_its_words() {
+    test_group("gpu/row");
+    var a = arena_allocator(1048576);
+    var extra = vec_new();
+    var buf = alloc(64);
+    memcpy(buf, "AMD Radeon (PCI 0x1002:0x1638)", 30);
+    store8(buf + 30, 0);
+    var p = profile_rocm(0, 3072 * 1048576);
+    profile_set_device_name(p, buf);
+    vec_push(extra, p);
+    agnostic_gpu_take(_t_registry(extra), 0);
+    memset(buf, 120, 30);
+    var d0 = bayan_json_v_arr_get(_t_key(_t_answer(a), "devices"), 0);
+    assert_eq(str_eq_cstr(agnostic_req_str(d0, str_from("name")), "AMD Radeon (PCI 0x1002:0x1638)"), 1,
+      "⭐ a name survives what it was copied from, and every byte of it");
+    assert_eq(bayan_json_v_int(_t_key(d0, "memory_mb")), 3072, "and the fields beside it are where they were");
+    assert_eq(AGNOSTIC_GPUR_SIZE, 40, "⭐ a row is as wide as its fields");
+}
+
+fn test_warnings_are_counted() {
+    test_group("gpu/warnings");
+    var a = arena_allocator(1048576);
+    var r = _t_registry(vec_new());
+    vec_push(reg_warnings(r), warning_tool_failed("nvidia-smi", 9, "/secret/path: driver mismatch"));
+    agnostic_gpu_take(r, 1);
+    var b = _t_answer(a);
+    assert_eq(bayan_json_v_int(_t_key(b, "warnings")), 1, "a read that met trouble says so");
+    var text = bayan_json_v_build_a(a, b);
+    assert_eq(str_contains_cstr(text, "secret"), 0, "⭐ and a tool's words do not reach a READ caller");
+
+    var absent = _t_registry(vec_new());
+    vec_push(reg_warnings(absent), warning_tool_not_found("hl-smi"));
+    vec_push(reg_warnings(absent), warning_tool_not_found("nvidia-smi"));
+    agnostic_gpu_take(absent, 1);
+    assert_eq(bayan_json_v_int(_t_key(_t_answer(a), "warnings")), 0,
+      "⭐ a tool that is not installed is no fault: a count that is never 0 is one nobody reads");
+    vec_push(reg_warnings(absent), warning_timeout("nvidia-smi", 30000));
+    agnostic_gpu_take(absent, 1);
+    assert_eq(bayan_json_v_int(_t_key(_t_answer(a), "warnings")), 1, "⭐ and one that hung is");
+}
+
+fn test_a_crew_is_not_held_to_it() {
+    test_group("gpu/enforced");
+    var a = arena_allocator(1048576);
+    agnostic_gpu_take(_t_registry(vec_new()), 0);
+    assert_eq(bayan_json_v_bool(_t_key(_t_answer(a), "gpu_required_enforced")), 0,
+      "⭐ every answer says a crew's gpu_required is not held to this list");
+    assert_eq(AGNOSTIC_GPU_REQUIRED_ENFORCED, 0, "⭐ pinned: turning this on needs something to place crews");
+}
+
+fn test_a_read_costs_the_arena() {
+    test_group("gpu/cost");
+    var extra = vec_new();
+    var p = profile_cuda(0, 1073741824);
+    profile_set_device_name(p, "a device");
+    vec_push(extra, p);
+    agnostic_gpu_take(_t_registry(extra), 0);
+    var a = arena_allocator(1048576);
+    var used = alloc_used();
+    var i = 0;
+    while (i < 100) {
+        agnostic_route_gpu_a(a);
+        reset_via(a);
+        i = i + 1;
+    }
+    assert_eq(alloc_used() - used, 0, "⭐ a hundred reads keep nothing, and touch no hardware");
+}
+
+# Whether the real detection, as the mount calls it with tools off, spawned anything is not visible
+# from here; that it runs and leaves a read is.
+fn test_detection_runs() {
+    test_group("gpu/detect");
+    agnostic_gpu_reset();
+    assert_gt(agnostic_gpu_detect(0) + 1, 0, "the host's own read runs, whatever it holds");
+    assert_gt(agnostic_gpu_at_ms(), 0, "and leaves its time");
+    assert_eq(agnostic_gpu_tools_ran(), 0, "⭐ with tools off, no tool is said to have run");
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    test_a_host_with_none();
+    test_devices_are_listed();
+    test_a_row_owns_its_words();
+    test_warnings_are_counted();
+    test_a_crew_is_not_held_to_it();
+    test_a_read_costs_the_arena();
+    test_detection_runs();
+    return assert_summary();
+}
+
+var _agnostic_gpu_test_exit = main();
+if (_agnostic_gpu_test_exit > 0) { _agnostic_gpu_test_exit = 1; }
+sys_exit_group(_agnostic_gpu_test_exit);

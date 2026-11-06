@@ -97,6 +97,27 @@ should ask. Each crew response also says whether it ran for real, in `engine_mod
 A stop takes as long as the outcomes still to be written. The unit allows 120 s. A crew whose outcome
 is not written reads `interrupted` after the restart, so shorten that with care.
 
+## List a GPU
+
+`GET /api/v1/gpu` needs nothing set up for an AMD or Intel GPU: it reads sysfs, and the unit's
+`PrivateDevices=true` does not hide that. No crew depends on this list, so skip it unless you want it.
+
+To list an NVIDIA GPU, set `AGNOSTIC_GPU_TOOLS=on` so that `nvidia-smi` runs at start. It needs
+`/dev/nvidia*`, which `PrivateDevices=true` takes away, so give the service a drop-in:
+
+```bash
+sudo systemctl edit agnostic
+```
+
+```ini
+[Service]
+PrivateDevices=false
+```
+
+That is the one place the guide relaxes the unit, and it is only for this list: leave it out if you do not
+need the list. We have not run this block against an NVIDIA card, so check the answer's `warnings` and
+`journalctl -u agnostic` after a restart.
+
 ## Put a proxy in front
 
 The proxy does three jobs: it ends TLS, it tells agnostic who the client is, and it buffers requests,

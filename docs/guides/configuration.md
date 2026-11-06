@@ -31,6 +31,7 @@ for about 70 KB/s.
 | `AGNOSTIC_JWT_SECRET` | random per process | At least 32 bytes, or the server refuses to start. It is read and never logged. Unset, a restart ends every session. Set it, and tokens survive a restart. Anyone who holds it can forge a token for any user. Changing it ends every session. |
 | `AGNOSTIC_TRUSTED_PROXIES` | none | Who may say who the client is: IPv4 addresses and networks, comma-separated, up to 32. Unset, `X-Forwarded-For` is ignored. `/0` and host bits under a mask are refused. See [below](#behind-a-reverse-proxy). |
 | `AGNOSTIC_TARGET_HOSTS` | none | The hosts a crew's `target` may name, comma-separated, up to 64. Unset, every target is refused, and a crew with no target is unaffected. See [below](#what-crews-may-test). |
+| `AGNOSTIC_GPU_TOOLS` | `off` | `off` or `on`. `on` runs vendor tools such as `nvidia-smi` once at start, and is how an NVIDIA GPU is seen. Off, nothing is spawned. See [below](#what-the-gpu-route-says). |
 | `AGNOSTIC_METRICS_TOKEN` | none | A scraper's bearer token, at least 32 bytes. It opens `GET /api/v1/metrics` and nothing else. Unset, only a super administrator can read it. It is read and never logged. |
 | `AGNOSTIC_TENANT_RATE_LIMIT` | `0` | Crews one tenant may submit in a minute, unless its own limit says otherwise. 0 is no limit. |
 | `AGNOSTIC_TENANT_MAX_CREWS` | `0` | Crews of one tenant that may be unfinished at once, unless its own limit says otherwise. 0 is no limit. |
@@ -81,6 +82,23 @@ AGNOSTIC_TARGET_HOSTS=staging.example.com,10.0.0.5,[::1]
 - A refused target answers 403, and the audit trail records `crew.target_refused`.
 - Today this bounds what a crew says it is testing: no crew calls a tool yet. It is on the list now
   so that a tool, when one runs, has a list to be held to.
+
+## What the GPU route says
+
+`GET /api/v1/gpu` lists the accelerators this host had when the server started, read once.
+
+- **It sees what sysfs shows by default:** AMD, Intel, Vulkan and NPUs, and not NVIDIA, whose source is
+  `nvidia-smi`. Set `AGNOSTIC_GPU_TOOLS=on` to run the vendor tools. Each runs under a deadline, and one that
+  hangs holds up the start by about 20 seconds before it is killed. `vendor_tools` on the answer says which it
+  was, so an empty list on an NVIDIA host does not read as no GPU.
+- **It is a snapshot, so it has no free memory, utilization or temperature.** It says when it was taken in
+  `detected_at`. A card added later is seen after a restart.
+- **`warnings` counts what went wrong:** a tool that failed or hung, or a read that failed. The words are in the
+  log. A tool that is not installed is not counted.
+- **A crew is not held to this.** `gpu_required` chooses among a crew's agents. It does not look at the
+  host, and inference happens at the gateway, usually on another machine. `gpu_required_enforced` says so.
+
+[Deployment](deployment.md#list-a-gpu) has what an NVIDIA card needs under the example unit.
 
 ## Behind a reverse proxy
 

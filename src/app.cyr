@@ -96,6 +96,7 @@ include "src/engine/presets.cyr"
 # The QA tool vocabulary, resolved against the engine's registry. Reads
 # `presets`' tool union, so it follows it.
 include "src/engine/tools.cyr"
+include "src/engine/gpu.cyr"
 include "src/engine/crew.cyr"
 # The thread that keeps every live crew's ledger entry current (0.1.9). Refreshes
 # through `crew.cyr`, so it follows it.
@@ -113,6 +114,7 @@ include "src/routes/crews.cyr"
 include "src/routes/definitions.cyr"
 include "src/routes/presets.cyr"
 include "src/routes/tools.cyr"
+include "src/routes/gpu.cyr"
 include "src/routes/plugins.cyr"
 include "src/routes/plugindata.cyr"
 include "src/routes/webgui.cyr"

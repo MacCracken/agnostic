@@ -4,6 +4,65 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-11-06
+
+**`GET /api/v1/gpu`: the accelerators this host had at start, and that a crew is not held to them.** One route
+over a snapshot taken at mount, so no request touches the hardware. Fleet gets no route: nothing feeds one, so
+it waits for a fleet. No dependency moved.
+
+### Added
+
+- **`GET /api/v1/gpu`** (G10, [ADR 0032](docs/adr/0032-the-gpu-route-reads-the-host-once-and-binds-no-crew.md)), READ:
+  each accelerator's type, name, driver and size, when it was read, whether vendor tools ran, and how many
+  things went wrong. `gpu_required_enforced` is false on every answer: agnosai scores `gpu_required` against
+  agents' flags and never looks at the host, and inference happens at the gateway.
+- **`AGNOSTIC_GPU_TOOLS`,** `off` by default. Off, detection is sysfs alone and spawns nothing, which sees AMD,
+  Intel, Vulkan and NPUs and not NVIDIA. `on` runs the vendor tools once at start. Any other value stops the
+  server.
+- **`tests/gpu.tcyr`,** on hand-built registries, and the boot probe asks the real binary on real hardware.
+
+### Changed
+
+- **The decision on fleet is recorded** (roadmap, Settled decisions), and the parity review's GPU and fleet rows
+  with it. Cross-crew GPU slots and local inference wait on something that places work on a GPU.
+
+### Found while building, and fixed before release
+
+- **A row was allocated too small.** `AGNOSTIC_GR_*` collided with the plugin grants' enum, the last definition
+  won, and writing a row overran into the next allocation. The first run on a real GPU showed it, as a device
+  name with its first 8 bytes zeroed. `check-symbols.sh` catches the collision too, so it could not have shipped,
+  and it would have changed the grants' layout as well.
+- **`warnings` read 6 on every host with tools on,** all of them a vendor's tool not being installed, and six WARN
+  lines each start. Those are INFO now and are not counted, so a count above 0 means something went wrong.
+- **A claim in the docs that was false before it was written.** `PrivateDevices=true` was going to be documented
+  as hiding every device. Measured under systemd, an AMD GPU is still listed: sysfs detection does not read `/dev`.
+
+### Performance
+
+- New row: `gpu_route` 339 ns, which only reads what the mount left. No other row moved past the run's noise.
+- **The start:** with `AGNOSTIC_GPU_TOOLS=on`, a tool that hangs held it for 21 s before it was killed, on both
+  machines. Off, detection reads sysfs and spawns nothing.
+
+### Verified
+
+- **x86_64, `CYRIUS_DCE=1`:** 40 suites, 3,870 assertions, 0 failed, and 97 JavaScript tests. Coverage 98% (649 of
+  659) against the gate of 95. `check-clean.sh`, `check-symbols.sh`, `check-skill.py`, the schema check and
+  `deps --locked` pass.
+- **A Raspberry Pi 4, natively:** the same 40 suites and 3,870 assertions, the boot probe and the load test, on 41
+  binaries and 213 tree files compared by hash first.
+- **On real hardware:** this machine's AMD GPU reads 3,072 MiB, which is what its sysfs says, and with tools on
+  `vulkaninfo` really ran and gave the better name. The Pi reads an honest empty list: `ai-hwaccel` does not count
+  its V3D. Under a real systemd scope with `PrivateDevices=true`, the AMD GPU is still listed.
+- **From outside the server:** `vendor_tools` is its own word for what it did, so the boot probe puts a fake
+  `nvidia-smi` on the `PATH` that leaves a mark. Off, no mark. On, it runs, and its failure is counted and not
+  quoted. One that hangs is killed, and the server comes up.
+- **18 mutants, all caught.** `tools run with the switch off` died only to that mark.
+- **Load test:** 7,500 crews on x86_64 and 3,125 on the Pi, all `completed` through a restart.
+
+**What this does not show.** There was no NVIDIA card to hand, so `nvidia-smi`'s real output and the deployment
+guide's `PrivateDevices=false` drop-in have not been run: the fake tool proves the spawn, not the parse. The
+list on hardware other than these two machines is `ai-hwaccel`'s, not checked here.
+
 ## [0.4.0] — 2026-11-06
 
 **A crew can say what it is for.** It can name its target, under a list of hosts its operator controls, name

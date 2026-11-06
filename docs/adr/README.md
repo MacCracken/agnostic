@@ -52,3 +52,4 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0029](0029-the-operator-lists-the-hosts-a-crew-may-test.md) | A crew's target is checked at the door, and the operator lists the hosts it may name |
 | [0030](0030-a-crew-names-a-stored-definition-and-copies-it.md) | A crew can name a stored definition, and copies it when it is accepted |
 | [0031](0031-output-schema-takes-what-the-engine-checks.md) | `output_schema` takes what the engine checks, and a result says whether it was met |
+| [0032](0032-the-gpu-route-reads-the-host-once-and-binds-no-crew.md) | The GPU route reads the host once, and binds no crew |

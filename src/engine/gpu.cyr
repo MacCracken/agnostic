@@ -1,0 +1,146 @@
+# agnostic/engine/gpu — the accelerators on this host, read once (0.4.1, ADR 0032).
+#
+# ## ⚠ What this does not say
+#
+# **A crew is not held to any of this.** agnosai scores a task's `gpu_required` against its agents'
+# GPU flags (`agnosai_gpu_score`) and never against the host: `agnosai_hw_inventory_satisfies` has no
+# caller in the run path. A crew that needs a GPU runs on a host with none, and it would be a
+# poor guide anyway, because inference happens at the gateway, usually on another machine.
+# `gpu_required_enforced` says so on every answer, for the reason `crews_call_tools` does.
+#
+# ## ⚠ Once, at mount, and never on a request
+#
+# Detection allocates on the global heap, which a route may not do per request, and with vendor tools
+# on it spawns them. It also sets the process-wide subprocess timeout while it runs
+# (`_cmd_dl_enter`), which is only safe with nothing else running. So it runs on the one thread,
+# before the server listens, and a route reads what it left.
+#
+# ## ⚠ Only what stays true
+#
+# Hardware rarely changes under a running server, and free memory, utilization and temperature change
+# by the second. A snapshot of those would be a stale number presented as a reading, so they are left out,
+# and the answer says when it was taken.
+#
+# ## Vendor tools are the operator's to allow
+#
+# agnostic spawns nothing today, and a sandbox can refuse `execve`, so the default is sysfs alone. That
+# sees AMD, Intel, Vulkan and NPUs and **not NVIDIA**, whose source is `nvidia-smi`.
+# `AGNOSTIC_GPU_TOOLS=on` runs the tools, each under ai-hwaccel's deadline, and a tool that hangs holds
+# up the start by that long. `vendor_tools` on the answer says which it was, so an empty list on an
+# NVIDIA host does not read as no GPU.
+#
+# A tool's words can hold paths and driver text, so they go to the log, and a READ caller gets a count.
+# A tool that is not installed is not counted: every host lacks most vendors' tools, and a count that is
+# never 0 is one nobody reads.
+
+# What is kept of one device.
+enum AgnosticGpuRowOff {
+    AGNOSTIC_GPUR_TYPE      = 0;    # ai-hwaccel's name for the accelerator, a C string
+    AGNOSTIC_GPUR_NAME      = 8;    # the device's own name, a Str, or 0
+    AGNOSTIC_GPUR_DRIVER    = 16;   # its driver version, a Str, or 0
+    AGNOSTIC_GPUR_MEMORY_MB = 24;   # memory, in MiB
+    AGNOSTIC_GPUR_SHARED    = 32;   # 1 when that memory is the host's own (an integrated GPU)
+    AGNOSTIC_GPUR_SIZE      = 40;
+}
+
+var AGNOSTIC_GPU_MB = 1048576;
+
+# The devices read at mount, a vec of rows, or 0 before then.
+var _agnostic_gpu_rows = 0;
+var _agnostic_gpu_at_ms = 0;
+var _agnostic_gpu_tools = 0;
+var _agnostic_gpu_warnings = 0;
+
+# Whether a crew's `gpu_required` is held to these devices. 0 until something places a crew on
+# hardware; `tests/gpu.tcyr` pins it, so turning it on is a decision.
+var AGNOSTIC_GPU_REQUIRED_ENFORCED = 0;
+
+# A copy of the C string `s`, or 0 for a missing or empty one.
+fn _agnostic_gpu_text(s): i64 {
+    if (s == 0) { return 0; }
+    if (strlen(s) == 0) { return 0; }
+    return str_clone(str_from(s));
+}
+
+# How many of `reg`'s warnings say something went wrong: all but a tool that is not installed.
+fn _agnostic_gpu_faults(reg): i64 {
+    var warns = reg_warnings(reg);
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(warns)) {
+        if (warning_code(vec_get(warns, i)) != HWA_ERR_TOOL_NOT_FOUND) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# Keep what registry `reg` found: every accelerator it holds. The CPU profile is not one, or a host
+# with no GPU would list a device. `tools` is whether vendor tools ran.
+fn agnostic_gpu_take(reg, tools): i64 {
+    var rows = vec_new();
+    var n = reg_num_profiles(reg);
+    var i = 0;
+    while (i < n) {
+        var p = reg_get_profile(reg, i);
+        var atype = profile_accel_type(p);
+        if (atype != ACCEL_CPU) {
+            var row = alloc(AGNOSTIC_GPUR_SIZE);
+            if (row == 0) { return 0; }
+            store64(row + AGNOSTIC_GPUR_TYPE, accel_name(atype));
+            store64(row + AGNOSTIC_GPUR_NAME, _agnostic_gpu_text(profile_device_name(p)));
+            store64(row + AGNOSTIC_GPUR_DRIVER, _agnostic_gpu_text(profile_driver_version(p)));
+            store64(row + AGNOSTIC_GPUR_MEMORY_MB, profile_memory_bytes(p) / AGNOSTIC_GPU_MB);
+            var host_memory = 0;
+            if (profile_shared_bytes(p) > 0) { host_memory = 1; }
+            store64(row + AGNOSTIC_GPUR_SHARED, host_memory);
+            vec_push(rows, row);
+        }
+        i = i + 1;
+    }
+    _agnostic_gpu_warnings = _agnostic_gpu_faults(reg);
+    _agnostic_gpu_tools = tools;
+    _agnostic_gpu_at_ms = agnostic_epoch_ms();
+    _agnostic_gpu_rows = rows;
+    return vec_len(rows);
+}
+
+# Read this host's accelerators. Mount time only, on the one thread: see the module header.
+fn agnostic_gpu_detect(tools): i64 {
+    var mask = builder_native();
+    if (tools == 1) { mask = builder_all(); }
+    var reg = registry_detect_with_opts(mask, tools);
+    if (reg == 0) { return 0; }
+    var found = agnostic_gpu_take(reg, tools);
+    # What a tool or a sysfs read said, for the operator, who is the one reader it is meant for.
+    var warns = reg_warnings(reg);
+    var w = 0;
+    while (w < vec_len(warns)) {
+        var level = SK_WARN;
+        if (warning_code(vec_get(warns, w)) == HWA_ERR_TOOL_NOT_FOUND) { level = SK_INFO; }
+        agnostic_log_kv_str(level, "hardware detection", 18, "warning", 7, warning_describe(vec_get(warns, w)));
+        w = w + 1;
+    }
+    agnostic_log_kv_int(SK_INFO, "accelerators found", 18, "count", 5, found);
+    return found;
+}
+
+# The devices, a vec of rows, or 0 before mount.
+fn agnostic_gpu_rows(): i64 { return _agnostic_gpu_rows; }
+
+# When they were read, epoch ms, or 0 before mount.
+fn agnostic_gpu_at_ms(): i64 { return _agnostic_gpu_at_ms; }
+
+# Whether vendor tools ran. 1 or 0.
+fn agnostic_gpu_tools_ran(): i64 { return _agnostic_gpu_tools; }
+
+# How many warnings the read left.
+fn agnostic_gpu_warning_count(): i64 { return _agnostic_gpu_warnings; }
+
+# Forget the read. For tests.
+fn agnostic_gpu_reset(): i64 {
+    _agnostic_gpu_rows = 0;
+    _agnostic_gpu_at_ms = 0;
+    _agnostic_gpu_tools = 0;
+    _agnostic_gpu_warnings = 0;
+    return 0;
+}

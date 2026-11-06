@@ -480,6 +480,9 @@ fn _agnostic_sch_keys_a(a, id): i64 {
     if (id == AGNOSTIC_ROUTE_TENANT_UPDATE) { return _agnostic_sch_words_a(a, k, "tenant"); }
     if (id == AGNOSTIC_ROUTE_TENANT_DELETE) { return _agnostic_sch_words_a(a, k, "key status"); }
     if (id == AGNOSTIC_ROUTE_PRESET_LIST) { return _agnostic_sch_words_a(a, k, "presets total"); }
+    if (id == AGNOSTIC_ROUTE_GPU) {
+        return _agnostic_sch_words_a(a, k, "devices total detected_at vendor_tools warnings gpu_required_enforced");
+    }
     if (id == AGNOSTIC_ROUTE_TOOLS) {
         return _agnostic_sch_words_a(a, k, "tools total resolved unresolved engine_tools crews_call_tools");
     }

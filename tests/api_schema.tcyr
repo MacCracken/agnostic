@@ -408,7 +408,7 @@ fn test_routes() {
     assert_eq(bayan_json_v_int(_t_get(doc, "schema")), 1, "it is format 1");
     var routes = _t_get(doc, "routes");
     var n = bayan_json_v_arr_len(routes);
-    assert_eq(n, 47, "47 routes: one per method each of the router's 34 rows answers");
+    assert_eq(n, 48, "48 routes: one per method each of the router's 35 rows answers");
 
     var shape = 0;
     var unresolved = 0;
@@ -1930,6 +1930,7 @@ fn test_responses() {
     cx = _t_ctx_as(a, token, 0, 0);
 
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/tools", "/api/v1/tools", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/gpu", "/api/v1/gpu", "", cx);
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit", "/api/v1/audit", "", cx);
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "/api/v1/audit/entries", "", cx);
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "/api/v1/audit/entries?limit=1", "", cx);

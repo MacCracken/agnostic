@@ -452,6 +452,8 @@ user asks:
 - **Tenants**, for a super administrator: `GET /api/v1/tenants`, `POST /api/v1/tenants`,
   `GET /api/v1/tenants/{key}`, `PUT /api/v1/tenants/{key}`, `DELETE /api/v1/tenants/{key}`.
 - **Metrics**, for a super administrator or a scraper's token: `GET /api/v1/metrics`.
+- **This host's accelerators:** `GET /api/v1/gpu`, as they were when the server started. A crew is not held
+  to it (`gpu_required_enforced`), so do not read it as what a crew will run on.
 - **The audit trail**, for a super administrator: `GET /api/v1/audit`, `GET /api/v1/audit/entries`.
 - **WebGUI plugins and their documents:** `GET /api/v1/plugins`, `PUT /api/v1/plugins/{id}`,
   `GET /api/v1/plugins/{id}/data`, `GET /api/v1/plugins/{id}/data/{key}`,

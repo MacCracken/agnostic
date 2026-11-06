@@ -462,6 +462,8 @@ fn agnostic_serve_mount(cfg): i64 {
     # operator named one: every client behind an unnamed proxy shares the proxy's login bucket.
     var proxies = agnostic_config_proxies(cfg);
     agnostic_forwarded_set_proxies(proxies);
+    # Before the workers start, which is the only time this may run (`src/engine/gpu.cyr`).
+    agnostic_gpu_detect(agnostic_config_gpu_tools(cfg));
     var target_hosts = agnostic_config_target_hosts(cfg);
     agnostic_target_set_hosts(target_hosts);
     if (target_hosts != 0) {

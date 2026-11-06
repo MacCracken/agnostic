@@ -1,0 +1,57 @@
+# agnostic/routes/gpu — `GET /api/v1/gpu`: the accelerators this host had at start (0.4.1, ADR 0032).
+#
+# One route over a snapshot: `src/engine/gpu.cyr` says what it holds, what it leaves out, and that a
+# crew is not held to it. Nothing here touches the hardware, so anyone with READ can ask as often as
+# they like and it costs the arena.
+
+var AGNOSTIC_JK_DEVICES      = str_from("devices");
+var AGNOSTIC_JK_DETECTED_AT  = str_from("detected_at");
+var AGNOSTIC_JK_VENDOR_TOOLS = str_from("vendor_tools");
+var AGNOSTIC_JK_WARNINGS     = str_from("warnings");
+var AGNOSTIC_JK_GPU_ENFORCED = str_from("gpu_required_enforced");
+var AGNOSTIC_JK_DRIVER       = str_from("driver");
+var AGNOSTIC_JK_MEMORY_MB    = str_from("memory_mb");
+var AGNOSTIC_JK_SHARED_MEM   = str_from("shared_memory");
+
+# One device as the wire shows it. A name or driver the host did not give is left out.
+fn _agnostic_gpu_row_value_a(a, row): i64 {
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_TYPE,
+      bayan_json_v_str_new_a(a, str_from_a(a, load64(row + AGNOSTIC_GPUR_TYPE))));
+    var name = load64(row + AGNOSTIC_GPUR_NAME);
+    if (name != 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_NAME, bayan_json_v_str_new_a(a, name)); }
+    var driver = load64(row + AGNOSTIC_GPUR_DRIVER);
+    if (driver != 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_DRIVER, bayan_json_v_str_new_a(a, driver)); }
+    bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_MEMORY_MB,
+      bayan_json_v_int_new_a(a, load64(row + AGNOSTIC_GPUR_MEMORY_MB)));
+    bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_SHARED_MEM,
+      bayan_json_v_bool_new_a(a, load64(row + AGNOSTIC_GPUR_SHARED)));
+    return o;
+}
+
+# `GET /api/v1/gpu`.
+fn agnostic_route_gpu_a(a): i64 {
+    var devices = bayan_json_v_arr_new_a(a);
+    if (devices == 0) { return 0; }
+    var rows = agnostic_gpu_rows();
+    var n = 0;
+    if (rows != 0) { n = vec_len(rows); }
+    var i = 0;
+    while (i < n) {
+        var o = _agnostic_gpu_row_value_a(a, vec_get(rows, i));
+        if (o == 0) { return 0; }
+        bayan_json_v_arr_push_a(a, devices, o);
+        i = i + 1;
+    }
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_DEVICES, devices);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOTAL, bayan_json_v_int_new_a(a, n));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_DETECTED_AT, bayan_json_v_int_new_a(a, agnostic_gpu_at_ms()));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_VENDOR_TOOLS, bayan_json_v_bool_new_a(a, agnostic_gpu_tools_ran()));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_WARNINGS, bayan_json_v_int_new_a(a, agnostic_gpu_warning_count()));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_GPU_ENFORCED,
+      bayan_json_v_bool_new_a(a, AGNOSTIC_GPU_REQUIRED_ENFORCED));
+    return agnostic_response_json_a(a, HTTP_OK, obj);
+}

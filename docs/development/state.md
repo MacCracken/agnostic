@@ -2,7 +2,11 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-06, at **0.4.0** — a crew can say what it is for: a checked `target` under
+> Last refreshed: 2026-11-06, at **0.4.1** — `GET /api/v1/gpu`, one read of this host at mount, which says a
+> crew is not held to it ([ADR 0032](../adr/0032-the-gpu-route-reads-the-host-once-and-binds-no-crew.md)), and
+> `AGNOSTIC_GPU_TOOLS`. Fleet gets no route until there is a fleet. No dependency moved. Version, Source, the
+> route table, Tests and Next were refreshed then.
+> Before that, 2026-11-06, at **0.4.0** — a crew can say what it is for: a checked `target` under
 > `AGNOSTIC_TARGET_HOSTS` ([ADR 0029](../adr/0029-the-operator-lists-the-hosts-a-crew-may-test.md)), a
 > stored definition named in its body ([ADR 0030](../adr/0030-a-crew-names-a-stored-definition-and-copies-it.md)),
 > and a task's `output_schema` with `output_valid` on its result
@@ -103,7 +107,7 @@
 
 ## Version
 
-**0.4.0** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.4.1** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -169,14 +173,14 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 57 files, 34,564 lines, 1,503 top-level definitions (0.4.0; 33,520 and 1,420 at
-0.3.1), all `agnostic_*`-prefixed. 12,492 of those lines are generated:
+the real surface (0.1.10)** — 59 files, 34,801 lines, 1,531 top-level definitions (0.4.1; 34,564 and 1,503 at
+0.4.0), all `agnostic_*`-prefixed. 12,492 of those lines are generated:
 `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (11,655 — six embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 39 suites, 3,820 assertions, 0 failed** (`cyrius test`, 0.4.0; 3,569 at 0.3.1), plus
-**97 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 96 at 0.3.1) — **and the
-same 39 suites natively on aarch64** (Raspberry Pi 4). Their counts match but for `crews_route`, 247 or 248
+**Tests: 40 suites, 3,870 assertions, 0 failed** (`cyrius test`, 0.4.1; 3,820 at 0.4.0), plus
+**97 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+) — **and the
+same 40 suites natively on aarch64** (Raspberry Pi 4). Their counts match but for `crews_route`, 247 or 248
 from run to run, because two loops assert once per poll. Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
 shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
@@ -274,6 +278,7 @@ refactor of any of it.
 | `src/routes/definitions.cyr` | agent definition CRUD |
 | `src/routes/presets.cyr` | the preset surface, read-only |
 | `src/routes/tools.cyr` | `GET /api/v1/tools`: the M6 gate on the wire (0.4.0) |
+| `src/engine/gpu.cyr`, `src/routes/gpu.cyr` | this host's accelerators, read once at mount (0.4.1, ADR 0032) |
 | `src/routes/plugins.cyr` | list plugins, switch one on or off (0.1.7) |
 | `src/routes/webgui.cyr` | `/ui` and `/ui/plugins/{id}` — the pages (0.1.7) |
 | `src/routes/plugindata.cyr` | a plugin's documents — list, read, write, delete (0.1.8) |
@@ -318,6 +323,7 @@ The crew surface, and what each code means:
 | `GET /api/v1/presets` | 200 — summaries, not documents |
 | `GET /api/v1/presets/{name}` | 200 · 404 unknown name |
 | `GET /api/v1/tools` | 200 — the 38 names, what resolves, the engine's tools, and `crews_call_tools` |
+| `GET /api/v1/gpu` | 200 — this host's accelerators at start, `vendor_tools`, and `gpu_required_enforced` |
 | `GET /api/v1/agents/definitions` | 200 |
 | `POST /api/v1/agents/definitions` | **201** · 400 (also an unknown `complexity`, 0.1.15) · **409** · 422 · **507** |
 | `GET /api/v1/agents/definitions/{key}` | 200 — with its revision, `etag` and an `ETag` header (0.1.15) · 404 · 422 |
@@ -342,7 +348,7 @@ CHANGELOG (0.1.13, Verified) records the live run that confirmed it, and a chang
 should re-read the skill.
 
 The table is a flat scan of 32 paths (33 patterns; 21 until 0.3.0). Since 0.1.13 (H5) it is literally a table
-— 34 rows of a pattern and the route id per method, built once at load, which the resolver walks
+— 35 rows of a pattern and the route id per method, built once at load, which the resolver walks
 in the old order and `agnostic_route_row_pattern` / `agnostic_route_row_id` expose. Re-measured then,
 in interleaved runs against a copy of the tree with the if-chain restored: 0.107 / 0.87 / 0.72 /
 2.15 µs against 0.108 / 0.92 / 0.78 / 2.19 µs — no slower, a miss ~7% faster, because the walk calls
@@ -501,8 +507,11 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**39 suites, 3,820 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.0, 2026-11-06),
-with `CYRIUS_DCE=1` as CI runs them. 0.4.0's additions, the rules mutation-checked (97 mutants, CHANGELOG
+**40 suites, 3,870 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.1, 2026-11-06),
+with `CYRIUS_DCE=1` as CI runs them. 0.4.1's additions, the rules mutation-checked (18 mutants, CHANGELOG
+[0.4.1]): `tests/gpu.tcyr` (42), `config/gpu-tools`, and in `scripts/boot-probe.sh` a fake `nvidia-smi` on
+the `PATH` that proves from outside what the server spawns. `cyrius coverage --exec` reads 98%.
+At 0.4.0: 39 suites and 3,820 assertions. Its additions, the rules mutation-checked (97 mutants, CHANGELOG
 [0.4.0]): `tests/crew_body.tcyr` (191: the target and its list, stored definitions, `output_schema`,
 `output_valid`, a database older than the target, and the tools route), `codec/field-rows`,
 `config/target-hosts`, `request/target-outlives`, `alloc/crew-body`, and in `api/responses` a proof that
@@ -906,10 +915,10 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x and holds every gap the
 parity review found. `python-port/` is removed once that plan is finished and tagged.
 
-**At 0.4.0:** what is left of the 0.4.x line divides in two. Definition versions and rollback, packages, the
+**At 0.4.1:** what is left of the 0.4.x line divides in two. Definition versions and rollback, packages, the
 `team` crew spec and `recommend_preset` wait on nothing. M6 proper, holding a tool to its target, the
 registry seam, the reviewer preset and the model picker wait on agnosai 2.3.x and 2.4.x, whose tag is not
-out: `git tag` there still ends at 2.2.4. GPU and fleet want a decision first: see the roadmap.
+out: `git tag` there still ends at 2.2.4. Fleet routes wait for a fleet.
 
 The notes below were written for M5 and remain true.
 

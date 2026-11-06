@@ -761,6 +761,17 @@ fn _agnostic_bench_operations(): i64 {
     bench_batch_stop(bf, 200000);
     bench_report(bf);
 
+    var bg = bench_new("gpu_route");
+    bench_batch_start(bg);
+    i = 0;
+    while (i < 200000) {
+        if (agnostic_route_gpu_a(a) != 0) { n = n + 1; }
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(bg, 200000);
+    bench_report(bg);
+
     var bl = bench_new("tools_route");
     bench_batch_start(bl);
     i = 0;

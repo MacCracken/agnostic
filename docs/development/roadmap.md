@@ -60,10 +60,7 @@ only a class name and a `focus`, so each tool is designed for agnostic as it is 
   - the `team` crew spec;
   - `recommend_preset`. Its owner is agnostic, whose preset library is canonical (Settled decisions,
     2026-08-20).
-  - ⚠ **GPU and fleet need a decision before a route.** Nothing in agnosai outside `src/fleet/` calls its
-    schedulers or registry, and agnostic is one process on one database, so a fleet route would have
-    nothing to read and would answer empty for ever. GPU has a source (`lib/ai-hwaccel.cyr` detects this
-    host's devices), and a route over it would say what a crew's `gpu_required` can find here.
+  - **Fleet routes wait for a fleet** (Settled decisions, 2026-11-06).
 - [ ] **Tool upload** (G10), once it has a sandbox.
 - [ ] **The model picker** (M9), on B33.
 
@@ -721,6 +718,14 @@ own section below.
   handles accents and tables. It cannot show text outside WinAnsi, so `✓`, `→` and non-Latin text need
   fonts it cannot embed yet. That and the other gaps are filed with bayan, and M8 says what agnostic does
   if they have not landed.
+
+- **2026-11-06 — A GPU route, and no fleet route until there is a fleet.** Nothing in agnosai outside
+  `src/fleet/` calls its schedulers or registry, and agnostic is one process on one database, so a fleet
+  route would have nothing to read and would answer empty for ever. It comes when a deployment has
+  more than one node. GPU has a source in `lib/ai-hwaccel.cyr`, and shipped at 0.4.1 as one route over a
+  snapshot ([ADR 0032](../adr/0032-the-gpu-route-reads-the-host-once-and-binds-no-crew.md)). What is left of
+  the former GPU surface, cross-crew slots and local inference, waits on something that places work on a
+  GPU, which nothing here does.
 
 ## Release shape
 
