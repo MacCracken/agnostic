@@ -91,7 +91,7 @@ enum AgnosticLedgerEntryOff {
     AGNOSTIC_LE_IDEM      = 128;  # the `Idempotency-Key` it was submitted with, or 0
     AGNOSTIC_LE_FPRINT    = 136;  # hex SHA-256 of the body that key came with, or 0
     AGNOSTIC_LE_RETIRED   = 144;  # 1 once the engine's registry has been told to forget it
-    AGNOSTIC_LE_PENDING   = 152;  # AGNOSTIC_PENDING_* bits: durable writes still owed
+    AGNOSTIC_LE_PENDING   = 152;  # AGNOSTIC_PENDING_* bits: durable writes not done yet
     AGNOSTIC_LE_SIZE      = 160;
 }
 
@@ -224,7 +224,7 @@ fn agnostic_status_is_terminal(s): i64 {
     return 0;
 }
 
-# The durable writes an entry still owes. A latch only records them: seeing that a crew finished
+# The durable writes an entry has not done. A latch only records them: seeing that a crew finished
 # is memory, and writing it down is about 11.5 ms of fsync, so the two run apart (ADR 0022).
 var AGNOSTIC_PENDING_OUTCOME = 1;   # its outcome has not been stored
 var AGNOSTIC_PENDING_RESULTS = 2;   # a cancelled crew took its results after that
@@ -771,12 +771,12 @@ fn agnostic_ledger_latch(e, status, error, results): i64 {
 # document are one-shot, 16 KB or more each time, and on the global heap they were never given
 # back: the routes and the collector pass an arena they reset.
 fn agnostic_ledger_latch_a(a, e, status, error, results): i64 {
-    var r = agnostic_ledger_latch_owed(e, status, error, results);
+    var r = agnostic_ledger_latch_unwritten(e, status, error, results);
     if (r != 0) { agnostic_ledger_flush_a(a, e); }
     return r;
 }
 
-# Write what `agnostic_ledger_latch_owed` left owing, once, whichever thread gets here first.
+# Write what `agnostic_ledger_latch_unwritten` left unwritten, once, whichever thread gets here first.
 # Returns 1 when this call wrote. The bits stay set until the write ends, so the entry stays
 # held, and a reader cannot miss it in both the ledger and the store.
 fn agnostic_ledger_flush_a(a, e): i64 {
@@ -803,9 +803,9 @@ fn agnostic_ledger_flush_a(a, e): i64 {
     return 1;
 }
 
-# `agnostic_ledger_latch` without its durable write: records what is owed, for
+# `agnostic_ledger_latch` without its durable write: records what needs writing, for
 # `agnostic_ledger_flush_a` to write.
-fn agnostic_ledger_latch_owed(e, status, error, results): i64 {
+fn agnostic_ledger_latch_unwritten(e, status, error, results): i64 {
     if (e == 0) { return 0; }
     mutex_lock(_agnostic_ledger_mutex);
     var stored = load64(e + AGNOSTIC_LE_STATUS);
@@ -839,7 +839,7 @@ fn agnostic_ledger_latch_owed(e, status, error, results): i64 {
     }
     mutex_unlock(_agnostic_ledger_mutex);
 
-    # ⚠ **Owed, on the one transition that matters.** This is the single point where a crew
+    # ⚠ **Unwritten, on the one transition that matters.** This is the single point where a crew
     # becomes terminal — the latch refuses every later write — so it is exactly where
     # durability belongs, and recording it here means no caller has to remember. Writing the
     # outcome also clears the crew's in-flight row (0.1.13), so the next start does not call

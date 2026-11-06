@@ -17,10 +17,11 @@ versioning/packaging, the crew assembler and the preset library.
 
 What remains is the **product** tier: the HTTP and MCP surfaces consumers bind to, the QA domain
 tools, identity and tenancy, persistence and reporting, and the GUI. Sequencing follows
-the release plan below, not the Python tree's layout. What was ported, delegated or dropped, area by
+the release plan below, not the Python tree's layout. What has and has not been ported, area by
 area, is in the [parity review](research/2026-11-05-python-port-parity.md).
 
-The oracle at `python-port/` is a **behavioural reference, not a specification**.
+agnostic is the project, written in Cyrius. `python-port/` is its former code: a **reference, not a
+specification**.
 [`../../ORACLE-AUDIT.md`](../../ORACLE-AUDIT.md) records 86 verified defects in it; several of its
 paths are wrong, and reproducing them faithfully would reproduce the bugs. Check that document
 before porting any behaviour.
@@ -47,16 +48,13 @@ budgets, 2.5.x the durable crew log, and 2.6.x MCP 2026-07-28 and A2A v1.0.x.
 - The benchmark rows the audit asked for (*Open*, Tests).
 - **A load test in the tree**: 16 clients and 6,000 crews, as the audit ran by hand. The first version
   of ADR 0022's fix passed every suite and lost most of them under this.
-- The parity review's fifteen records (*Decisions awaiting the user*), so the deletion list shrinks to
-  real work.
 - Any time: `[embed]` and `deps --locked` (*Available from the toolchain*).
 
 ### 0.3.x — identity, tenancy and deployment
 
 Comes first among the feature lines because nothing else can be used by a machine without it. A
-deployment has one user, no issuable API key, and tokens that die on restart. Python's static key
-worked, so this is a regression, and the v1.0 criterion "a consumer green against the published API"
-cannot be met until it is done. Details under *Identity and deployment*.
+deployment has one user, no issuable API key, and tokens that die on restart, and the v1.0 criterion
+"a consumer green against the published API" cannot be met until it is done. Details under *Identity and deployment*.
 
 - **Provisioning**: users, API keys and tenants, by route or an `agnostic admin` command, with an ADR.
 - **`AGNOSTIC_JWT_SECRET`**, length-checked, so a restart does not log everyone out.
@@ -72,14 +70,13 @@ cannot be met until it is done. Details under *Identity and deployment*.
 
 ### 0.4.x — the QA tool surface (M6)
 
-Waits on agnosai 2.3.x: F1, and B33. Extract the tool intent from `python-port/` first (*Deleting
-`python-port/`*): M6 says "preset-declared intent", and a preset declares only a class name and a
-`focus`.
+Waits on agnosai 2.3.x: F1, and B33. M6 says "preset-declared intent", and a preset declares only a
+class name and a `focus`, so each tool is designed for agnostic as it is written.
 
 - **M6**: every one of the 38 names resolved, written or struck, with a miss an error.
 - **The tool-registry seam** (`handoff.md` §8), decided with F1.
 - **The reviewer preset**, once F9 hands a dependent task its dependencies' outputs (agnosai 2.4.x).
-- **`target_url`** (G4): a task field, or prose in `description`.
+- **A crew's target** (G4): its form is question 3 in the parity review.
 - **`GET /tools`** (G10), which the viability gate wants.
 - **The model picker** (M9), on B33.
 
@@ -87,12 +84,10 @@ Waits on agnosai 2.3.x: F1, and B33. Extract the tool intent from `python-port/`
 
 Waits on agnosai 2.6.x for MCP 2026-07-28 and A2A v1.0.x.
 
-- **M7**: `/mcp`, `/api/v1/mcp/invoke`, A2A, and the daimon registrar. Say which surface it means: the
-  34 Python MCP tools are operations, and the 38 are QA classes (parity review, §7). The manifest is
-  extracted before deletion.
+- **M7**: `/mcp`, `/api/v1/mcp/invoke`, A2A, and the daimon registrar. Which surface it exposes is
+  question 12 in the parity review.
 - **The completion webhook** (G3), on agnosai's guarded fetch: how a CI job learns a run ended.
-- **M8**: exports, trends and comparison. **Decide what reports read first** (G5): crew outcomes, or
-  a result model of their own.
+- **M8**: exports, trends and comparison. What reports read is question 4 in the parity review.
 - **M9**: streaming crew events, reports in the shell, and the "which crew needs me?" badge, which
   needs agnosai F3.
 
@@ -101,35 +96,31 @@ Waits on agnosai 2.6.x for MCP 2026-07-28 and A2A v1.0.x.
 The v1.0 criteria below, the exported symbols' half of the API freeze, a security audit re-run, and
 the deletion of `python-port/`.
 
-## Deleting `python-port/` — at 1.0.0, once M6–M8 and the gaps are closed
+## Deleting `python-port/` — at 1.0.0, once M6–M8 and identity are in
 
 Full record: [the parity review](research/2026-11-05-python-port-parity.md), which went over all 397
 tracked files, 106 routes and 192 environment variables.
 
-**The verdict: not yet by the rule, and safe mechanically.** Nothing in the repo reads the tree: no
-script, suite or CI step, and `gen-presets.sh` reads `src/presets/`, whose 18 documents match byte
-for byte. Deleting it now would break nothing. But `first-party-standards.md:53` asks for equal or
-better coverage, and that is not met. If you would rather delete earlier, the only cost is that M6–M8
-read the oracle through `git show`, which is a convenience loss, not a data loss.
+**The verdict: it can go whenever you say.** Nothing in the repo reads the tree: no script, suite or
+CI step, and `gen-presets.sh` reads `src/presets/`, whose 18 documents match byte for byte. All of it
+stays in git. What stands in the way is `first-party-standards.md:53`, which asks for equal or better
+coverage, so the list below is what agnostic does not have yet.
 
 **Blockers:**
 
 - [ ] **M6:** 36 of 38 tool names resolve to nothing, and agnosai F1 means none would be called if they
   did.
 - [ ] **M7:** MCP and A2A are not started.
-- [ ] **M8:** reports are not started, and their input is undecided (G5).
-- [ ] **G1 and G2 in code:** machine access regresses from what Python had (0.3.x).
-- [ ] **G3–G17:** fifteen missing records, most of them one-line drops (*Decisions awaiting the user*).
+- [ ] **M8:** reports are not started.
+- [ ] **G1 and G2:** a deployment has one user, no issuable API key, and tokens that die on restart
+  (0.3.x).
+- [ ] Any parity-review question answered yes (*Decisions awaiting the user*).
 
-M9's streaming is owed but is not a blocker: the event cursor gives everything `/ws/realtime` gave
-except push.
+M9's streaming is on 0.5.x and is not needed for the rule: the event cursor gives a client the same
+events.
 
 **Before the deletion commit:**
 
-- [ ] **Extract the tool intent** for the 36 classes (`name`, `description`, inputs, outputs). It is the
-  only copy, and M6 is written against it.
-- [ ] **Extract the 34-tool MCP manifest** (`webgui/routes/mcp.py`) into M7's ADR notes.
-- [ ] Note `shared/yeoman_schemas.py` for G5: it is the only typed result model in the tree.
 - [ ] Tag the parent commit, and put that rev in `ORACLE-AUDIT.md`'s header, so its citations resolve.
 
 Everything else is recoverable with `git show <rev>:python-port/...`. There are no Grafana dashboards
@@ -324,7 +315,7 @@ owed for 1.0.0:
 
 ## Identity and deployment (0.3.x)
 
-From the [parity review](research/2026-11-05-python-port-parity.md) (G1, G2, G11, G12, G14) and the
+From the [parity review](research/2026-11-05-python-port-parity.md) (G1, G2, G12, G14) and the
 [2026-11-05 audit](../audit/2026-11-05-audit.md).
 
 - [ ] **Provisioning (G1).** Nothing can add anyone after the bootstrap admin:
@@ -342,7 +333,6 @@ From the [parity review](research/2026-11-05-python-port-parity.md) (G1, G2, G11
   socket peer, so behind a proxy about 5 anonymous requests a minute lock out every login.
 - [ ] **Password change (audit S12b).** The mount WARN says to rotate the bootstrap credential, and
   nothing can.
-- [ ] **Tenant limits (G11):** defer to agnosai F5, and record that quotas, which never ran, are dropped.
 - [ ] **The audit vocabulary (G12).** A failed login is audited since 0.2.2. A 401, a 403 and a
   rate-limit hit still leave nothing, and `agnostic_rl_shed_count` and `agnostic_argon_shed_count`
   have no callers. Bounded, so the trail does not become a write amplifier.
@@ -538,18 +528,9 @@ then, ADR 0022, with the gateway-URL scrub beside it. Filings are in each repo's
 
 ## Decisions awaiting the user
 
-- [ ] **The parity review's records.** Each gap needs a line saying what happens to it. These are its
-  recommendations, for you to accept or change; the [review](research/2026-11-05-python-port-parity.md)
-  has the evidence for each.
-  - **Drop, with a recorded reason:** G6 scheduled reports and delivery (the default jobs raised on
-    construction, so they never ran), G8 alerts, G9 dashboards and the agent monitor (they read keys
-    with no literal writer), G13 the AGNOS clients (five never used beyond a shutdown `close()`), G16
-    preset writes, G17 small leftovers.
-  - **Port, on the plan above:** G1, G2, G3, G12, G14.
-  - **Decide at a milestone:** G4 at M6, G5 before M8.
-  - **Record per item:** G7 (one `/metrics` route, or OTLP only; drop the stack either way), G10 (each
-    unsurfaced engine capability; `recommend_preset` has no owner), G11 (defer to agnosai F5).
-  - G15, the operator documentation, is started: `docs/guides/configuration.md`, since 0.2.2.
+- [ ] **The parity review's thirteen questions**
+  ([§3](research/2026-11-05-python-port-parity.md#questions-for-the-user)). Each asks whether the project
+  wants something agnostic does not have. A yes puts it on the release plan.
 - [ ] **Make the post-tag benchmark run part of the Process?** 0.1.16's was run on request, right
   after the tag, on the clean tree: `./scripts/bench-history.sh`, then commit `BENCHMARKS.md` and
   `bench-history.csv`, so each row names a tagged commit. The proposal is a clause in CLAUDE.md's

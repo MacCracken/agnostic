@@ -469,7 +469,7 @@ and **80 JavaScript tests** (`./scripts/check-webgui-js.sh`; 80). The run ends `
 gate since 0.2.2. 0.2.2's additions, each repair mutation-checked: `crews/engine-cap`,
 `crews/collect-apart` and `crews/cancel-retire` (a crew is never lost at the engine's cap, and its results
 survive retirement), `serve/arena-grows`, `serve/restrictions` and `serve/failure-reason`,
-`alloc/definitions-past-cache`, `ledger/evict-oldest`, `ledger/owed` and `ledger/unknown-settled`,
+`alloc/definitions-past-cache`, `ledger/evict-oldest`, `ledger/unwritten` and `ledger/unknown-settled`,
 `request/deps-need-dag`, `login/body-cap` and `login/failed-audited`, `tenancy/limits`,
 `crewstore/listing-failure`, and `config/parse-auth`, `parse-addr` and `url-userinfo`.
 At 0.2.1: 33 suites and 2,806 assertions.
@@ -846,7 +846,7 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x. Next in the 0.2.x line:
 the agnosai re-pin that removes `_agnostic_crew_retire_a`'s reach into its fields, `GET /crews` paging,
 and a CI step that boots the binary. Then 0.3.x: provisioning, `AGNOSTIC_JWT_SECRET`, tenant scope and
-a trusted-proxy setting. The parity review's records are waiting on the user (*Decisions awaiting the
+a trusted-proxy setting. The parity review's thirteen questions are waiting on the user (*Decisions awaiting the
 user*). The notes below were written for M5 and remain true.
 
 ✅ **patra's single index per table does NOT bind here — corrected 2026-08-21.**

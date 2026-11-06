@@ -561,11 +561,11 @@ fn _agnostic_crew_observe_a(a, entry, crew_id: Str): i64 {
     if (state != 0) {
         var observed = agnostic_outcome_from_state_a(a, state);
         var status = agnostic_crew_observed_status(entry, agnostic_outcome_status(observed));
-        agnostic_ledger_latch_owed(entry, status, agnostic_outcome_error(observed),
+        agnostic_ledger_latch_unwritten(entry, status, agnostic_outcome_error(observed),
           agnostic_outcome_results(observed));
     } else {
         if (agnostic_status_is_terminal(agnostic_ledger_status(entry)) == 0) {
-            agnostic_ledger_latch_owed(entry, AGNOSTIC_CREW_UNKNOWN, AGNOSTIC_CREW_LOST_MSG, 0);
+            agnostic_ledger_latch_unwritten(entry, AGNOSTIC_CREW_UNKNOWN, AGNOSTIC_CREW_LOST_MSG, 0);
         }
     }
     return 0;

@@ -297,15 +297,15 @@ fn test_unknown_is_settled() {
     assert_neq(agnostic_ledger_entry(_t_id(1)), 0, "and eviction leaves it where a reader can find it");
 }
 
-# A latch records what is owed, and the entry stays until it is paid: live, and past eviction.
+# A latch records what needs writing, and the entry stays until it is written: live, and past eviction.
 fn test_an_owed_latch_is_held_until_written() {
-    test_group("ledger/owed");
+    test_group("ledger/unwritten");
 
     agnostic_ledger_reset();
     var a = arena_allocator(65536);
     var e = agnostic_ledger_record(_t_id(1), str_from("c"), 0);
     store64(e + AGNOSTIC_LE_T0_MS, 1);
-    assert_eq(agnostic_ledger_latch_owed(e, AGNOSTIC_CREW_COMPLETED, 0, 0), 1, "the latch takes");
+    assert_eq(agnostic_ledger_latch_unwritten(e, AGNOSTIC_CREW_COMPLETED, 0, 0), 1, "the latch takes");
     assert_eq(agnostic_ledger_status(e), AGNOSTIC_CREW_COMPLETED, "and readers see it at once");
     assert_eq(agnostic_ledger_is_live(e), 1, "but it is live until it is written");
 

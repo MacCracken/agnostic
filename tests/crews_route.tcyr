@@ -740,10 +740,10 @@ fn test_collecting_does_not_wait_for_the_write() {
     }
     assert_eq(agnostic_engine_crew_count(), 0, "the crew is retired with no write done");
     assert_eq(agnostic_ledger_status(entry), AGNOSTIC_CREW_COMPLETED, "a reader sees it finished");
-    assert_eq(agnostic_ledger_is_live(entry), 1, "and the ledger still owes its outcome");
+    assert_eq(agnostic_ledger_is_live(entry), 1, "and the ledger has not written its outcome");
     assert_eq(agnostic_crews_doc_a(sa, id), 0, "which is not stored yet");
 
-    assert_eq(agnostic_collector_finish_a(sa), 1, "a stop writes what is owed");
+    assert_eq(agnostic_collector_finish_a(sa), 1, "a stop writes what is unwritten");
     assert_neq(agnostic_crews_doc_a(sa, id), 0, "and the outcome is stored");
     assert_eq(agnostic_ledger_is_live(entry), 0, "so the entry is finished");
 }

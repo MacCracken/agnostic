@@ -12,8 +12,8 @@ performance and memory) went over the whole tree, a fourth reviewed the repairs,
 authorisation bypass and no memory corruption. They did find memory exhaustion without credentials,
 completed crews lost under load, and reads that leaked on every call. All are repaired, with the
 exceptions the audit lists. The roadmap is reorganized into release lines, 0.2.x to 0.5.x, with a
-[parity review](docs/development/research/2026-11-05-python-port-parity.md) that says what stands
-between `python-port/` and its deletion.
+[parity review](docs/development/research/2026-11-05-python-port-parity.md) that lists what agnostic does
+not have yet.
 
 ⚠ **Wire-visible**, each below: a request must arrive whole within **15 s** of connecting, not 60; a
 login body over 4 KiB is **413**; raw invalid UTF-8 or a raw control byte in JSON is **400**;
@@ -124,9 +124,9 @@ flat through every read phase of the replay here.
 
 ### Known
 
-- ⚠ **`python-port/` cannot go yet.** Nothing depends on it mechanically, but M6–M8 and the parity
-  review's gaps stand between it and "equal or better coverage". Its fifteen records are yours to
-  accept (roadmap, *Decisions awaiting the user*).
+- **`python-port/` stays until you delete it.** Nothing reads it. M6–M8, provisioning and the JWT
+  secret stand between it and "equal or better coverage", and the parity review has thirteen
+  questions for you (roadmap, *Decisions awaiting the user*).
 - **agnostic reaches into agnosai's private fields** to retire a crew, until agnosai has a call for it.
 - **Under sustained load the outcome writes fall behind**, about 200 crews a second against 86. A
   graceful stop drains them, and a crash loses them to `interrupted`.

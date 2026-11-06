@@ -57,7 +57,7 @@ var _agnostic_collector_sweeps = 0;
 # otherwise hold the next sweep off for seconds while finished crews pile up in the engine.
 var AGNOSTIC_COLLECTOR_WRITE_MS = 150;
 
-# One sweep, in `a`: bring every live ledger entry up to date, then write what is owed, for as long
+# One sweep, in `a`: bring every live ledger entry up to date, then write what is still unwritten, for as long
 # as the budget lasts. The first half is memory and always finishes, so a backlog of writes never
 # stops the sweep from reading the engine. What the budget leaves stays live, and the next sweep
 # has it. Returns how many entries it looked at. Safe to call from any thread, concurrently with
@@ -81,7 +81,7 @@ fn agnostic_collector_sweep_a(a): i64 {
     return n;
 }
 
-# Write everything the ledger still owes, with no budget. A graceful stop runs this, after the
+# Write everything the ledger has not written, with no budget. A graceful stop runs this, after the
 # server has stopped accepting: a crew that finished must not read `interrupted` after a restart
 # because its write was still waiting for a sweep. Returns how many entries it looked at.
 fn agnostic_collector_finish_a(a): i64 {
