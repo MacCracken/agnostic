@@ -613,8 +613,8 @@ var _T_CREWDB = _tt_tmp_path("crews-route-collector");
 # ⭐ The collector (0.1.9): with no client polling at all, a finished crew's outcome is
 # latched and PERSISTED, and its events are collected and timed. Before 0.1.9 an outcome
 # was latched only by a poll, so a crew that finished unwatched did not survive a restart.
-# A crew the ledger has finished with leaves the engine's registry, so the engine's all-at-once
-# eviction never fires. Anything still in it has not been read.
+# A crew the ledger has finished with leaves the engine's registry, so the engine's eviction never
+# fires. Anything still in it has not been read.
 fn test_a_finished_crew_leaves_the_engine() {
     test_group("crews/retired");
 
@@ -647,9 +647,9 @@ fn test_a_finished_crew_leaves_the_engine() {
       "as completed");
 }
 
-# ⭐ At the engine's 1000 the next submit drops every finished crew at once, read or not. Through
-# 0.2.1 that lost whatever the collector had not reached, and each read `unknown`, with its results
-# gone: 885 of 1,300 at 190/s.
+# ⭐ Past the engine's 1000 no crew is lost and none waits on eviction. Through 0.2.1, on agnosai
+# 2.2.3, the next submit at the cap dropped every finished crew at once, read or not, and each read
+# `unknown`, with its results gone: 885 of 1,300 at 190/s.
 fn test_no_crew_is_lost_at_the_engine_cap() {
     test_group("crews/engine-cap");
 
@@ -1354,6 +1354,43 @@ fn test_llm_timeout_reaches_the_engine() {
     agnostic_engine_reset();
 }
 
+# A crew whose gateway is down reports the failure and not the address. agnostic scrubbed the URL
+# out of results through 0.3.0, because agnosai 2.2.3 wrote it there. agnosai 2.2.4 stopped, so this
+# holds the seam the scrub used to: a response reaches any reader, and a stored outcome keeps it.
+fn test_a_dead_gateway_is_not_named() {
+    test_group("crews/gateway-address");
+
+    var a = arena_allocator(262144);
+    var sa = arena_allocator(262144);
+    var cfg = agnostic_config_from_env();
+    store64(cfg + AGNOSTIC_CFG_LLM_URL, str_from("http://127.0.0.1:1"));
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    assert_eq(agnostic_engine_init(cfg), 1, "the engine mounts with a gateway nobody answers");
+
+    var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"),
+      str_from(_T_BODY), 1048576, 0);
+    var id = str_clone(agnostic_req_str(agnostic_response_body(resp), AGNOSTIC_JK_CREW_ID));
+    var entry = agnostic_ledger_entry(id);
+    var tries = 0;
+    while (tries < 400 && agnostic_ledger_is_live(entry) == 1) {
+        agnostic_crew_refresh_a(sa, entry, id);
+        reset_via(sa);
+        sleep_ms(5);
+        tries = tries + 1;
+    }
+    assert_eq(agnostic_ledger_is_live(entry), 0, "the crew ended");
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/crews/");
+    str_builder_add(sb, id);
+    var got = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_builder_build(sb), str_from(""), 1048576, 0);
+    var text = agnostic_encode_a(a, agnostic_response_body(got));
+    assert_eq(str_contains_cstr(text, "hoosh transport error: "), 1, "the failure is in the crew's results");
+    assert_eq(str_contains_cstr(text, "127.0.0.1"), 0, "⭐ and the gateway's address is not");
+    agnostic_engine_reset();
+}
+
 fn test_readiness_registers_the_engine() {
     test_group("crews/ready");
 
@@ -1408,6 +1445,7 @@ fn main() {
     test_explain_refuses_past_the_budget();
     test_submit_joins_the_request_trace();
     test_llm_timeout_reaches_the_engine();
+    test_a_dead_gateway_is_not_named();
     test_readiness_registers_the_engine();
     _tt_unlink_store(_T_CREWDB);
     _tt_unlink_store(_T_RESTARTDB);

@@ -3,6 +3,11 @@
 **Status**: Accepted
 **Date**: 2026-11-05
 
+> **Update, 0.3.1.** agnosai 2.2.4 ships both halves of this. `agnosai_orchestrator_forget_crew` replaces
+> the reach into the orchestrator's fields, and eviction is oldest-first (its ADR 026). The decision stands:
+> eviction is a backstop for a reader that falls behind, so a crew the ledger holds still leaves at once.
+> The sentences below on private fields describe 2.2.3.
+
 ## Context
 
 agnosai keeps at most 1000 crews in its registry. At that size the next submit removes **every**

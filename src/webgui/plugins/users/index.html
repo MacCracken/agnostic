@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Users · agnostic</title>
+<style>
+:root {
+  --bg: #060a0f;
+  --panel: #0c131c;
+  --panel-2: #111b27;
+  --line: #1c2a38;
+  --line-2: #2a3d50;
+  --text: #d4e4f1;
+  --dim: #7d93a8;
+  --faint: #4b6075;
+  --accent: #39d0ff;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --err: #ef4444;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans); }
+body { display: flex; flex-direction: column; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.muted { color: var(--dim); }
+.btn { background: #0f1823; border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 11px; font: 600 12px var(--sans); }
+.btn:hover { border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: #0e3346; border-color: var(--accent); color: var(--accent); }
+.btn.danger { color: var(--err); border-color: rgba(239, 68, 68, .5); }
+
+.bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line-2); background: var(--panel-2); flex-wrap: wrap; }
+.chip { background: none; border: 1px solid var(--line-2); border-radius: 12px; padding: 2px 11px; color: var(--dim); font-weight: 600; font-size: 12px; }
+.chip:hover { color: var(--text); }
+.chip[aria-pressed="true"] { color: var(--text); border-color: var(--accent); background: #0e3346; }
+.spacer { flex: 1; }
+
+.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 340px) 1fr; }
+.list { border-right: 1px solid var(--line-2); overflow: auto; }
+.detail { overflow: auto; padding: 18px 22px 48px; min-width: 0; }
+.row { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 9px 12px; }
+.row:hover { background: #0b141e; }
+.row[aria-current="true"] { background: #0e2433; box-shadow: inset 3px 0 0 var(--accent); }
+.row .top { display: flex; gap: 8px; align-items: center; }
+.row .nm { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.foot { padding: 12px; color: var(--dim); font-size: 12px; }
+.pill { font: 600 10px var(--mono); letter-spacing: .06em; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line-2); color: var(--dim); text-transform: uppercase; white-space: nowrap; }
+
+h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+h2 { font-size: 12px; margin: 22px 0 8px; letter-spacing: .14em; color: var(--dim); text-transform: uppercase; }
+.lede { color: var(--dim); margin: 6px 0 0; max-width: 75ch; }
+.actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+.box { border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 11px; margin-top: 12px; color: var(--dim); }
+.box.ok { border-color: rgba(34, 197, 94, .5); color: var(--ok); }
+.box.bad { border-color: rgba(239, 68, 68, .5); color: var(--err); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+.card h3 { font-size: 14px; margin: 0; }
+.card .role { color: var(--accent); font-size: 12px; margin-top: 1px; }
+.card p { margin: 8px 0 0; }
+.card details { margin-top: 8px; }
+.card summary { color: var(--accent); cursor: pointer; font-size: 12px; }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; margin-top: 14px; }
+.kv dt { color: var(--dim); }
+.kv dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+.tag { font: 11px var(--mono); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 6px; color: var(--dim); }
+form.edit { display: grid; grid-template-columns: 170px 1fr; gap: 10px 14px; margin-top: 16px; max-width: 900px; align-items: start; }
+form.edit label { color: var(--dim); padding-top: 6px; }
+form.edit .hint { grid-column: 2; color: var(--faint); font-size: 11.5px; margin-top: -6px; }
+form.edit input[type="text"], form.edit input[type="password"], form.edit input[type="number"], form.edit textarea, form.edit select { width: 100%; background: #0b131c; border: 1px solid var(--line-2); border-radius: 5px; padding: 6px 9px; }
+.actions input, .actions select { width: 100%; background: #0b131c; border: 1px solid var(--line-2); border-radius: 5px; padding: 6px 9px; }
+.actions input { flex: 0 1 280px; width: auto; }
+.actions select { width: auto; min-width: 200px; }
+form.edit textarea { min-height: 76px; resize: vertical; }
+form.edit .checks { display: flex; gap: 18px; flex-wrap: wrap; padding-top: 6px; }
+form.edit .checks label { padding: 0; color: var(--text); }
+form.edit .row-actions { grid-column: 2; display: flex; gap: 8px; }
+.empty { color: var(--dim); padding: 48px 20px; text-align: center; max-width: 60ch; margin: 0 auto; }
+@media (max-width: 720px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: minmax(140px, 35%) 1fr; }
+  .list { border-right: 0; border-bottom: 1px solid var(--line-2); }
+  form.edit { grid-template-columns: 1fr; }
+  form.edit .hint, form.edit .row-actions { grid-column: 1; }
+  .kv { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header class="bar" id="bar">
+  <div id="tabs" role="group" aria-label="Show"></div>
+  <span class="spacer"></span>
+  <button class="btn primary" id="new" type="button" hidden>New user</button>
+</header>
+<div class="layout" id="layout">
+  <nav class="list" aria-label="Items"><div id="list"></div><div class="foot" id="list-foot"></div></nav>
+  <main class="detail" id="detail"></main>
+</div>
+<script>
+'use strict';
+/* agnostic-kit:host begin — DO NOT EDIT A COPY: the canonical source is src/webgui/kit/host.js,
+ * and scripts/gen-webgui.sh refuses a plugin page whose copy differs (`--sync-kit` rewrites them).
+ *
+ *  Host — the plugin side of agnostic's host bridge (ADR 0005, 0007, 0010).
+ *
+ *  Framed by the agnostic shell, a plugin page runs in an opaque origin with connect-src 'none': it
+ *  cannot reach the API. It asks the shell by postMessage, and the shell answers only what this
+ *  plugin's manifest permits, with the signed-in user's own credential (which the page never sees)
+ *  — and the server checks the same permissions, and that user's role, again. Protocol 1:
+ *
+ *     page  → shell   {type:'agnostic:hello', protocol}
+ *     shell → page    {type:'agnostic:init', protocol, features[], plugin:{id,name,version},
+ *                      permissions[], user:{auth, signedIn, role}, params, views[{id,name}]}
+ *     page  → shell   {type:'agnostic:request', id, method, path, body?, ifMatch?, ifNoneMatch?,
+ *                      idempotencyKey?}
+ *     shell → page    {type:'agnostic:response', id, status, data, etag?}  status 0 = never reached it
+ *     page  → shell   {type:'agnostic:navigate', to, params?}             open another view (0.1.10)
+ *     shell → page    {type:'agnostic:params', params}                    this view's params changed
+ *
+ *  The shell re-sends init after a sign-in or sign-out. `params` is the part of the shell's URL after
+ *  `#plugin/<id>?` — a deep link into this view, e.g. `crew=<uuid>`. `views` lists the views switched
+ *  on, so a page offers a link only to one that will open. Opened on its own (a new tab) there is no
+ *  shell: `mode` is 'standalone', and the page must degrade.
+ */
+class Host {
+  constructor({ helloMs = 3000, timeoutMs = 30000 } = {}) {
+    this.mode = 'connecting';  // 'connecting' | 'connected' | 'standalone'
+    this.info = null;          // the latest agnostic:init
+    this.params = '';          // this view's params, from init or agnostic:params
+    this.pending = new Map();  // request id → {resolve, timer}
+    this.seq = 0;
+    this.timeoutMs = timeoutMs;
+    // A random prefix per page load: request ids restart with every load, and a reply the shell
+    // sends after a reload must never match a request of this page that happens to share a number.
+    this.prefix = 'q' + Host.token(6) + '-';
+    this.listeners = new Set();
+    this.paramListeners = new Set();
+    let framed = false;
+    try { framed = window.parent !== window; } catch (err) { framed = true; }
+    if (!framed) { this.mode = 'standalone'; return; }
+    window.addEventListener('message', (e) => this.onMessage(e));
+    try { window.parent.postMessage({ type: 'agnostic:hello', protocol: 1 }, '*'); } catch (err) { /* detached */ }
+    // A parent that never answers is not the agnostic shell (or is an older one): stand alone.
+    this.timer = setTimeout(() => { if (this.mode === 'connecting') this.setMode('standalone'); }, helloMs);
+  }
+  /** `n` random characters of [a-z0-9]. */
+  static token(n) {
+    const b = new Uint8Array(n);
+    try { crypto.getRandomValues(b); } catch (err) { for (let i = 0; i < n; i++) b[i] = Math.floor(Math.random() * 256); }
+    let s = '';
+    for (const x of b) s += (x % 36).toString(36);
+    return s;
+  }
+  onMessage(e) {
+    if (e.source !== window.parent) return;
+    const m = e.data;
+    if (!m || typeof m !== 'object' || typeof m.type !== 'string') return;
+    if (m.type === 'agnostic:init') {
+      const u = m.user && typeof m.user === 'object' ? m.user : {};
+      this.info = {
+        plugin: m.plugin && typeof m.plugin === 'object' ? m.plugin : {},
+        permissions: Array.isArray(m.permissions) ? m.permissions.filter((x) => typeof x === 'string') : [],
+        features: Array.isArray(m.features) ? m.features.filter((x) => typeof x === 'string') : [],
+        user: { auth: typeof u.auth === 'string' ? u.auth : 'unknown', signedIn: !!u.signedIn, role: typeof u.role === 'string' ? u.role : null },
+        views: Array.isArray(m.views) ? m.views.filter((v) => v && typeof v.id === 'string' && typeof v.name === 'string') : [],
+      };
+      clearTimeout(this.timer);
+      const params = typeof m.params === 'string' ? m.params : '';
+      const changed = params !== this.params;
+      this.params = params;
+      this.setMode('connected');
+      if (changed) this.emitParams();
+    } else if (m.type === 'agnostic:params') {
+      this.params = typeof m.params === 'string' ? m.params : '';
+      this.emitParams();
+    } else if (m.type === 'agnostic:response') {
+      const r = this.pending.get(m.id);
+      if (!r) return;
+      this.pending.delete(m.id);
+      clearTimeout(r.timer);
+      r.resolve({ status: Number.isInteger(m.status) ? m.status : 0, data: m.data === undefined ? null : m.data, etag: typeof m.etag === 'string' ? m.etag : null });
+    }
+  }
+  setMode(mode) { this.mode = mode; for (const fn of this.listeners) fn(this); }
+  /** Called on every init (and the fall back to standalone); returns an unsubscribe. */
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  /** Called when this view's params change — a deep link followed while it is open. */
+  onParams(fn) { this.paramListeners.add(fn); return () => this.paramListeners.delete(fn); }
+  emitParams() { for (const fn of this.paramListeners) fn(this.params); }
+  /** One param of this view: `param('crew')` for `crew=<uuid>`; '' when absent. */
+  param(name) {
+    for (const pair of this.params.split('&')) {
+      const i = pair.indexOf('=');
+      const k = i < 0 ? pair : pair.slice(0, i);
+      if (k === name) { try { return decodeURIComponent(i < 0 ? '' : pair.slice(i + 1)); } catch (err) { return ''; } }
+    }
+    return '';
+  }
+  can(permission) { return this.mode === 'connected' && this.info.permissions.includes(permission); }
+  /** Whether the shell's bridge carries `feature` ('query' | 'revisions' | 'idempotency' | 'navigate'). */
+  has(feature) { return this.mode === 'connected' && this.info.features.includes(feature); }
+  pluginId() { return (this.info && typeof this.info.plugin.id === 'string' && this.info.plugin.id) || ''; }
+  /** The user's role when the server enforces roles; null when auth is off or unknown. */
+  role() { return this.info && this.info.user.auth === 'required' ? this.info.user.role : null; }
+  /** Whether the user may write at all: any role but viewer. */
+  mayWrite() { return this.mode === 'connected' && this.role() !== 'viewer'; }
+  /** Whether view `id` is switched on — so a link to it will open. */
+  hasView(id) { return this.mode === 'connected' && this.info.views.some((v) => v.id === id); }
+  /** Open another view (or 'overview' / 'settings'), with params for it. Resolves false when it cannot. */
+  navigate(to, params) {
+    if (!this.has('navigate')) return false;
+    try { window.parent.postMessage({ type: 'agnostic:navigate', to: String(to), params: params ? String(params) : '' }, '*'); } catch (err) { return false; }
+    return true;
+  }
+  /** `opts`: {ifMatch, ifNoneMatch, idempotencyKey}, each sent only when the shell carries it. */
+  request(method, path, body, opts) {
+    if (this.mode !== 'connected') return Promise.resolve({ status: 0, data: { error: 'not connected to agnostic' }, etag: null });
+    const id = this.prefix + ++this.seq;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { if (this.pending.delete(id)) resolve({ status: 0, data: { error: 'the shell did not answer' }, etag: null }); }, this.timeoutMs);
+      this.pending.set(id, { resolve, timer });
+      const msg = { type: 'agnostic:request', id, method, path };
+      if (body !== undefined) msg.body = body;
+      const o = opts || {};
+      if (o.ifMatch && this.has('revisions')) msg.ifMatch = o.ifMatch;
+      if (o.ifNoneMatch && this.has('revisions')) msg.ifNoneMatch = o.ifNoneMatch;
+      if (o.idempotencyKey && this.has('idempotency')) msg.idempotencyKey = o.idempotencyKey;
+      try { window.parent.postMessage(msg, '*'); } catch (err) { this.pending.delete(id); clearTimeout(timer); resolve({ status: 0, data: { error: 'the shell is gone' }, etag: null }); }
+    });
+  }
+}
+/** The error text of a bridge response. */
+function errOf(r) {
+  if (r && r.data && typeof r.data.error === 'string') return r.data.error;
+  return r && r.status ? 'HTTP ' + r.status : 'the server is unreachable';
+}
+/* agnostic-kit:host end */
+
+/* =====================================================================================
+ *  USERS — who can sign in, and the tenants they belong to (0.3.1)
+ *
+ *  Users are /api/v1/users[/{id}], their passwords /api/v1/users/{id}/password and their keys
+ *  /api/v1/users/{id}/api-keys[/{key}]. Tenants are /api/v1/tenants[/{key}], for a super
+ *  administrator only. The tab and the item open are in the URL
+ *  (`#plugin/users?tab=tenants&item=<key>`).
+ *
+ *  ⚠ The server decides everything here. What this page hides is only what would be refused, and
+ *  a refusal is shown as the server worded it: an administrator cannot touch a user above them, a
+ *  user of another tenant is a 404, and the last super administrator stays.
+ *
+ *  ⚠ Nothing keeps a password. It is read from its field when the form is sent and the field is
+ *  cleared whatever the answer, so a password is never in this page's state and never in a URL.
+ *  Your own password and keys are not here on purpose: they need the current password, and a
+ *  plugin is not given those routes. An administrator's route does not set their own password.
+ *
+ *  Everything above the VIEW section is plain logic with no DOM — tests/webgui/users.test.mjs runs
+ *  it in Node against a fake agnostic.
+ * ===================================================================================== */
+const TABS = Object.freeze(['users', 'tenants']);
+const ROLES = Object.freeze(['viewer', 'operator', 'admin', 'super_admin']);
+const ROLE_NAMES = Object.freeze({ viewer: 'Viewer', operator: 'Operator', admin: 'Administrator', super_admin: 'Super administrator' });
+// As the server writes them: 16 lowercase hex digits, and a tenant key (src/auth/tenant.cyr).
+const RE_ID = /^[0-9a-f]{16}$/;
+const RE_TENANT = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const PASSWORD_MIN = 12;
+const PASSWORD_MAX = 1024;
+const EMAIL_MAX = 255;
+const LIMIT_MAX = 1000000;
+
+/** The roles `role` may hand out: its own and those below. Auth off has none, because it has no users. */
+function rolesFor(role) {
+  const i = ROLES.indexOf(role);
+  return i < 0 ? [] : ROLES.slice(0, i + 1);
+}
+/** Why `pw` would be refused, or ''. The server's rule, so a mistake does not cost a round trip. */
+function passwordError(pw) {
+  const n = new TextEncoder().encode(String(pw || '')).length;
+  if (n < PASSWORD_MIN) return 'A password is at least ' + PASSWORD_MIN + ' bytes.';
+  if (n > PASSWORD_MAX) return 'A password is at most ' + PASSWORD_MAX + ' bytes.';
+  return '';
+}
+/** A create-user body from form fields. Returns {body} or {error}. */
+function userBody(f) {
+  const email = String(f.email || '').trim();
+  if (!email.includes('@') || email.length > EMAIL_MAX) return { error: 'An email is an address of at most ' + EMAIL_MAX + ' bytes.' };
+  const bad = passwordError(f.password);
+  if (bad) return { error: bad };
+  const role = String(f.role || 'viewer');
+  if (!ROLES.includes(role)) return { error: 'Choose a role.' };
+  const body = { email, password: String(f.password), role };
+  const tenant = String(f.tenant || '').trim();
+  if (tenant) {
+    if (!RE_TENANT.test(tenant)) return { error: 'A tenant key is 1–64 of a–z, 0–9 and -, starting with a letter or digit.' };
+    body.tenant = tenant;
+  }
+  return { body };
+}
+/** A limit from a form field: empty is 0, the server's default. Returns {value} or {error}. */
+function limitFrom(text, name) {
+  const t = String(text === undefined || text === null ? '' : text).trim();
+  if (!t) return { value: 0 };
+  const n = Number(t);
+  if (!Number.isInteger(n) || n < 0 || n > LIMIT_MAX) return { error: name + ' is a whole number from 0 to ' + LIMIT_MAX + '.' };
+  return { value: n };
+}
+/** A tenant body from form fields, with the key only when creating. Returns {body} or {error}. */
+function tenantBody(f, creating) {
+  const body = {};
+  if (creating) {
+    const key = String(f.key || '').trim();
+    if (!RE_TENANT.test(key)) return { error: 'A tenant key is 1–64 of a–z, 0–9 and -, starting with a letter or digit.' };
+    body.key = key;
+  }
+  const name = String(f.name || '').trim();
+  if (name.length > EMAIL_MAX) return { error: 'A name is at most ' + EMAIL_MAX + ' bytes.' };
+  if (name) body.name = name;
+  const rate = limitFrom(f.rate_limit, 'Crews a minute');
+  if (rate.error) return rate;
+  const crews = limitFrom(f.max_crews, 'Unfinished crews');
+  if (crews.error) return crews;
+  body.rate_limit = rate.value;
+  body.max_crews = crews.value;
+  return { body };
+}
+/** What a limit reads as: a number, or that the server's default applies. */
+function limitText(n) { return Number.isInteger(n) && n > 0 ? String(n) : 'server default'; }
+/** `?tab=…&item=…`, leaving out the defaults. */
+function paramsFor(tab, item) {
+  const p = [];
+  if (tab && tab !== 'users') p.push('tab=' + tab);
+  if (item) p.push('item=' + encodeURIComponent(item));
+  return p.join('&');
+}
+
+/** The users this caller can see, and what can be done to them. */
+class UserDirectory {
+  constructor(host) { this.host = host; this.users = []; this.loading = false; this.error = ''; this.listeners = new Set(); }
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit() { for (const fn of this.listeners) fn(this); }
+  get(id) { return this.users.find((u) => u.id === id) || null; }
+  readError(r) {
+    if (r.status === 401) return 'Sign in as an administrator to manage users.';
+    if (r.status === 403 && !(r.data && typeof r.data.code === 'string' && r.data.code.startsWith('plugin_'))) return 'Managing users is for administrators.';
+    return 'Could not read the users: ' + errOf(r);
+  }
+  async load() {
+    this.loading = true; this.emit();
+    const r = await this.host.request('GET', '/api/v1/users');
+    this.loading = false;
+    if (r.status === 200 && r.data && Array.isArray(r.data.users)) {
+      this.users = r.data.users.filter((u) => u && RE_ID.test(u.id));
+      this.error = '';
+    } else { this.users = []; this.error = this.readError(r); }
+    this.emit();
+    return this.error === '';
+  }
+  /** `f` is the form's fields. Resolves to {id} or {error}. */
+  async create(f) {
+    const b = userBody(f);
+    if (b.error) return b;
+    const r = await this.host.request('POST', '/api/v1/users', b.body);
+    if (r.status !== 201 || !r.data || !r.data.user) return { error: errOf(r) };
+    await this.load();
+    return { id: r.data.user.id };
+  }
+  async write(method, path, body, ok) {
+    const r = await this.host.request(method, path, body);
+    if (r.status !== 200) return { error: errOf(r) };
+    if (ok) await ok();
+    return {};
+  }
+  setRole(id, role) {
+    if (!RE_ID.test(id)) return Promise.resolve({ error: 'That is not a user id.' });
+    return this.write('PUT', '/api/v1/users/' + id, { role }, () => this.load());
+  }
+  setPassword(id, password) {
+    if (!RE_ID.test(id)) return Promise.resolve({ error: 'That is not a user id.' });
+    const bad = passwordError(password);
+    if (bad) return Promise.resolve({ error: bad });
+    return this.write('PUT', '/api/v1/users/' + id + '/password', { password });
+  }
+  remove(id) {
+    if (!RE_ID.test(id)) return Promise.resolve({ error: 'That is not a user id.' });
+    return this.write('DELETE', '/api/v1/users/' + id, undefined, () => this.load());
+  }
+  /** Resolves to {keys} or {error}. A key's secret is never here: the server does not hold it. */
+  async keysOf(id) {
+    if (!RE_ID.test(id)) return { error: 'That is not a user id.' };
+    const r = await this.host.request('GET', '/api/v1/users/' + id + '/api-keys');
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.keys)) return { error: errOf(r) };
+    return { keys: r.data.keys.filter((k) => k && RE_ID.test(k.id)) };
+  }
+  revokeKey(id, key) {
+    if (!RE_ID.test(id) || !RE_ID.test(key)) return Promise.resolve({ error: 'That is not a key id.' });
+    return this.write('DELETE', '/api/v1/users/' + id + '/api-keys/' + key);
+  }
+}
+
+/** The tenants, for a super administrator. */
+class TenantDirectory {
+  constructor(host) { this.host = host; this.tenants = []; this.loaded = false; this.error = ''; this.listeners = new Set(); }
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit() { for (const fn of this.listeners) fn(this); }
+  get(key) { return this.tenants.find((t) => t.key === key) || null; }
+  async load() {
+    const r = await this.host.request('GET', '/api/v1/tenants');
+    if (r.status === 200 && r.data && Array.isArray(r.data.tenants)) {
+      this.tenants = r.data.tenants.filter((t) => t && RE_TENANT.test(t.key));
+      this.error = '';
+    } else {
+      this.tenants = [];
+      this.error = r.status === 403 ? 'Tenants are for super administrators.' : 'Could not read the tenants: ' + errOf(r);
+    }
+    this.loaded = true;
+    this.emit();
+    return this.error === '';
+  }
+  async create(f) {
+    const b = tenantBody(f, true);
+    if (b.error) return b;
+    const r = await this.host.request('POST', '/api/v1/tenants', b.body);
+    if (r.status !== 201 || !r.data || !r.data.tenant) return { error: errOf(r) };
+    await this.load();
+    return { key: r.data.tenant.key };
+  }
+  async update(key, f) {
+    if (!RE_TENANT.test(key)) return { error: 'That is not a tenant key.' };
+    const b = tenantBody(f, false);
+    if (b.error) return b;
+    const r = await this.host.request('PUT', '/api/v1/tenants/' + key, b.body);
+    if (r.status !== 200) return { error: errOf(r) };
+    await this.load();
+    return {};
+  }
+  async remove(key) {
+    if (!RE_TENANT.test(key)) return { error: 'That is not a tenant key.' };
+    const r = await this.host.request('DELETE', '/api/v1/tenants/' + key);
+    if (r.status !== 200) return { error: errOf(r) };
+    await this.load();
+    return {};
+  }
+}
+
+/* =====================================================================================
+ *  VIEW — the DOM. Every value from the server is written with textContent.
+ * ===================================================================================== */
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+function button(text, cls, fn) {
+  const b = el('button', cls, text);
+  b.type = 'button';
+  b.addEventListener('click', fn);
+  return b;
+}
+/** A labelled control in a `form.edit`. */
+function field(form, label, control, hint) {
+  const l = el('label', null, label);
+  const id = 'f-' + label.replace(/[^a-z]/gi, '').toLowerCase();
+  control.id = id;
+  l.htmlFor = id;
+  form.append(l, control);
+  if (hint) form.append(el('div', 'hint', hint));
+  return control;
+}
+function input(type, value) {
+  const i = el('input');
+  i.type = type;
+  if (value !== undefined && value !== null) i.value = String(value);
+  if (type === 'password') { i.autocomplete = 'new-password'; }
+  return i;
+}
+function when(ms) { return Number.isInteger(ms) && ms > 0 ? new Date(ms).toISOString().slice(0, 10) : '—'; }
+
+class UsersView {
+  constructor(host) {
+    this.host = host;
+    this.people = new UserDirectory(host);
+    this.orgs = new TenantDirectory(host);
+    this.$ = (id) => document.getElementById(id);
+    this.tab = 'users';
+    this.item = '';
+    this.creating = false;
+    this.confirming = '';   // the user or tenant whose delete is being asked about
+    this.note = null;
+    this.people.onChange(() => this.render());
+    this.orgs.onChange(() => this.render());
+    this.$('new').addEventListener('click', () => { this.creating = true; this.item = ''; this.note = null; this.render(); });
+    host.onChange(() => this.start());
+    host.onParams(() => { this.readParams(); this.render(); });
+    this.start();
+  }
+  state() {
+    if (this.host.mode !== 'connected') return this.host.mode;
+    return this.host.can('users:read') ? 'ready' : 'forbidden';
+  }
+  isSuper() { return this.host.role() === 'super_admin' && this.host.can('tenants:read'); }
+  readParams() {
+    const t = this.host.param('tab');
+    this.tab = TABS.includes(t) ? t : 'users';
+    this.item = this.host.param('item');
+  }
+  start() {
+    this.readParams();
+    if (this.state() === 'ready') {
+      this.people.load();
+      if (this.isSuper()) this.orgs.load();
+    }
+    this.render();
+  }
+  go(tab, item) {
+    this.tab = tab; this.item = item || ''; this.creating = false; this.confirming = ''; this.note = null;
+    this.host.navigate(this.host.pluginId() || 'users', paramsFor(this.tab, this.item));
+    this.render();
+  }
+  render() {
+    const st = this.state();
+    this.$('layout').hidden = st !== 'ready';
+    this.$('bar').hidden = st !== 'ready';
+    let msg = this.$('message');
+    if (st !== 'ready') {
+      if (!msg) { msg = el('div', 'empty'); msg.id = 'message'; document.body.append(msg); }
+      msg.textContent = st === 'standalone' ? 'This view manages an agnostic server’s users. Open it from agnostic’s WebGUI (/ui), as an administrator.'
+        : st === 'forbidden' ? 'This build of the Users view was not granted users:read.' : 'Connecting to agnostic…';
+      return;
+    }
+    if (msg) msg.remove();
+    const tabs = this.$('tabs');
+    tabs.replaceChildren();
+    if (this.isSuper()) {
+      for (const t of TABS) {
+        const b = button(t === 'users' ? 'Users' : 'Tenants', 'chip', () => this.go(t));
+        b.setAttribute('aria-pressed', String(t === this.tab));
+        tabs.append(b);
+      }
+    }
+    const canWrite = this.tab === 'users' ? this.host.can('users:write') && rolesFor(this.host.role()).length > 0 : this.host.can('tenants:write');
+    this.$('new').hidden = !canWrite;
+    this.$('new').textContent = this.tab === 'users' ? 'New user' : 'New tenant';
+    if (this.tab === 'tenants' && this.isSuper()) this.renderTenants(); else this.renderUsers();
+  }
+  row(top, pill, sub, current, fn) {
+    const b = button('', 'row', fn);
+    b.setAttribute('aria-current', String(current));
+    const t = el('div', 'top');
+    t.append(el('span', 'nm', top));
+    if (pill) t.append(el('span', 'pill', pill));
+    b.append(t, el('div', 'sub', sub));
+    return b;
+  }
+  flash(detail) { if (this.note) detail.append(el('div', 'box ' + (this.note.bad ? 'bad' : 'ok'), this.note.text)); }
+  said(res, ok) { this.note = res.error ? { bad: true, text: res.error } : { bad: false, text: ok }; this.render(); }
+  renderUsers() {
+    const list = this.$('list');
+    list.replaceChildren();
+    const p = this.people;
+    for (const u of p.users) {
+      list.append(this.row(u.email, ROLE_NAMES[u.role] || u.role, u.tenant || 'no tenant', u.id === this.item,
+        () => this.go('users', u.id)));
+    }
+    this.$('list-foot').textContent = p.loading && !p.users.length ? 'Loading…' : p.users.length + (p.users.length === 1 ? ' user' : ' users');
+    const d = this.$('detail');
+    d.replaceChildren();
+    if (p.error) { d.append(el('div', 'box bad', p.error)); return; }
+    if (this.creating) { this.newUser(d); return; }
+    const u = p.get(this.item);
+    if (!u) { d.append(el('div', 'empty', p.users.length ? 'Choose a user.' : 'No users yet.')); return; }
+    this.userDetail(d, u);
+  }
+  newUser(d) {
+    d.append(el('h1', null, 'New user'));
+    this.flash(d);
+    const f = el('form', 'edit');
+    const email = field(f, 'Email', input('text'));
+    const pw = field(f, 'Password', input('password'), 'At least ' + PASSWORD_MIN + ' bytes. They can change it themselves after signing in.');
+    const role = field(f, 'Role', el('select'));
+    for (const r of rolesFor(this.host.role())) { const o = el('option', null, ROLE_NAMES[r]); o.value = r; role.append(o); }
+    let tenant = null;
+    if (this.isSuper()) {
+      tenant = field(f, 'Tenant', el('select'), 'Leave as none for a user of no tenant.');
+      const none = el('option', null, 'None'); none.value = ''; tenant.append(none);
+      for (const t of this.orgs.tenants) { const o = el('option', null, t.key); o.value = t.key; tenant.append(o); }
+    }
+    const actions = el('div', 'row-actions');
+    actions.append(button('Create', 'btn primary', async () => {
+      const res = await this.people.create({ email: email.value, password: pw.value, role: role.value, tenant: tenant ? tenant.value : '' });
+      pw.value = '';
+      if (res.error) { this.note = { bad: true, text: res.error }; this.render(); return; }
+      this.creating = false;
+      this.go('users', res.id);
+    }), button('Cancel', 'btn', () => { this.creating = false; this.note = null; this.render(); }));
+    f.append(actions);
+    d.append(f);
+  }
+  userDetail(d, u) {
+    const h = el('h1', null, u.email);
+    h.append(el('span', 'pill', ROLE_NAMES[u.role] || u.role));
+    d.append(h);
+    this.flash(d);
+    const kv = el('dl', 'kv');
+    kv.append(el('dt', null, 'Tenant'), el('dd', null, u.tenant || 'None'), el('dt', null, 'Created'), el('dd', null, when(u.created_at)), el('dt', null, 'Id'), el('dd', null, u.id));
+    d.append(kv);
+    if (!this.host.can('users:write')) return;
+
+    d.append(el('h2', null, 'Role'));
+    const roles = rolesFor(this.host.role());
+    const sel = el('select');
+    for (const r of roles) { const o = el('option', null, ROLE_NAMES[r]); o.value = r; o.selected = r === u.role; sel.append(o); }
+    const ra = el('div', 'actions');
+    ra.append(sel, button('Change role', 'btn', async () => this.said(await this.people.setRole(u.id, sel.value), 'Role changed.')));
+    d.append(ra);
+
+    d.append(el('h2', null, 'Password'));
+    d.append(el('p', 'lede', 'Setting a password ends the sessions this user has open.'));
+    const pw = input('password');
+    const pa = el('div', 'actions');
+    pa.append(pw, button('Set password', 'btn', async () => {
+      const res = await this.people.setPassword(u.id, pw.value);
+      pw.value = '';
+      this.said(res, 'Password set.');
+    }));
+    d.append(pa);
+
+    d.append(el('h2', null, 'API keys'));
+    const keys = el('div');
+    d.append(keys);
+    this.showKeys(keys, u.id);
+
+    d.append(el('h2', null, 'Delete'));
+    const da = el('div', 'actions');
+    // Asked inline: the shell frames this page without `allow-modals`, so window.confirm answers
+    // false at once and the delete would silently do nothing.
+    if (this.confirming === u.id) {
+      da.append(el('span', null, 'Delete ' + u.email + '? Their keys and sessions stop working.'),
+        button('Yes, delete', 'btn danger', async () => {
+          this.confirming = '';
+          const res = await this.people.remove(u.id);
+          if (res.error) { this.note = { bad: true, text: res.error }; this.render(); return; }
+          this.go('users');
+        }), button('Keep', 'btn', () => { this.confirming = ''; this.render(); }));
+    } else {
+      da.append(button('Delete this user', 'btn danger', () => { this.confirming = u.id; this.render(); }));
+    }
+    d.append(da);
+  }
+  async showKeys(box, id) {
+    const res = await this.people.keysOf(id);
+    box.replaceChildren();
+    if (res.error) { box.append(el('div', 'box bad', res.error)); return; }
+    if (!res.keys.length) { box.append(el('p', 'muted', 'No API keys.')); return; }
+    for (const k of res.keys) {
+      const line = el('div', 'actions');
+      line.append(el('span', null, k.label || '(no label)'), el('span', 'muted', when(k.created_at)), button('Revoke', 'btn danger', async () => {
+        const out = await this.people.revokeKey(id, k.id);
+        if (out.error) { box.append(el('div', 'box bad', out.error)); return; }
+        this.showKeys(box, id);
+      }));
+      box.append(line);
+    }
+  }
+  renderTenants() {
+    const list = this.$('list');
+    list.replaceChildren();
+    const o = this.orgs;
+    for (const t of o.tenants) list.append(this.row(t.key, null, t.name || '', t.key === this.item, () => this.go('tenants', t.key)));
+    this.$('list-foot').textContent = o.tenants.length + (o.tenants.length === 1 ? ' tenant' : ' tenants');
+    const d = this.$('detail');
+    d.replaceChildren();
+    if (o.error) { d.append(el('div', 'box bad', o.error)); return; }
+    if (this.creating) { this.tenantForm(d, null); return; }
+    const t = o.get(this.item);
+    if (!t) { d.append(el('div', 'empty', o.tenants.length ? 'Choose a tenant.' : 'No tenants yet.')); return; }
+    this.tenantForm(d, t);
+  }
+  tenantForm(d, t) {
+    d.append(el('h1', null, t ? t.key : 'New tenant'));
+    this.flash(d);
+    const f = el('form', 'edit');
+    const key = t ? null : field(f, 'Key', input('text'), 'What the tenant’s data is stored under, so it cannot be changed later.');
+    const name = field(f, 'Name', input('text', t ? t.name : ''));
+    const rate = field(f, 'Crews a minute', input('text', t && t.rate_limit ? t.rate_limit : ''), 'Leave empty for the server’s default.');
+    const crews = field(f, 'Unfinished crews', input('text', t && t.max_crews ? t.max_crews : ''), 'Leave empty for the server’s default.');
+    const fields = () => ({ key: key ? key.value : '', name: name.value, rate_limit: rate.value, max_crews: crews.value });
+    const actions = el('div', 'row-actions');
+    if (t) {
+      actions.append(button('Save', 'btn primary', async () => this.said(await this.orgs.update(t.key, fields()), 'Saved.')));
+      if (this.confirming === t.key) {
+        d.append(el('div', 'box', 'Delete tenant ' + t.key + '? Its stored data stays, and a later tenant with this key would read it.'));
+        actions.append(button('Yes, delete', 'btn danger', async () => {
+          this.confirming = '';
+          const res = await this.orgs.remove(t.key);
+          if (res.error) { this.note = { bad: true, text: res.error }; this.render(); return; }
+          this.go('tenants');
+        }), button('Keep', 'btn', () => { this.confirming = ''; this.render(); }));
+      } else {
+        actions.append(button('Delete', 'btn danger', () => { this.confirming = t.key; this.render(); }));
+      }
+    } else {
+      actions.append(button('Create', 'btn primary', async () => {
+        const res = await this.orgs.create(fields());
+        if (res.error) { this.note = { bad: true, text: res.error }; this.render(); return; }
+        this.creating = false;
+        this.go('tenants', res.key);
+      }), button('Cancel', 'btn', () => { this.creating = false; this.note = null; this.render(); }));
+    }
+    f.append(actions);
+    d.append(f);
+  }
+}
+
+if (typeof document !== 'undefined' && document.getElementById('detail')) {
+  window.users = new UsersView(new Host());
+}
+</script>
+</body>
+</html>

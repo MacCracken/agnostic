@@ -249,7 +249,7 @@ fn agnostic_idem_key_valid(k: Str): i64 {
 fn agnostic_route_crew_submit_a(a, body: Str, ctx): i64 {
     var scope = agnostic_reqctx_scope(ctx);
     var idem = agnostic_reqctx_idem(ctx);
-    if (idem == 0) { return _agnostic_crew_submit_a(a, body, scope, 0, 0, 0); }
+    if (idem == 0) { return _agnostic_crew_submit_a(a, body, scope, 0, 0, 0, ctx); }
     if (agnostic_idem_key_valid(idem) == 0) {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "an Idempotency-Key is 8 to 128 of [A-Za-z0-9._:-]"));
@@ -259,14 +259,14 @@ fn agnostic_route_crew_submit_a(a, body: Str, ctx): i64 {
     # One keyed submission at a time, so two racing retries of one key cannot both submit.
     # Never held with the ledger lock or across anything slow but the submit itself.
     agnostic_ledger_idem_lock();
-    var r = _agnostic_crew_submit_keyed_a(a, body, scope, idem, fprint);
+    var r = _agnostic_crew_submit_keyed_a(a, body, scope, idem, fprint, ctx);
     agnostic_ledger_idem_unlock();
     return r;
 }
 
 # The keyed half of submit: replay the crew this key already started, refuse the key
 # over a different body, or submit. The caller holds the idempotency lock.
-fn _agnostic_crew_submit_keyed_a(a, body: Str, scope: Str, idem: Str, fprint: Str): i64 {
+fn _agnostic_crew_submit_keyed_a(a, body: Str, scope: Str, idem: Str, fprint: Str, ctx): i64 {
     var prior = agnostic_ledger_find_idem(scope, idem);
     if (prior != 0) {
         if (str_eq(agnostic_ledger_fprint(prior), fprint) == 0) {
@@ -274,12 +274,32 @@ fn _agnostic_crew_submit_keyed_a(a, body: Str, scope: Str, idem: Str, fprint: St
               str_from_a(a, "this Idempotency-Key was already used with a different request"));
         }
     }
-    return _agnostic_crew_submit_a(a, body, scope, idem, fprint, prior);
+    return _agnostic_crew_submit_a(a, body, scope, idem, fprint, prior, ctx);
+}
+
+# The 429 for a crew over its tenant's limit, with how long to wait.
+fn _agnostic_crew_over_limit_a(a, verdict, retry, ctx): i64 {
+    var kind = AGNOSTIC_REFUSAL_TENANT_RATE;
+    var msg = "this tenant has submitted as many crews as its limit allows; retry later";
+    if (verdict == AGNOSTIC_ADMIT_CREWS) {
+        kind = AGNOSTIC_REFUSAL_TENANT_CREWS;
+        msg = "this tenant has as many unfinished crews as its limit allows; retry when one ends";
+    }
+    agnostic_refusal_note_a(a, kind, ctx, agnostic_principal_uid(agnostic_reqctx_principal(ctx)));
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_cstr_a(a, sb, "Retry-After: ");
+    str_builder_add_int_a(a, sb, retry);
+    str_builder_add_cstr_a(a, sb, "\r\n");
+    var header = str_builder_build_a(a, sb);
+    if (header == 0) { return 0; }
+    return agnostic_response_set_headers(
+      agnostic_response_error_a(a, AGNOSTIC_HTTP_TOO_MANY_REQUESTS, str_from_a(a, msg)), str_data(header));
 }
 
 # Decode and validate the body, then submit it — or, when `prior` is the crew this
 # request's key already started, answer that crew again without submitting.
-fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, prior): i64 {
+fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, prior, ctx): i64 {
     var v = agnostic_decode_a(a, body);
     if (v == 0) {
         return agnostic_response_error_a(a, HTTP_BAD_REQUEST,
@@ -290,10 +310,19 @@ fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, pri
     # would keep a whole crew on the global heap for the one list the response takes from it.
     var req = 0;
     if (prior == 0) {
+        # Before the crew is built: `src/auth/tenantlimit.cyr` says why. A replay takes no place.
+        var rate: i64[1];
+        var crews: i64[1];
+        var retry: i64[1];
+        agnostic_tenant_limits_a(a, scope, &rate, &crews);
+        var verdict = agnostic_tenant_admit(scope, load64(&rate), load64(&crews), &retry);
+        if (verdict != AGNOSTIC_ADMIT_OK) { return _agnostic_crew_over_limit_a(a, verdict, load64(&retry), ctx); }
+
         var reject: i64[1];
         store64(&reject, 0);
         req = agnostic_crew_req_from_value_a(a, v, &reject);
         if (req == 0) {
+            agnostic_tenant_unadmit(scope);
             var rj = load64(&reject);
             return agnostic_response_error_a(a, agnostic_reject_status(rj),
               agnostic_reject_message(rj));
@@ -307,15 +336,18 @@ fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, pri
         var rc = agnostic_crew_submit_owned(req, &entry, scope, idem, fprint);
 
         if (rc == AGNOSTIC_SUBMIT_NO_ENGINE) {
+            agnostic_tenant_unadmit(scope);
             return agnostic_response_error_a(a, HTTP_SERVICE_UNAVAILABLE,
               str_from_a(a, "engine is not available"));
         }
         if (rc == AGNOSTIC_SUBMIT_SPEC_FAILED) {
+            agnostic_tenant_unadmit(scope);
             return agnostic_response_error_a(a, HTTP_INTERNAL,
               str_from_a(a, "could not build the crew specification"));
         }
 
         e = load64(&entry);
+        agnostic_ledger_hold_admission(e);
         if (rc == AGNOSTIC_SUBMIT_START_FAILED) {
             # ⚠ 503 with the crew id, not a bare 500. The crew was accepted, is
             # registered, and has a latched FAILED outcome the client can poll — so

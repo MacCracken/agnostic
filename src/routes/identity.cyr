@@ -20,6 +20,7 @@
 # | `GET /api/v1/tenants` | SUPER | 200 |
 # | `POST /api/v1/tenants` | SUPER | **201** · 400 · 409 · 413 · 422 |
 # | `GET /api/v1/tenants/{key}` | SUPER | 200 · 404 |
+# | `PUT /api/v1/tenants/{key}` | SUPER | 200 · 400 · 404 · 413 · 422 |
 # | `DELETE /api/v1/tenants/{key}` | SUPER | 200 · 404 · 409 |
 #
 # Every route also answers 409 with authentication off: there is nobody to provision.
@@ -95,6 +96,17 @@ fn agnostic_tenant_fields_a(a): i64 {
     var f = agnostic_fields_a(a);
     agnostic_field_a(a, f, "key");
     agnostic_field_a(a, f, "name");
+    agnostic_field_a(a, f, "rate_limit");
+    agnostic_field_a(a, f, "max_crews");
+    return f;
+}
+
+# What `PUT /api/v1/tenants/:key` takes. A key is what names a tenant, so it does not change.
+fn agnostic_tenant_update_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_a(a, f, "name");
+    agnostic_field_a(a, f, "rate_limit");
+    agnostic_field_a(a, f, "max_crews");
     return f;
 }
 
@@ -202,7 +214,24 @@ fn _agnostic_idn_tenant_a(a, row): i64 {
     _agnostic_idn_put_str_a(a, o, "key", agnostic_tenant_row_key(row));
     _agnostic_idn_put_str_a(a, o, "name", agnostic_tenant_row_name(row));
     _agnostic_idn_put_int_a(a, o, "created_at", agnostic_tenant_row_created(row) * 1000);
+    _agnostic_idn_put_int_a(a, o, "rate_limit", agnostic_tenant_row_rate(row));
+    _agnostic_idn_put_int_a(a, o, "max_crews", agnostic_tenant_row_crews(row));
     return o;
+}
+
+# Field `name` of body `v` as a limit: -1 when it is absent, -2 when it is not a whole number in range.
+fn _agnostic_idn_limit_a(a, v, name): i64 {
+    var f = bayan_json_v_obj_get_by_str(v, str_from_a(a, name));
+    if (f == 0) { return 0 - 1; }
+    if (bayan_json_v_is_int(f) != 1) { return 0 - 2; }
+    var n = bayan_json_v_int(f);
+    if (n < 0 || n > AGNOSTIC_TENANT_LIMIT_MAX) { return 0 - 2; }
+    return n;
+}
+
+fn _agnostic_idn_bad_limit_a(a): i64 {
+    return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+      str_from_a(a, "'rate_limit' and 'max_crews' must be whole numbers from 0 to 1000000"));
 }
 
 # `{"<key>": <value>}`, the shape every single-object answer takes.
@@ -672,6 +701,9 @@ fn agnostic_route_tenant_create_a(a, body: Str, ctx): i64 {
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
           str_from_a(a, "'name' must be a string of at most 255 bytes"));
     }
+    var rate = _agnostic_idn_limit_a(a, v, "rate_limit");
+    var crews = _agnostic_idn_limit_a(a, v, "max_crews");
+    if (rate == 0 - 2 || crews == 0 - 2) { return _agnostic_idn_bad_limit_a(a); }
     if (agnostic_tenant_create_a(a, key, name) == 0) {
         if (agnostic_tenant_find_a(a, key) != 0) {
             return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
@@ -679,9 +711,37 @@ fn agnostic_route_tenant_create_a(a, body: Str, ctx): i64 {
         }
         return _agnostic_idn_failed_a(a, "could not store the tenant");
     }
+    if ((rate > 0 || crews > 0) && agnostic_tenant_update_a(a, key, 0, rate, crews) == 0) {
+        return _agnostic_idn_failed_a(a, "could not store the tenant's limits");
+    }
     _agnostic_idn_audit(a, SEV_INFO, "tenant.create", "tenant", key, p);
     return _agnostic_idn_one_a(a, AGNOSTIC_HTTP_CREATED, "tenant",
       _agnostic_idn_tenant_a(a, agnostic_tenant_get_a(a, key)));
+}
+
+# `PUT /api/v1/tenants/:key`: a tenant's name and limits. A field left out keeps its value, and 0 in
+# a limit hands it back to the server's default.
+fn agnostic_route_tenant_update_a(a, key: Str, body: Str, ctx): i64 {
+    var resp: i64[1];
+    var v = _agnostic_idn_decode_a(a, body, agnostic_tenant_update_fields_a(a), &resp);
+    if (v == 0) { return load64(&resp); }
+    var p = agnostic_reqctx_principal(ctx);
+    if (p == 0) { return _agnostic_idn_off_a(a); }
+    var name = agnostic_opt_str(v, str_from_a(a, "name"), str_from_a(a, ""));
+    if (name == 0 || str_len(name) > AGNOSTIC_EMAIL_MAX) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'name' must be a string of at most 255 bytes"));
+    }
+    if (str_len(name) == 0) { name = 0; }
+    var rate = _agnostic_idn_limit_a(a, v, "rate_limit");
+    var crews = _agnostic_idn_limit_a(a, v, "max_crews");
+    if (rate == 0 - 2 || crews == 0 - 2) { return _agnostic_idn_bad_limit_a(a); }
+    if (agnostic_tenant_get_a(a, key) == 0) { return _agnostic_idn_tenant_missing_a(a); }
+    if (agnostic_tenant_update_a(a, key, name, rate, crews) == 0) {
+        return _agnostic_idn_failed_a(a, "could not store the tenant");
+    }
+    _agnostic_idn_audit(a, SEV_INFO, "tenant.update", "tenant", key, p);
+    return _agnostic_idn_one_a(a, HTTP_OK, "tenant", _agnostic_idn_tenant_a(a, agnostic_tenant_get_a(a, key)));
 }
 
 # `GET /api/v1/tenants/{key}`.

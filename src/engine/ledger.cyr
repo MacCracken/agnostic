@@ -5,13 +5,12 @@
 # 202-then-poll means the client asks about a crew *later*, and "later" is when
 # two engine behaviours become visible that a blocking call never sees.
 #
-# **1. The engine forgets finished crews.** `_agnosai_orch_evict_locked`
-# (`lib/agnosai.cyr:33501` at agnosai 2.1.5) drops **every finished crew** from the registry once
-# it holds `AGNOSAI_MAX_RETAINED_CREWS` (1000). After that
-# `agnosai_orchestrator_crew` answers 0 — the same 0 it answers for an id that
-# never existed. Without a ledger, a crew that completed successfully and a crew
-# that was never submitted are the same 404, and the client cannot tell "your
-# results expired" from "you typo'd the id".
+# **1. The engine forgets finished crews.** agnosai's registry evicts the longest-finished crews
+# past `AGNOSAI_MAX_RETAINED_CREWS` (1000), down to 900 (all of them at once through 2.2.3), and
+# agnostic forgets each one it has read (ADR 0022). After that `agnosai_orchestrator_crew` answers
+# 0 — the same 0 it answers for an id that never existed. Without a ledger, a crew that completed
+# successfully and a crew that was never submitted are the same 404, and the client cannot tell
+# "your results expired" from "you typo'd the id".
 #
 # **2. One engine failure never reaches a terminal state.** When
 # `agnosai_crew_runner_run` returns 0 — a cyclic DAG, or a DAG whose dependency
@@ -92,7 +91,8 @@ enum AgnosticLedgerEntryOff {
     AGNOSTIC_LE_FPRINT    = 136;  # hex SHA-256 of the body that key came with, or 0
     AGNOSTIC_LE_RETIRED   = 144;  # 1 once the engine's registry has been told to forget it
     AGNOSTIC_LE_PENDING   = 152;  # AGNOSTIC_PENDING_* bits: durable writes not done yet
-    AGNOSTIC_LE_SIZE      = 160;
+    AGNOSTIC_LE_ADMITTED  = 160;  # 1 once it holds a place in its tenant's `max_crews` (0.3.1)
+    AGNOSTIC_LE_SIZE      = 168;
 }
 
 # The event type that carries a finished task's output (0.1.15, ADR 0019).
@@ -152,6 +152,21 @@ var AGNOSTIC_LEDGER_MAX_EVENTS = 256;
 
 # Str-keyed map of crew id to entry. Built at mount, mutated under the mutex.
 var _agnostic_ledger = 0;
+
+# ## ⚠ An evicted entry gives its ring back (0.3.1, audit P2)
+#
+# An entry stays for good: a request may hold it past eviction, and the heap has no `free`. Its
+# ring does not have to. 4,096 B a crew was the largest thing the ledger kept, so rings go on a
+# free list here and the next crew takes one. The rings in use then stop at the most crews the
+# ledger has held at once, and a crew costs that much less for life.
+#
+# It is safe because the ring is only ever read and written under `_agnostic_ledger_mutex`. Eviction
+# clears the pointer under that lock, so a request still holding the entry finds no ring, and reads
+# no events with all of them counted as missed. It can never read another crew's: that would be
+# one tenant's output in another tenant's answer. The other half of P2, the channel and the spec, is
+# agnosai's to give back.
+var _agnostic_ledger_free_rings = 0;    # a stack: a free ring's first word is the next
+var _agnostic_ledger_rings_made = 0;
 
 # The lock guarding `_agnostic_ledger` and every entry's mutable fields.
 #
@@ -267,9 +282,8 @@ var AGNOSTIC_LEDGER_EVICT_MAX = 512;
 # caller holds the lock.
 #
 # Only **stored** entries go, so a ledger full of running crews grows past the
-# cap rather than forgetting live work — the same judgement
-# `_agnosai_orch_evict_locked` makes, for the same reason: the cap bounds memory,
-# not work.
+# cap rather than forgetting live work — the same judgement the engine's registry
+# makes, for the same reason: the cap bounds memory, not work.
 #
 # ⚠ **Oldest first, and only some of them (0.2.2).** It used to drop every terminal entry at
 # once, so the crew submitted just before the cap went with the rest. That entry's
@@ -320,10 +334,44 @@ fn _agnostic_ledger_evict_locked(): i64 {
     }
     var n = 0;
     while (n < held) {
-        map_delete(_agnostic_ledger, load64(&oldest + n * 16 + 8));
+        var key = load64(&oldest + n * 16 + 8);
+        _agnostic_ledger_ring_give_locked(map_get(_agnostic_ledger, key));
+        map_delete(_agnostic_ledger, key);
         n = n + 1;
     }
     return held;
+}
+
+# A ring for a new crew, cleared: a free one, else a new one. 0 on exhaustion.
+fn _agnostic_ledger_ring_take(): i64 {
+    var bytes = AGNOSTIC_LEDGER_MAX_EVENTS * AGNOSTIC_LS_SIZE;
+    mutex_lock(_agnostic_ledger_mutex);
+    var ring = _agnostic_ledger_free_rings;
+    if (ring != 0) {
+        _agnostic_ledger_free_rings = load64(ring);
+    } else {
+        _agnostic_ledger_rings_made = _agnostic_ledger_rings_made + 1;
+    }
+    mutex_unlock(_agnostic_ledger_mutex);
+    if (ring == 0) { return alloc(bytes); }
+    memset(ring, 0, bytes);
+    return ring;
+}
+
+# Take entry `e`'s ring back. The caller holds the lock.
+fn _agnostic_ledger_ring_give_locked(e): i64 {
+    if (e == 0) { return 0; }
+    var ring = load64(e + AGNOSTIC_LE_RING);
+    if (ring == 0) { return 0; }
+    store64(e + AGNOSTIC_LE_RING, 0);
+    store64(ring, _agnostic_ledger_free_rings);
+    _agnostic_ledger_free_rings = ring;
+    return 0;
+}
+
+# How many rings have been allocated since the start. A test's measure of the free list.
+fn agnostic_ledger_rings_made(): i64 {
+    return _agnostic_ledger_rings_made;
 }
 
 # Record a crew Agnostic has just submitted, and return its entry.
@@ -351,7 +399,7 @@ fn agnostic_ledger_record_owned(crew_id: Str, name: Str, sub, scope: Str, idem: 
     var e = alloc(AGNOSTIC_LE_SIZE);
     if (e == 0) { return 0; }
     # The ring, once, for the crew's whole life — see the header.
-    var ring = alloc(AGNOSTIC_LEDGER_MAX_EVENTS * AGNOSTIC_LS_SIZE);
+    var ring = _agnostic_ledger_ring_take();
     if (ring == 0) { return 0; }
     store64(e + AGNOSTIC_LE_CREW_ID, crew_id);
     store64(e + AGNOSTIC_LE_NAME, name);
@@ -375,6 +423,7 @@ fn agnostic_ledger_record_owned(crew_id: Str, name: Str, sub, scope: Str, idem: 
     store64(e + AGNOSTIC_LE_FPRINT, 0);
     store64(e + AGNOSTIC_LE_RETIRED, 0);
     store64(e + AGNOSTIC_LE_PENDING, 0);
+    store64(e + AGNOSTIC_LE_ADMITTED, 0);
     if (idem != 0) { store64(e + AGNOSTIC_LE_IDEM, str_clone(idem)); }
     if (fprint != 0) { store64(e + AGNOSTIC_LE_FPRINT, str_clone(fprint)); }
 
@@ -681,13 +730,15 @@ fn agnostic_ledger_snapshot_a(a, e, after): i64 {
     var newest = load64(e + AGNOSTIC_LE_NEXT_SEQ) - 1;
     var oldest = 1;
     if (newest > AGNOSTIC_LEDGER_MAX_EVENTS) { oldest = newest - AGNOSTIC_LEDGER_MAX_EVENTS + 1; }
+    var ring = load64(e + AGNOSTIC_LE_RING);
+    # Evicted while a reader held it: nothing is left, and every event is one it missed.
+    if (ring == 0) { oldest = newest + 1; }
     var from = after + 1;
     var missed = 0;
     if (from < oldest) {
         missed = oldest - from;
         from = oldest;
     }
-    var ring = load64(e + AGNOSTIC_LE_RING);
     var seq = from;
     var ok = 1;
     while (seq <= newest && ok == 1) {
@@ -797,6 +848,22 @@ fn agnostic_ledger_flush_a(a, e): i64 {
     return 1;
 }
 
+# Entry `e` holds the place `agnostic_tenant_admit` took for it, until it ends.
+#
+# ⚠ **A crew can end before this is called:** the submit returns after the engine has it, and a
+# placeholder crew takes under a millisecond. Set blindly, the flag would land on a terminal entry
+# and nothing would give the place back, so a tenant's `max_crews` would fall by one each time. Both
+# this and the latch hold the ledger lock, so exactly one of them sees the other.
+fn agnostic_ledger_hold_admission(e): i64 {
+    if (e == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_mutex);
+    var ended = agnostic_status_is_terminal(load64(e + AGNOSTIC_LE_STATUS));
+    if (ended == 0) { store64(e + AGNOSTIC_LE_ADMITTED, 1); }
+    mutex_unlock(_agnostic_ledger_mutex);
+    if (ended == 1) { agnostic_tenant_crew_ended(load64(e + AGNOSTIC_LE_SCOPE)); }
+    return 0;
+}
+
 # `agnostic_ledger_latch` without its durable write: records what needs writing, for
 # `agnostic_ledger_flush_a` to write.
 fn agnostic_ledger_latch_unwritten(e, status, error, results): i64 {
@@ -827,11 +894,14 @@ fn agnostic_ledger_latch_unwritten(e, status, error, results): i64 {
     store64(e + AGNOSTIC_LE_STATUS, status);
     if (error != 0) { store64(e + AGNOSTIC_LE_ERROR, error); }
     if (results != 0) { store64(e + AGNOSTIC_LE_RESULTS, results); }
+    var admitted = 0;
     if (agnostic_status_is_terminal(status) == 1) {
         store64(e + AGNOSTIC_LE_FINISHED, agnostic_epoch_ms());
         store64(e + AGNOSTIC_LE_PENDING, load64(e + AGNOSTIC_LE_PENDING) | AGNOSTIC_PENDING_OUTCOME);
+        admitted = load64(e + AGNOSTIC_LE_ADMITTED);
     }
     mutex_unlock(_agnostic_ledger_mutex);
+    if (admitted == 1) { agnostic_tenant_crew_ended(load64(e + AGNOSTIC_LE_SCOPE)); }
 
     # ⚠ **Unwritten, on the one transition that matters.** This is the single point where a crew
     # becomes terminal — the latch refuses every later write — so it is exactly where
@@ -1003,8 +1073,9 @@ fn agnostic_ledger_row_a(a, e): i64 {
 # recorded start is what `agnostic_crew_live_status` reads a PENDING as RUNNING by.
 fn _agnostic_ledger_push_event_locked(e, ev, now_ms): i64 {
     var seq = load64(e + AGNOSTIC_LE_NEXT_SEQ);
-    var slot = load64(e + AGNOSTIC_LE_RING)
-    + ((seq - 1) % AGNOSTIC_LEDGER_MAX_EVENTS) * AGNOSTIC_LS_SIZE;
+    var ring = load64(e + AGNOSTIC_LE_RING);
+    if (ring == 0) { return 0; }
+    var slot = ring + ((seq - 1) % AGNOSTIC_LEDGER_MAX_EVENTS) * AGNOSTIC_LS_SIZE;
     store64(slot + AGNOSTIC_LS_AT, now_ms - load64(e + AGNOSTIC_LE_T0_MS));
     store64(slot + AGNOSTIC_LS_EV, ev);
     store64(e + AGNOSTIC_LE_NEXT_SEQ, seq + 1);

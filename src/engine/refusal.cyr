@@ -1,0 +1,199 @@
+# agnostic/engine/refusal — what a refused request leaves behind (0.3.1, G12).
+#
+# ## The problem is the write, not the record
+#
+# A 401, a 403 and a rate-limit hit left nothing, so an operator could not see a credential being
+# guessed or a role being probed. Recording each one is the obvious fix and the wrong one. An audit
+# append is a chained hash and a store write, and the caller of a 401 needs no credential: one entry
+# per refusal lets an anonymous caller turn a cheap request into a durable write, and fill the trail
+# past the 1024 entries its route serves, which pushes out the record of what they did.
+#
+# ## ⚠ So the write is budgeted, and the count is not
+#
+# Each refusal counts, always, in memory. Those counters are what `GET /api/v1/metrics` serves.
+#
+# In any 60 s window the first `AGNOSTIC_REFUSAL_BURST` refusals of any kind are written as entries
+# of their own, with the peer, the route and the user. The rest are held as counts, and the window's
+# end writes them as one `audit.refusals_held` entry. So a refusal costs at most
+# `BURST + 1` writes a minute, whoever is sending, and what is withheld is the detail and never the
+# fact: a flood shows up as a number in the trail.
+#
+# The budget is one pool, on purpose. A pool per kind only multiplies the bound, and a flood of one
+# kind that pushes out another's detail still leaves the second kind's count in the summary.
+#
+# ⚠ **A tumbling window, held by the clock of whoever arrives.** The next refusal closes a window
+# that has run out, and the collector closes one when nobody does, so a burst's summary is not left
+# waiting for the next caller. `agnostic_refusals_flush_a` also runs at a graceful stop.
+#
+# ## What is never here
+#
+# The address tried at a login and any credential, for the reason `auth.login.failed` gives: a
+# mistyped password in the email field must not reach the trail. A refusal's details are the peer,
+# a route's PATTERN (never its path, which holds what the caller typed) and a user id.
+
+enum AgnosticRefusalKind {
+    AGNOSTIC_REFUSAL_UNAUTHENTICATED = 0;   # 401: no credential, or none that resolves
+    AGNOSTIC_REFUSAL_FORBIDDEN       = 1;   # 403: a role, a plugin's grant, a Host
+    AGNOSTIC_REFUSAL_THROTTLED       = 2;   # 429: a login over its bucket
+    AGNOSTIC_REFUSAL_SHED            = 3;   # 429: a login with the Argon2 pool full
+    AGNOSTIC_REFUSAL_TENANT_RATE     = 4;   # 429: a tenant over its crews a minute
+    AGNOSTIC_REFUSAL_TENANT_CREWS    = 5;   # 429: a tenant at its unfinished crews
+    AGNOSTIC_REFUSAL_KINDS           = 6;
+}
+
+var AGNOSTIC_REFUSAL_WINDOW_MS = 60000;
+var AGNOSTIC_REFUSAL_BURST = 16;
+
+var _agnostic_refusal_counts = 0;   # KINDS words: every refusal since the start
+var _agnostic_refusal_held = 0;     # KINDS words: refusals of this window with no entry of their own
+var _agnostic_refusal_lock = 0;
+var _agnostic_refusal_since = 0;    # when the window began, in epoch ms
+var _agnostic_refusal_spent = 0;    # entries this window has written
+
+# Allocate the counters. Mount time only, before any worker exists.
+fn agnostic_refusal_init(): i64 {
+    if (_agnostic_refusal_counts != 0) { return 1; }
+    var bytes = AGNOSTIC_REFUSAL_KINDS * 8;
+    var c = alloc(bytes);
+    var h = alloc(bytes);
+    if (c == 0 || h == 0) { return 0; }
+    memset(c, 0, bytes);
+    memset(h, 0, bytes);
+    _agnostic_refusal_lock = mutex_new();
+    _agnostic_refusal_held = h;
+    _agnostic_refusal_since = agnostic_epoch_ms();
+    _agnostic_refusal_spent = 0;
+    _agnostic_refusal_counts = c;
+    return 1;
+}
+
+# Zero the counters and open a window. For tests.
+fn agnostic_refusal_reset(): i64 {
+    if (_agnostic_refusal_counts == 0) { return agnostic_refusal_init(); }
+    var bytes = AGNOSTIC_REFUSAL_KINDS * 8;
+    memset(_agnostic_refusal_counts, 0, bytes);
+    memset(_agnostic_refusal_held, 0, bytes);
+    _agnostic_refusal_since = agnostic_epoch_ms();
+    _agnostic_refusal_spent = 0;
+    return 1;
+}
+
+# Refusals of `kind` since the start.
+fn agnostic_refusal_count(kind): i64 {
+    if (_agnostic_refusal_counts == 0 || kind < 0 || kind >= AGNOSTIC_REFUSAL_KINDS) { return 0; }
+    return atomic_load(_agnostic_refusal_counts + kind * 8);
+}
+
+# The audit action `kind` is recorded as, a C string, or 0.
+fn agnostic_refusal_action(kind): i64 {
+    if (kind == AGNOSTIC_REFUSAL_UNAUTHENTICATED) { return "auth.denied"; }
+    if (kind == AGNOSTIC_REFUSAL_FORBIDDEN) { return "auth.forbidden"; }
+    if (kind == AGNOSTIC_REFUSAL_THROTTLED) { return "auth.throttled"; }
+    if (kind == AGNOSTIC_REFUSAL_SHED) { return "auth.shed"; }
+    if (kind == AGNOSTIC_REFUSAL_TENANT_RATE) { return "tenant.throttled"; }
+    if (kind == AGNOSTIC_REFUSAL_TENANT_CREWS) { return "tenant.crews_full"; }
+    return 0;
+}
+
+# `peer=… route=… uid=…`, in `a`. The route and the user only when they are known.
+fn _agnostic_refusal_detail_a(a, ctx, uid): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_cstr_a(a, sb, "peer=");
+    str_builder_add_a(a, sb, agnostic_addr_text_a(a, agnostic_reqctx_peer(ctx)));
+    var route = agnostic_reqctx_route(ctx);
+    if (route != 0) {
+        str_builder_add_cstr_a(a, sb, " route=");
+        str_builder_add_cstr_a(a, sb, route);
+    }
+    if (uid != 0) {
+        str_builder_add_cstr_a(a, sb, " uid=");
+        str_builder_add_a(a, sb, agnostic_id_hex_a(a, uid));
+    }
+    return str_builder_build_a(a, sb);
+}
+
+# What the window held as text in `a`, zeroing it, or 0 when it held nothing. Under the lock.
+fn _agnostic_refusal_take_held_locked_a(a): i64 {
+    var any = 0;
+    var k = 0;
+    while (k < AGNOSTIC_REFUSAL_KINDS) {
+        if (load64(_agnostic_refusal_held + k * 8) != 0) { any = 1; }
+        k = k + 1;
+    }
+    if (any == 0) { return 0; }
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    k = 0;
+    while (k < AGNOSTIC_REFUSAL_KINDS) {
+        var n = load64(_agnostic_refusal_held + k * 8);
+        if (n != 0) {
+            if (any == 2) { str_builder_add_cstr_a(a, sb, " "); }
+            any = 2;
+            str_builder_add_cstr_a(a, sb, agnostic_refusal_action(k));
+            str_builder_add_cstr_a(a, sb, "=");
+            str_builder_add_int_a(a, sb, n);
+            store64(_agnostic_refusal_held + k * 8, 0);
+        }
+        k = k + 1;
+    }
+    return str_builder_build_a(a, sb);
+}
+
+# Close the window if it has run out, or if `force`, and answer what it held. Under the lock.
+#
+# A clock that moved back closes it too: otherwise the window would stay open until the clock
+# caught up, and the budget would stay spent.
+fn _agnostic_refusal_roll_locked_a(a, now, force): i64 {
+    var age = now - _agnostic_refusal_since;
+    if (force == 0 && age >= 0 && age < AGNOSTIC_REFUSAL_WINDOW_MS) { return 0; }
+    _agnostic_refusal_since = now;
+    _agnostic_refusal_spent = 0;
+    return _agnostic_refusal_take_held_locked_a(a);
+}
+
+fn _agnostic_refusal_write_held_a(a, held: Str): i64 {
+    if (held == 0) { return 0; }
+    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, "audit.refusals_held"), held);
+    return 1;
+}
+
+# Note one refusal of `kind` for the request `ctx`, by user `uid` when one is known (0 otherwise).
+# Returns 1 when it wrote an entry of its own. Any allocation is in `a`.
+#
+# Audit writes happen outside the lock: an append can take milliseconds, and every refused request
+# would queue behind it.
+fn agnostic_refusal_note_a(a, kind, ctx, uid): i64 {
+    if (_agnostic_refusal_counts == 0 || kind < 0 || kind >= AGNOSTIC_REFUSAL_KINDS) { return 0; }
+    atomic_fetch_add(_agnostic_refusal_counts + kind * 8, 1);
+
+    var now = agnostic_epoch_ms();
+    mutex_lock(_agnostic_refusal_lock);
+    var held = _agnostic_refusal_roll_locked_a(a, now, 0);
+    var own = 0;
+    if (_agnostic_refusal_spent < AGNOSTIC_REFUSAL_BURST) {
+        _agnostic_refusal_spent = _agnostic_refusal_spent + 1;
+        own = 1;
+    } else {
+        var h = _agnostic_refusal_held + kind * 8;
+        store64(h, load64(h) + 1);
+    }
+    mutex_unlock(_agnostic_refusal_lock);
+
+    _agnostic_refusal_write_held_a(a, held);
+    if (own == 1) {
+        agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, agnostic_refusal_action(kind)),
+          _agnostic_refusal_detail_a(a, ctx, uid));
+    }
+    return own;
+}
+
+# Write what a run-out window held, or whatever is held when `force` is 1. The collector's tick and
+# a graceful stop. Returns 1 when it wrote.
+fn agnostic_refusals_flush_a(a, force): i64 {
+    if (_agnostic_refusal_counts == 0) { return 0; }
+    mutex_lock(_agnostic_refusal_lock);
+    var held = _agnostic_refusal_roll_locked_a(a, agnostic_epoch_ms(), force);
+    mutex_unlock(_agnostic_refusal_lock);
+    return _agnostic_refusal_write_held_a(a, held);
+}

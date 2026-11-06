@@ -662,6 +662,76 @@ fn _agnostic_bench_serve_handler(): i64 {
     return n;
 }
 
+# The 0.3.1 paths a request walks: who the client is, whether a refusal is written, whether a tenant
+# may submit, and a scrape. Last, so that no row above moves: a new row changes what follows it.
+fn _agnostic_bench_operations(): i64 {
+    var a = arena_allocator(1048576);
+    var n = 0;
+
+    var peer = net_parse_ipv4("10.0.0.5");
+    var req = str_from("POST /api/v1/auth/login HTTP/1.1\r\nHost: agnostic.example.com\r\nContent-Type: application/json\r\nX-Forwarded-For: 192.0.2.7, 203.0.113.9, 10.0.0.9\r\nContent-Length: 2\r\n\r\n{}"); #skip-lint
+    var d = str_data(req);
+    var l = str_len(req);
+    agnostic_forwarded_set_proxies(0);
+    var bn = bench_new("client_addr_no_proxies");
+    bench_batch_start(bn);
+    var i = 0;
+    while (i < 1000000) { n = n + agnostic_client_addr(peer, d, l); i = i + 1; }
+    bench_batch_stop(bn, 1000000);
+    bench_report(bn);
+    agnostic_forwarded_set_proxies(agnostic_config_parse_proxies(str_from("127.0.0.1,10.0.0.0/8")));
+    var bx = bench_new("client_addr_forwarded");
+    bench_batch_start(bx);
+    i = 0;
+    while (i < 200000) { n = n + agnostic_client_addr(peer, d, l); i = i + 1; }
+    bench_batch_stop(bx, 200000);
+    bench_report(bx);
+    agnostic_forwarded_set_proxies(0);
+
+    agnostic_refusal_init();
+    var spend = 0;
+    while (spend < AGNOSTIC_REFUSAL_BURST) {
+        agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, 0, 0);
+        spend = spend + 1;
+    }
+    var br = bench_new("refusal_past_the_budget");
+    bench_batch_start(br);
+    i = 0;
+    while (i < 200000) {
+        n = n + agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, 0, 0);
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(br, 200000);
+    bench_report(br);
+
+    agnostic_tenant_limits_init(0, 0);
+    var scope = str_from("acme");
+    var retry: i64[1];
+    var ba = bench_new("tenant_admit_and_end");
+    bench_batch_start(ba);
+    i = 0;
+    while (i < 200000) {
+        n = n + agnostic_tenant_admit(scope, 1000000, 1000, &retry);
+        agnostic_tenant_crew_ended(scope);
+        i = i + 1;
+    }
+    bench_batch_stop(ba, 200000);
+    bench_report(ba);
+
+    var bm = bench_new("metrics_render");
+    bench_batch_start(bm);
+    i = 0;
+    while (i < 20000) {
+        if (agnostic_route_metrics_a(a) != 0) { n = n + 1; }
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(bm, 20000);
+    bench_report(bm);
+    return n;
+}
+
 fn main(): i64 {
     alloc_init();
     var b = bench_new("noop");
@@ -732,6 +802,7 @@ fn main(): i64 {
     _agnostic_bench_identity();
     _agnostic_bench_audit_open();
     _agnostic_bench_serve_handler();
+    _agnostic_bench_operations();
     return 0;
 }
 

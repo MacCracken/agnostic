@@ -631,6 +631,82 @@ fn test_live_entries() {
       "every live entry the map holds, and nothing else");
 }
 
+# A crew id as a Str: `crew-<n>`.
+fn _t_ring_id(n) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "crew-");
+    str_builder_add_int(sb, n);
+    return str_builder_build(sb);
+}
+
+# A crew recorded, with one event of its own, finished and written, so eviction may take it.
+fn _t_finished_crew(n, ev) {
+    var e = agnostic_ledger_record(_t_ring_id(n), str_from("x"), 0);
+    if (ev != 0) {
+        _agnostic_ledger_push_event_locked(e, ev, agnostic_epoch_ms());
+    }
+    agnostic_ledger_latch(e, AGNOSTIC_CREW_COMPLETED, 0, 0);
+    return e;
+}
+
+# ⭐ audit P2: the ring is the largest thing the ledger kept for life, 4,096 B a crew.
+fn test_an_evicted_crew_gives_its_ring_back() {
+    test_group("ledger/ring-recycled");
+    agnostic_ledger_reset();
+    var a = arena_allocator(1048576);
+    var made = agnostic_ledger_rings_made();
+    var first = _t_finished_crew(0, 0);
+    var total = AGNOSTIC_LEDGER_MAX * 4;
+    var i = 1;
+    while (i < total) {
+        _t_finished_crew(i, 0);
+        i = i + 1;
+    }
+    var rings = agnostic_ledger_rings_made() - made;
+    assert_eq(rings <= AGNOSTIC_LEDGER_MAX + 1, 1, "⭐ rings stop at what the ledger holds at once");
+    assert_eq(agnostic_ledger_count() <= AGNOSTIC_LEDGER_MAX, 1, "with the ledger at its cap");
+
+    # A request that held the entry across its eviction.
+    assert_eq(load64(first + AGNOSTIC_LE_RING), 0, "an evicted entry holds no ring");
+    var snap = agnostic_ledger_snapshot_a(a, first, 0);
+    assert_neq(snap, 0, "a reader that held it still gets an answer");
+    assert_eq(vec_len(agnostic_ledger_snap_events(snap)), 0, "with no events");
+}
+
+# ⚠ A recycled ring holds nothing of the crew before it: that would be one tenant's output in
+# another's answer.
+fn test_a_reused_ring_is_empty() {
+    test_group("ledger/ring-clean");
+    agnostic_ledger_reset();
+    var a = arena_allocator(1048576);
+    var ev = agnosai_crew_event_new(str_from("crew-9"), str_from("token"), bayan_json_v_str_new(str_from("secret")));
+    var i = 0;
+    var old = _t_finished_crew(100000, ev);
+    while (i < AGNOSTIC_LEDGER_MAX) {
+        _t_finished_crew(100001 + i, ev);
+        i = i + 1;
+    }
+    assert_eq(load64(old + AGNOSTIC_LE_RING), 0, "the first crew was evicted");
+    assert_eq(agnostic_ledger_event_count(old), 1, "having had an event");
+    var snap = agnostic_ledger_snapshot_a(a, old, 0);
+    assert_eq(vec_len(agnostic_ledger_snap_events(snap)), 0, "⭐ which a late reader does not get");
+    assert_eq(agnostic_ledger_snap_missed(snap), 1, "⭐ and is told it missed");
+    assert_eq(agnostic_ledger_snap_next(snap), 1, "with a cursor past it");
+
+    var fresh = agnostic_ledger_record(str_from("crew-fresh"), str_from("x"), 0);
+    var ring = load64(fresh + AGNOSTIC_LE_RING);
+    assert_neq(ring, 0, "the next crew has a ring");
+    var dirty = 0;
+    var b = 0;
+    while (b < AGNOSTIC_LEDGER_MAX_EVENTS * AGNOSTIC_LS_SIZE) {
+        if (load64(ring + b) != 0) { dirty = dirty + 1; }
+        b = b + 8;
+    }
+    assert_eq(dirty, 0, "⭐ and it is clean, the free list's link included");
+    var fs = agnostic_ledger_snapshot_a(a, fresh, 0);
+    assert_eq(vec_len(agnostic_ledger_snap_events(fs)), 0, "so a new crew starts with no events");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
@@ -656,6 +732,8 @@ fn main() {
     test_crew_started_is_noticed();
     test_registry_running_is_a_start();
     test_live_entries();
+    test_an_evicted_crew_gives_its_ring_back();
+    test_a_reused_ring_is_empty();
     return assert_summary();
 }
 

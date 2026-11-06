@@ -1,0 +1,458 @@
+# agnostic/auth/tenantlimit — how much of the server one tenant may take (0.3.1, G11).
+#
+# Held here:
+#
+#   1. Each limit refuses at exactly its number, and one tenant's limit is not another's.
+#   2. 16 threads racing for a cap of 10 get 10. A check against a count would give more.
+#   3. A place is given back exactly once, whichever way a crew ends, or a cap wears away.
+#   4. A refusal keeps nothing on the global heap: it comes before the crew is built.
+include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
+
+var _T_DB = _tt_tmp_path("tenantlimit-suite");
+var _T_AUDIT = _tt_tmp_path("tenantlimit-suite-audit");
+var _T_MAXB = 1048576;
+var _T_PW = "correct-horse-battery";
+var _T_BODY = "{\"name\":\"t\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"d\"}]}"; #skip-lint
+var _T_BAD = "{\"name\":\"t\",\"agents\":[],\"tasks\":[]}";
+
+var _t_a_scope = 0;
+var _t_b_scope = 0;
+
+fn _t_open() {
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    _tt_unlink_store(_T_AUDIT);
+    patra_init();
+    agnostic_store_open(str_from(_T_DB));
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_crews_ensure();
+    agnostic_audit_open(str_from(_T_AUDIT));
+    agnostic_rl_reset();
+    agnostic_refusal_reset();
+    agnostic_tenant_limits_init(0, 0);
+    agnostic_tenant_limits_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    return 0;
+}
+
+# A context for a user of `tenant` (0 for none), of `role`.
+fn _t_as(a, email, role, tenant) {
+    var t = 0;
+    if (tenant != 0) { t = str_from(tenant); }
+    var uid = agnostic_users_find_a(a, str_from(email));
+    if (uid == 0) { uid = agnostic_users_create_a(a, str_from(email), str_from(_T_PW), role, t); }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Bearer ");
+    str_builder_add(sb, agnostic_jwt_issue_a(a, uid, role, t, 600));
+    return agnostic_reqctx_new_a(a, str_builder_build(sb), 0);
+}
+
+fn _t_post(a, body, ctx) {
+    return agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), str_from(body), _T_MAXB, ctx);
+}
+
+fn _t_submit(a, ctx) { return agnostic_response_status(_t_post(a, _T_BODY, ctx)); }
+
+fn _t_tenant(key, rate, crews) {
+    var a = arena_allocator(65536);
+    agnostic_tenant_create_a(a, str_from(key), 0);
+    agnostic_tenant_update_a(a, str_from(key), 0, rate, crews);
+    return 0;
+}
+
+fn _t_retry_after(r) {
+    var h = agnostic_response_headers(r);
+    if (h == 0) { return 0; }
+    var s = str_from(h);
+    if (str_starts_with(s, str_from("Retry-After: ")) == 0) { return 0; }
+    var n = 0;
+    var i = 13;
+    while (i < str_len(s)) {
+        var c = load8(str_data(s) + i);
+        if (c < 48 || c > 57) { return n; }
+        n = n * 10 + (c - 48);
+        i = i + 1;
+    }
+    return n;
+}
+
+# Latch every unfinished crew of the ledger, as the collector would.
+fn _t_collect(a) {
+    var tries = 0;
+    while (tries < 400) {
+        var live = agnostic_ledger_live_entries_a(a);
+        if (vec_len(live) == 0) { return 0; }
+        var i = 0;
+        while (i < vec_len(live)) {
+            var e = vec_get(live, i);
+            agnostic_crew_refresh_a(a, e, agnostic_ledger_crew_id(e));
+            i = i + 1;
+        }
+        sleep_ms(2);
+        tries = tries + 1;
+    }
+    return 0;
+}
+
+fn test_the_rate() {
+    test_group("tenantlimit/rate");
+    _t_open();
+    var a = arena_allocator(4194304);
+    _t_tenant("acme", 3, 0);
+    _t_tenant("zeta", 0, 0);
+    var cx = _t_as(a, "w@acme.test", AGNOSTIC_ROLE_ADMIN, "acme");
+    assert_eq(_t_submit(a, cx), AGNOSTIC_HTTP_ACCEPTED, "the first");
+    assert_eq(_t_submit(a, cx), AGNOSTIC_HTTP_ACCEPTED, "the second");
+    assert_eq(_t_submit(a, cx), AGNOSTIC_HTTP_ACCEPTED, "the third, of three a minute");
+    var r = _t_post(a, _T_BODY, cx);
+    assert_eq(agnostic_response_status(r), AGNOSTIC_HTTP_TOO_MANY_REQUESTS, "⭐ the fourth is refused");
+    assert_eq(_t_retry_after(r), 20, "and told when: one crew in 20 s, at three a minute");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_TENANT_RATE), 1, "the refusal is counted");
+    assert_eq(_t_submit(a, _t_as(a, "w@zeta.test", AGNOSTIC_ROLE_ADMIN, "zeta")), AGNOSTIC_HTTP_ACCEPTED,
+      "⭐ and another tenant is not touched");
+
+    # The bucket's clock is set outright. Creating a user above costs an Argon2 hash, which is seconds
+    # on a small machine, and that time really does refill the bucket.
+    var s = _agnostic_tl_slot_locked(agnostic_tenant_tid(str_from("acme")), 0);
+    store64(s + AGNOSTIC_TL_TOKENS, 0);
+    store64(s + AGNOSTIC_TL_SEEN, clock_now_ms() - 1000);
+    var again = _t_post(a, _T_BODY, cx);
+    assert_eq(agnostic_response_status(again), AGNOSTIC_HTTP_TOO_MANY_REQUESTS, "a second later");
+    assert_eq(_t_retry_after(again), 19, "the wait is a second shorter");
+
+    # The wait honoured, to the second: one twentieth of a token held, and nineteen seconds more.
+    store64(s + AGNOSTIC_TL_TOKENS, 50);
+    store64(s + AGNOSTIC_TL_SEEN, clock_now_ms() - 19000);
+    assert_eq(_t_submit(a, cx), AGNOSTIC_HTTP_ACCEPTED, "⭐ a client that waits what it was told is let in");
+    assert_eq(_t_submit(a, cx) == AGNOSTIC_HTTP_TOO_MANY_REQUESTS, 1, "and that was the one token");
+}
+
+fn test_the_cap() {
+    test_group("tenantlimit/crews");
+    _t_open();
+    var a = arena_allocator(4194304);
+    _t_tenant("acme", 0, 2);
+    var cx = _t_as(a, "w@acme.test", AGNOSTIC_ROLE_ADMIN, "acme");
+    var scope = str_from("acme");
+    assert_eq(_t_submit(a, cx), AGNOSTIC_HTTP_ACCEPTED, "one unfinished");
+    assert_eq(_t_submit(a, cx), AGNOSTIC_HTTP_ACCEPTED, "two");
+    assert_eq(agnostic_tenant_running(scope), 2, "holding two places");
+    var r = _t_post(a, _T_BODY, cx);
+    assert_eq(agnostic_response_status(r), AGNOSTIC_HTTP_TOO_MANY_REQUESTS, "⭐ the third waits");
+    assert_eq(_t_retry_after(r), AGNOSTIC_TL_CREWS_RETRY_SECS, "and is told to come back");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_TENANT_CREWS), 1, "the refusal is counted");
+    _t_collect(a);
+    assert_eq(agnostic_tenant_running(scope), 0, "⭐ crews that end give their places back");
+    assert_eq(_t_submit(a, cx), AGNOSTIC_HTTP_ACCEPTED, "so the next is let in");
+    _t_collect(a);
+}
+
+fn test_a_cap_does_not_stop_the_clock() {
+    test_group("tenantlimit/both");
+    _t_open();
+    var a = arena_allocator(4194304);
+    var scope = str_from("acme");
+    var retry: i64[1];
+    assert_eq(agnostic_tenant_admit(scope, 1, 1, &retry), AGNOSTIC_ADMIT_OK, "one a minute, one at once");
+    var s = _agnostic_tl_slot_locked(agnostic_tenant_tid(scope), 0);
+    assert_eq(load64(s + AGNOSTIC_TL_TOKENS), 0, "the minute's token is spent");
+    # Back by more than a test takes, or a clock written here reads the same as one left alone.
+    var seen = load64(s + AGNOSTIC_TL_SEEN) - 5000;
+    store64(s + AGNOSTIC_TL_SEEN, seen);
+
+    # ⭐ Polling at the cap costs no token, and does not stop tokens coming back.
+    assert_eq(agnostic_tenant_admit(scope, 1, 1, &retry), AGNOSTIC_ADMIT_CREWS, "at the cap");
+    assert_eq(load64(s + AGNOSTIC_TL_TOKENS), 0, "a refusal for the cap spends nothing");
+    assert_eq(load64(s + AGNOSTIC_TL_SEEN), seen, "⭐ and leaves the bucket's clock alone");
+
+    agnostic_tenant_crew_ended(scope);
+    store64(s + AGNOSTIC_TL_SEEN, seen - 60000);
+    assert_eq(agnostic_tenant_admit(scope, 1, 1, &retry), AGNOSTIC_ADMIT_OK, "a minute on, both have room");
+    assert_eq(agnostic_tenant_admit(scope, 1, 0, &retry), AGNOSTIC_ADMIT_RATE, "the rate alone refuses");
+    assert_eq(agnostic_tenant_running(scope), 1, "a refusal takes no place");
+    agnostic_tenant_crew_ended(scope);
+    assert_eq(agnostic_tenant_running(scope), 0, "and the ended one goes");
+    agnostic_tenant_crew_ended(scope);
+    assert_eq(agnostic_tenant_running(scope), 0, "an end with no place does not go below 0");
+
+    # With no rate there is no bucket, and one set later starts full.
+    assert_eq(agnostic_tenant_admit(str_from("newco"), 0, 0, &retry), AGNOSTIC_ADMIT_OK, "no limits");
+    var n = _agnostic_tl_slot_locked(agnostic_tenant_tid(str_from("newco")), 0);
+    assert_eq(load64(n + AGNOSTIC_TL_TOKENS), 0 - 1, "keeps no bucket");
+    assert_eq(agnostic_tenant_admit(str_from("newco"), 2, 0, &retry), AGNOSTIC_ADMIT_OK, "a rate set later");
+    assert_eq(load64(n + AGNOSTIC_TL_TOKENS), 1000, "starts full");
+    assert_eq(agnostic_tenant_running(str_from("no-such")), 0, "a tenant never seen holds nothing");
+}
+
+# ⚠ A crew that ends before its submit returns, which is what a placeholder crew does.
+fn test_a_crew_that_ended_first() {
+    test_group("tenantlimit/ended-first");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var scope = str_from("acme");
+    var retry: i64[1];
+    agnostic_tenant_admit(scope, 0, 5, &retry);
+    assert_eq(agnostic_tenant_running(scope), 1, "a place is taken");
+    var e = agnostic_ledger_record_owned(str_from("crew-1"), str_from("t"), 0, scope, 0, 0);
+    agnostic_ledger_latch_unwritten(e, AGNOSTIC_CREW_COMPLETED, 0, 0);
+    assert_eq(agnostic_tenant_running(scope), 1, "a latch before the hold gives nothing back yet");
+    agnostic_ledger_hold_admission(e);
+    assert_eq(agnostic_tenant_running(scope), 0, "⭐ the hold sees it ended and gives the place back");
+
+    agnostic_tenant_admit(scope, 0, 5, &retry);
+    var f = agnostic_ledger_record_owned(str_from("crew-2"), str_from("t"), 0, scope, 0, 0);
+    agnostic_ledger_hold_admission(f);
+    assert_eq(agnostic_tenant_running(scope), 1, "a crew still running keeps its place");
+    agnostic_ledger_latch_unwritten(f, AGNOSTIC_CREW_RUNNING, 0, 0);
+    assert_eq(agnostic_tenant_running(scope), 1, "while it runs");
+    agnostic_ledger_latch_unwritten(f, AGNOSTIC_CREW_FAILED, 0, 0);
+    assert_eq(agnostic_tenant_running(scope), 0, "⭐ and the latch gives it back");
+    agnostic_ledger_latch_unwritten(f, AGNOSTIC_CREW_COMPLETED, 0, 0);
+    assert_eq(agnostic_tenant_running(scope), 0, "once: a refused latch gives nothing back again");
+}
+
+fn test_what_does_not_count() {
+    test_group("tenantlimit/not-counted");
+    _t_open();
+    var a = arena_allocator(4194304);
+    _t_tenant("acme", 1, 1);
+    var cx = _t_as(a, "w@acme.test", AGNOSTIC_ROLE_ADMIN, "acme");
+    var scope = str_from("acme");
+
+    assert_eq(agnostic_response_status(_t_post(a, _T_BAD, cx)), HTTP_BAD_REQUEST, "a body that fails");
+    assert_eq(agnostic_tenant_running(scope), 0, "⭐ gives its place back");
+    assert_eq(_t_submit(a, cx), AGNOSTIC_HTTP_ACCEPTED, "⭐ and its token: a typo does not cost the minute");
+    _t_collect(a);
+
+    # A keyed retry of a crew that exists takes nothing, even with the tenant at its limit.
+    _t_open();
+    _t_tenant("acme", 1, 1);
+    var kx = _t_as(a, "k@acme.test", AGNOSTIC_ROLE_ADMIN, "acme");
+    agnostic_reqctx_set_headers(kx, str_from("retry-key-1"), 0, 0, 0);
+    assert_eq(_t_submit(a, kx), AGNOSTIC_HTTP_ACCEPTED, "keyed, the first time");
+    assert_eq(_t_submit(a, kx), AGNOSTIC_HTTP_ACCEPTED, "⭐ and the retry, over both limits, answers that crew");
+    assert_eq(agnostic_tenant_running(scope), 1, "with no second place taken");
+    _t_collect(a);
+
+    # No engine: the request never became a crew.
+    _t_open();
+    _t_tenant("acme", 1, 1);
+    agnostic_engine_reset();
+    var dx = _t_as(a, "d@acme.test", AGNOSTIC_ROLE_ADMIN, "acme");
+    assert_eq(_t_submit(a, dx), HTTP_SERVICE_UNAVAILABLE, "with the engine down");
+    assert_eq(agnostic_tenant_running(scope), 0, "⭐ nothing is held");
+    agnostic_engine_init(agnostic_config_from_env());
+    assert_eq(_t_submit(a, dx), AGNOSTIC_HTTP_ACCEPTED, "and the token is there when it is back");
+    _t_collect(a);
+}
+
+fn test_defaults_and_rows() {
+    test_group("tenantlimit/defaults");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var rate: i64[1];
+    var crews: i64[1];
+    agnostic_tenant_limits_a(a, str_from("_"), &rate, &crews);
+    assert_eq(load64(&rate) + load64(&crews), 0, "nothing set is no limit");
+
+    agnostic_tenant_limits_init(30, 4);
+    agnostic_tenant_limits_a(a, str_from("_"), &rate, &crews);
+    assert_eq(load64(&rate), 30, "the scope with no tenant takes the server's default");
+    assert_eq(load64(&crews), 4, "both of them");
+    _t_tenant("acme", 0, 9);
+    agnostic_tenant_limits_a(a, str_from("acme"), &rate, &crews);
+    assert_eq(load64(&rate), 30, "⭐ a 0 on a row is the server's default");
+    assert_eq(load64(&crews), 9, "and a value on a row wins");
+    agnostic_tenant_limits_a(a, str_from("gone"), &rate, &crews);
+    assert_eq(load64(&rate), 30, "a tenant deleted under its crews takes the default");
+    agnostic_tenant_limits_init(0, 0);
+}
+
+fn test_the_table_fails_open() {
+    test_group("tenantlimit/table");
+    _t_open();
+    var retry: i64[1];
+    var i = 0;
+    while (i < AGNOSTIC_TL_SLOTS) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "t");
+        str_builder_add_int(sb, i);
+        agnostic_tenant_admit(str_builder_build(sb), 0, 0, &retry);
+        i = i + 1;
+    }
+    var over = str_from("one-too-many");
+    assert_eq(agnostic_tenant_admit(over, 1, 1, &retry), AGNOSTIC_ADMIT_OK, "⭐ a full table lets a tenant in");
+    assert_eq(agnostic_tenant_running(over), 0, "uncounted");
+    agnostic_tenant_crew_ended(over);
+    assert_eq(agnostic_tenant_running(str_from("t0")), 1, "and a running tenant keeps its slot");
+
+    agnostic_tenant_crew_ended(str_from("t0"));
+    assert_eq(agnostic_tenant_admit(over, 1, 1, &retry), AGNOSTIC_ADMIT_OK, "a slot with none running is reused");
+    assert_eq(agnostic_tenant_running(over), 1, "and counts");
+}
+
+var _t_admitted = 0;
+var _t_refused = 0;
+var _t_racer_scope = 0;
+
+fn _t_racer(arg): i64 {
+    var retry: i64[1];
+    var i = 0;
+    while (i < 100) {
+        if (agnostic_tenant_admit(_t_racer_scope, 0, 10, &retry) == AGNOSTIC_ADMIT_OK) {
+            atomic_fetch_add(&_t_admitted, 1);
+        } else {
+            atomic_fetch_add(&_t_refused, 1);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ⭐ One thread cannot show this: read-then-write only goes wrong with two.
+fn test_16_threads_at_a_cap() {
+    test_group("tenantlimit/concurrent");
+    _t_open();
+    _t_racer_scope = str_from("acme");
+    var handles: i64[16];
+    var t = 0;
+    while (t < 16) {
+        store64(&handles + t * 8, thread_create(&_t_racer, t));
+        t = t + 1;
+    }
+    t = 0;
+    while (t < 16) {
+        thread_join(load64(&handles + t * 8));
+        t = t + 1;
+    }
+    assert_eq(atomic_load(&_t_admitted), 10, "⭐ a cap of 10 admits exactly 10");
+    assert_eq(atomic_load(&_t_refused), 1590, "and refuses the rest");
+    assert_eq(agnostic_tenant_running(_t_racer_scope), 10, "holding 10 places");
+}
+
+fn _t_route(a, method, key, body, ctx) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/api/v1/tenants");
+    if (key != 0) {
+        str_builder_add_cstr(sb, "/");
+        str_builder_add_cstr(sb, key);
+    }
+    return agnostic_route_dispatch_a(a, method, str_builder_build(sb), str_from(body), _T_MAXB, ctx);
+}
+
+fn _t_limit(r, name) {
+    var t = bayan_json_v_obj_get_by_cstr(agnostic_response_body(r), "tenant");
+    return bayan_json_v_int(bayan_json_v_obj_get_by_cstr(t, name));
+}
+
+fn test_the_routes() {
+    test_group("tenantlimit/routes");
+    _t_open();
+    var a = arena_allocator(4194304);
+    var su = _t_as(a, "s@agnostic.test", AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var r = _t_route(a, AGNOSTIC_METHOD_POST, 0, "{\"key\":\"acme\",\"rate_limit\":60,\"max_crews\":5}", su);
+    assert_eq(agnostic_response_status(r), AGNOSTIC_HTTP_CREATED, "a tenant is made with its limits");
+    assert_eq(_t_limit(r, "rate_limit"), 60, "the rate");
+    assert_eq(_t_limit(r, "max_crews"), 5, "the cap");
+    var bare = _t_route(a, AGNOSTIC_METHOD_POST, 0, "{\"key\":\"bare\"}", su);
+    assert_eq(_t_limit(bare, "rate_limit"), 0, "a tenant with none says 0");
+
+    var u = _t_route(a, AGNOSTIC_METHOD_PUT, "acme", "{\"max_crews\":7}", su);
+    assert_eq(agnostic_response_status(u), HTTP_OK, "a limit is changed");
+    assert_eq(_t_limit(u, "max_crews"), 7, "to what was asked");
+    assert_eq(_t_limit(u, "rate_limit"), 60, "⭐ and a field left out keeps its value");
+    var named = _t_route(a, AGNOSTIC_METHOD_PUT, "acme", "{\"name\":\"Acme Inc\",\"rate_limit\":0}", su);
+    assert_eq(_t_limit(named, "rate_limit"), 0, "0 hands it back to the server");
+    assert_eq(_t_limit(named, "max_crews"), 7, "the other stays");
+    assert_eq(str_eq_cstr(agnostic_tenant_row_name(agnostic_tenant_get_a(a, str_from("acme"))), "Acme Inc"), 1,
+      "and a name changes with them");
+    assert_eq(agnostic_tenant_row_created(agnostic_tenant_get_a(a, str_from("acme"))) > 0, 1, "created is kept");
+
+    assert_eq(agnostic_response_status(_t_route(a, AGNOSTIC_METHOD_PUT, "acme", "{\"max_crews\":-1}", su)),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a negative limit");
+    assert_eq(agnostic_response_status(_t_route(a, AGNOSTIC_METHOD_PUT, "acme", "{\"max_crews\":1000001}", su)),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "one past the most");
+    assert_eq(agnostic_response_status(_t_route(a, AGNOSTIC_METHOD_PUT, "acme", "{\"max_crews\":\"7\"}", su)),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "a limit that is a string");
+    assert_eq(agnostic_response_status(_t_route(a, AGNOSTIC_METHOD_PUT, "acme", "{\"rate_limit\":1.5}", su)),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "or a fraction");
+    assert_eq(agnostic_response_status(_t_route(a, AGNOSTIC_METHOD_POST, 0, "{\"key\":\"x\",\"rate_limit\":-1}", su)),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "on create too");
+    assert_eq(agnostic_tenant_get_a(a, str_from("x")), 0, "which then makes no tenant");
+    assert_eq(agnostic_response_status(_t_route(a, AGNOSTIC_METHOD_PUT, "acme", "{\"key\":\"other\"}", su)),
+      AGNOSTIC_HTTP_UNPROCESSABLE, "⭐ a key cannot be changed: it is what the tenant's data is under");
+    assert_eq(agnostic_response_status(_t_route(a, AGNOSTIC_METHOD_PUT, "nobody", "{\"max_crews\":1}", su)),
+      HTTP_NOT_FOUND, "no such tenant");
+    var long_name = str_builder_new();
+    str_builder_add_cstr(long_name, "{\"name\":\"");
+    var i = 0;
+    while (i < 300) { str_builder_add_cstr(long_name, "x"); i = i + 1; }
+    str_builder_add_cstr(long_name, "\"}");
+    assert_eq(agnostic_response_status(_t_route(a, AGNOSTIC_METHOD_PUT, "acme",
+          str_data(str_builder_build(long_name)), su)), AGNOSTIC_HTTP_UNPROCESSABLE, "a name too long");
+
+    var ad = _t_as(a, "ad@agnostic.test", AGNOSTIC_ROLE_ADMIN, "acme");
+    assert_eq(agnostic_response_status(_t_route(a, AGNOSTIC_METHOD_PUT, "acme", "{\"max_crews\":9999}", ad)),
+      HTTP_FORBIDDEN, "⭐ a tenant's administrator cannot raise their own limit");
+}
+
+# The limits were added with ALTER TABLE, so a database from 0.3.0 has rows that lack them.
+fn test_a_row_from_before() {
+    test_group("tenantlimit/migration");
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    patra_init();
+    agnostic_store_open(str_from(_T_DB));
+    agnostic_store_ensure(AGNOSTIC_TENANTS_TABLE_SQL);
+    var a = arena_allocator(1048576);
+    assert_neq(agnostic_tenant_create_a(a, str_from("old"), str_from("Old")), 0, "a row with no limits");
+
+    assert_eq(agnostic_tenants_ensure(), 1, "the columns are added to a table from 0.3.0");
+    assert_eq(agnostic_tenants_ensure(), 1, "and a second start finds them there");
+    var row = agnostic_tenant_get_a(a, str_from("old"));
+    assert_neq(row, 0, "⭐ the old row is still read");
+    assert_eq(str_eq_cstr(agnostic_tenant_row_name(row), "Old"), 1, "whole");
+    assert_eq(agnostic_tenant_row_rate(row), 0, "and it reads the server's default");
+    assert_eq(agnostic_tenant_row_crews(row), 0, "for both limits");
+    assert_eq(agnostic_tenant_update_a(a, str_from("old"), 0, 12, 3), 1, "and takes limits");
+    var after = agnostic_tenant_get_a(a, str_from("old"));
+    assert_eq(agnostic_tenant_row_rate(after), 12, "that stick");
+    assert_eq(agnostic_tenant_row_crews(after), 3, "both of them");
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    agnostic_crypto_main_init();
+    agnostic_argon_pool_init();
+    agnostic_rl_init();
+    agnostic_jwt_init_random();
+    agnostic_refusal_init();
+    agnostic_tenant_limits_init(0, 0);
+    test_the_rate();
+    test_the_cap();
+    test_a_cap_does_not_stop_the_clock();
+    test_a_crew_that_ended_first();
+    test_what_does_not_count();
+    test_defaults_and_rows();
+    test_the_table_fails_open();
+    test_16_threads_at_a_cap();
+    test_the_routes();
+    test_a_row_from_before();
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    _tt_unlink_store(_T_AUDIT);
+    return assert_summary();
+}
+
+var _agnostic_tenantlimit_test_exit = main();
+if (_agnostic_tenantlimit_test_exit > 0) { _agnostic_tenantlimit_test_exit = 1; }
+sys_exit_group(_agnostic_tenantlimit_test_exit);

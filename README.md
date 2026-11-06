@@ -23,6 +23,10 @@ that an administrator switches on in its Settings tab — see
 - **Swarm Command** — keeps swarms on the server, per tenant, prices them with headless simulations
   beside one agent given the same tokens, runs them as live crews and reports what they really
   cost, and watches any crew on its map.
+- **Users** — who can sign in and with what role, and, for a super administrator, tenants and their
+  limits.
+
+[`docs/guides/deployment.md`](docs/guides/deployment.md) puts agnostic behind a proxy, under systemd.
 
 A view's state is in the URL (`/ui#plugin/crews?crew=<uuid>`), so a link to a crew can be shared.
 

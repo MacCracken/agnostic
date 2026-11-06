@@ -94,6 +94,71 @@ fn _t_cost(method, path, body, auth, transport) {
     return _t_cost_once(method, path, body, auth, transport);
 }
 
+# ⭐ 0.3.1: a refusal past its budget writes nothing and keeps nothing, so a flood of 401s costs the
+# heap as little as it costs the disk. The budget itself keeps libro's entry, as every audited
+# request does, and that is what the budget bounds.
+fn test_a_refusal_past_the_budget_keeps_nothing() {
+    test_group("alloc/refusal-budget");
+    agnostic_refusal_init();
+    agnostic_refusal_reset();
+    var libro = _t_libro_record_cost();
+    assert_eq(libro > 0, 1, "precondition: libro's entry is measured");
+    var i = 0;
+    var a = arena_allocator(1048576);
+    while (i < AGNOSTIC_REFUSAL_BURST - 1) {
+        agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_UNAUTHENTICATED, 0, 0);
+        reset_via(a);
+        i = i + 1;
+    }
+    assert_eq(_t_cost_once(AGNOSTIC_METHOD_GET, "/api/v1/crews", "", 0, 0) - libro, 0,
+      "⭐ a 401 inside the budget keeps libro's entry and nothing of agnostic's");
+    var appended = agnostic_audit_appended();
+    assert_eq(_t_cost(AGNOSTIC_METHOD_GET, "/api/v1/crews", "", 0, 0), 0, "⭐ past it, a 401 keeps nothing");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_PUT, "/api/v1/plugins/swarm", "{\"enabled\":true}", 2, 0), 0,
+      "and a 403 keeps nothing");
+    assert_eq(agnostic_audit_appended(), appended, "having written nothing");
+    agnostic_refusal_reset();
+}
+
+# ⭐ 0.3.1: a crew over its tenant's limit is refused before it is built. Building one keeps it on the
+# global heap, so a refusal after that step would be a leak a tenant at its limit could drive.
+fn test_a_crew_over_its_limit_keeps_nothing() {
+    test_group("alloc/tenant-limit");
+    agnostic_refusal_init();
+    agnostic_refusal_reset();
+    agnostic_tenant_limits_init(1, 0);
+    agnostic_tenant_limits_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+    var body = "{\"name\":\"c\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"d\"}]}"; #skip-lint
+    _t_cost_once(AGNOSTIC_METHOD_POST, "/api/v1/crews", body, 1, 0);
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_TENANT_RATE), 0, "precondition: the minute's crew was admitted");
+    var i = 0;
+    while (i < AGNOSTIC_REFUSAL_BURST) {
+        _t_cost_once(AGNOSTIC_METHOD_POST, "/api/v1/crews", body, 1, 0);
+        i = i + 1;
+    }
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_TENANT_RATE), AGNOSTIC_REFUSAL_BURST,
+      "precondition: refused since");
+    assert_eq(_t_cost(AGNOSTIC_METHOD_POST, "/api/v1/crews", body, 1, 0), 0,
+      "⭐ a crew refused for its limit keeps nothing");
+    agnostic_tenant_limits_init(0, 0);
+    agnostic_tenant_limits_reset();
+    agnostic_refusal_reset();
+}
+
+# ⭐ 0.3.1: `agnosai_metrics_gather` would keep about 1 KB a scrape for ever (ADR 0027).
+fn test_a_scrape_keeps_nothing() {
+    test_group("alloc/metrics");
+    agnostic_refusal_init();
+    agnosai_metrics_global();
+    var a = arena_allocator(1048576);
+    agnostic_route_metrics_a(a);
+    reset_via(a);
+    var before = alloc_used();
+    agnostic_route_metrics_a(a);
+    assert_eq(alloc_used() - before, 0, "⭐ a scrape keeps nothing");
+}
+
 fn test_refusals_keep_nothing() {
     test_group("alloc/refusals");
 
@@ -275,6 +340,9 @@ fn main() {
     test_audited_writes_keep_nothing();
     test_refused_bodies_keep_nothing();
     test_definitions_past_the_cache_keep_nothing();
+    test_a_refusal_past_the_budget_keeps_nothing();
+    test_a_crew_over_its_limit_keeps_nothing();
+    test_a_scrape_keeps_nothing();
     agnostic_audit_close();
     agnostic_store_close();
     _tt_unlink_store(_T_RADB);

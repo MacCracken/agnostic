@@ -1,0 +1,184 @@
+# agnostic/routes/metrics — `GET /api/v1/metrics`, in Prometheus text format (0.3.1, G7).
+#
+# ## Who may read it
+#
+# These are counts across every tenant, so the route is SUPER, as the audit trail is. A scraper's
+# config is a plain file on another machine, and a super administrator's key in it can do anything.
+# So `AGNOSTIC_METRICS_TOKEN` is a second credential that opens this one route and nothing else.
+# Unset, the route needs a super administrator as usual.
+#
+# ⚠ **The compare is over digests**, for the reason agnosai's `server/auth` gives: `sha256` is fixed
+# output, so the loop runs over 32 bytes whatever length a caller sends, and neither a length nor a
+# prefix can be read from the timing.
+#
+# ## Why not `agnosai_metrics_gather`
+#
+# It builds its text on the global heap, which has no `free`, and returns it. A scrape every 15 s
+# would keep about 1 KB each time, for ever, on the one route nobody watches, and `request_alloc`
+# holds every request path to 0. So the same six families are rendered here, under the same names,
+# from agnosai's accessors, in the request's arena. A dashboard keyed on those names reads the same.
+#
+# ## Counts, and no labels a caller can choose
+#
+# Every label value is a word in this file. A tenant, a path or a status code as a label is a series
+# per distinct value, which is a memory bound a caller gets to set in the scraper. Per-tenant
+# figures are not here for that reason, and a route's latency is the traces' (ADR 0018).
+
+var AGNOSTIC_METRICS_CTYPE = "text/plain; version=0.0.4; charset=utf-8";
+
+var _agnostic_metrics_token = 0;
+
+# One word per status class, 1xx to 5xx. In BSS, so a response before any init still counts.
+var _agnostic_http_counts: u8[48];
+
+# Name the scraper's token, a Str, or 0. Mount time only.
+fn agnostic_metrics_set_token(t: Str): i64 {
+    _agnostic_metrics_token = t;
+    return 0;
+}
+
+# Whether `Authorization` value `header` is `Bearer <the scraper's token>`. 1 or 0.
+fn agnostic_metrics_token_matches(a, header: Str): i64 {
+    if (_agnostic_metrics_token == 0 || header == 0) { return 0; }
+    if (_agnostic_authn_scheme_is(header, "Bearer") == 0) { return 0; }
+    var tok = _agnostic_authn_credential_a(a, header, "Bearer");
+    if (tok == 0) { return 0; }
+    var want = alloc_via(a, AGNOSTIC_HASH_BYTES);
+    var got = alloc_via(a, AGNOSTIC_HASH_BYTES);
+    if (want == 0 || got == 0) { return 0; }
+    agnostic_sha256(str_data(_agnostic_metrics_token), str_len(_agnostic_metrics_token), want);
+    agnostic_sha256(str_data(tok), str_len(tok), got);
+    return ct_eq_bytes(want, got, AGNOSTIC_HASH_BYTES);
+}
+
+# Count a response by its status class.
+fn agnostic_metrics_note_status(status): i64 {
+    var class = status / 100;
+    if (class < 1 || class > 5) { return 0; }
+    atomic_fetch_add(&_agnostic_http_counts + class * 8, 1);
+    return 0;
+}
+
+# Responses of status class `class`, 1 to 5.
+fn agnostic_metrics_status_count(class): i64 {
+    if (class < 1 || class > 5) { return 0; }
+    return atomic_load(&_agnostic_http_counts + class * 8);
+}
+
+# A family's `# HELP` and `# TYPE`.
+fn _agnostic_m_head_a(a, sb, name, help, kind): i64 {
+    str_builder_add_cstr_a(a, sb, "# HELP ");
+    str_builder_add_cstr_a(a, sb, name);
+    str_builder_add_cstr_a(a, sb, " ");
+    str_builder_add_cstr_a(a, sb, help);
+    str_builder_add_cstr_a(a, sb, "\n# TYPE ");
+    str_builder_add_cstr_a(a, sb, name);
+    str_builder_add_cstr_a(a, sb, " ");
+    str_builder_add_cstr_a(a, sb, kind);
+    str_builder_add_cstr_a(a, sb, "\n");
+    return 0;
+}
+
+# One sample, `name value`.
+fn _agnostic_m_int_a(a, sb, name, v): i64 {
+    str_builder_add_cstr_a(a, sb, name);
+    str_builder_add_cstr_a(a, sb, " ");
+    str_builder_add_int_a(a, sb, v);
+    str_builder_add_cstr_a(a, sb, "\n");
+    return 0;
+}
+
+# A family of one sample.
+fn _agnostic_m_one_a(a, sb, name, help, kind, v): i64 {
+    _agnostic_m_head_a(a, sb, name, help, kind);
+    return _agnostic_m_int_a(a, sb, name, v);
+}
+
+# One sample with one label, `name{label="value"} v`.
+fn _agnostic_m_labelled_a(a, sb, name, label, value, v): i64 {
+    str_builder_add_cstr_a(a, sb, name);
+    str_builder_add_cstr_a(a, sb, "{");
+    str_builder_add_cstr_a(a, sb, label);
+    str_builder_add_cstr_a(a, sb, "=\"");
+    str_builder_add_cstr_a(a, sb, value);
+    str_builder_add_cstr_a(a, sb, "\"} ");
+    str_builder_add_int_a(a, sb, v);
+    str_builder_add_cstr_a(a, sb, "\n");
+    return 0;
+}
+
+# `micro` millionths of a dollar as a decimal, always six places, as the sample's value.
+fn _agnostic_m_usd_a(a, sb, name, micro): i64 {
+    str_builder_add_cstr_a(a, sb, name);
+    str_builder_add_cstr_a(a, sb, " ");
+    str_builder_add_int_a(a, sb, micro / 1000000);
+    str_builder_add_cstr_a(a, sb, ".");
+    var frac = micro % 1000000;
+    var scale = 100000;
+    while (scale >= 1) {
+        str_builder_add_int_a(a, sb, (frac / scale) % 10);
+        scale = scale / 10;
+    }
+    str_builder_add_cstr_a(a, sb, "\n");
+    return 0;
+}
+
+# agnosai's six families, under agnosai's names. See the header for why they are rendered here.
+fn _agnostic_m_engine_a(a, sb): i64 {
+    var m = agnosai_metrics_global();
+    _agnostic_m_one_a(a, sb, "agnosai_crews_total", "Total number of crews created.", "counter",
+      agnosai_metrics_crews_total(m));
+    _agnostic_m_one_a(a, sb, "agnosai_crews_active", "Number of currently active crews.", "gauge",
+      agnosai_metrics_crews_active(m));
+    _agnostic_m_one_a(a, sb, "agnosai_tasks_completed_total", "Total tasks completed successfully.", "counter",
+      agnosai_metrics_tasks_completed(m));
+    _agnostic_m_one_a(a, sb, "agnosai_tasks_failed_total", "Total tasks that failed.", "counter",
+      agnosai_metrics_tasks_failed(m));
+    _agnostic_m_one_a(a, sb, "agnosai_inference_tokens_total", "Total inference tokens processed.", "counter",
+      agnosai_metrics_tokens_total(m));
+    _agnostic_m_head_a(a, sb, "agnosai_inference_cost_usd_total", "Total inference cost in USD.", "counter");
+    _agnostic_m_usd_a(a, sb, "agnosai_inference_cost_usd_total", agnosai_metrics_cost_micro_usd(m));
+    return 0;
+}
+
+# `GET /api/v1/metrics`.
+fn agnostic_route_metrics_a(a): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+
+    _agnostic_m_head_a(a, sb, "agnostic_build_info", "The running version.", "gauge");
+    str_builder_add_cstr_a(a, sb, "agnostic_build_info{version=\"");
+    str_builder_add_a(a, sb, agnostic_version());
+    str_builder_add_cstr_a(a, sb, "\"} 1\n");
+
+    var http = "agnostic_http_responses_total";
+    _agnostic_m_head_a(a, sb, http, "Responses sent, by status class.", "counter");
+    _agnostic_m_labelled_a(a, sb, http, "class", "2xx", agnostic_metrics_status_count(2));
+    _agnostic_m_labelled_a(a, sb, http, "class", "3xx", agnostic_metrics_status_count(3));
+    _agnostic_m_labelled_a(a, sb, http, "class", "4xx", agnostic_metrics_status_count(4));
+    _agnostic_m_labelled_a(a, sb, http, "class", "5xx", agnostic_metrics_status_count(5));
+
+    # `src/engine/refusal.cyr`. The two login sheds are read from the controls that count them, so
+    # each counter has one owner, and the pool's covers a password change as well as a login.
+    var ref = "agnostic_refusals_total";
+    _agnostic_m_head_a(a, sb, ref, "Requests refused, by why.", "counter");
+    _agnostic_m_labelled_a(a, sb, ref, "reason", "unauthenticated",
+      agnostic_refusal_count(AGNOSTIC_REFUSAL_UNAUTHENTICATED));
+    _agnostic_m_labelled_a(a, sb, ref, "reason", "forbidden", agnostic_refusal_count(AGNOSTIC_REFUSAL_FORBIDDEN));
+    _agnostic_m_labelled_a(a, sb, ref, "reason", "login_throttled", agnostic_rl_shed_count());
+    _agnostic_m_labelled_a(a, sb, ref, "reason", "argon_shed", agnostic_argon_shed_count());
+    _agnostic_m_labelled_a(a, sb, ref, "reason", "tenant_rate", agnostic_refusal_count(AGNOSTIC_REFUSAL_TENANT_RATE));
+    _agnostic_m_labelled_a(a, sb, ref, "reason", "tenant_crews", agnostic_refusal_count(AGNOSTIC_REFUSAL_TENANT_CREWS));
+
+    _agnostic_m_one_a(a, sb, "agnostic_ledger_crews", "Crews the ledger remembers.", "gauge", agnostic_ledger_count());
+    _agnostic_m_one_a(a, sb, "agnostic_engine_crews", "Crews in the engine's registry.", "gauge",
+      agnostic_engine_crew_count());
+    _agnostic_m_one_a(a, sb, "agnostic_audit_entries", "Entries in the audit trail.", "gauge", agnostic_audit_count());
+    _agnostic_m_one_a(a, sb, "agnostic_audit_dropped_total", "Audit entries that could not be stored.", "counter",
+      agnostic_audit_dropped());
+    _agnostic_m_engine_a(a, sb);
+
+    var body = str_builder_build_a(a, sb);
+    if (body == 0) { return 0; }
+    return agnostic_response_bytes_a(a, HTTP_OK, AGNOSTIC_METRICS_CTYPE, body, 0);
+}

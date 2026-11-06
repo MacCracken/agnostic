@@ -39,21 +39,6 @@ fn agnostic_login_fields_a(a): i64 {
     return f;
 }
 
-# The request's peer address, dotted, in `a`.
-fn _agnostic_peer_str_a(a, ctx): i64 {
-    var ip = agnostic_reqctx_peer(ctx);
-    var sb = str_builder_new_a(a);
-    if (sb == 0) { return 0; }
-    str_builder_add_int_a(a, sb, ip & 0xFF);
-    str_builder_add_cstr_a(a, sb, ".");
-    str_builder_add_int_a(a, sb, (ip >> 8) & 0xFF);
-    str_builder_add_cstr_a(a, sb, ".");
-    str_builder_add_int_a(a, sb, (ip >> 16) & 0xFF);
-    str_builder_add_cstr_a(a, sb, ".");
-    str_builder_add_int_a(a, sb, (ip >> 24) & 0xFF);
-    return str_builder_build_a(a, sb);
-}
-
 # The longest login body. An email and a password fit in far less, and this route is open: a
 # megabyte of `[1,1,…]` costs its worker twenty times that in parse tree before the rate limit
 # can refuse it.
@@ -86,10 +71,16 @@ fn agnostic_route_login_a(a, body: Str, ctx): i64 {
 
     var status: i64[1];
     store64(&status, 0);
+    var shed = agnostic_argon_shed_count();
     var uid = agnostic_login_a(a, agnostic_reqctx_peer(ctx), email, password, &status);
     var st = load64(&status);
 
     if (st == AGNOSTIC_LOGIN_THROTTLED) {
+        # One answer to the caller, and two to the operator: `agnostic_login_a` says why they are
+        # the same, and which of them it was tells a guessing source from a server that is full.
+        var kind = AGNOSTIC_REFUSAL_THROTTLED;
+        if (agnostic_argon_shed_count() != shed) { kind = AGNOSTIC_REFUSAL_SHED; }
+        agnostic_refusal_note_a(a, kind, ctx, 0);
         return agnostic_response_error_a(a, AGNOSTIC_HTTP_TOO_MANY_REQUESTS,
           str_from_a(a, "too many attempts; retry later"));
     }
@@ -98,7 +89,7 @@ fn agnostic_route_login_a(a, body: Str, ctx): i64 {
         # bounded by what they can spend on Argon2. The peer, never the address tried:
         # a mistyped password in the email field must not reach the trail.
         agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, "auth.login.failed"),
-          agnostic_audit_detail_a(a, "peer", _agnostic_peer_str_a(a, ctx)));
+          agnostic_audit_detail_a(a, "peer", agnostic_addr_text_a(a, agnostic_reqctx_peer(ctx))));
         # ⚠ Same message whether the address is unknown or the password is
         # wrong. Do not "improve" this into something more helpful.
         return agnostic_response_error_a(a, HTTP_UNAUTHORIZED,

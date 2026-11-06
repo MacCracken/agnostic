@@ -5,24 +5,32 @@ WHAT IT GUARDS. A suite runs one thread with no store contention, so it cannot s
 does at 200 crews a second. The first version of ADR 0022's fix passed every suite and lost most of
 its crews under this load, and only a real server with concurrent clients showed it.
 
-Four steps, each of which has lost crews before:
+Six steps, the first four of which have lost crews before:
 
   1. a burst from `--clients` clients, past the engine's registry of 1,000, none of it polled;
   2. every crew read back, while the outcome writes are still behind;
   3. a second burst and SIGTERM as soon as it is accepted, so the stop finds writes outstanding;
-  4. a restart, where every crew must read `completed` from the store.
+  4. a restart, where every crew must read `completed` from the store;
+  5. readers of `/events` against a burst past the ledger's cap, whose eviction recycles event rings:
+     a crew must never show another crew's events. A smoke test: the moment a request holds an entry
+     across its eviction is too short to hit on demand, so `ledger/ring-recycled` holds that rule;
+  6. the same clients against a tenant cap, where a crew can end before its submit returns. A place
+     not given back shows up as a tenant refused for crews it no longer has.
 
 The second burst is there because reading the first takes long enough for the writes to catch up,
 and a stop with nothing outstanding proves nothing. A crew that reads `interrupted` after the
 restart finished before the stop and was not written. Exits 1 on any crew that is not `completed`.
 
 Usage: scripts/load-test.py [binary] [--crews 6000] [--clients 16] [--port 18732]
+       --steps 1-4,5,6      run only some of it (a mutant's check needs only its own step)
 """
 import argparse
 import collections
 import http.client
 import json
 import os
+import random
+import re
 import shutil
 import socket
 import subprocess
@@ -50,14 +58,15 @@ def request(port, method, path, body=None):
         conn.close()
 
 
-def start(binary, work, port, log_name):
+def start(binary, work, port, log_name, db="load", **extra):
     env = dict(
         os.environ,
         AGNOSTIC_ADDR="127.0.0.1",
         AGNOSTIC_PORT=str(port),
         AGNOSTIC_AUTH="off",
-        AGNOSTIC_DB_PATH=os.path.join(work, "load.patra"),
-        AGNOSTIC_AUDIT_PATH=os.path.join(work, "load-audit.patra"),
+        AGNOSTIC_DB_PATH=os.path.join(work, db + ".patra"),
+        AGNOSTIC_AUDIT_PATH=os.path.join(work, db + "-audit.patra"),
+        **extra,
     )
     log = open(os.path.join(work, log_name), "wb")
     server = subprocess.Popen([binary], env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -72,8 +81,12 @@ def start(binary, work, port, log_name):
     sys.exit("load-test: the server did not listen within 30 s")
 
 
-def burst(port, total, clients):
-    """Submit `total` crews from `clients` threads. The ids accepted, and anything refused."""
+def burst(port, total, clients, follow=False):
+    """Submit `total` crews from `clients` threads. The ids accepted, and anything refused.
+
+    `follow` reads each accepted crew until it ends, which is what frees its place at a tenant's cap,
+    so places turn over as fast as crews finish and not at the collector's 200 ms.
+    """
     ids, refused, lock, taken = [], collections.Counter(), threading.Lock(), [0]
 
     def client():
@@ -88,6 +101,14 @@ def burst(port, total, clients):
                     ids.append(json.loads(text)["crew_id"])
                 else:
                     refused[status] += 1
+            if follow and status != 202:
+                time.sleep(0.01)  # as a client told to come back would, or it only spins on refusals
+            if follow and status == 202:
+                crew = json.loads(text)["crew_id"]
+                while True:
+                    got, reply = request(port, "GET", f"/api/v1/crews/{crew}")
+                    if got != 200 or json.loads(reply).get("status") not in ("pending", "running"):
+                        break
 
     threads = [threading.Thread(target=client) for _ in range(clients)]
     for t in threads:
@@ -114,19 +135,86 @@ def read_all(port, ids, settle_s):
     return dict(seen)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("binary", nargs="?", default="build/agnostic")
-    parser.add_argument("--crews", type=int, default=6000)
-    parser.add_argument("--clients", type=int, default=16)
-    parser.add_argument("--port", type=int, default=18732)
-    args = parser.parse_args()
+def named_crew(name):
+    return json.dumps({
+        "name": name,
+        "agents": [{"key": "a", "role": "r", "goal": "g"}],
+        "tasks": [{"description": "one"}],
+    })
 
-    work = tempfile.mkdtemp(prefix="agnostic-load-")
-    server = None
-    bad = []
+
+def events_race(port, total, clients):
+    """Step 5. How many reads found their crew's events, and how many found another's."""
+    known, lock, taken, done = [], threading.Lock(), [0], threading.Event()
+    reads, wrong = [0], []
+
+    def writer():
+        while True:
+            with lock:
+                if taken[0] >= total:
+                    return
+                taken[0] += 1
+                name = f"crew-{taken[0]}"
+            status, text = request(port, "POST", "/api/v1/crews", named_crew(name))
+            if status == 202:
+                with lock:
+                    known.append((json.loads(text)["crew_id"], name))
+
+    def reader():
+        rng = random.Random()
+        while not done.is_set():
+            with lock:
+                if not known:
+                    continue
+                crew, name = known[rng.randrange(len(known))]
+            status, text = request(port, "GET", f"/api/v1/crews/{crew}/events")
+            if status != 200:
+                continue
+            for event in json.loads(text)["events"]:
+                if event["type"] == "crew_started":
+                    with lock:
+                        reads[0] += 1
+                        if event["data"]["name"] != name:
+                            wrong.append((crew, name, event["data"]["name"]))
+
+    writers = [threading.Thread(target=writer) for _ in range(clients)]
+    readers = [threading.Thread(target=reader) for _ in range(clients // 2)]
+    for t in writers + readers:
+        t.start()
+    for t in writers:
+        t.join()
+    done.set()
+    for t in readers:
+        t.join()
+    return reads[0], wrong
+
+
+def metric(port, name):
+    status, text = request(port, "GET", "/api/v1/metrics")
+    if status != 200:
+        return None
+    found = re.search(r"^" + re.escape(name) + r" (\d+)$", text.decode(), re.M)
+    return int(found.group(1)) if found else None
+
+
+def settle_count(port, ids, settle_s):
+    """Wait for `ids` to end, and report how many did not."""
+    seen = read_all(port, ids, settle_s)
+    return sum(n for word, n in seen.items() if word != "completed")
+
+
+def wanted(spec):
+    """The step numbers `--steps 1-4,6` names."""
+    out = set()
+    for part in spec.split(","):
+        first, _, last = part.partition("-")
+        out.update(range(int(first), int(last or first) + 1))
+    return out
+
+
+def steps_one_to_four(args, work, bad):
+    server = start(args.binary, work, args.port, "first.log")
     try:
-        server = start(args.binary, work, args.port, "first.log")
         began = time.time()
         ids, refused = burst(args.port, args.crews, args.clients)
         took = time.time() - began
@@ -162,10 +250,83 @@ def main():
             bad.append(f"audit chain: {status} {text[:120]!r}")
         server.terminate()
         server.wait(60)
-        server = None
     finally:
-        if server is not None and server.poll() is None:
+        if server.poll() is None:
             server.kill()
+
+
+def step_five(args, work, bad):
+    server = start(args.binary, work, args.port, "events.log", db="events")
+    try:
+        total = max(args.crews // 2, 2000)
+        reads, wrong = events_race(args.port, total, args.clients)
+        print(f"{reads} reads of a crew's events beside {total} crews and eviction: {len(wrong)} of another's")
+        if wrong:
+            bad.append(f"a crew showed another's events: {wrong[:3]}")
+        if reads == 0:
+            bad.append("no read reached a crew's events")
+        server.terminate()
+        code = server.wait(300)
+        if code != 0:
+            bad.append(f"exit {code} after the event readers")
+    finally:
+        if server.poll() is None:
+            server.kill()
+
+
+def step_six(args, work, bad):
+    cap = 8
+    server = start(args.binary, work, args.port, "cap.log", db="cap", AGNOSTIC_TENANT_MAX_CREWS=str(cap))
+    try:
+        total = max(args.crews // 2, 2000)
+        ids, refused = burst(args.port, total, args.clients, follow=True)
+        print(f"at a cap of {cap}: accepted {len(ids)}, refused {dict(refused)} of {total}")
+        if set(refused) - {429}:
+            bad.append(f"a capped burst was answered {dict(refused)}")
+        if len(ids) < cap * 10:
+            bad.append(f"only {len(ids)} crews got through, too few to turn the places over")
+        if settle_count(args.port, ids, 60) != 0:
+            bad.append("a capped burst did not finish")
+        counted = metric(args.port, 'agnostic_refusals_total{reason="tenant_crews"}')
+        if counted != refused[429]:
+            bad.append(f"the metrics count {counted} refusals of {refused[429]}")
+
+        # Every crew has ended, so every place is free. One leaked place would fail this: `cap`
+        # crews at once, each held by nothing but the collector's 200 ms.
+        time.sleep(0.5)
+        status = [request(args.port, "POST", "/api/v1/crews", CREW)[0] for _ in range(cap)]
+        print(f"then {cap} more, with nothing running: {collections.Counter(status)}")
+        if status != [202] * cap:
+            bad.append(f"places were lost: {collections.Counter(status)}")
+        server.terminate()
+        code = server.wait(300)
+        if code != 0:
+            bad.append(f"exit {code} after the capped burst")
+    finally:
+        if server.poll() is None:
+            server.kill()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("binary", nargs="?", default="build/agnostic")
+    parser.add_argument("--crews", type=int, default=6000)
+    parser.add_argument("--clients", type=int, default=16)
+    parser.add_argument("--port", type=int, default=18732)
+    parser.add_argument("--steps", default="1-6")
+    args = parser.parse_args()
+    steps = wanted(args.steps)
+
+    work = tempfile.mkdtemp(prefix="agnostic-load-")
+    bad = []
+    try:
+        if steps & {1, 2, 3, 4}:
+            steps_one_to_four(args, work, bad)
+        if 5 in steps:
+            step_five(args, work, bad)
+        if 6 in steps:
+            step_six(args, work, bad)
+    finally:
         shutil.rmtree(work, ignore_errors=True)
 
     if bad:

@@ -44,3 +44,7 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0021](0021-request-arenas-grow-and-do-not-spill.md) | Request arenas grow, and do not spill |
 | [0022](0022-a-finished-crew-leaves-the-engines-registry.md) | A finished crew leaves the engine's registry |
 | [0023](0023-provisioning-is-routes-and-one-recovery-command.md) | Provisioning is routes and one recovery command, and ADMIN runs a tenant |
+| [0024](0024-the-client-is-the-rightmost-address-no-listed-proxy-added.md) | The client is the rightmost address no listed proxy added |
+| [0025](0025-a-refusal-always-counts-and-is-written-within-a-budget.md) | A refusal always counts, and is written within a budget |
+| [0026](0026-a-tenants-limits-are-on-crews-and-a-place-is-reserved.md) | A tenant's limits are on crews, and a place is reserved before the crew is built |
+| [0027](0027-a-scraper-has-a-credential-of-its-own.md) | A scraper has a credential of its own, and metrics stay in the request's arena |

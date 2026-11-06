@@ -88,6 +88,8 @@ enum AgnosticRouteId {
     AGNOSTIC_ROUTE_TENANT_CREATE = 41;
     AGNOSTIC_ROUTE_TENANT_GET    = 42;
     AGNOSTIC_ROUTE_TENANT_DELETE = 43;
+    AGNOSTIC_ROUTE_TENANT_UPDATE = 44;   # 0.3.1
+    AGNOSTIC_ROUTE_METRICS       = 45;   # 0.3.1
 }
 
 var AGNOSTIC_METHOD_NONE   = 0;
@@ -323,7 +325,7 @@ enum AgnosticRouteRowOff {
     AGNOSTIC_RR_PUT         = 24;
     AGNOSTIC_RR_DELETE      = 32;
     AGNOSTIC_RR_SIZE        = 40;
-    AGNOSTIC_RR_TABLE_BYTES = 1920; # the table's storage: 48 rows, 32 used
+    AGNOSTIC_RR_TABLE_BYTES = 1920; # the table's storage: 48 rows, 33 used
 }
 
 # The rows, AGNOSTIC_RR_SIZE bytes each, in resolution order.
@@ -385,7 +387,7 @@ fn _agnostic_route_table_build(): i64 {
     n = _agnostic_route_add(n, "/api/v1/users/:id/api-keys/:key", none, none, none, AGNOSTIC_ROUTE_USER_KEY_DEL);
     n = _agnostic_route_add(n, "/api/v1/tenants", AGNOSTIC_ROUTE_TENANT_LIST, AGNOSTIC_ROUTE_TENANT_CREATE, none, none);
     n = _agnostic_route_add(n, "/api/v1/tenants/:key",
-      AGNOSTIC_ROUTE_TENANT_GET, none, none, AGNOSTIC_ROUTE_TENANT_DELETE);
+      AGNOSTIC_ROUTE_TENANT_GET, none, AGNOSTIC_ROUTE_TENANT_UPDATE, AGNOSTIC_ROUTE_TENANT_DELETE);
 
     # The preset library (M3) — read-only. A POST to either path earns a 405 naming
     # the mismatch rather than a 404: the collection exists, the write surface does
@@ -403,6 +405,7 @@ fn _agnostic_route_table_build(): i64 {
     # The audit trail (M4), read-only. Nothing writes it over HTTP — entries come
     # from the operations they record, never from a client. Its newest entries
     # (0.1.10), by cursor.
+    n = _agnostic_route_add(n, "/api/v1/metrics", AGNOSTIC_ROUTE_METRICS, none, none, none);
     n = _agnostic_route_add(n, "/api/v1/audit", AGNOSTIC_ROUTE_AUDIT, none, none, none);
     n = _agnostic_route_add(n, "/api/v1/audit/entries", AGNOSTIC_ROUTE_AUDIT_ENTRIES, none, none, none);
 
@@ -613,6 +616,7 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     # body size: it is a property of how the request arrived, not of what it asked.
     if (agnostic_reqctx_is_transport(ctx) == 1 && agnostic_authn_required() == 0) {
         if (agnostic_host_is_loopback(agnostic_reqctx_host(ctx)) == 0) {
+            agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, ctx, 0);
             return agnostic_response_error_a(a, HTTP_FORBIDDEN,
               str_from_a(a, "AGNOSTIC_AUTH=off: only a loopback Host is answered (localhost, 127.0.0.1, [::1])"));
         }
@@ -644,7 +648,10 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     var plugin_id = agnostic_reqctx_plugin(ctx);
     if (plugin_id != 0) {
         var refusal = agnostic_plugin_gate_a(a, plugin_id, method, path);
-        if (refusal != 0) { return refusal; }
+        if (refusal != 0) {
+            agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, ctx, 0);
+            return refusal;
+        }
     }
 
     # --- the auth rung -----------------------------------------------------
@@ -654,13 +661,19 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     # A route nobody classified answers SUPER, so forgetting one fails closed.
     if (agnostic_authn_required() == 1) {
         var need = agnostic_perm_for_route(id);
+        # The scraper's credential opens this one route and nothing else (`src/routes/metrics.cyr`).
+        if (id == AGNOSTIC_ROUTE_METRICS) {
+            if (agnostic_metrics_token_matches(a, agnostic_reqctx_authz(ctx)) == 1) { need = 0; }
+        }
         if (need != 0) {
             var principal = agnostic_authn_resolve_a(a, agnostic_reqctx_authz(ctx));
             if (principal == 0) {
+                agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_UNAUTHENTICATED, ctx, 0);
                 return agnostic_response_error_a(a, HTTP_UNAUTHORIZED,
                   str_from_a(a, "authentication required"));
             }
             if (agnostic_role_can(agnostic_principal_role(principal), need) == 0) {
+                agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, ctx, agnostic_principal_uid(principal));
                 return agnostic_response_error_a(a, HTTP_FORBIDDEN,
                   str_from_a(a, "insufficient permissions"));
             }
@@ -742,7 +755,9 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     if (id == AGNOSTIC_ROUTE_TENANT_CREATE) { return agnostic_route_tenant_create_a(a, body, ctx); }
     if (id == AGNOSTIC_ROUTE_TENANT_GET) { return agnostic_route_tenant_get_a(a, p1, ctx); }
     if (id == AGNOSTIC_ROUTE_TENANT_DELETE) { return agnostic_route_tenant_delete_a(a, p1, ctx); }
+    if (id == AGNOSTIC_ROUTE_TENANT_UPDATE) { return agnostic_route_tenant_update_a(a, p1, body, ctx); }
 
+    if (id == AGNOSTIC_ROUTE_METRICS) { return agnostic_route_metrics_a(a); }
     if (id == AGNOSTIC_ROUTE_AUDIT) { return agnostic_route_audit_a(a); }
     if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) {
         # The raw path, query and all: `?limit=` and `?before=` (0.1.10).

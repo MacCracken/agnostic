@@ -65,6 +65,27 @@ A tenant key is lower-case letters, digits and hyphens. A user with no `tenant` 
 
 Crews, agent definitions and plugin documents belong to a tenant.
 
+## Limit a tenant
+
+A tenant can be held to a number of crews a minute and a number of unfinished crews at once. A super
+administrator sets them when creating it, or later:
+
+```bash
+curl -sS -X PUT localhost:8000/api/v1/tenants/acme -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"rate_limit":60,"max_crews":10}'
+```
+
+A field left out keeps its value, and 0 hands a limit back to the server's default
+(`AGNOSTIC_TENANT_RATE_LIMIT`, `AGNOSTIC_TENANT_MAX_CREWS`). Over a limit, `POST /api/v1/crews` answers 429
+with `Retry-After`. Nothing else a tenant does is limited, and an administrator cannot change their own
+tenant's limits.
+
+## Use the WebGUI
+
+Everything above is also in the **Users** view, which a super administrator switches on in **Settings**.
+An administrator sees the users of their own tenant there, and a super administrator also sees tenants.
+Your own password and keys stay with the API, because they need your current password.
+
 ## Give a script a key
 
 Log in as the user the script should act as, then:

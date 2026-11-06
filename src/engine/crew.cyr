@@ -206,6 +206,10 @@ fn agnostic_engine_init(cfg): i64 {
     var o = agnosai_orchestrator_new(budget);
     if (o == 0) { return 0; }
 
+    # Made here, on the one thread: it is not safe to create concurrently, and `GET /api/v1/metrics`
+    # would otherwise race the first crew to it.
+    agnosai_metrics_global();
+
     # The engine's own audit chain is agnostic's to switch off: libro holds the trail here and
     # nothing reads this one. It cost 9.6 KB per crew, and past 10,000 entries its eviction
     # re-hashed on the global heap, taking a crew's cost from 28 KB to 65 KB.
@@ -222,7 +226,6 @@ fn agnostic_engine_init(cfg): i64 {
     var url = agnostic_config_llm_url(cfg);
     if (url != 0) {
         agnosai_orchestrator_with_llm_url(o, url, agnostic_config_llm_api_key(cfg));
-        agnostic_outcome_set_gateway(url);
         # The inference call's ceilings (0.1.14; agnosai 2.1.6 gave the call any). Unset keeps
         # agnosai's: connect 10 s, each read or write 300 s, the exchange 600 s. A shorter
         # exchange bounds the other two with it. Mount time: the block is read lock-free.
@@ -562,17 +565,19 @@ fn _agnostic_crew_observe_a(a, entry, crew_id: Str): i64 {
 }
 
 # Take a finished crew out of the engine's registry, once the ledger holds all it will ever need.
+# 1 when it left, 0 when this call did not take it out.
 #
-# ⛔ **The fix for finished crews going missing (0.2.2).** At 1000 entries the engine's next submit
-# drops every finished crew at once (`_agnosai_orch_evict_locked`), including those this
-# process has not read yet: the collector looks only every 200 ms, so under load a completed
-# crew vanished and latched UNKNOWN, with its results gone, and read `interrupted` after a
-# restart. 1,300 crews at 190/s lost 885. A crew retired here is one the ledger already holds, so
-# the registry stays at the crews still running and that eviction never fires.
+# ⛔ **Finished crews went missing without this (0.2.2).** Reading a crew and keeping it are two
+# things: the collector looks every 200 ms, and agnosai's registry evicts at 1000. Through its
+# 2.2.3 that eviction took every finished crew at once, read or not, and 1,300 crews at 190/s lost
+# 885. Its 2.2.4 evicts oldest-first down to 900 (its ADR 026), which is a backstop and not a
+# guarantee for a reader that falls behind. A crew retired here is one the ledger already holds, so
+# the registry stays at the crews still running and the eviction never fires.
 #
-# ⚠ It reaches into the orchestrator's fields because agnosai 2.2.3 has no call for this: a rename
-# there is a build error here, not a silent change. The upstream fix is on the roadmap, and this
-# goes when it ships.
+# The claim waits for the subscription to close, and agnosai removes that channel after it stores
+# the final state, so `forget_crew` does not refuse a crew that got this far. A crew eviction took
+# first answers CrewNotFound, and a registry entry it did refuse is the eviction's: either way
+# there is nothing left to do, and the claim means nothing asks again.
 fn _agnostic_crew_retire_a(a, entry, crew_id: Str): i64 {
     if (_agnostic_orchestrator == 0) { return 0; }
     if (agnostic_ledger_retire_claim(entry) == 0) { return 0; }
@@ -580,10 +585,7 @@ fn _agnostic_crew_retire_a(a, entry, crew_id: Str): i64 {
     # has recorded the final state, and this is the last chance to read it: a cancelled crew reads
     # CANCELLED before it ends, and an observation made a moment ago can hold no results.
     _agnostic_crew_observe_a(a, entry, crew_id);
-    var mtx = load64(_agnostic_orchestrator + AGN_OR_MUTEX);
-    mutex_lock(mtx);
-    map_delete(load64(_agnostic_orchestrator + AGN_OR_CREWS), crew_id);
-    mutex_unlock(mtx);
+    if (agnosai_orchestrator_forget_crew(_agnostic_orchestrator, crew_id) != 0) { return 0; }
     return 1;
 }
 

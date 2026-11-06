@@ -284,13 +284,12 @@ fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
     var raw_authz = sandhi_server_find_header_a(a, buf, blen, "authorization");
     if (raw_authz != 0) { authz = str_from_a(a, raw_authz); }
 
-    # The peer address is the SOCKET peer, not `X-Forwarded-For` — see
-    # `agnostic_reqctx_new_a`. A caller-supplied address would let an attacker
-    # mint a fresh rate bucket per request.
+    # The SOCKET peer, unless it is a proxy the operator named: `src/http/forwarded.cyr`. A
+    # caller-supplied address would let an attacker mint a fresh rate bucket per request.
     # ⚠ Not named `ctx` — the handler's first PARAMETER is already `ctx` (sandhi's
     # server context), and shadowing it is a compile error whose diagnostic
     # points at an unrelated file.
-    var rctx = agnostic_reqctx_new_a(a, authz, sandhi_server_peer_ip(cfd));
+    var rctx = agnostic_reqctx_new_a(a, authz, agnostic_client_addr(sandhi_server_peer_ip(cfd), buf, blen));
 
     # The two headers the ladder's transport rules read (0.1.8), and the mark that
     # makes those rules apply: this request came over a socket. Same accessor, and the
@@ -315,6 +314,7 @@ fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
     var resp = 0;
     if (rctx != 0) { resp = agnostic_route_dispatch_a(a, method, path, body, max_body, rctx); }
     var sent = _agnostic_serve_send(a, cfd, resp);
+    agnostic_metrics_note_status(sent);
     # After the send, so the span covers the whole answer; before the clear below, which
     # takes the trace id with it.
     _agnostic_serve_record_span_a(a, method, path, rctx, sent, start_ns);
@@ -444,6 +444,26 @@ fn agnostic_serve_mount(cfg): i64 {
         # is the same mechanism placeholder LLM mode uses — the operator is told
         # what this process is rather than left to infer it.
         sakshi_warn("authentication is OFF; every route is open on loopback", 54);
+    }
+
+    if (agnostic_refusal_init() == 0) {
+        sakshi_error("could not allocate the refusal counters; refusing to start", 58);
+        return 0;
+    }
+
+    if (agnostic_tenant_limits_init(agnostic_config_tenant_rate(cfg), agnostic_config_tenant_crews(cfg)) == 0) {
+        sakshi_error("could not allocate the tenant limit table; refusing to start", 60);
+        return 0;
+    }
+
+    agnostic_metrics_set_token(agnostic_config_metrics_token(cfg));
+
+    # Which peer may say who the client is. Off, and `X-Forwarded-For` is ignored, unless the
+    # operator named one: every client behind an unnamed proxy shares the proxy's login bucket.
+    var proxies = agnostic_config_proxies(cfg);
+    agnostic_forwarded_set_proxies(proxies);
+    if (proxies != 0) {
+        agnostic_log_kv_int(SK_INFO, "trusted proxies", 15, "entries", 7, load64(proxies + AGNOSTIC_PXT_COUNT));
     }
 
     # The identity tables share the definition store's handle, so they are
@@ -711,7 +731,10 @@ fn agnostic_serve(cfg): i64 {
     # Outcomes the collector had not reached yet, before anything else stops. An arena of its own:
     # no request is running, and a backlog at a stop is at most what the last sweeps left.
     var fa = arena_allocator_growable(1048576);
-    if (fa != 0) { agnostic_collector_finish_a(fa); }
+    if (fa != 0) {
+        agnostic_collector_finish_a(fa);
+        agnostic_refusals_flush_a(fa, 1);
+    }
     # The last batch is the one most likely to explain the stop: flush it, whatever rc says.
     agnostic_serve_telemetry_stop(telemetry);
     if (rc == 0) {

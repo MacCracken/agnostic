@@ -38,36 +38,9 @@ budgets, 2.5.x the durable crew log, and 2.6.x MCP 2026-07-28 and A2A v1.0.x.
 
 ### 0.2.x — hardening and housekeeping
 
-**Once agnosai ships the crew-registry fix:**
-
-- [ ] **Re-pin agnosai**, and take out `_agnostic_crew_retire_a`'s reach into the orchestrator's fields
-  ([ADR 0022](../adr/0022-a-finished-crew-leaves-the-engines-registry.md), *Upstream*). bote 3.8.15
-  comes with that re-pin.
-
 **Any time:**
 
 - [ ] `[embed]` (*Available from the toolchain*).
-
-### 0.3.x — identity, tenancy and deployment
-
-Comes first among the feature lines because nothing else can be used by a machine without it. A
-deployment has one user, no issuable API key, and tokens that die on restart, and the v1.0 criterion
-"a consumer green against the published API" cannot be met until it is done. Details under *Identity
-and deployment*.
-
-Provisioning, `AGNOSTIC_JWT_SECRET`, password change and tenant scoping shipped together at 0.3.0
-([ADR 0023](../adr/0023-provisioning-is-routes-and-one-recovery-command.md)).
-
-- [ ] **A users view in the WebGUI**, on the 0.3.0 routes, so provisioning does not need `curl`.
-- [ ] **A trusted-proxy setting**, since TLS belongs to a proxy and a proxy gives every client one login
-  bucket (audit S7).
-- [ ] **Tenant limits** (G11), beyond the login limit.
-- [ ] **A metrics route** (G7) over `agnosai_metrics_gather`, beside the OTLP traces.
-- [ ] **Deployment** (G14): a guide for the binary, a reverse proxy and a unit file, and the Zugot
-  recipe.
-- [ ] **What a refusal leaves behind** (G12): the rest of the audit vocabulary, and the rate-limit and
-  Argon2 shed counters, which nothing reads.
-- [ ] **Crew memory** (*Open*, Memory), with agnosai's half.
 
 ### 0.4.x — the QA tool surface and the crew body (M6)
 
@@ -75,6 +48,10 @@ Waits on agnosai 2.3.x: F1, and B33. M6 says "preset-declared intent", and a pre
 class name and a `focus`, so each tool is designed for agnostic as it is written.
 
 - [ ] **M6**: every one of the 38 names resolved, written or struck, with a miss an error.
+- [ ] **Hold a tool to the crew's target.** agnosai 2.2.4 has the gate (its ADR 025): a consumer's
+  `agnosai_tool_gate_new`, asked of every call and every redirect hop, can narrow what a tool reaches and
+  admit a declared private host, and `agnosai_task_result_record_tool_call` keeps what a tool measured on
+  its task. Nothing here sets a gate yet.
 - [ ] **The tool-registry seam** (`handoff.md` §8), decided with F1.
 - [ ] **The reviewer preset**, once F9 hands a dependent task its dependencies' outputs (agnosai 2.4.x).
 - [ ] **A crew's target** (G4): a checked `target` on the crew that a task may override, and the
@@ -87,8 +64,7 @@ class name and a `focus`, so each tool is designed for agnostic as it is written
   *API schema*.
 - [ ] **`GET /tools`** (G10), which the viability gate wants.
 - [ ] **The engine features with no route** (G10): definition versions and rollback, package export and
-  import, GPU, fleet, the `team` crew spec and `recommend_preset`, which needs an owner. Definitions
-  come after 0.3.x's scoping and its store migration.
+  import, GPU, fleet, the `team` crew spec and `recommend_preset`, which needs an owner.
 - [ ] **Tool upload** (G10), once it has a sandbox.
 - [ ] **The model picker** (M9), on B33.
 
@@ -160,7 +136,7 @@ Nothing in the repo reads the tree: no script, suite or CI step, and `gen-preset
 - [ ] CHANGELOG complete from v0.1.0 onward
 - [ ] Security audit pass re-run at the cut. The last is
       [`docs/audit/2026-11-05-audit.md`](../audit/2026-11-05-audit.md), for 0.2.2.
-- [ ] Zugot recipe published (`zugot: marketplace/agnostic.toml`)
+- [ ] Zugot recipe published at the release (`zugot: marketplace/agnostic.cyml`, native since 0.3.0's asset)
 
 ## Milestones
 
@@ -381,32 +357,11 @@ owed for 1.0.0:
   agnosai picks for the agent's complexity. The route sits behind a permission, as the presets list does
   (`presets:read`); the route, its permission and the cache go in an ADR.
 
-## Identity and deployment (0.3.x)
-
-From the [parity review](research/2026-11-05-python-port-parity.md) (G1, G2, G7, G11, G12, G14) and the
-[2026-11-05 audit](../audit/2026-11-05-audit.md).
-
-- [ ] **A trusted-proxy setting (audit S7).** `src/auth/ratelimit.cyr:90` keys the login bucket on the
-  socket peer, so behind a proxy about 5 anonymous requests a minute lock out every login.
-- [ ] **The audit vocabulary (G12).** A failed login is audited since 0.2.2. A 401, a 403 and a
-  rate-limit hit still leave nothing, and `agnostic_rl_shed_count` and `agnostic_argon_shed_count`
-  have no callers. Bounded, so the trail does not become a write amplifier.
-- [ ] **Tenant limits (G11).** `src/auth/ratelimit.cyr` limits login and nothing else. agnosai F5 is the
-  engine's half.
-- [ ] **A metrics route (G7)** over `agnosai_metrics_gather`, which nothing calls today.
-- [ ] **Deployment (G14):** a guide for the binary, a reverse proxy and a unit file. TLS is the proxy's
-  job. A small image is optional.
-
 ## Waiting on agnosai (release agnosai, then re-pin)
 
 Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity"), B33 under **B** ("Owed").
 
 - **F1 — tool loop:** M6's prerequisite.
-- **What a tool may reach (F1):** a tool sees only its own context and the model's input, so nothing
-  can hold a call to the crew's declared target, and `agnosai_is_safe_url` refuses every private host,
-  which is where a staging system usually lives. Filed with agnosai.
-- **What a tool measured (F1):** a task result has to carry each tool's result, or a report has only
-  the model's word for it. Filed with agnosai, in the same issue.
 - **F2 — hierarchical wired:** agnostic then accepts `hierarchical`, which
   `agnostic_process_from_wire` (`src/engine/request.cyr:149-159`) leaves out today, so it is a 400.
 - **F3 — approvals plus a lifecycle contract with `seq`:** builds on the event and status
@@ -415,12 +370,6 @@ Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity")
 - **F4 — durable crew log:** turns an `interrupted` crew (ADR 0013) into a resumable one.
 - **F5 — budgets and caps:** brings back an `AGNOSTIC_CREW_MAX_CONCURRENT_TASKS` that is actually
   enforced.
-- **The crew registry (agnostic 0.2.2's H1):** evict oldest-first down to a low-water mark, and give a
-  consumer a call to forget a crew it has read. Until then `_agnostic_crew_retire_a` reaches into the
-  orchestrator's fields (ADR 0022). Filed with agnosai.
-- **A transport error that names the gateway's URL:** agnostic scrubs it from results. Filed with agnosai.
-- **bote 3.8.15:** agnosai 2.2.3 pins 3.8.11. Nothing reaches agnostic, because neither repo calls a
-  bote function, so it moves with the next agnosai release and not by an override pin here.
 - **B33 — models from hoosh's catalog (recorded 2026-10-09):** a crew whose agents name no model is
   sent a model agnosai names itself: `llama3:70b`, or `llama3:405b` for a complex agent. That covers every
   preset, since none sets `llm_model`, and every agent whose *LLM model* field is left empty in the Library
@@ -429,7 +378,7 @@ Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity")
   like, so a vendor-prefixed id such as Groq's `openai/gpt-oss-120b` reaches hoosh renamed. And a response
   that names no provider is billed by agnosai's guess from the name, which bills `o4-mini` and newer
   families to Ollama. B33 has agnosai choose and attribute from hoosh 2.8.0's `GET /v1/models/catalog`
-  instead. Re-pin when it ships (the pin is `[deps.agnosai]` tag 2.2.3); M9's model picker builds on it.
+  instead. Re-pin when it ships; M9's model picker builds on it.
 
 **What agnostic will hold them to — harness rules, recorded 2026-10-07.** From a comparison with
 [turnstone](https://github.com/turnstonelabs/turnstone), a self-hosted, tool-using agent harness,
@@ -511,12 +460,6 @@ to remove.
   here (ADR 0022). A graceful stop drains the backlog, and a crash loses it to `interrupted`. Nothing
   bounds it but the load. If a deployment meets this, batching several outcomes per fsync is the next
   step; BATCH mode as it stands loses the outcome-before-delete ordering (see Performance).
-- [ ] **A crew keeps about 16 KB for life, plus 1.6× its output** (audit P2): about 16 GB per million
-  crews. The ledger's cap bounds entries and frees nothing, since eviction unlinks an entry and the
-  global heap has no `free`. The largest parts are the ledger's event ring (4,096 B), the subscribe
-  channel (2.4 KB) and the engine's spec (2.0 KB). Needs a crew-scoped arena in agnosai, and ring
-  recycling here. An evicted entry can still be held by a request, so clear its ring pointer under the
-  lock first.
 - [ ] **Audit open holds the whole trail** (`src/engine/audit.cyr:251`): 589 B and ~16 µs per entry, so
   100,000 entries take 1.4 s and 59 MB for life. Needs a streaming verify read from libro, beside the
   ranged read already recorded.
@@ -541,8 +484,7 @@ From the audit's performance review, at 10,000 crews.
 
 ## Upstream — owed by sibling repos
 
-Each is fixed at its source and reaches agnostic by a re-pin. One exception is wrapped here until
-then, ADR 0022, with the gateway-URL scrub beside it. Filings are in each repo's
+Each is fixed at its source and reaches agnostic by a re-pin. Filings are in each repo's
 `docs/development/issues/`.
 
 - [ ] → **bayan**: what M8's PDF form needs (`2026-11-05-pdf-writer-gaps-for-a-qa-report.md`): refused
@@ -585,9 +527,11 @@ then, ADR 0022, with the gateway-URL scrub beside it. Filings are in each repo's
   one page since 0.2.3 and patra still scans and sorts the tenant's history first: 55 ms a request at
   10,000 crews, under the store lock, and it grows with the history. A second index on a table, or a
   composite one on (`scope`, `submitted`), ends it. Filed with patra.
-- [ ] → **agnosai**: streamline its preset set (18 in `src/presets/`) to a small illustrative example
-  library rather than a competing production one, so the two stop diverging by accident (Settled
-  decisions, preset canon). Filed with agnosai.
+- [ ] → **agnosai**: what a crew keeps after it is forgotten (audit P2). 11,080 B a crew for life, about 11 GB
+  per million crews, plus 1.6× its output. Needs a crew-scoped arena, and a release call beside
+  `forget_crew`, because agnostic reads a crew's spec and results after forgetting it. agnostic gave back
+  its own part, the event ring, at 0.3.1. Filed with agnosai
+  (`2026-11-06-agnostic-a-forgotten-crew-keeps-its-memory.md`).
 - [ ] → **bote**, through agnosai's tool registry (F1): the client half of MCP, so a crew's agents
   can call tools on external MCP servers. bote is the ecosystem's MCP layer (Settled decisions,
   2026-10-07). At 3.3.16 it is the server half — dispatch, six transports, sessions — plus a

@@ -1,0 +1,246 @@
+# agnostic/auth/tenantlimit — how much of the server one tenant may take (0.3.1, G11).
+#
+# ## What is limited, and why these two
+#
+# A crew is what spends: model tokens, a worker thread, about 16 KB of memory for life. Everything
+# else a caller does is a cheap read or a small write. So the two limits are on crews:
+#
+#   * **`rate_limit`:** crews a tenant may submit in a minute.
+#   * **`max_crews`:** crews of a tenant that may be unfinished at once.
+#
+# The second is what the first cannot do: crews that each run for an hour are few a minute and
+# still hold every worker. A token budget is agnosai's half (its F5), and enforced there, where a
+# call's cost is known.
+#
+# Both come from the tenant's row, then from `AGNOSTIC_TENANT_RATE_LIMIT` and
+# `AGNOSTIC_TENANT_MAX_CREWS`. 0 at the row means the server's default, and 0 there means no limit.
+# So a deployment that sets nothing behaves as it did before 0.3.1.
+#
+# ## ⚠ A reservation, not a count
+#
+# Counting the tenant's running crews and then submitting is a race: 16 workers each read 9 of 10
+# and each submit, so a cap of 10 admits 25. So admission takes a place under the lock, before
+# the crew exists, and `agnostic_tenant_crew_ended` gives it back at the one point a crew becomes
+# terminal (`agnostic_ledger_latch_unwritten`). A process that restarts starts at 0, which is
+# right: its crews are interrupted, and none of them runs.
+#
+# ## ⚠ Admission comes before the crew is built
+#
+# `agnostic_crew_req_from_value_a` keeps parts of a crew on the global heap, which has no `free`.
+# Refusing after that step would make a refusal leak, so a tenant held at its limit could spend
+# memory faster than one under it. A body that then fails validation has its place and its token
+# handed back (`agnostic_tenant_unadmit`), so a typo does not cost a tenant its minute.
+#
+# ## A replay is not a crew
+#
+# A keyed retry that answers an existing crew admits nothing, so a client retrying a timeout is
+# never told it is over a limit by the crew it already has.
+#
+# ## ⚠ Fixed table, and which way it fails
+#
+# `AGNOSTIC_TL_SLOTS` entries, allocated once, for the reason `src/auth/ratelimit.cyr` gives. Only a
+# super administrator can make a tenant, so nobody can churn this table from outside. A slot with
+# crews running is never reused. With every slot running, a further tenant is admitted uncounted:
+# like the login bucket, a limiter must not be able to refuse everyone by failing.
+
+var AGNOSTIC_TL_SLOTS = 256;
+var AGNOSTIC_TL_MINUTE_MS = 60000;
+
+# What `Retry-After` says for a tenant at `max_crews`. How long is up to its crews.
+var AGNOSTIC_TL_CREWS_RETRY_SECS = 5;
+
+# The key of the scope with no tenant. `agnostic_tenant_tid` answers 0 for it.
+var AGNOSTIC_TL_NO_TENANT = 2;
+
+enum AgnosticTlOff {
+    AGNOSTIC_TL_KEY     = 0;
+    AGNOSTIC_TL_TOKENS  = 8;    # thousandths of a crew, or -1 while no rate applies
+    AGNOSTIC_TL_SEEN    = 16;
+    AGNOSTIC_TL_RUNNING = 24;
+    AGNOSTIC_TL_SIZE    = 32;
+}
+
+# What `agnostic_tenant_admit` answers.
+enum AgnosticAdmit {
+    AGNOSTIC_ADMIT_OK    = 0;
+    AGNOSTIC_ADMIT_RATE  = 1;
+    AGNOSTIC_ADMIT_CREWS = 2;
+}
+
+var _agnostic_tl_table = 0;
+var _agnostic_tl_lock = 0;
+var _agnostic_tl_rate_default = 0;
+var _agnostic_tl_crews_default = 0;
+
+# Allocate the table and name the server's defaults. Mount time only, before any worker exists.
+fn agnostic_tenant_limits_init(rate, crews): i64 {
+    _agnostic_tl_rate_default = rate;
+    _agnostic_tl_crews_default = crews;
+    if (_agnostic_tl_table != 0) { return 1; }
+    var bytes = AGNOSTIC_TL_SLOTS * AGNOSTIC_TL_SIZE;
+    var t = alloc(bytes);
+    if (t == 0) { return 0; }
+    memset(t, 0, bytes);
+    _agnostic_tl_lock = mutex_new();
+    _agnostic_tl_table = t;
+    return 1;
+}
+
+# Forget every tenant's bucket and place. For tests.
+fn agnostic_tenant_limits_reset(): i64 {
+    if (_agnostic_tl_table == 0) { return 0; }
+    memset(_agnostic_tl_table, 0, AGNOSTIC_TL_SLOTS * AGNOSTIC_TL_SIZE);
+    return 0;
+}
+
+fn _agnostic_tl_key(scope: Str): i64 {
+    var k = agnostic_tenant_tid(scope);
+    if (k == 0) { return AGNOSTIC_TL_NO_TENANT; }
+    return k;
+}
+
+# The slot for `key`, or 0. With `make`, a new one: a free slot, else the longest idle with no crew
+# running. Under the lock.
+fn _agnostic_tl_slot_locked(key, make): i64 {
+    var free_slot = 0;
+    var idle = 0;
+    var i = 0;
+    while (i < AGNOSTIC_TL_SLOTS) {
+        var s = _agnostic_tl_table + i * AGNOSTIC_TL_SIZE;
+        var k = load64(s + AGNOSTIC_TL_KEY);
+        if (k == key) { return s; }
+        if (k == 0) {
+            if (free_slot == 0) { free_slot = s; }
+        } else {
+            if (load64(s + AGNOSTIC_TL_RUNNING) == 0) {
+                if (idle == 0 || load64(s + AGNOSTIC_TL_SEEN) < load64(idle + AGNOSTIC_TL_SEEN)) { idle = s; }
+            }
+        }
+        i = i + 1;
+    }
+    if (make == 0) { return 0; }
+    var slot = free_slot;
+    if (slot == 0) { slot = idle; }
+    if (slot == 0) { return 0; }
+    store64(slot + AGNOSTIC_TL_KEY, key);
+    store64(slot + AGNOSTIC_TL_TOKENS, 0 - 1);
+    store64(slot + AGNOSTIC_TL_SEEN, 0);
+    store64(slot + AGNOSTIC_TL_RUNNING, 0);
+    return slot;
+}
+
+# The limits that apply to `scope`, through `out_rate` and `out_crews`. 0 means no limit.
+fn agnostic_tenant_limits_a(a, scope: Str, out_rate, out_crews): i64 {
+    var rate = 0;
+    var crews = 0;
+    if (agnostic_tenant_key_valid(scope) == 1) {
+        var row = agnostic_tenant_get_a(a, scope);
+        if (row != 0) {
+            rate = agnostic_tenant_row_rate(row);
+            crews = agnostic_tenant_row_crews(row);
+        }
+    }
+    if (rate == 0) { rate = _agnostic_tl_rate_default; }
+    if (crews == 0) { crews = _agnostic_tl_crews_default; }
+    store64(out_rate, rate);
+    store64(out_crews, crews);
+    return 0;
+}
+
+# Take a place for one crew of `scope`. Returns an `AGNOSTIC_ADMIT_*` code. A refusal stores how many
+# seconds to wait through `out_retry`, and takes nothing.
+#
+# ⚠ **`max_crews` is asked first.** A tenant at its cap must not spend a token on a refusal, or
+# waiting for a crew to end would also run down its minute.
+#
+# Tokens are thousandths, for the reason `agnostic_rl_allow` gives, and a tenant's first minute is a
+# full bucket: `rate_limit` crews at once, then that many a minute.
+fn agnostic_tenant_admit(scope: Str, rate, crews, out_retry): i64 {
+    if (_agnostic_tl_table == 0) { return AGNOSTIC_ADMIT_OK; }
+    var now = clock_now_ms();
+    mutex_lock(_agnostic_tl_lock);
+    var s = _agnostic_tl_slot_locked(_agnostic_tl_key(scope), 1);
+    if (s == 0) {
+        mutex_unlock(_agnostic_tl_lock);
+        return AGNOSTIC_ADMIT_OK;
+    }
+    var running = load64(s + AGNOSTIC_TL_RUNNING);
+    if (crews > 0 && running >= crews) {
+        # `SEEN` stays: it is also when the bucket last filled, so moving it here would stop a
+        # tenant's tokens coming back for as long as it polled at its cap.
+        mutex_unlock(_agnostic_tl_lock);
+        store64(out_retry, AGNOSTIC_TL_CREWS_RETRY_SECS);
+        return AGNOSTIC_ADMIT_CREWS;
+    }
+    if (rate > 0) {
+        var cap = rate * 1000;
+        var tokens = load64(s + AGNOSTIC_TL_TOKENS);
+        if (tokens < 0) {
+            tokens = cap;
+        } else {
+            var elapsed = now - load64(s + AGNOSTIC_TL_SEEN);
+            if (elapsed < 0) { elapsed = 0; }
+            if (elapsed > AGNOSTIC_TL_MINUTE_MS) { elapsed = AGNOSTIC_TL_MINUTE_MS; }
+            tokens = tokens + (elapsed * cap) / AGNOSTIC_TL_MINUTE_MS;
+            if (tokens > cap) { tokens = cap; }
+        }
+        store64(s + AGNOSTIC_TL_SEEN, now);
+        if (tokens < 1000) {
+            store64(s + AGNOSTIC_TL_TOKENS, tokens);
+            mutex_unlock(_agnostic_tl_lock);
+            # Rounded up, so that a client honouring it finds the token there.
+            store64(out_retry, ((1000 - tokens) * 60 + cap - 1) / cap);
+            return AGNOSTIC_ADMIT_RATE;
+        }
+        store64(s + AGNOSTIC_TL_TOKENS, tokens - 1000);
+    } else {
+        # With no rate there is no bucket to keep, and a rate set later starts full.
+        store64(s + AGNOSTIC_TL_TOKENS, 0 - 1);
+        store64(s + AGNOSTIC_TL_SEEN, now);
+    }
+    store64(s + AGNOSTIC_TL_RUNNING, running + 1);
+    mutex_unlock(_agnostic_tl_lock);
+    return AGNOSTIC_ADMIT_OK;
+}
+
+fn _agnostic_tl_give_back_locked(s): i64 {
+    if (s != 0) {
+        var running = load64(s + AGNOSTIC_TL_RUNNING);
+        if (running > 0) { store64(s + AGNOSTIC_TL_RUNNING, running - 1); }
+    }
+    return 0;
+}
+
+# Hand back an admission for a crew that never existed: a body that failed, an engine that is down.
+fn agnostic_tenant_unadmit(scope: Str): i64 {
+    if (_agnostic_tl_table == 0) { return 0; }
+    mutex_lock(_agnostic_tl_lock);
+    var s = _agnostic_tl_slot_locked(_agnostic_tl_key(scope), 0);
+    _agnostic_tl_give_back_locked(s);
+    if (s != 0) {
+        var tokens = load64(s + AGNOSTIC_TL_TOKENS);
+        if (tokens >= 0) { store64(s + AGNOSTIC_TL_TOKENS, tokens + 1000); }
+    }
+    mutex_unlock(_agnostic_tl_lock);
+    return 0;
+}
+
+# A crew of `scope` ended, so its place is free. Its token stays spent: it ran.
+fn agnostic_tenant_crew_ended(scope: Str): i64 {
+    if (_agnostic_tl_table == 0) { return 0; }
+    mutex_lock(_agnostic_tl_lock);
+    _agnostic_tl_give_back_locked(_agnostic_tl_slot_locked(_agnostic_tl_key(scope), 0));
+    mutex_unlock(_agnostic_tl_lock);
+    return 0;
+}
+
+# The crews of `scope` admitted and not ended.
+fn agnostic_tenant_running(scope: Str): i64 {
+    if (_agnostic_tl_table == 0) { return 0; }
+    mutex_lock(_agnostic_tl_lock);
+    var s = _agnostic_tl_slot_locked(_agnostic_tl_key(scope), 0);
+    var n = 0;
+    if (s != 0) { n = load64(s + AGNOSTIC_TL_RUNNING); }
+    mutex_unlock(_agnostic_tl_lock);
+    return n;
+}

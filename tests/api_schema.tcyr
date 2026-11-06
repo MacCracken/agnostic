@@ -372,7 +372,7 @@ fn test_routes() {
     assert_eq(bayan_json_v_int(_t_get(doc, "schema")), 1, "it is format 1");
     var routes = _t_get(doc, "routes");
     var n = bayan_json_v_arr_len(routes);
-    assert_eq(n, 44, "44 routes: one per method each of the router's 32 rows answers");
+    assert_eq(n, 46, "46 routes: one per method each of the router's 33 rows answers");
 
     var shape = 0;
     var unresolved = 0;
@@ -1073,7 +1073,7 @@ fn test_probes() {
         }
         i = i + 1;
     }
-    assert_eq(takers, 11, "eleven routes take an allow-listed body");
+    assert_eq(takers, 12, "twelve routes take an allow-listed body");
     assert_eq(probe_bad, 0, "each refuses an unknown key as unknown (422)");
     assert_eq(field_bad, 0, "and accepts every field its declared body lists as known");
 
@@ -1469,6 +1469,12 @@ fn _t_answered(method, pattern, r) {
         } elif (streq(ctype, AGNOSTIC_WEBGUI_HTML) != 1) {
             _t_broken(pattern, " is not an html page: ", ctype);
         }
+    } elif (str_eq_cstr(kind, "metrics") == 1) {
+        if (agnostic_response_is_text(r) != 1 || ctype == 0) {
+            _t_broken(pattern, " is not Prometheus text", 0);
+        } elif (streq(ctype, AGNOSTIC_METRICS_CTYPE) != 1) {
+            _t_broken(pattern, " is not Prometheus text: ", ctype);
+        }
     } elif (str_eq_cstr(kind, "document") == 1) {
         var hs = agnostic_response_headers(r);
         if (agnostic_response_is_text(r) != 1 || ctype == 0) {
@@ -1716,6 +1722,9 @@ fn test_responses() {
       "{\"key\":\"sweep\",\"name\":\"Sweep\"}", cx);
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/tenants", "/api/v1/tenants", "", cx);
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/tenants/:key", "/api/v1/tenants/sweep", "", cx);
+    _t_go(a, AGNOSTIC_METHOD_PUT, "/api/v1/tenants/:key", "/api/v1/tenants/sweep",
+      "{\"name\":\"Sweep\",\"rate_limit\":0,\"max_crews\":0}", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/metrics", "/api/v1/metrics", "", cx);
 
     var made_user = _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/users", "/api/v1/users",
       "{\"email\":\"u@agnostic.test\",\"password\":\"sweep-password-1\",\"role\":\"viewer\",\"tenant\":\"sweep\"}", cx);

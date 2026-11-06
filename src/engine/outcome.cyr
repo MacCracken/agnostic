@@ -397,51 +397,11 @@ fn agnostic_outcome_to_value_a(a, o): i64 {
 
     var err = agnostic_outcome_error(o);
     if (err != 0) {
-        var ev = bayan_json_v_str_new_a(a, _agnostic_scrub_gateway_a(a, err));
+        var ev = bayan_json_v_str_new_a(a, err);
         if (ev == 0) { return 0; }
         bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ERROR, ev);
     }
     return obj;
-}
-
-# The configured gateway's URL, set once at engine init. 0 in placeholder mode.
-var _agnostic_gateway_url = 0;
-
-# Name the gateway whose failures `_agnostic_scrub_gateway_a` hides. Engine init only.
-fn agnostic_outcome_set_gateway(url: Str): i64 {
-    _agnostic_gateway_url = url;
-    return 0;
-}
-
-# `s` with the gateway's URL replaced by `the gateway`, in `a`, or `s` itself when it does not
-# hold it. agnosai writes the URL into a transport error, and that text is a crew's result: it
-# reaches any caller with READ permission and the stored outcome. The browser and the API are
-# not meant to know where the gateway is (M9).
-fn _agnostic_scrub_gateway_a(a, s: Str): i64 {
-    if (s == 0 || _agnostic_gateway_url == 0) { return s; }
-    var n = str_len(s);
-    var d = str_data(s);
-    var m = str_len(_agnostic_gateway_url);
-    var g = str_data(_agnostic_gateway_url);
-    if (m == 0) { return s; }
-    var sb = 0;
-    var from = 0;
-    var i = 0;
-    while (i + m <= n) {
-        if (memeq(d + i, g, m) == 1) {
-            if (sb == 0) { sb = str_builder_new_a(a); }
-            if (sb == 0) { return s; }
-            str_builder_add_a(a, sb, str_new_a(a, d + from, i - from));
-            str_builder_add_cstr_a(a, sb, "the gateway");
-            i = i + m;
-            from = i;
-        } else {
-            i = i + 1;
-        }
-    }
-    if (sb == 0) { return s; }
-    str_builder_add_a(a, sb, str_new_a(a, d + from, n - from));
-    return str_builder_build_a(a, sb);
 }
 
 # Render one engine task result as `{task_id, status, output, agent_key?, usage?, error?}`.
@@ -469,10 +429,7 @@ fn _agnostic_task_result_to_value_a(a, r): i64 {
     var failure = 0;
     if (meta != 0) { failure = map_get(meta, _AGNOSTIC_MK_ERROR); }
 
-    # A task whose call failed has the failure as its output too, so both go through the scrub.
-    var out_text = agnosai_task_result_output(r);
-    if (bayan_json_v_is_str(failure) == 1) { out_text = _agnostic_scrub_gateway_a(a, out_text); }
-    var ov = bayan_json_v_str_new_a(a, out_text);
+    var ov = bayan_json_v_str_new_a(a, agnosai_task_result_output(r));
     if (ov == 0) { return 0; }
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_OUTPUT, ov);
 
@@ -492,7 +449,7 @@ fn _agnostic_task_result_to_value_a(a, r): i64 {
     if (usage != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_USAGE, usage); }
     if (bayan_json_v_is_str(failure) == 1) {
         bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ERROR,
-          bayan_json_v_str_new_a(a, _agnostic_scrub_gateway_a(a, bayan_json_v_str(failure))));
+          bayan_json_v_str_new_a(a, bayan_json_v_str(failure)));
     }
     return obj;
 }

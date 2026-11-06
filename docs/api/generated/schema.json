@@ -384,7 +384,12 @@
       "auth": true,
       "permission": "admin",
       "min_role": "admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "users:read",
+          "self": []
+        }
+      ],
       "body": null,
       "query": [],
       "headers": [],
@@ -405,7 +410,12 @@
       "auth": true,
       "permission": "admin",
       "min_role": "admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "users:write",
+          "self": []
+        }
+      ],
       "body": "user",
       "query": [],
       "headers": [],
@@ -425,7 +435,12 @@
       "auth": true,
       "permission": "admin",
       "min_role": "admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "users:read",
+          "self": []
+        }
+      ],
       "body": null,
       "query": [],
       "headers": [],
@@ -445,7 +460,12 @@
       "auth": true,
       "permission": "admin",
       "min_role": "admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "users:write",
+          "self": []
+        }
+      ],
       "body": "user_role",
       "query": [],
       "headers": [],
@@ -465,7 +485,12 @@
       "auth": true,
       "permission": "admin",
       "min_role": "admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "users:write",
+          "self": []
+        }
+      ],
       "body": null,
       "query": [],
       "headers": [],
@@ -486,7 +511,12 @@
       "auth": true,
       "permission": "admin",
       "min_role": "admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "users:write",
+          "self": []
+        }
+      ],
       "body": "user_password",
       "query": [],
       "headers": [],
@@ -507,7 +537,12 @@
       "auth": true,
       "permission": "admin",
       "min_role": "admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "users:read",
+          "self": []
+        }
+      ],
       "body": null,
       "query": [],
       "headers": [],
@@ -528,7 +563,12 @@
       "auth": true,
       "permission": "admin",
       "min_role": "admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "users:write",
+          "self": []
+        }
+      ],
       "body": null,
       "query": [],
       "headers": [],
@@ -549,7 +589,12 @@
       "auth": true,
       "permission": "super",
       "min_role": "super_admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "tenants:read",
+          "self": []
+        }
+      ],
       "body": null,
       "query": [],
       "headers": [],
@@ -570,7 +615,12 @@
       "auth": true,
       "permission": "super",
       "min_role": "super_admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "tenants:write",
+          "self": []
+        }
+      ],
       "body": "tenant",
       "query": [],
       "headers": [],
@@ -590,8 +640,38 @@
       "auth": true,
       "permission": "super",
       "min_role": "super_admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "tenants:read",
+          "self": []
+        }
+      ],
       "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "tenant"
+        ]
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/tenants/:key",
+      "auth": true,
+      "permission": "super",
+      "min_role": "super_admin",
+      "plugin_permissions": [
+        {
+          "name": "tenants:write",
+          "self": []
+        }
+      ],
+      "body": "tenant_update",
       "query": [],
       "headers": [],
       "ok": [
@@ -610,7 +690,12 @@
       "auth": true,
       "permission": "super",
       "min_role": "super_admin",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "tenants:write",
+          "self": []
+        }
+      ],
       "body": null,
       "query": [],
       "headers": [],
@@ -822,6 +907,24 @@
           "status",
           "storage"
         ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/metrics",
+      "auth": true,
+      "permission": "super",
+      "min_role": "super_admin",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "metrics",
+        "keys": []
       }
     },
     {
@@ -1204,7 +1307,16 @@
     "tenant": {
       "fields": [
         "key",
-        "name"
+        "name",
+        "rate_limit",
+        "max_crews"
+      ]
+    },
+    "tenant_update": {
+      "fields": [
+        "name",
+        "rate_limit",
+        "max_crews"
       ]
     },
     "plugin_switch": {
@@ -1346,7 +1458,11 @@
       "definitions:write",
       "crews:read",
       "crews:write",
-      "audit:read"
+      "audit:read",
+      "users:read",
+      "users:write",
+      "tenants:read",
+      "tenants:write"
     ]
   }
 }

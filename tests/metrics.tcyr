@@ -1,0 +1,272 @@
+# agnostic/routes/metrics — `GET /api/v1/metrics` (0.3.1, G7).
+#
+# Held here: the text is what a Prometheus scraper parses, every counter it shows is moved by the
+# thing it names, and a scraper's token opens this route and no other.
+include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
+
+var _T_MAXB = 1048576;
+var _T_DB = _tt_tmp_path("metrics-suite");
+var _T_AUDIT = _tt_tmp_path("metrics-suite-audit");
+var _T_TOKEN = "scrape-0123456789abcdef0123456789abcdef";
+
+fn _t_open() {
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    _tt_unlink_store(_T_AUDIT);
+    patra_init();
+    agnostic_store_open(str_from(_T_DB));
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_crews_ensure();
+    agnostic_audit_open(str_from(_T_AUDIT));
+    agnostic_refusal_reset();
+    agnostic_tenant_limits_init(0, 0);
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    agnostic_metrics_set_token(0);
+    return 0;
+}
+
+fn _t_ctx(a, header) {
+    var authz = 0;
+    if (header != 0) { authz = str_from(header); }
+    return agnostic_reqctx_new_a(a, authz, 0);
+}
+
+fn _t_bearer(a, uid, role) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Bearer ");
+    str_builder_add(sb, agnostic_jwt_issue_a(a, uid, role, 0, 600));
+    return agnostic_reqctx_new_a(a, str_builder_build(sb), 0);
+}
+
+fn _t_get(a, path, ctx) {
+    return agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from(path), str_from(""), _T_MAXB, ctx);
+}
+
+fn _t_status(a, path, ctx) { return agnostic_response_status(_t_get(a, path, ctx)); }
+
+# The value of the sample line that starts `sample`, or -1.
+fn _t_sample(text: Str, sample) {
+    var d = str_data(text);
+    var n = str_len(text);
+    var m = strlen(sample);
+    var i = 0;
+    while (i < n) {
+        var e = i;
+        while (e < n && load8(d + e) != 10) { e = e + 1; }
+        if (e - i > m && memeq(d + i, sample, m) == 1 && load8(d + i + m) == 32) {
+            var v = 0;
+            var j = i + m + 1;
+            while (j < e) {
+                var c = load8(d + j);
+                if (c < 48 || c > 57) { return v; }
+                v = v * 10 + (c - 48);
+                j = j + 1;
+            }
+            return v;
+        }
+        i = e + 1;
+    }
+    return 0 - 1;
+}
+
+fn _t_text(a) { return agnostic_response_body(agnostic_route_metrics_a(a)); }
+
+fn test_the_format() {
+    test_group("metrics/format");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var r = agnostic_route_metrics_a(a);
+    assert_eq(agnostic_response_status(r), HTTP_OK, "the route answers");
+    assert_eq(agnostic_response_is_text(r), 1, "in text");
+    assert_eq(streq(agnostic_response_ctype(r), "text/plain; version=0.0.4; charset=utf-8"), 1,
+      "⭐ the version a scraper keys its parser on");
+    var t = agnostic_response_body(r);
+    var d = str_data(t);
+    var n = str_len(t);
+    assert_eq(load8(d + n - 1), 10, "the last line ends in a newline, or a scraper drops it");
+
+    # Every line is a comment or `name[{labels}] value`, and a family's samples follow its TYPE.
+    var bad = 0;
+    var types = 0;
+    var i = 0;
+    while (i < n) {
+        var e = i;
+        while (e < n && load8(d + e) != 10) { e = e + 1; }
+        if (e == i) { bad = bad + 1; }
+        elif (load8(d + i) == 35) {
+            if (e - i > 7 && memeq(d + i, "# TYPE ", 7) == 1) { types = types + 1; }
+        } else {
+            var c = load8(d + i);
+            if (c < 97 || c > 122) { bad = bad + 1; }
+            var sp = i;
+            while (sp < e && load8(d + sp) != 32) { sp = sp + 1; }
+            if (sp >= e - 1) { bad = bad + 1; }
+        }
+        i = e + 1;
+    }
+    assert_eq(bad, 0, "⭐ every line parses");
+    assert_eq(types, 13, "thirteen families");
+
+    var version = str_builder_new();
+    str_builder_add_cstr(version, "agnostic_build_info{version=\"");
+    str_builder_add(version, agnostic_version());
+    str_builder_add_cstr(version, "\"}");
+    assert_eq(_t_sample(t, str_data(str_builder_build(version))), 1, "the running version");
+    assert_eq(str_contains_cstr(t, "\n# TYPE agnosai_crews_total counter\n"), 1, "agnosai's families keep their names");
+}
+
+fn test_money() {
+    test_group("metrics/usd");
+    var a = arena_allocator(65536);
+    var sb = str_builder_new_a(a);
+    _agnostic_m_usd_a(a, sb, "x", 1234567);
+    assert_eq(str_eq_cstr(str_builder_build_a(a, sb), "x 1.234567\n"), 1, "dollars and micro-dollars");
+    var z = str_builder_new_a(a);
+    _agnostic_m_usd_a(a, z, "x", 5);
+    assert_eq(str_eq_cstr(str_builder_build_a(a, z), "x 0.000005\n"), 1, "⭐ a small amount keeps its zeros");
+    var w = str_builder_new_a(a);
+    _agnostic_m_usd_a(a, w, "x", 7000000);
+    assert_eq(str_eq_cstr(str_builder_build_a(a, w), "x 7.000000\n"), 1, "a whole amount");
+}
+
+fn test_each_counter_moves() {
+    test_group("metrics/counters");
+    _t_open();
+    var a = arena_allocator(4194304);
+
+    var before = _t_sample(_t_text(a), "agnostic_refusals_total{reason=\"unauthenticated\"}");
+    assert_eq(_t_status(a, "/api/v1/crews", _t_ctx(a, 0)), HTTP_UNAUTHORIZED, "a 401");
+    assert_eq(_t_sample(_t_text(a), "agnostic_refusals_total{reason=\"unauthenticated\"}"), before + 1,
+      "⭐ is counted");
+
+    var rl = agnostic_rl_shed_count();
+    var i = 0;
+    while (i < AGNOSTIC_RL_BURST + 2) { agnostic_rl_allow(77); i = i + 1; }
+    assert_eq(_t_sample(_t_text(a), "agnostic_refusals_total{reason=\"login_throttled\"}"),
+      agnostic_rl_shed_count(), "the login bucket's shed count is read");
+    assert_eq(agnostic_rl_shed_count() > rl, 1, "and it moved");
+
+    var held = vec_new();
+    var b = agnostic_argon_acquire();
+    while (b != 0) { vec_push(held, b); b = agnostic_argon_acquire(); }
+    var shed = _t_sample(_t_text(a), "agnostic_refusals_total{reason=\"argon_shed\"}");
+    agnostic_argon_acquire();
+    assert_eq(_t_sample(_t_text(a), "agnostic_refusals_total{reason=\"argon_shed\"}"), shed + 1,
+      "the Argon2 pool's too");
+    i = 0;
+    while (i < vec_len(held)) { agnostic_argon_release(vec_get(held, i)); i = i + 1; }
+
+    agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_TENANT_RATE, 0, 0);
+    agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_TENANT_CREWS, 0, 0);
+    agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, 0, 0);
+    var t = _t_text(a);
+    assert_eq(_t_sample(t, "agnostic_refusals_total{reason=\"tenant_rate\"}"), 1, "a tenant's rate");
+    assert_eq(_t_sample(t, "agnostic_refusals_total{reason=\"tenant_crews\"}"), 1, "a tenant's cap");
+    assert_eq(_t_sample(t, "agnostic_refusals_total{reason=\"forbidden\"}"), 1, "a 403");
+
+    var two = agnostic_metrics_status_count(2);
+    agnostic_metrics_note_status(200);
+    agnostic_metrics_note_status(204);
+    agnostic_metrics_note_status(599);
+    agnostic_metrics_note_status(0);
+    agnostic_metrics_note_status(600);
+    t = _t_text(a);
+    assert_eq(_t_sample(t, "agnostic_http_responses_total{class=\"2xx\"}"), two + 2, "responses by class");
+    assert_eq(_t_sample(t, "agnostic_http_responses_total{class=\"5xx\"}"), 1, "and a 5xx");
+    assert_eq(agnostic_metrics_status_count(0), 0, "a status outside the classes is nothing");
+    assert_eq(agnostic_metrics_status_count(6), 0, "above them too");
+    assert_eq(_t_sample(t, "agnostic_audit_entries"), agnostic_audit_count(), "the trail's size");
+}
+
+fn test_the_engine_families() {
+    test_group("metrics/engine");
+    _t_open();
+    var a = arena_allocator(4194304);
+    agnostic_ledger_reset();
+    agnostic_engine_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var before = _t_sample(_t_text(a), "agnosai_crews_total");
+    var body = str_from("{\"name\":\"t\",\"agents\":[{\"key\":\"a1\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"d\"}]}"); #skip-lint
+    var resp = agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from("/api/v1/crews"), body, _T_MAXB, 0);
+    assert_eq(agnostic_response_status(resp), AGNOSTIC_HTTP_ACCEPTED, "a crew is submitted");
+    var spins = 0;
+    while (spins < 400 && _t_sample(_t_text(a), "agnosai_crews_total") == before) {
+        sleep_ms(2);
+        spins = spins + 1;
+    }
+    var t = _t_text(a);
+    assert_eq(_t_sample(t, "agnosai_crews_total"), before + 1, "⭐ the engine's counter is the one served");
+    assert_eq(_t_sample(t, "agnostic_ledger_crews"), agnostic_ledger_count(), "the ledger's size");
+    assert_eq(_t_sample(t, "agnostic_engine_crews"), agnostic_engine_crew_count(), "the registry's");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+}
+
+fn test_who_may_read() {
+    test_group("metrics/who");
+    _t_open();
+    var a = arena_allocator(4194304);
+    var su = agnostic_users_create_a(a, str_from("s@agnostic.test"), str_from("correct-horse-battery"),
+      AGNOSTIC_ROLE_SUPER_ADMIN, 0);
+    var ad = agnostic_users_create_a(a, str_from("a@agnostic.test"), str_from("correct-horse-battery"),
+      AGNOSTIC_ROLE_ADMIN, 0);
+    var path = "/api/v1/metrics";
+
+    assert_eq(_t_status(a, path, _t_ctx(a, 0)), HTTP_UNAUTHORIZED, "nobody");
+    assert_eq(_t_status(a, path, _t_bearer(a, ad, AGNOSTIC_ROLE_ADMIN)), HTTP_FORBIDDEN,
+      "⭐ an administrator: these are counts across tenants");
+    assert_eq(_t_status(a, path, _t_bearer(a, su, AGNOSTIC_ROLE_SUPER_ADMIN)), HTTP_OK, "a super administrator");
+
+    assert_eq(_t_status(a, path, _t_ctx(a, "Bearer scrape-0123456789abcdef0123456789abcdef")), HTTP_UNAUTHORIZED,
+      "⭐ with no token configured, a matching string opens nothing");
+
+    agnostic_metrics_set_token(str_from(_T_TOKEN));
+    assert_eq(_t_status(a, path, _t_ctx(a, "Bearer scrape-0123456789abcdef0123456789abcdef")), HTTP_OK,
+      "⭐ the scraper's token");
+    assert_eq(_t_status(a, path, _t_ctx(a, "Bearer scrape-0123456789abcdef0123456789abcdee")), HTTP_UNAUTHORIZED,
+      "one byte off");
+    assert_eq(_t_status(a, path, _t_ctx(a, "Bearer scrape-0123456789abcdef0123456789abcde")), HTTP_UNAUTHORIZED,
+      "one byte short");
+    assert_eq(_t_status(a, path, _t_ctx(a, "Bearer scrape-0123456789abcdef0123456789abcdefg")), HTTP_UNAUTHORIZED,
+      "one byte long");
+    assert_eq(_t_status(a, path, _t_ctx(a, "ApiKey scrape-0123456789abcdef0123456789abcdef")), HTTP_UNAUTHORIZED,
+      "under another scheme");
+    assert_eq(_t_status(a, "/api/v1/crews", _t_ctx(a, "Bearer scrape-0123456789abcdef0123456789abcdef")),
+      HTTP_UNAUTHORIZED, "⭐ and it opens nothing else");
+    assert_eq(_t_status(a, "/api/v1/audit", _t_ctx(a, "Bearer scrape-0123456789abcdef0123456789abcdef")),
+      HTTP_UNAUTHORIZED, "not even what the same tier reads");
+    assert_eq(agnostic_metrics_token_matches(a, 0), 0, "no header");
+
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    agnostic_metrics_set_token(0);
+    assert_eq(_t_status(a, path, 0), HTTP_OK, "with auth off it is open, as every route is");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    agnostic_crypto_main_init();
+    agnostic_argon_pool_init();
+    agnostic_rl_init();
+    agnostic_rl_reset();
+    agnostic_jwt_init_random();
+    agnostic_refusal_init();
+    test_the_format();
+    test_money();
+    test_each_counter_moves();
+    test_the_engine_families();
+    test_who_may_read();
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    _tt_unlink_store(_T_AUDIT);
+    return assert_summary();
+}
+
+var _agnostic_metrics_test_exit = main();
+if (_agnostic_metrics_test_exit > 0) { _agnostic_metrics_test_exit = 1; }
+sys_exit_group(_agnostic_metrics_test_exit);

@@ -1,13 +1,13 @@
-commit	ca778f5949d68e68e5db0ed002fa38b8aebf72d2	agnosai	https://github.com/MacCracken/agnosai.git	2.2.3
+commit	e16832b0bf9f74a2629b83cfc5615c2602d0f217	agnosai	https://github.com/MacCracken/agnosai.git	2.2.4
 commit	ccdcd9c035e205c1373b3c0d2c5878004da6edbc	ai-hwaccel	https://github.com/MacCracken/ai-hwaccel.git	2.5.6
-commit	96e1886a86224c6074f9151999716449f0c87c8d	bote	https://github.com/MacCracken/bote.git	3.8.11
+commit	1503109df263d74006ae16f76a4c4209b680a49d	bote	https://github.com/MacCracken/bote.git	3.8.15
 commit	a12e38da66f9a61fb74ecd33e680c8ed4f69b166	kavach	https://github.com/MacCracken/kavach.git	3.14.2
 commit	f4a31a450a112587d6fcc46a946e1b6061878e6f	libro	https://github.com/MacCracken/libro.git	2.11.3
 commit	40b827f275c452f592e0735b19b0cb47448c2794	majra	https://github.com/MacCracken/majra.git	2.13.0
 commit	efa2e34aefcb1dc65a01e734b2b19bfe18b10c7f	patra	https://github.com/MacCracken/patra.git	1.16.6
 commit	3c47656154ecd4b07abee1f8b174b2389bb83a8b	sigil	https://github.com/MacCracken/sigil.git	3.13.15
 commit	cdb74e281920da6130bd48f1de37d9b150ab0d3d	tyche	https://github.com/MacCracken/tyche.git	1.2.2
-3a53b823339252461cc8238aa8a43abd84393dbcc200e1375721fac2e839e16d  lib/agnosai.cyr
+2f06fb62d40dcf3846633a2778f797370d037978b07e0e1e7b5c26d931b59d79  lib/agnosai.cyr
 807532a0cfad2147fdb6ecebea11a5e2224611d89454349545f50b3daed59d9d  lib/ai-hwaccel.cyr
 346716377b00f36e58eb16cf7fe1dd62dd8fe577930d0d0429f822795b35817c  lib/alloc.cyr
 5afd5bb7cba4e49fee331f6a2838f4e01d9781defaf531403f6616f42ac7151b  lib/alloc_agnos.cyr
@@ -27,7 +27,7 @@ eba2079d68fe37db226c7d6803e8a35fe822dd906f4be22f3760e468da441e38  lib/async_agno
 3476082d1607f9ccf8dc83aa7c8cc664ee814765554573245d3875d0523423ae  lib/audit_walk.cyr
 233e7263692ab65ca4dab7bb98aae0ddc0fa3cc937c87ca8ff96326d3f0ae20e  lib/bayan.cyr
 cd9321d9400401cd8895d1f488d969ea391a1194b327f7a1fa60b99912b73cf2  lib/bench.cyr
-676fa643ee085c8355ab6b85c7cc4c97bf04617e89dce17e3861ed5a7415de36  lib/bote-core.cyr
+59c7c9f226bf360badceec0718672ce1efcf15a161bdde90c3eef5bfc32e2998  lib/bote-core.cyr
 d3106568aba674ffa99ad15542ba2accd648707e4c3172d4e5ca3bf8f49b765b  lib/bounds.cyr
 b99081e633d572569ee63c6a915fe4aa39b3ac4ff5665c08cc4c9416ed2f6928  lib/boxed.cyr
 09c4d27912d9cd18e36a0e24b6d5d1771aecd8b57661813d3886844494e2c2be  lib/callback.cyr

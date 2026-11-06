@@ -30,7 +30,9 @@ enum AgnosticTenantRowOff {
     AGNOSTIC_TR_KEY     = 0;
     AGNOSTIC_TR_NAME    = 8;
     AGNOSTIC_TR_CREATED = 16;
-    AGNOSTIC_TR_SIZE    = 24;
+    AGNOSTIC_TR_RATE    = 24;   # crews a minute, 0 for the server's default (0.3.1)
+    AGNOSTIC_TR_CREWS   = 32;   # unfinished crews, 0 for the server's default (0.3.1)
+    AGNOSTIC_TR_SIZE    = 40;
 }
 
 # What deleting a tenant reports.
@@ -47,13 +49,26 @@ fn agnostic_tenant_row_key(r): i64 { return load64(r + AGNOSTIC_TR_KEY); }
 fn agnostic_tenant_row_name(r): i64 { return load64(r + AGNOSTIC_TR_NAME); }
 # When the tenant was created, in epoch seconds.
 fn agnostic_tenant_row_created(r): i64 { return load64(r + AGNOSTIC_TR_CREATED); }
+# The tenant's crews a minute, 0 for the server's default.
+fn agnostic_tenant_row_rate(r): i64 { return load64(r + AGNOSTIC_TR_RATE); }
+# The tenant's unfinished crews, 0 for the server's default.
+fn agnostic_tenant_row_crews(r): i64 { return load64(r + AGNOSTIC_TR_CREWS); }
 
 var AGNOSTIC_TENANTS_TABLE_SQL =
 "CREATE TABLE agnostic_tenants (tid INT, tkey STR, tname STR, created INT)";
 
+# The limits (0.3.1, `src/auth/tenantlimit.cyr`). A row from before them reads 0, the server's default.
+var AGNOSTIC_TENANTS_RATE_SQL = "ALTER TABLE agnostic_tenants ADD COLUMN rate_limit INT";
+var AGNOSTIC_TENANTS_CREWS_SQL = "ALTER TABLE agnostic_tenants ADD COLUMN max_crews INT";
+
+# The most either limit takes.
+var AGNOSTIC_TENANT_LIMIT_MAX = 1000000;
+
 # Ensure the tenant table. Mount time only.
 fn agnostic_tenants_ensure(): i64 {
-    return agnostic_store_ensure(AGNOSTIC_TENANTS_TABLE_SQL);
+    if (agnostic_store_ensure(AGNOSTIC_TENANTS_TABLE_SQL) == 0) { return 0; }
+    if (agnostic_store_ensure(AGNOSTIC_TENANTS_RATE_SQL) == 0) { return 0; }
+    return agnostic_store_ensure(AGNOSTIC_TENANTS_CREWS_SQL);
 }
 
 # Whether `k` is a legal tenant key: `[a-z0-9][a-z0-9-]*`, at most
@@ -247,13 +262,15 @@ fn _agnostic_tenant_delete_empty_locked_a(a, key: Str): i64 {
     return AGNOSTIC_TENANT_OK;
 }
 
-# Row `i` of `SELECT tkey, tname, created`, in `a`. 0 on exhaustion.
+# Row `i` of `SELECT tkey, tname, created, rate_limit, max_crews`, in `a`. 0 on exhaustion.
 fn _agnostic_tenants_row_a(a, rs, i): i64 {
     var r = alloc_via(a, AGNOSTIC_TR_SIZE);
     if (r == 0) { return 0; }
     store64(r + AGNOSTIC_TR_KEY, _agnostic_auth_str_a(a, rs, i, 0));
     store64(r + AGNOSTIC_TR_NAME, _agnostic_auth_str_a(a, rs, i, 1));
     store64(r + AGNOSTIC_TR_CREATED, patra_result_get_int(rs, i, 2));
+    store64(r + AGNOSTIC_TR_RATE, patra_result_get_int(rs, i, 3));
+    store64(r + AGNOSTIC_TR_CREWS, patra_result_get_int(rs, i, 4));
     return r;
 }
 
@@ -269,7 +286,8 @@ fn agnostic_tenants_list_a(a): i64 {
 fn _agnostic_tenants_list_locked_a(a): i64 {
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
-    var rs = patra_query(db, "SELECT tkey, tname, created FROM agnostic_tenants ORDER BY tkey");
+    var rs = patra_query(db,
+      "SELECT tkey, tname, created, rate_limit, max_crews FROM agnostic_tenants ORDER BY tkey");
     if (rs == 0) { return 0; }
     var out = vec_new_a(a);
     var i = 0;
@@ -291,13 +309,48 @@ fn agnostic_tenant_get_a(a, key: Str): i64 {
     return r;
 }
 
+# Change a tenant's name and limits. `name` 0 and a limit of -1 keep what it has. 1, or 0 when there
+# is no such tenant or the store refused. The read and the write are one step under the lock, so two
+# updates of different fields cannot undo each other.
+fn agnostic_tenant_update_a(a, key: Str, name: Str, rate, crews): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_tenant_update_locked_a(a, key, name, rate, crews);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_tenant_update_a`'s body. The caller holds the store lock.
+fn _agnostic_tenant_update_locked_a(a, key: Str, name: Str, rate, crews): i64 {
+    var row = _agnostic_tenant_get_locked_a(a, key);
+    if (row == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var nm = name;
+    if (nm == 0) { nm = agnostic_tenant_row_name(row); }
+    var r = rate;
+    if (r < 0) { r = agnostic_tenant_row_rate(row); }
+    var c = crews;
+    if (c < 0) { c = agnostic_tenant_row_crews(row); }
+    var st = patra_prepare(db, "UPDATE agnostic_tenants SET tname = ?, rate_limit = ?, max_crews = ? WHERE tid = ?");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(nm), str_len(nm));
+    patra_bind_int(st, 1, r);
+    patra_bind_int(st, 2, c);
+    patra_bind_int(st, 3, agnostic_tenant_tid(key));
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    if (rc != PATRA_OK) { return 0; }
+    return 1;
+}
+
 # `agnostic_tenant_get_a`'s body. The caller holds the store lock.
 fn _agnostic_tenant_get_locked_a(a, key: Str): i64 {
     var tid = agnostic_tenant_find_a(a, key);
     if (tid == 0) { return 0; }
     var db = agnostic_store_db();
     if (db == 0) { return 0; }
-    var st = patra_prepare(db, "SELECT tkey, tname, created FROM agnostic_tenants WHERE tid = ?");
+    var st = patra_prepare(db,
+      "SELECT tkey, tname, created, rate_limit, max_crews FROM agnostic_tenants WHERE tid = ?");
     if (st == 0) { return 0; }
     patra_bind_int(st, 0, tid);
     var rs = patra_query_prepared(db, st);

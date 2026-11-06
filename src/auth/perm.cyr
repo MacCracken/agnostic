@@ -138,6 +138,10 @@ fn agnostic_perm_for_route(id): i64 {
     if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { return AGNOSTIC_PERM_WRITE; }
     if (id == AGNOSTIC_ROUTE_DEF_DELETE) { return AGNOSTIC_PERM_WRITE; }
 
+    # Counts across every tenant, so SUPER for the audit trail's reason. A scraper has a credential
+    # of its own that the ladder takes in place of this (`src/routes/metrics.cyr`).
+    if (id == AGNOSTIC_ROUTE_METRICS) { return AGNOSTIC_PERM_SUPER; }
+
     if (id == AGNOSTIC_ROUTE_AUDIT) { return AGNOSTIC_PERM_SUPER; }
     if (id == AGNOSTIC_ROUTE_AUDIT_ENTRIES) { return AGNOSTIC_PERM_SUPER; }
 
@@ -184,6 +188,7 @@ fn agnostic_perm_for_route(id): i64 {
     if (id == AGNOSTIC_ROUTE_TENANT_CREATE) { return AGNOSTIC_PERM_SUPER; }
     if (id == AGNOSTIC_ROUTE_TENANT_GET) { return AGNOSTIC_PERM_SUPER; }
     if (id == AGNOSTIC_ROUTE_TENANT_DELETE) { return AGNOSTIC_PERM_SUPER; }
+    if (id == AGNOSTIC_ROUTE_TENANT_UPDATE) { return AGNOSTIC_PERM_SUPER; }
 
     return AGNOSTIC_PERM_SUPER;
 }

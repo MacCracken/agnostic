@@ -107,6 +107,7 @@ fn _agnostic_collector_thread(stop_flag): i64 {
     }
     while (load64(stop_flag) == 0) {
         agnostic_collector_sweep_a(a);
+        agnostic_refusals_flush_a(a, 0);
         reset_via(a);
         sleep_ms(AGNOSTIC_COLLECTOR_INTERVAL_MS);
     }

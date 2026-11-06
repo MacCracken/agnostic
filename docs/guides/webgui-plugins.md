@@ -143,6 +143,10 @@ server enforces it, and the shell reads it from `GET /api/v1/plugins` (`catalogu
 | `crews:read` | `GET /api/v1/crews` · `GET /api/v1/crews/<uuid>` · `…/events` · `…/plan` |
 | `crews:write` | `POST /api/v1/crews` · `POST /api/v1/crews/<uuid>/cancel` |
 | `audit:read` | `GET /api/v1/audit` · `GET /api/v1/audit/entries` — SUPER routes: the user must be a super administrator too |
+| `users:read` | `GET /api/v1/users` · `GET /api/v1/users/<id>` · `…/api-keys` — ADMIN routes |
+| `users:write` | `POST /api/v1/users` · `PUT`, `DELETE /api/v1/users/<id>` · `PUT …/password` · `DELETE …/api-keys/<key>` — ADMIN routes |
+| `tenants:read` | `GET /api/v1/tenants` · `GET /api/v1/tenants/<key>` — SUPER routes |
+| `tenants:write` | `POST /api/v1/tenants` · `PUT`, `DELETE /api/v1/tenants/<key>` — SUPER routes |
 
 Anything else is answered **403 by the shell** without reaching the network; a malformed path (`..`,
 `//`, characters outside `[A-Za-z0-9/._-]`, or a query string outside `[A-Za-z0-9._~=&%-]`) or a body

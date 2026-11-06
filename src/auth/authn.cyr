@@ -35,14 +35,11 @@
 # — `agnostic_authn_resolve_a` is what turns the credential into a principal, and
 # the address is used only for rate accounting.
 #
-# ⚠ **`peer_ip` is the socket peer, deliberately not `X-Forwarded-For`.** Behind
-# a proxy every request shares one address and the bucket becomes a global rate
-# limit — which is a real deployment problem, but the alternative is worse:
-# `X-Forwarded-For` is caller-supplied, so honouring it lets an attacker mint a
-# fresh bucket per request and removes the control entirely. A deployment that
-# needs per-client buckets behind a proxy has to establish which hop is trusted,
-# which is trusted-proxy configuration this does not carry — see CHANGELOG,
-# M5 (part 3). #skip-lint
+# ⚠ **`peer_ip` is the socket peer unless a proxy the operator named says otherwise.** Behind a proxy
+# every request shares one address and the bucket becomes a global rate limit, and
+# `X-Forwarded-For` is caller-supplied, so honouring it from anyone lets an attacker mint a fresh
+# bucket per request. `agnostic_client_addr` (`src/http/forwarded.cyr`, 0.3.1) settles which it is,
+# and this field holds what it answered: an address, or an IPv6 client's /64.
 #
 # Since 0.1.8 the context also carries what the ladder LEARNS — the principal the
 # auth rung resolved, which tenant-scoped handlers read — and two more transport

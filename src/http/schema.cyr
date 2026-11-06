@@ -296,6 +296,7 @@ fn _agnostic_sch_body_of(id): i64 {
     if (id == AGNOSTIC_ROUTE_USER_UPDATE) { return "user_role"; }
     if (id == AGNOSTIC_ROUTE_USER_PASSWORD) { return "user_password"; }
     if (id == AGNOSTIC_ROUTE_TENANT_CREATE) { return "tenant"; }
+    if (id == AGNOSTIC_ROUTE_TENANT_UPDATE) { return "tenant_update"; }
     if (id == AGNOSTIC_ROUTE_PLUGIN_SET) { return "plugin_switch"; }
     if (id == AGNOSTIC_ROUTE_PDATA_PUT) { return "plugin_document"; }
     return 0;
@@ -384,10 +385,12 @@ fn _agnostic_sch_ok_a(a, id): i64 {
     return ok;
 }
 
-# What kind of body route `id` answers with: `json`, an object; `html`, a WebGUI page; or
-# `document`, a plugin's stored JSON document sent back verbatim with its revision as `ETag`.
+# What kind of body route `id` answers with: `json`, an object; `html`, a WebGUI page; `metrics`,
+# Prometheus text; or `document`, a plugin's stored JSON document sent back verbatim with its
+# revision as `ETag`.
 fn _agnostic_sch_kind_of(id): i64 {
     if (id == AGNOSTIC_ROUTE_PDATA_GET) { return "document"; }
+    if (id == AGNOSTIC_ROUTE_METRICS) { return "metrics"; }
     if (id == AGNOSTIC_ROUTE_UI_SHELL) { return "html"; }
     if (id == AGNOSTIC_ROUTE_UI_PLUGIN) { return "html"; }
     return "json";
@@ -445,6 +448,7 @@ fn _agnostic_sch_keys_a(a, id): i64 {
     if (id == AGNOSTIC_ROUTE_TENANT_LIST) { return _agnostic_sch_words_a(a, k, "tenants total"); }
     if (id == AGNOSTIC_ROUTE_TENANT_CREATE) { return _agnostic_sch_words_a(a, k, "tenant"); }
     if (id == AGNOSTIC_ROUTE_TENANT_GET) { return _agnostic_sch_words_a(a, k, "tenant"); }
+    if (id == AGNOSTIC_ROUTE_TENANT_UPDATE) { return _agnostic_sch_words_a(a, k, "tenant"); }
     if (id == AGNOSTIC_ROUTE_TENANT_DELETE) { return _agnostic_sch_words_a(a, k, "key status"); }
     if (id == AGNOSTIC_ROUTE_PRESET_LIST) { return _agnostic_sch_words_a(a, k, "presets total"); }
     if (id == AGNOSTIC_ROUTE_PRESET_GET) {
@@ -559,6 +563,7 @@ fn _agnostic_sch_bodies_a(a): i64 {
     b = _agnostic_sch_put_a(a, b, "user_role", _agnostic_sch_fields_body_a(a, agnostic_user_role_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "user_password", _agnostic_sch_fields_body_a(a, agnostic_user_password_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "tenant", _agnostic_sch_fields_body_a(a, agnostic_tenant_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "tenant_update", _agnostic_sch_fields_body_a(a, agnostic_tenant_update_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "plugin_switch", _agnostic_sch_fields_body_a(a, agnostic_plugin_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "plugin_document", doc);
     return b;

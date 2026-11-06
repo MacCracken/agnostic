@@ -52,5 +52,38 @@
       "GET /api/v1/audit",
       "GET /api/v1/audit/entries"
     ]
+  },
+  "users:read": {
+    "grants": "list users and their API keys",
+    "routes": [
+      "GET /api/v1/users",
+      "GET /api/v1/users/:id",
+      "GET /api/v1/users/:id/api-keys"
+    ]
+  },
+  "users:write": {
+    "grants": "create, change and delete users, set their passwords and revoke their keys",
+    "routes": [
+      "POST /api/v1/users",
+      "PUT /api/v1/users/:id",
+      "DELETE /api/v1/users/:id",
+      "PUT /api/v1/users/:id/password",
+      "DELETE /api/v1/users/:id/api-keys/:key"
+    ]
+  },
+  "tenants:read": {
+    "grants": "list tenants and their limits",
+    "routes": [
+      "GET /api/v1/tenants",
+      "GET /api/v1/tenants/:key"
+    ]
+  },
+  "tenants:write": {
+    "grants": "create, change and delete tenants",
+    "routes": [
+      "POST /api/v1/tenants",
+      "PUT /api/v1/tenants/:key",
+      "DELETE /api/v1/tenants/:key"
+    ]
   }
 }

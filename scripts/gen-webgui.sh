@@ -72,7 +72,7 @@ KIT_END = "/* agnostic-kit:host end */"
 
 # The plugins, in listing order. Each is src/webgui/plugins/<id>/ holding a
 # `plugin.json` manifest and the page it names.
-PLUGINS = ["swarm", "crews", "library", "audit"]
+PLUGINS = ["swarm", "crews", "library", "users", "audit"]
 
 # A manifest carries exactly these keys — the allow-list rule the API's request
 # decoders follow (src/http/codec.cyr): an unknown key is an error, never ignored.

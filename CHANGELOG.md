@@ -4,6 +4,124 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-11-06
+
+**agnostic can be deployed.** It runs behind a proxy without one client locking out the rest, a scraper
+can watch it, a tenant can be held to a share of it, a refused request leaves a record, and there is a
+guide, a unit file and a native Zugot recipe. Users and tenants have a view in the WebGUI. agnosai moves to
+2.2.4, which takes two work-arounds out of this tree. This finishes the 0.3.x line, and closes audit S7 and
+gaps G7, G11, G12 and G14.
+
+### Breaking
+
+- **`GET /api/v1/tenants` and `GET /api/v1/tenants/{key}` carry `rate_limit` and `max_crews`.** A client
+  that refuses unknown keys has to take them.
+- **`POST /api/v1/crews` can answer 429** with `Retry-After`, once a limit is set. A deployment that sets
+  none sees no change.
+- **`audit.*`, `auth.*` and `tenant.*` entries are new in the trail,** so a reader matching on actions
+  meets six more, and `audit.refusals_held`.
+
+### Added
+
+- **`AGNOSTIC_TRUSTED_PROXIES`** (audit S7, [ADR 0024](docs/adr/0024-the-client-is-the-rightmost-address-no-listed-proxy-added.md)):
+  who may say who the client is, as IPv4 addresses and networks. `X-Forwarded-For` is read only from a
+  listed peer, from the right, skipping listed hops, across every line of the header, so a client cannot
+  pick its own login bucket by writing to the left of what the proxy adds. An IPv6 client is its /64, and
+  the audit trail names the client and not the proxy. `/0` and host bits under a mask refuse to start.
+- **What a refusal leaves behind** (G12, [ADR 0025](docs/adr/0025-a-refusal-always-counts-and-is-written-within-a-budget.md)):
+  `auth.denied`, `auth.forbidden`, `auth.throttled`, `auth.shed`, `tenant.throttled` and
+  `tenant.crews_full`. Every refusal counts. The first 16 a minute are written with the peer, the route's
+  pattern and the user, and `audit.refusals_held` writes the count of the rest, so a flood costs at most 17
+  writes a minute. A held count is written on the next refusal, on the collector's tick or at a graceful
+  stop.
+- **Tenant limits** (G11, [ADR 0026](docs/adr/0026-a-tenants-limits-are-on-crews-and-a-place-is-reserved.md)):
+  `rate_limit`, crews a minute, and `max_crews`, unfinished crews at once. They come from the tenant, then
+  from `AGNOSTIC_TENANT_RATE_LIMIT` and `AGNOSTIC_TENANT_MAX_CREWS`, with 0 meaning no limit. A place is
+  reserved under a lock before the crew is built, so 16 racing workers cannot pass a cap and a refusal
+  keeps nothing on the global heap. A body that then fails gets its place and token back, and a keyed retry
+  takes neither.
+- **`PUT /api/v1/tenants/{key}`**, SUPER: a tenant's name and limits. A field left out keeps its value, and
+  a limit of 0 hands it back to the server's default. `POST /api/v1/tenants` takes the limits too.
+- **`GET /api/v1/metrics`** (G7, [ADR 0027](docs/adr/0027-a-scraper-has-a-credential-of-its-own.md)):
+  Prometheus text, with responses by class, refusals by reason, the ledger, the audit trail, and agnosai's
+  six families under their own names. SUPER, or `AGNOSTIC_METRICS_TOKEN`, a credential that opens this one
+  route and nothing else. A scrape keeps nothing on the global heap, which `agnosai_metrics_gather` would.
+- **A Users view in the WebGUI**, on the 0.3.0 routes: create a user, change a role, set a password, revoke
+  a key, and, for a super administrator, tenants and their limits. Off by default, like every view. Four
+  new permissions, `users:read`, `users:write`, `tenants:read` and `tenants:write`. Your own password and
+  keys are not a plugin's to touch.
+- **[Deployment](docs/guides/deployment.md)** (G14): the binary, a proxy, a unit file
+  ([`docs/examples/agnostic.service`](docs/examples/agnostic.service)), metrics, backup and recovery.
+- `tests/webgui/browser/users.e2e.mjs`: the Users view in real Chromium, by hand. It found two defects the
+  suites could not, below.
+
+### Changed
+
+- **agnosai 2.2.3 → 2.2.4, and bote 3.8.11 → 3.8.15 with it.** Every other dep and Cyrius 6.7.18 were
+  already on their latest.
+- **A finished crew leaves the engine through `agnosai_orchestrator_forget_crew`.**
+  `_agnostic_crew_retire_a` no longer reaches into the orchestrator's fields (ADR 0022).
+- **The gateway-URL scrub is gone.** agnosai 2.2.4 no longer writes the URL into a transport error, so
+  `crews/gateway-address` holds that seam end to end against a dead gateway. A URL with userinfo is still
+  refused at start-up.
+
+### Fixed
+
+- **A crew kept 4,096 B of event ring for life** (audit P2). An evicted entry gives its ring back, which
+  takes a finished crew from 15,176 B to 11,080 B. A request still holding the entry reads no events, with
+  all of them counted as missed, and can never read another crew's. The rest is agnosai's, and filed.
+
+### Found while building, and fixed before release
+
+- **Delete in the Users view did nothing.** `window.confirm` answers false in a frame with no
+  `allow-modals`, silently. It asks inline, as the other views do, and a test now fails on a modal in any
+  plugin page.
+- **The role and password controls were white on white.** Only a real browser showed it.
+- **A tenant polling at its cap stopped earning tokens,** because a refusal moved the bucket's clock.
+
+### Performance
+
+`cyrius bench` on the final tree, 36 rows, five of them new and last, so that no row above moved. Against
+0.3.0 no row moved more than 10%, other than the 3 ns `noop`.
+
+- **The new paths:** `client_addr_no_proxies` 8 ns, which is what a server with no list pays per request;
+  `client_addr_forwarded` 825 ns; `refusal_past_the_budget` 1.4 µs; `tenant_admit_and_end` 2.4 µs;
+  `metrics_render` 20.1 µs.
+- **The table grew by one row:** `route_miss_404` 1.031 → 1.110 µs, `route_last_ui_plugin` 1.211 → 1.252 µs,
+  `route_plugindata_doc` 3.188 → 3.417 µs. The crew routes sit before it.
+
+### Verified
+
+- **x86_64, `CYRIUS_DCE=1`:** 38 suites, 3,569 assertions, 0 failed, and 96 JavaScript tests. Coverage reads
+  98% (608 of 618) against the gate of 95. Binary 4,235,752 B.
+- **Natively on the Pi:** the same 38 suites, 0 failed, the boot probe, and the load test with every crew
+  `completed` and a 15.1 s stop. Aarch64 binary 8,036,336 B. 37 suites match x86_64's counts exactly. `crews_route`
+  reads 247 or 248 from run to run on the Pi, because two loops assert once per poll, and a slow machine
+  sometimes polls again.
+- **A sibling-free replica with an empty cache,** in CI's order: `lib sync --full`, `deps --locked`, the
+  symbol and cleanliness gates and the schema check all pass, the tree stays clean, and both binaries
+  are byte-identical to these.
+- **51 mutants, each failing a named check.** Two more were dead code, and the code went. Three survived
+  first: a clock written in the same millisecond it was read, and two races at 200 notes a thread that
+  20,000 show.
+- **The load test gained two steps.** With 16 clients, 2,500 crews and 625 more all read `completed`, a cap of
+  8 turned over 983 crews with no place lost, and 1,175 reads beside eviction found no crew's events in
+  another's. Putting the place leak back fails this step with `places were lost`.
+- **The Pi caught two tests that held only on a fast machine.** Five Argon2 hashes take the 12 s that earn a
+  token back there, so "the sixth is refused" and an exact refill were timing, not rules. Each now asserts
+  the rule, and the probe still fails against a mutant that reads the leftmost address.
+- **The Users view in real Chromium,** 25 steps through the real sandboxed frame against the real server,
+  with no script error or CSP violation.
+- **The unit file** passes `systemd-analyze verify`. Its hardening ran under a user manager: the server
+  answered, its files came up 0600, and the recovery command worked as the guide writes it.
+
+### Known
+
+- The proxy configs in the guide were not run against a real nginx or Caddy: neither is on this machine or
+  the Pi. Every header they send was probed against the binary.
+- Past the refusal budget, a second caller inside a flood is only a number.
+- `[embed]` (roadmap, 0.2.x) was not taken: it is a build change with nothing waiting on it.
+
 ## [0.3.0] — 2026-11-06
 
 **A deployment can have more than one user.** Until now nothing could add anyone after the bootstrap

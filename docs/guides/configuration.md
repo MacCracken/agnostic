@@ -29,6 +29,10 @@ for about 70 KB/s.
 | `AGNOSTIC_BOOTSTRAP_EMAIL` | none | The first administrator, created once, on an empty store with `AGNOSTIC_AUTH=required`. |
 | `AGNOSTIC_BOOTSTRAP_PASSWORD` | none | At least 12 characters. It is read, never logged, and has no effect once any user exists. Change it with `PUT /api/v1/auth/password` and unset it ([Users and tenants](users-and-tenants.md)). |
 | `AGNOSTIC_JWT_SECRET` | random per process | At least 32 bytes, or the server refuses to start. It is read and never logged. Unset, a restart ends every session. Set it, and tokens survive a restart. Anyone who holds it can forge a token for any user. Changing it ends every session. |
+| `AGNOSTIC_TRUSTED_PROXIES` | none | Who may say who the client is: IPv4 addresses and networks, comma-separated, up to 32. Unset, `X-Forwarded-For` is ignored. `/0` and host bits under a mask are refused. See [below](#behind-a-reverse-proxy). |
+| `AGNOSTIC_METRICS_TOKEN` | none | A scraper's bearer token, at least 32 bytes. It opens `GET /api/v1/metrics` and nothing else. Unset, only a super administrator can read it. It is read and never logged. |
+| `AGNOSTIC_TENANT_RATE_LIMIT` | `0` | Crews one tenant may submit in a minute, unless its own limit says otherwise. 0 is no limit. |
+| `AGNOSTIC_TENANT_MAX_CREWS` | `0` | Crews of one tenant that may be unfinished at once, unless its own limit says otherwise. 0 is no limit. |
 
 ## Storage
 
@@ -60,10 +64,12 @@ for about 70 KB/s.
 
 ## Behind a reverse proxy
 
-agnostic serves plain HTTP, so TLS belongs to a proxy in front of it. Two things follow.
+agnostic serves plain HTTP, so TLS belongs to a proxy in front of it. [Deployment](deployment.md) has a
+working setup. Two things follow.
 
-- Every client arrives from the proxy's address, and the login rate limit is per source. Five bad
-  attempts from anyone then lock out everyone for that window. There is no trusted-proxy setting yet
-  (roadmap, 0.3.x).
+- Every client arrives from the proxy's address, and the login rate limit is per source. Set
+  `AGNOSTIC_TRUSTED_PROXIES` to the proxy's address, or five bad attempts from anyone lock out everyone
+  for that window. agnostic then reads `X-Forwarded-For` from the right, skipping listed addresses, so a
+  client cannot pick its own limit by sending that header. `Forwarded` and `X-Real-IP` are not read.
 - A proxy that buffers requests also protects the worker pool: one connection holds one worker while
   it is read, and 16 idle sockets stall the server for `AGNOSTIC_REQUEST_MS`.

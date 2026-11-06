@@ -1,0 +1,324 @@
+# agnostic/engine/refusal — what a refused request leaves behind, and what it costs (0.3.1, G12).
+#
+# Two claims, held apart:
+#
+#   1. Every refusal counts, and the trail shows it happened.
+#   2. A caller with no credential cannot make more than `BURST + 1` durable writes a minute.
+#
+# The second is what makes the first safe to ship, so the assertions on it are on the number of
+# entries written, not on anything the code says about itself.
+include "src/app.cyr"
+include "tests/support/tmp.cyr"   # scratch paths under $TMPDIR (0.1.15)
+
+var _T_DB = _tt_tmp_path("refusal-suite");
+var _T_AUDIT = _tt_tmp_path("refusal-suite-audit");
+var _T_MAXB = 1048576;
+var _T_PW = "correct-horse-battery";
+
+fn _t_open() {
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    _tt_unlink_store(_T_AUDIT);
+    patra_init();
+    agnostic_store_open(str_from(_T_DB));
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_audit_open(str_from(_T_AUDIT));
+    agnostic_rl_reset();
+    agnostic_refusal_reset();
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    return 0;
+}
+
+# A context from `peer`, carrying `header` as its `Authorization`, or nothing.
+fn _t_ctx(a, peer, header) {
+    var authz = 0;
+    if (header != 0) { authz = header; }
+    return agnostic_reqctx_new_a(a, authz, peer);
+}
+
+fn _t_get(a, path, ctx) {
+    return agnostic_response_status(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_GET, str_from(path),
+        str_from(""), _T_MAXB, ctx));
+}
+
+# How many entries the trail holds with `action`.
+fn _t_entries(a, action) {
+    var rows = agnostic_audit_entries_a(a, agnostic_audit_next_index(), 1024);
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(rows)) {
+        if (str_eq_cstr(agnostic_audit_read_get(vec_get(rows, i), AGNOSTIC_AR_ACTION), action) == 1) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# The newest entry's details, or 0.
+fn _t_newest_details(a, action) {
+    var rows = agnostic_audit_entries_a(a, agnostic_audit_next_index(), 1024);
+    var i = 0;
+    while (i < vec_len(rows)) {
+        var e = vec_get(rows, i);
+        if (str_eq_cstr(agnostic_audit_read_get(e, AGNOSTIC_AR_ACTION), action) == 1) {
+            return agnostic_audit_read_get(e, AGNOSTIC_AR_DETAILS);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Make the open window read as run out.
+fn _t_expire_window() {
+    _agnostic_refusal_since = agnostic_epoch_ms() - AGNOSTIC_REFUSAL_WINDOW_MS - 1;
+    return 0;
+}
+
+fn test_each_kind() {
+    test_group("refusal/kinds");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var peer = net_parse_ipv4("9.8.7.6");
+
+    assert_eq(_t_get(a, "/api/v1/crews", _t_ctx(a, peer, 0)), HTTP_UNAUTHORIZED, "no credential");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_UNAUTHENTICATED), 1, "counted");
+    assert_eq(_t_entries(a, "auth.denied"), 1, "⭐ and in the trail");
+    assert_eq(str_eq_cstr(_t_newest_details(a, "auth.denied"), "peer=9.8.7.6 route=/api/v1/crews"), 1,
+      "with who and where");
+
+    assert_eq(_t_get(a, "/api/v1/crews", _t_ctx(a, peer, str_from("Bearer not-a-token"))), HTTP_UNAUTHORIZED,
+      "a credential that resolves to nobody");
+    assert_eq(_t_entries(a, "auth.denied"), 2, "is the same refusal");
+
+    var uid = agnostic_users_create_a(a, str_from("v@agnostic.test"), str_from(_T_PW), AGNOSTIC_ROLE_VIEWER, 0);
+    var hdr = str_builder_new();
+    str_builder_add_cstr(hdr, "Bearer ");
+    str_builder_add(hdr, agnostic_jwt_issue_a(a, uid, AGNOSTIC_ROLE_VIEWER, 0, 600));
+    assert_eq(_t_get(a, "/api/v1/audit", _t_ctx(a, peer, str_builder_build(hdr))), HTTP_FORBIDDEN, "a role too low");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_FORBIDDEN), 1, "counted");
+    var det = _t_newest_details(a, "auth.forbidden");
+    assert_eq(str_contains_cstr(det, "route=/api/v1/audit"), 1, "with the route");
+    assert_eq(str_contains(det, agnostic_id_hex_a(a, uid)), 1, "and who was refused");
+
+    var pctx = _t_ctx(a, peer, 0);
+    agnostic_reqctx_set_headers(pctx, 0, str_from("no-such-plugin"), 0, 0);
+    assert_eq(_t_get(a, "/api/v1/crews", pctx), HTTP_FORBIDDEN, "a plugin outside its grant");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_FORBIDDEN), 2, "is a 403 like any other");
+
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+    var hctx = _t_ctx(a, peer, 0);
+    agnostic_reqctx_set_transport(hctx, 0, str_from("attacker.example"));
+    assert_eq(_t_get(a, "/api/v1/crews", hctx), HTTP_FORBIDDEN, "a rebinding Host with auth off");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_FORBIDDEN), 3, "too");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+
+    # A route needing nothing refuses nothing, so a health check is no refusal.
+    assert_eq(_t_get(a, "/health", _t_ctx(a, peer, 0)), HTTP_OK, "a health check");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_UNAUTHENTICATED), 2, "leaves no trace");
+}
+
+fn test_a_login_refused() {
+    test_group("refusal/login");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var peer = net_parse_ipv4("9.8.7.5");
+    var body = str_from("{\"email\":\"typed-a-secret@agnostic.test\",\"password\":\"wrong\"}");
+    var path = str_from("/api/v1/auth/login");
+    # Until it refuses, and not a count of attempts: on a small machine five Argon2 hashes take the
+    # 12 s that earn a token back, so the sixth can honestly be let in.
+    var i = 0;
+    var status = 0;
+    while (i < AGNOSTIC_RL_BURST + 4 && status != AGNOSTIC_HTTP_TOO_MANY_REQUESTS) {
+        status = agnostic_response_status(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, path, body,
+            _T_MAXB, _t_ctx(a, peer, 0)));
+        i = i + 1;
+    }
+    assert_eq(status, AGNOSTIC_HTTP_TOO_MANY_REQUESTS, "the bucket refuses the last");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_THROTTLED), 1, "counted once");
+    assert_eq(_t_entries(a, "auth.throttled"), 1, "⭐ and in the trail");
+    var det = _t_newest_details(a, "auth.throttled");
+    assert_eq(str_contains_cstr(det, "peer=9.8.7.5"), 1, "with the source");
+    assert_eq(str_contains_cstr(det, "typed-a-secret"), 0, "⭐ and never the address tried");
+
+    # Every Argon2 slot held, so a fresh source is refused by the pool and not its bucket.
+    var held = vec_new();
+    var buf = agnostic_argon_acquire();
+    while (buf != 0) {
+        vec_push(held, buf);
+        buf = agnostic_argon_acquire();
+    }
+    status = agnostic_response_status(agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, path, body, _T_MAXB,
+        _t_ctx(a, net_parse_ipv4("9.8.7.4"), 0)));
+    assert_eq(status, AGNOSTIC_HTTP_TOO_MANY_REQUESTS, "the same answer with the pool full");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_SHED), 1, "⭐ told apart for the operator");
+    assert_eq(_t_entries(a, "auth.shed"), 1, "in the trail too");
+    i = 0;
+    while (i < vec_len(held)) {
+        agnostic_argon_release(vec_get(held, i));
+        i = i + 1;
+    }
+}
+
+fn test_the_budget() {
+    test_group("refusal/budget");
+    _t_open();
+    var a = arena_allocator(4194304);
+    var peer = net_parse_ipv4("9.8.7.3");
+    var flood = AGNOSTIC_REFUSAL_BURST * 5;
+    var before = agnostic_audit_count();
+    var i = 0;
+    while (i < flood) {
+        _t_get(a, "/api/v1/crews", _t_ctx(a, peer, 0));
+        i = i + 1;
+    }
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_UNAUTHENTICATED), flood, "every refusal is counted");
+    assert_eq(agnostic_audit_count() - before, AGNOSTIC_REFUSAL_BURST, "⭐ and a flood writes the burst, no more");
+    assert_eq(agnostic_refusals_flush_a(a, 0), 0, "a window still open keeps what it holds");
+
+    _t_expire_window();
+    assert_eq(agnostic_refusals_flush_a(a, 0), 1, "a run-out window writes what it held");
+    assert_eq(agnostic_audit_count() - before, AGNOSTIC_REFUSAL_BURST + 1, "⭐ as one entry");
+    var expect = str_builder_new();
+    str_builder_add_cstr(expect, "auth.denied=");
+    str_builder_add_int(expect, flood - AGNOSTIC_REFUSAL_BURST);
+    assert_eq(str_eq(_t_newest_details(a, "audit.refusals_held"), str_builder_build(expect)), 1,
+      "⭐ so what was withheld is the detail, never the fact");
+    assert_eq(agnostic_refusals_flush_a(a, 0), 0, "and nothing is written twice");
+
+    _t_get(a, "/api/v1/crews", _t_ctx(a, peer, 0));
+    assert_eq(_t_entries(a, "auth.denied"), AGNOSTIC_REFUSAL_BURST + 1, "the new window has a budget of its own");
+}
+
+fn test_a_window_closes_itself() {
+    test_group("refusal/window");
+    _t_open();
+    var a = arena_allocator(4194304);
+    var i = 0;
+    while (i < AGNOSTIC_REFUSAL_BURST + 3) {
+        agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_UNAUTHENTICATED, 0, 0);
+        i = i + 1;
+    }
+    agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, 0, 0);
+    _t_expire_window();
+    assert_eq(agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_THROTTLED, 0, 0), 1,
+      "the next refusal closes a run-out window, and has an entry of its own");
+    assert_eq(str_eq_cstr(_t_newest_details(a, "audit.refusals_held"), "auth.denied=3 auth.forbidden=1"), 1,
+      "each kind held is named");
+    assert_eq(_t_entries(a, "auth.throttled"), 1, "after the summary");
+
+    # A stop does not wait for the window.
+    i = 0;
+    while (i < AGNOSTIC_REFUSAL_BURST) {
+        agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_SHED, 0, 0);
+        i = i + 1;
+    }
+    assert_eq(_t_entries(a, "audit.refusals_held"), 1, "one summary so far");
+    assert_eq(agnostic_refusals_flush_a(a, 1), 1, "⭐ a graceful stop writes what is held");
+    assert_eq(str_eq_cstr(_t_newest_details(a, "audit.refusals_held"), "auth.shed=1"), 1, "this window's");
+    assert_eq(agnostic_refusals_flush_a(a, 1), 0, "and nothing when nothing is held");
+
+    # A clock moved back must not leave the budget spent until it catches up.
+    i = 0;
+    while (i < AGNOSTIC_REFUSAL_BURST * 2) {
+        agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, 0, 0);
+        i = i + 1;
+    }
+    _agnostic_refusal_since = agnostic_epoch_ms() + 3600000;
+    assert_eq(agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, 0, 0), 1,
+      "a clock that moved back opens a window");
+}
+
+fn test_a_path_is_not_a_detail() {
+    test_group("refusal/never");
+    _t_open();
+    var a = arena_allocator(1048576);
+    _t_get(a, "/api/v1/crews/typed-a-secret-here", _t_ctx(a, 0, 0));
+    var det = _t_newest_details(a, "auth.denied");
+    assert_neq(det, 0, "a refused request is recorded");
+    assert_eq(str_contains_cstr(det, "typed-a-secret"), 0, "⭐ by its route's pattern, not what the caller sent");
+    assert_eq(str_contains_cstr(det, "route=/api/v1/crews/:id"), 1, "which names the route just as well");
+
+    # An uninitialised module counts nothing and writes nothing, for a suite that never mounts it.
+    var counts = _agnostic_refusal_counts;
+    _agnostic_refusal_counts = 0;
+    var before = agnostic_audit_count();
+    assert_eq(agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, 0, 0), 0, "not mounted");
+    assert_eq(agnostic_audit_count(), before, "writes nothing");
+    _agnostic_refusal_counts = counts;
+    assert_eq(agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_KINDS, 0, 0), 0, "a kind out of range");
+    assert_eq(agnostic_refusal_note_a(a, 0 - 1, 0, 0), 0, "below the range too");
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_KINDS), 0, "and reads nothing");
+    assert_eq(agnostic_refusal_action(AGNOSTIC_REFUSAL_KINDS), 0, "and has no name");
+}
+
+var _t_writers_done = 0;
+
+# Enough to contend: at 200 a thread a lost update never showed.
+var _T_FLOOD = 20000;
+
+# `_T_FLOOD` refusals. In an arena of its own, as a worker's.
+fn _t_flood_worker(arg): i64 {
+    var a = arena_allocator(1048576);
+    var i = 0;
+    while (i < _T_FLOOD) {
+        agnostic_refusal_note_a(a, AGNOSTIC_REFUSAL_FORBIDDEN, 0, 0);
+        reset_via(a);
+        i = i + 1;
+    }
+    atomic_fetch_add(&_t_writers_done, 1);
+    return 0;
+}
+
+# ⭐ One thread cannot prove a counter or a budget: both are read-then-write races if they are wrong.
+fn test_under_16_threads() {
+    test_group("refusal/concurrent");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var before = agnostic_audit_count();
+    var handles: i64[16];
+    var t = 0;
+    while (t < 16) {
+        store64(&handles + t * 8, thread_create(&_t_flood_worker, t));
+        t = t + 1;
+    }
+    t = 0;
+    while (t < 16) {
+        thread_join(load64(&handles + t * 8));
+        t = t + 1;
+    }
+    assert_eq(atomic_load(&_t_writers_done), 16, "every thread finished");
+    var total = 16 * _T_FLOOD;
+    assert_eq(agnostic_refusal_count(AGNOSTIC_REFUSAL_FORBIDDEN), total, "⭐ no count is lost");
+    assert_eq(agnostic_audit_count() - before, AGNOSTIC_REFUSAL_BURST, "⭐ and the budget holds under a race");
+    assert_eq(agnostic_refusals_flush_a(a, 1), 1, "what was held is written");
+    var expect = str_builder_new();
+    str_builder_add_cstr(expect, "auth.forbidden=");
+    str_builder_add_int(expect, total - AGNOSTIC_REFUSAL_BURST);
+    assert_eq(str_eq(_t_newest_details(a, "audit.refusals_held"), str_builder_build(expect)), 1,
+      "and it adds up to what was refused");
+}
+
+fn main() {
+    alloc_init();
+    thread_local_init();
+    agnostic_crypto_main_init();
+    agnostic_argon_pool_init();
+    agnostic_rl_init();
+    agnostic_jwt_init_random();
+    test_each_kind();
+    test_a_login_refused();
+    test_the_budget();
+    test_a_window_closes_itself();
+    test_a_path_is_not_a_detail();
+    test_under_16_threads();
+    agnostic_audit_close();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    _tt_unlink_store(_T_AUDIT);
+    return assert_summary();
+}
+
+var _agnostic_refusal_test_exit = main();
+if (_agnostic_refusal_test_exit > 0) { _agnostic_refusal_test_exit = 1; }
+sys_exit_group(_agnostic_refusal_test_exit);

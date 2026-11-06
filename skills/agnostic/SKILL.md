@@ -218,6 +218,9 @@ same key starts a new crew.
 
 - **`"process": "hierarchical"` is refused** with a 400, because the engine does not implement it.
   Do not switch modes quietly. Tell the user, and offer `dag` with an explicit coordinating task.
+- **429** with `Retry-After`: your tenant is over its crews a minute or its unfinished crews. Wait that
+  many seconds and retry with the same key. No crew was started. A keyed retry of a crew that exists
+  answers it, and is never refused for a limit.
 - **503** "engine is not available": stop (guardrail 1).
 - **503** with a `crew_id` and `"status":"failed"`: the crew was accepted but could not start.
   Report it, and do not resubmit without asking.
@@ -424,7 +427,8 @@ user asks:
   `PUT /api/v1/users/{id}/password`, `GET /api/v1/users/{id}/api-keys`,
   `DELETE /api/v1/users/{id}/api-keys/{key}`.
 - **Tenants**, for a super administrator: `GET /api/v1/tenants`, `POST /api/v1/tenants`,
-  `GET /api/v1/tenants/{key}`, `DELETE /api/v1/tenants/{key}`.
+  `GET /api/v1/tenants/{key}`, `PUT /api/v1/tenants/{key}`, `DELETE /api/v1/tenants/{key}`.
+- **Metrics**, for a super administrator or a scraper's token: `GET /api/v1/metrics`.
 - **The audit trail**, for a super administrator: `GET /api/v1/audit`, `GET /api/v1/audit/entries`.
 - **WebGUI plugins and their documents:** `GET /api/v1/plugins`, `PUT /api/v1/plugins/{id}`,
   `GET /api/v1/plugins/{id}/data`, `GET /api/v1/plugins/{id}/data/{key}`,

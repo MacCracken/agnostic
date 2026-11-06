@@ -72,6 +72,7 @@ than as unknown. `bodies.plugin_document` is any JSON object of at most `max_byt
 |---|---|
 | `json` | a JSON object; `keys` are its top-level keys, in the order the handler writes them |
 | `html` | a WebGUI page, `text/html; charset=utf-8`; `keys` is `[]` |
+| `metrics` | Prometheus text, `text/plain; version=0.0.4; charset=utf-8`; `keys` is `[]` |
 | `document` | a plugin's stored JSON document, sent back byte for byte as `application/json` with its revision as `ETag`; `keys` is `[]` |
 
 A trailing `?` on a key marks one a success can leave out: a crew that has not started has no

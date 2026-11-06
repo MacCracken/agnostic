@@ -53,6 +53,10 @@ Nothing to port.
 | Crew shortcuts and retry (G4): `/tasks/security`, `/performance`, `/regression`, `/full`, `/tasks/{id}/retry` | `POST /api/v1/crews` with a preset's agents and a task |
 | Dashboards and the agent monitor (G9) | The Crews view, `GET /api/v1/crews` and `GET /api/v1/crews/:id/events`. Agents are not long-lived and there is no queue to watch |
 | Failed-login audit (G12) | `auth.login.failed`, since 0.2.2 |
+| The rest of the audit vocabulary (G12) | Done at 0.3.1, within a budget ([ADR 0025](../../adr/0025-a-refusal-always-counts-and-is-written-within-a-budget.md)) |
+| Tenant limits (G11) | Done at 0.3.1, on crews ([ADR 0026](../../adr/0026-a-tenants-limits-are-on-crews-and-a-place-is-reserved.md)) |
+| A metrics route (G7) | Done at 0.3.1 ([ADR 0027](../../adr/0027-a-scraper-has-a-credential-of-its-own.md)) |
+| Deployment guide (G14) | Done at 0.3.1: `docs/guides/deployment.md`, a unit file, and a native Zugot recipe |
 | Configuration reference (G15) | `docs/guides/configuration.md`, since 0.2.2 |
 | Preset writes (G16) | A canonical library compiled in, and saved definitions for custom agents. In the former code, running a created preset was a 404 |
 | Token refresh and logout routes | Tokens last 3600 s, roles are re-read on each request, and the shell clears its own token |
@@ -62,15 +66,11 @@ Nothing to port.
 | Item | agnostic today | Release |
 |---|---|---|
 | Identity provisioning (G1) and the JWT secret (G2) | Done at 0.3.0, see §1 | 0.3.0 |
-| The rest of the audit vocabulary (G12) | A 401, a 403 and a rate-limit hit leave no entry | 0.3.x |
-| Deployment guide (G14) | `SECURITY.md` and the configuration guide say TLS belongs to a proxy. Nothing covers the binary, the proxy and a unit file together | 0.3.x |
 | A crew's target (G4) | A QA tool needs one, and the crew body is `name`, `process`, `max_concurrency`, `agents`, `tasks` | 0.4.x |
 | `GET /tools` (G10) | `src/engine/tools.cyr` resolves names, and no route shows them | 0.4.x |
 | Completion webhook (G3) | `src/auth/webhook.cyr` signs and verifies with a signed timestamp, tested in `tests/loginguard.tcyr`. Nothing sends one, and the crew body has no callback field | 0.5.x |
 | A boot-and-probe CI step (G17) | Suites run on socketpairs, and CI never boots the binary and probes it | 0.2.x |
 | Issue and PR templates (G17) | `.github` holds workflows only | 0.2.x |
-| Tenant limits (G11) | Login is the only limit | 0.3.x |
-| A metrics route (G7) | OTLP traces. `agnosai_metrics_gather` exists, and nothing calls it | 0.3.x |
 | Stored definitions in a crew body (G4) | A client reads a definition and re-sends it | 0.4.x |
 | Engine features with no route (G10) | Definition versions and rollback, package export and import, tool upload, GPU, fleet, the `team` crew spec and `recommend_preset`, which has no owner | 0.4.x |
 | The AGNOS clients (G13) | Memory, RAG, reasoning, recording, RPC, screen and vector: none here | 0.5.x |

@@ -2,7 +2,16 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-06, at **0.3.0** — a deployment can have more than one user: 17 provisioning
+> Last refreshed: 2026-11-06, at **0.3.1** — agnostic can be deployed. A trusted-proxy setting
+> ([ADR 0024](../adr/0024-the-client-is-the-rightmost-address-no-listed-proxy-added.md)), refusals in the
+> trail within a budget ([ADR 0025](../adr/0025-a-refusal-always-counts-and-is-written-within-a-budget.md)),
+> tenant limits on crews ([ADR 0026](../adr/0026-a-tenants-limits-are-on-crews-and-a-place-is-reserved.md)),
+> `GET /api/v1/metrics` with a scraper's token ([ADR 0027](../adr/0027-a-scraper-has-a-credential-of-its-own.md)),
+> a Users view, the deployment guide, and a native Zugot recipe. An evicted crew gives back its event ring.
+> **agnosai 2.2.4 and bote 3.8.15**, which took the reach into the orchestrator and the gateway-URL scrub
+> out of this tree. Version, Toolchain, Dependencies, Dependency layout, Source, the route table, the WebGUI
+> section, Tests, Hardening and Next were refreshed then.
+> Before that, 2026-11-06, at **0.3.0** — a deployment can have more than one user: 17 provisioning
 > routes, one recovery command, `AGNOSTIC_JWT_SECRET`, and a password change that ends older tokens
 > ([ADR 0023](../adr/0023-provisioning-is-routes-and-one-recovery-command.md)). Agent definitions and the
 > deployment-wide routes are scoped, closing audit S3, S4 and S12b. No dependency moved. Version, Source,
@@ -85,7 +94,7 @@
 
 ## Version
 
-**0.3.0** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.3.1** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -98,7 +107,7 @@ line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
   byte, and CI's gates passed there. What moved at each earlier release is in `CHANGELOG.md`.
 
 ✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin, and no pin is off its fold.** 6.7.18 folds
-**sigil 3.13.15**, **patra 1.16.6** and **bayan 1.11.1**. agnosai 2.2.3, kavach 3.14.2 and libro 2.11.3
+**sigil 3.13.15**, **patra 1.16.6** and **bayan 1.11.1**. agnosai 2.2.4, kavach 3.14.2 and libro 2.11.3
 declare that sigil, libro 2.11.3 declares that patra, and ai-hwaccel 2.5.6 declares that bayan. So every
 commit pin the lock records on a folded module names the bytes `lib/` holds.
 
@@ -127,11 +136,11 @@ order, the pin and the tags moving together) are in
 
 | dep | pin | how it arrives |
 |---|---|---|
-| `agnosai` | **2.2.3** | direct, `git` + `tag` + `modules` — pins every dep below |
+| `agnosai` | **2.2.4** | direct, `git` + `tag` + `modules` — pins every dep below |
 | `libro` | **2.11.3** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
-| `bote` / `majra` | **3.8.11** / **2.13.0** | transitive via agnosai 2.2.3; bote's latest is 3.8.15, which moves with the next agnosai release |
-| `kavach` / `tyche` | **3.14.2** / **1.2.2** | transitive via agnosai 2.2.3 |
-| `ai-hwaccel` | **2.5.6** | transitive via agnosai 2.2.3 |
+| `bote` / `majra` | **3.8.15** / **2.13.0** | transitive via agnosai 2.2.4. Neither repo calls a bote function |
+| `kavach` / `tyche` | **3.14.2** / **1.2.2** | transitive via agnosai 2.2.4 |
+| `ai-hwaccel` | **2.5.6** | transitive via agnosai 2.2.4 |
 | `sigil` | **3.13.15** (folded) | folded stdlib (`[deps].stdlib`); agnosai and libro declare the same 3.13.15 |
 | `patra` | **1.16.6** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.16.6 |
 
@@ -151,14 +160,15 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 51 files, 31,488 lines, 1,331 top-level definitions (0.3.0; 30,007 and 1,242 at
-0.2.3), all `agnostic_*`-prefixed. 11,740 of those lines are generated:
-`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (10,903 — five embedded pages and the plugin
+the real surface (0.1.10)** — 55 files, 33,520 lines, 1,420 top-level definitions (0.3.1; 31,488 and 1,331 at
+0.3.0), all `agnostic_*`-prefixed. 12,476 of those lines are generated:
+`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (11,639 — six embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 34 suites, 3,273 assertions, 0 failed** (`cyrius test`, 0.3.0; 2,961 at 0.2.3), plus
-**80 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.2.1) — **and the
-same 34 suites natively on aarch64, with the same per-suite counts** (Raspberry Pi 4). Gates
+**Tests: 38 suites, 3,569 assertions, 0 failed** (`cyrius test`, 0.3.1; 3,273 at 0.3.0), plus
+**96 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+; 80 at 0.3.0) — **and the
+same 38 suites natively on aarch64** (Raspberry Pi 4). Their counts match but for `crews_route`, 247 or 248
+from run to run, because two loops assert once per poll. Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
 shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
 which since 0.1.10 verifies every plugin's copy of the bridge client; the WebGUI's JavaScript; and,
@@ -235,6 +245,8 @@ refactor of any of it.
 | `src/engine/store.cyr` | the one patra handle the durable tables share — **handed out only under the store lock** |
 | `src/engine/crewstore.cyr` | terminal crew outcomes, durable; the crew index the listing reads (0.1.9) |
 | `src/engine/audit.cyr` | the tamper-evident trail, libro over patra; its newest 1024 entries kept for reading (0.1.10) |
+| `src/engine/refusal.cyr` | what a refused request leaves behind: always counted, written within a budget (0.3.1) |
+| `src/auth/tenantlimit.cyr` | a tenant's crews a minute and unfinished crews, reserved before a crew is built (0.3.1) |
 | `src/engine/presets.cyr` | the canonical preset library, parsed once at mount |
 | `src/presets_data.cyr` | **generated** — the 18 documents as Cyrius literals |
 | `src/engine/settings.cyr` | deployment-wide settings, durable — the plugin switches (0.1.7) |
@@ -244,6 +256,7 @@ refactor of any of it.
 | `src/webgui/kit/host.js` | the bridge client every plugin page carries verbatim (0.1.10, ADR 0010) |
 | `src/webgui_data.cyr` | **generated** — the shell and each plugin page, verbatim, with SHA-256 and CSP (0.1.7) |
 | `src/routes/health.cyr` | `/health` and `/ready` |
+| `src/routes/metrics.cyr` | `GET /api/v1/metrics`, and the scraper's token (0.3.1) |
 | `src/routes/crews.cyr` | the crew surface |
 | `src/routes/definitions.cyr` | agent definition CRUD |
 | `src/routes/presets.cyr` | the preset surface, read-only |
@@ -251,6 +264,7 @@ refactor of any of it.
 | `src/routes/webgui.cyr` | `/ui` and `/ui/plugins/{id}` — the pages (0.1.7) |
 | `src/routes/plugindata.cyr` | a plugin's documents — list, read, write, delete (0.1.8) |
 | `src/http/guard.cyr` | the transport rules: a JSON media type, a loopback Host (0.1.8) |
+| `src/http/forwarded.cyr` | which address a request came from, behind a proxy the operator named (0.3.1) |
 | `src/http/schema.cyr` | the API schema, built from the router's rows and the server's own tables; pure (0.1.13, ADR 0015) |
 | `src/cli.cyr` | the command line: no arguments serves, `api schema`, `help`, anything else exits 2 (0.1.13) |
 | `src/server/serve.cyr` | the only module that touches a socket |
@@ -312,8 +326,8 @@ list in it to the API schema. Its prose (statuses, limits, behaviour) is not mac
 CHANGELOG (0.1.13, Verified) records the live run that confirmed it, and a change to this surface
 should re-read the skill.
 
-The table is a flat scan of 31 paths (32 patterns; 21 until 0.3.0). Since 0.1.13 (H5) it is literally a table
-— 32 rows of a pattern and the route id per method, built once at load, which the resolver walks
+The table is a flat scan of 32 paths (33 patterns; 21 until 0.3.0). Since 0.1.13 (H5) it is literally a table
+— 33 rows of a pattern and the route id per method, built once at load, which the resolver walks
 in the old order and `agnostic_route_row_pattern` / `agnostic_route_row_id` expose. Re-measured then,
 in interleaved runs against a copy of the tree with the if-chain restored: 0.107 / 0.87 / 0.72 /
 2.15 µs against 0.108 / 0.92 / 0.78 / 2.19 µs — no slower, a miss ~7% faster, because the walk calls
@@ -472,11 +486,17 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**34 suites, 3,273 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.3.0, 2026-11-06),
-with `CYRIUS_DCE=1` as CI runs them. 0.3.0's additions, the rules mutation-checked: `tests/identity.tcyr`
+**38 suites, 3,569 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.3.1, 2026-11-06),
+with `CYRIUS_DCE=1` as CI runs them. 0.3.1's additions, the rules mutation-checked (51 mutants, CHANGELOG
+[0.3.1]): `tests/forwarded.tcyr` (65), `tests/refusal.tcyr` (54), `tests/tenantlimit.tcyr` (95),
+`tests/metrics.tcyr` (41), `ledger/ring-recycled`, `ledger/ring-clean`, `crews/gateway-address` and the
+`alloc/refusal-budget`, `alloc/tenant-limit` and `alloc/metrics` groups. `scripts/boot-probe.sh` drives the
+proxy, the scraper's token and a tenant's 429 over a real socket, and `scripts/load-test.py` gains a
+tenant cap and readers beside eviction. `tests/webgui/browser/users.e2e.mjs` runs the Users view in real
+Chromium, by hand. `cyrius coverage --exec` reads 98%, against a gate of 95%.
+At 0.3.0: 34 suites and 3,273 assertions. Its additions, the rules mutation-checked: `tests/identity.tcyr`
 (148), `tenancy/definitions`, `store/last-super-race`, `authstore/tokens-from-migration` and the rest of
 `authstore`, `ladder/deployment-routes`, `alloc/authenticated`, and the sweep over all 44 routes.
-`cyrius coverage --exec` is a CI gate at 95%, and reads 98%.
 At 0.2.3: **33 suites, 2,961 assertions, 0 failed**. Its additions, each mutation-checked:
 `tenancy/list-read-cut`, `tenancy/stored-bytes` and `codec/top-str`.
 At 0.2.2: **33 suites, 2,920 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 2026-11-06),
@@ -566,7 +586,7 @@ each failing a named assertion.
 vec), `tests/crewstore.tcyr` (the stored outcome rewritten once, across a reopen),
 `tests/crew_tenancy.tcyr` (the status filter, across pages), `tests/audit.tcyr` (the ring: newest
 first, seeded at open, bounded at 1024, a UTF-8-safe cut, the route and its cursor), `tests/webgui.tcyr`
-(four plugins, each OFF at start, the new permissions on the rung), `tests/serve_mount.tcyr` (sigil
+(five plugins, each OFF at start, the new permissions on the rung), `tests/serve_mount.tcyr` (sigil
 3.13.6's crypto contract); under Node, `kit.test.mjs` (the bridge client every plugin carries),
 `crews`, `library` and `audit` against fakes, and the shell's route parser and navigate gate.
 0.1.9's additions:
@@ -618,7 +638,7 @@ in this repo (`222`) and in agnosai (`8,038`) double-counted it.
 
 ## Dependency layout
 
-**agnosai 2.2.3** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
+**agnosai 2.2.4** (`modules = ["dist/agnosai.cyr"]`), linked in-process rather
 than called over HTTP. Everything crew/task/agent/scheduling-shaped lives there;
 Agnostic owns the product tier. Versions and pins: see the table under
 [Dependencies](#dependencies) above.
@@ -645,9 +665,8 @@ Agnostic is built to stand on its own, not as a required layer.
 
 **P(-1) complete — 2026-08-20**, re-audited at M1, and **re-run in full on 2026-11-05 for 0.2.2**:
 [`2026-11-05-audit.md`](../audit/2026-11-05-audit.md) — 1 CRITICAL, 3 HIGH, 11 MEDIUM and 17 LOW, no
-authentication bypass and no memory corruption. All repaired but the listed open items: one waiting on
-0.3.x (S7, the trusted proxy), one mitigated (idle sockets), and the rest upstream. S3, S4 and S12b
-closed at 0.3.0.
+authentication bypass and no memory corruption. All repaired but the listed open items: one mitigated
+(idle sockets), and the rest upstream. S3, S4 and S12b closed at 0.3.0, and S7 at 0.3.1.
 
 | Criterion | Status |
 |---|---|

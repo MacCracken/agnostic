@@ -1,0 +1,50 @@
+# agnostic as a systemd service. docs/guides/deployment.md walks through it.
+#
+# Install as /etc/systemd/system/agnostic.service. The binary is /usr/local/bin/agnostic, its
+# settings are /etc/agnostic/agnostic.env (mode 0600), and its database and audit trail live in
+# /var/lib/agnostic, which StateDirectory creates and owns.
+
+[Unit]
+Description=agnostic QA agent platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agnostic
+Group=agnostic
+ExecStart=/usr/local/bin/agnostic
+EnvironmentFile=/etc/agnostic/agnostic.env
+StateDirectory=agnostic
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/agnostic
+
+# A refused start is a bad setting, and retrying it only fills the journal. Exit 1 is that refusal.
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=1
+
+# A graceful stop writes the crews the collector has not reached. 1,500 finished crews took 11 s
+# on an x86_64 box, and more on a small one. Killed sooner, they read `interrupted`.
+KillSignal=SIGTERM
+TimeoutStopSec=120
+
+# The binary is static, reads its settings once and writes only under /var/lib/agnostic.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

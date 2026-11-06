@@ -213,4 +213,153 @@ grep -q 'auth.password.reset' "$WORK/body" || fail "the trail does not hold the 
 grep -q "$NEW_PW" "$WORK/body" && fail "the trail holds the password"
 stop
 
+# --- behind a proxy, and what a scraper and a tenant meet (0.3.1) --------------------------------
+
+# refused <what> VAR=value...: a setting that must stop the server before it listens.
+refused() {
+  local what="$1"
+  shift
+  local rc=0
+  env AGNOSTIC_ADDR=127.0.0.1 AGNOSTIC_PORT="$PORT" AGNOSTIC_AUTH=off \
+    AGNOSTIC_DB_PATH="$WORK/refused.patra" AGNOSTIC_AUDIT_PATH="$WORK/refused-audit.patra" \
+    "$@" timeout 5 "$BIN" > "$WORK/refused.log" 2>&1 || rc=$?
+  [ "$rc" -eq 1 ] || fail "$what: exited $rc, not 1"
+  echo "  ok: $what is refused"
+}
+refused "a proxy list of /0" AGNOSTIC_TRUSTED_PROXIES=0.0.0.0/0
+refused "a proxy list with a typo" AGNOSTIC_TRUSTED_PROXIES=10.1.2.3/8
+refused "a short metrics token" AGNOSTIC_METRICS_TOKEN=short
+refused "a tenant limit that is not a number" AGNOSTIC_TENANT_MAX_CREWS=many
+
+SCRAPE=scrape-0123456789abcdef0123456789abcdef
+
+# start_proxied <log> <db> [VAR=value...]: auth required, one bootstrap user, and whatever is named.
+start_proxied() {
+  local log="$1" db="$2"
+  shift 2
+  env AGNOSTIC_ADDR=127.0.0.1 AGNOSTIC_PORT="$PORT" AGNOSTIC_AUTH=required \
+    AGNOSTIC_BOOTSTRAP_EMAIL=probe@example.com AGNOSTIC_BOOTSTRAP_PASSWORD=probe-password-12 \
+    AGNOSTIC_DB_PATH="$WORK/$db.patra" AGNOSTIC_AUDIT_PATH="$WORK/$db-audit.patra" \
+    "$@" "$BIN" > "$WORK/$log.log" 2>&1 &
+  PID=$!
+}
+
+# bad_login <expected status> <what> [curl args...]: a wrong password, with the headers named.
+bad_login() {
+  local want="$1" what="$2"
+  shift 2
+  expect "$want" "$what" -X POST -H 'Content-Type: application/json' "$@" \
+    -d '{"email":"probe@example.com","password":"wrong-password-1"}' "$BASE/api/v1/auth/login"
+}
+
+# drain <what> [curl args...]: wrong passwords until the bucket refuses, with @N@ in an argument
+# replaced by the attempt's number. The burst is 5, and a token comes back every 12 s, so on a machine
+# where a hash takes 2 s the sixth attempt is honestly let in. What matters is that a refusal comes:
+# a caller who got a fresh bucket per request would never see one.
+drain() {
+  local what="$1" n=0 got
+  shift
+  while [ "$n" -lt 10 ]; do
+    n=$((n + 1))
+    got="$(status_of -X POST -H 'Content-Type: application/json' "${@//@N@/$n}" \
+      -d '{"email":"probe@example.com","password":"wrong-password-1"}' "$BASE/api/v1/auth/login")"
+    if [ "$got" = "429" ]; then
+      echo "  ok: $what: refused on attempt $n"
+      return 0
+    fi
+    [ "$got" = "401" ] || fail "$what: attempt $n got $got"
+  done
+  fail "$what: ten attempts and no refusal"
+}
+
+# refused_soon <what> [curl args...]: the bucket is already drained, so a refusal comes within two
+# attempts, one token at most having come back. A fresh bucket would answer 401 twice.
+refused_soon() {
+  local what="$1" n=0 got
+  shift
+  while [ "$n" -lt 2 ]; do
+    n=$((n + 1))
+    got="$(status_of -X POST -H 'Content-Type: application/json' "$@" \
+      -d '{"email":"probe@example.com","password":"wrong-password-1"}' "$BASE/api/v1/auth/login")"
+    if [ "$got" = "429" ]; then
+      echo "  ok: $what"
+      return 0
+    fi
+  done
+  fail "$what: two attempts and no refusal"
+}
+
+# With no list the header is noise: rotating it buys no new bucket.
+start_proxied noproxy noproxy
+wait_up
+drain "a new claimed address each time, with no proxy named" -H 'X-Forwarded-For: 198.51.100.@N@'
+stop
+
+start_proxied proxied proxied AGNOSTIC_TRUSTED_PROXIES=127.0.0.1 AGNOSTIC_METRICS_TOKEN="$SCRAPE" \
+  AGNOSTIC_TENANT_RATE_LIMIT=2
+wait_up
+drain "client A" -H 'X-Forwarded-For: 203.0.113.1'
+bad_login 401 "client B, behind the same proxy, is not locked out" -H 'X-Forwarded-For: 203.0.113.2'
+refused_soon "client A cannot escape by writing to the left of what the proxy adds" \
+  -H 'X-Forwarded-For: 192.0.2.77, 203.0.113.1'
+refused_soon "nor with a line of its own ahead of the proxy's" \
+  -H 'X-Forwarded-For: 192.0.2.78' -H 'X-Forwarded-For: 203.0.113.1'
+bad_login 401 "an IPv6 client has a bucket" -H 'X-Forwarded-For: 2001:db8:1:2::9'
+
+expect 401 "the metrics, with nothing" "$BASE/api/v1/metrics"
+expect 401 "the metrics, with a wrong token" -H 'Authorization: Bearer scrape-wrong' "$BASE/api/v1/metrics"
+expect 200 "the metrics, as a scraper" -H "Authorization: Bearer $SCRAPE" "$BASE/api/v1/metrics"
+grep -q '^agnostic_build_info{version="' "$WORK/body" || fail "the metrics name no version"
+grep -q '^agnostic_refusals_total{reason="login_throttled"} [1-9]' "$WORK/body" \
+  || fail "the metrics do not count the throttled logins"
+expect 401 "and that token opens nothing else" -H "Authorization: Bearer $SCRAPE" "$BASE/api/v1/presets"
+CTYPE="$(curl -s -m 10 -o /dev/null -w '%{content_type}' -H "Authorization: Bearer $SCRAPE" "$BASE/api/v1/metrics")"
+case "$CTYPE" in
+  text/plain*version=0.0.4*) echo "  ok: the metrics say their format" ;;
+  *) fail "the metrics are served as '$CTYPE'" ;;
+esac
+
+expect 200 "a sign-in" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"probe@example.com","password":"probe-password-12"}' "$BASE/api/v1/auth/login"
+TOKEN="$(sed -E 's/.*"token":"([^"]+)".*/\1/' "$WORK/body")"
+CREW='{"name":"probe","agents":[{"key":"a1","role":"r","goal":"g"}],"tasks":[{"description":"d"}]}'
+for n in 1 2; do
+  expect 202 "crew $n of 2 a minute" -X POST -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' -d "$CREW" "$BASE/api/v1/crews"
+done
+LIMITED="$(curl -s -m 10 -D - -o /dev/null -X POST -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d "$CREW" "$BASE/api/v1/crews")"
+printf '%s' "$LIMITED" | grep -q '^HTTP/1.1 429' || fail "the third crew was not refused: $LIMITED"
+printf '%s' "$LIMITED" | grep -qi '^retry-after: [1-9]' || fail "the 429 has no Retry-After: $LIMITED"
+echo "  ok: a tenant over its rate is told when to come back"
+
+expect 404 "the Users view, switched off" "$BASE/ui/plugins/users"
+expect 200 "switching it on" -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"enabled":true}' "$BASE/api/v1/plugins/users"
+expect 200 "the Users view" "$BASE/ui/plugins/users"
+grep -q 'Users · agnostic' "$WORK/body" || fail "/ui/plugins/users is not the Users view"
+
+# More refusals than the budget, so the stop has a count to write.
+for n in $(seq 1 30); do
+  [ "$(status_of "$BASE/api/v1/presets")" = "401" ] || fail "refusal $n was not a 401"
+done
+expect 200 "the trail" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/audit/entries?limit=100"
+grep -q '"auth.denied"' "$WORK/body" || fail "a 401 left nothing in the trail"
+grep -q '"auth.throttled"' "$WORK/body" || fail "a throttled login left nothing in the trail"
+grep -q 'peer=203.0.113.1' "$WORK/body" || fail "the trail does not name the client behind the proxy"
+grep -q '"tenant.throttled"' "$WORK/body" || fail "a tenant's refusal left nothing in the trail"
+grep -q 'wrong-password' "$WORK/body" && fail "the trail holds a password"
+echo "  ok: refusals are in the trail, by the client's address"
+stop
+
+start_proxied proxied-again proxied
+wait_up
+expect 200 "a sign-in after the stop" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"probe@example.com","password":"probe-password-12"}' "$BASE/api/v1/auth/login"
+TOKEN="$(sed -E 's/.*"token":"([^"]+)".*/\1/' "$WORK/body")"
+expect 200 "the trail again" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/audit/entries?limit=100"
+grep -q '"audit.refusals_held"' "$WORK/body" || fail "the stop did not write what was held"
+echo "  ok: a stop writes what the budget held back"
+stop
+
 echo "boot-probe: OK"

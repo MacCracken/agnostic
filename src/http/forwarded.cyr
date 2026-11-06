@@ -1,0 +1,297 @@
+# agnostic/http/forwarded — which address a request came from, behind a proxy the operator named.
+#
+# ## Why this exists
+#
+# TLS belongs to a reverse proxy, so behind one every request arrives from the proxy's address, and
+# the login bucket is per source. About 5 anonymous requests a minute then lock out every login
+# (audit S7). `X-Forwarded-For` carries the client's address, and it is also caller-supplied:
+# honoured from anyone, it mints a fresh bucket per request and removes the control.
+#
+# ## ⚠ The rule: rightmost untrusted, and only from a trusted peer
+#
+# A proxy appends the address it saw. So the right end of the header is written by the hops the
+# operator trusts, and everything left of the last trusted hop was written by the caller.
+#
+#   1. A socket peer not on `AGNOSTIC_TRUSTED_PROXIES` is the answer, whatever it sent.
+#   2. Otherwise walk the header from the right, skipping trusted addresses. The first address that
+#      is not trusted is the client.
+#   3. A token that does not parse stops the walk: nothing left of it can be believed. The answer
+#      is then the proxy's address, so the caller shares the proxy's bucket and gains nothing.
+#
+# ⛔ **Taking the leftmost address is the bug this module exists to avoid.** It is what most
+# examples show, and a client writes it. `X-Forwarded-For: 1.1.1.1` through nginx reads
+# `1.1.1.1, <the real client>`, so the leftmost reading gives an attacker any bucket they ask for.
+#
+# ## ⚠ Every line of the header, not the first
+#
+# nginx folds a client's header into its own line. HAProxy's `option forwardfor` adds a new one,
+# after the client's. `sandhi_server_find_header_a` answers the first line, which in that second
+# case is exactly the one the caller wrote, so this reads the raw request. RFC 9110 §5.3 makes
+# repeated lines equal to one comma-joined value, in order.
+#
+# ## Why one forward pass
+#
+# Walking from the right over several lines needs them stored. A forward pass gives the same
+# answer with no allocation: remember the last untrusted address, and forget it at a token that
+# does not parse. Whatever follows either replaces it or is trusted.
+#
+# `Forwarded` (RFC 7239) and `X-Real-IP` are not read. One header, that every proxy here can write,
+# is one thing to get right.
+#
+# ## An IPv6 client is a /64
+#
+# The bucket key is an integer. A proxy can reach a client over IPv6 even though this server's own
+# socket is IPv4, and one host usually holds a whole /64, so the prefix is what identifies it. A
+# bucket per full address would hand each caller 2^64 buckets. `::ffff:a.b.c.d` is the IPv4 address
+# it holds.
+
+var _agnostic_proxies = 0;
+
+# Name the trusted proxies, a table from `agnostic_config_parse_proxies`, or 0. Mount time only.
+fn agnostic_forwarded_set_proxies(t): i64 {
+    _agnostic_proxies = t;
+    return 0;
+}
+
+# The value of hex digit `c`, or -1.
+fn _agnostic_hex_digit(c): i64 {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    if (c >= 97 && c <= 102) { return c - 87; }
+    if (c >= 65 && c <= 70) { return c - 55; }
+    return 0 - 1;
+}
+
+# The packed IPv4 address in `n` bytes at `d`, or -1. Strict: `net_parse_ipv4`.
+fn _agnostic_ipv4_span(d, n): i64 {
+    if (n < 7 || n > 15) { return 0 - 1; }
+    var text[16];
+    memcpy(&text, d, n);
+    store8(&text + n, 0);
+    return net_parse_ipv4(&text);
+}
+
+# The bucket key of the IPv6 address in `n` bytes at `d`: its /64 as an integer, the packed IPv4
+# address for a mapped one, or 0 when it does not parse.
+fn _agnostic_ipv6_key(d, n): i64 {
+    var g: i64[8];
+    var gi = 0;
+    while (gi < 8) { store64(&g + gi * 8, 0); gi = gi + 1; }
+
+    var count = 0;
+    var gap = 0 - 1;
+    var i = 0;
+    if (n >= 2 && load8(d) == 58 && load8(d + 1) == 58) {
+        gap = 0;
+        i = 2;
+    } else {
+        if (n >= 1 && load8(d) == 58) { return 0; }
+    }
+    while (i < n) {
+        var start = i;
+        var v = 0;
+        var digits = 0;
+        while (i < n && _agnostic_hex_digit(load8(d + i)) >= 0) {
+            v = v * 16 + _agnostic_hex_digit(load8(d + i));
+            digits = digits + 1;
+            if (digits > 4) { return 0; }
+            i = i + 1;
+        }
+        if (i < n && load8(d + i) == 46) {
+            # A dotted tail takes the last two groups, and nothing can follow it.
+            var v4 = _agnostic_ipv4_span(d + start, n - start);
+            if (v4 < 0 || count > 6) { return 0; }
+            var be = agnostic_ip_order(v4);
+            store64(&g + count * 8, (be >> 16) & 0xFFFF);
+            store64(&g + (count + 1) * 8, be & 0xFFFF);
+            count = count + 2;
+            i = n;
+        } else {
+            if (digits == 0 || count >= 8) { return 0; }
+            store64(&g + count * 8, v);
+            count = count + 1;
+            if (i < n) {
+                if (load8(d + i) != 58) { return 0; }
+                i = i + 1;
+                if (i < n && load8(d + i) == 58) {
+                    if (gap >= 0) { return 0; }
+                    gap = count;
+                    i = i + 1;
+                } else {
+                    if (i == n) { return 0; }
+                }
+            }
+        }
+    }
+
+    if (gap >= 0) {
+        if (count >= 8) { return 0; }
+        # Slide what followed the `::` to the end. From the top, since the two ranges can overlap.
+        var tail = count - gap;
+        var t = 1;
+        while (t <= tail) {
+            var from = &g + (count - t) * 8;
+            var to = &g + (8 - t) * 8;
+            var moved = load64(from);
+            store64(from, 0);
+            store64(to, moved);
+            t = t + 1;
+        }
+    } else {
+        if (count != 8) { return 0; }
+    }
+
+    var high = load64(&g) | load64(&g + 8) | load64(&g + 16) | load64(&g + 24) | load64(&g + 32);
+    if (high == 0 && load64(&g + 40) == 0xFFFF) {
+        var hi = load64(&g + 48);
+        var lo = load64(&g + 56);
+        return ((hi >> 8) & 0xFF) | ((hi & 0xFF) << 8) | (((lo >> 8) & 0xFF) << 16) | ((lo & 0xFF) << 24);
+    }
+    return (load64(&g) << 48) | (load64(&g + 8) << 32) | (load64(&g + 16) << 16) | load64(&g + 24);
+}
+
+# The bucket key of one header token in `n` bytes at `d`, or 0 when it does not parse.
+#
+# A proxy may write `[v6]`, `[v6]:port` or `a.b.c.d:port`. The port goes, because it changes per
+# connection and would be a fresh bucket each time.
+fn _agnostic_xff_token(d, n): i64 {
+    if (n == 0) { return 0; }
+    if (load8(d) == 91) {
+        var close = 1;
+        while (close < n && load8(d + close) != 93) { close = close + 1; }
+        if (close >= n) { return 0; }
+        return _agnostic_ipv6_key(d + 1, close - 1);
+    }
+    var colons = 0;
+    var first = 0 - 1;
+    var dots = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i);
+        if (c == 58) {
+            colons = colons + 1;
+            if (first < 0) { first = i; }
+        }
+        if (c == 46) { dots = dots + 1; }
+        i = i + 1;
+    }
+    if (colons == 0 || (colons == 1 && dots == 3)) {
+        var len = n;
+        if (colons == 1) { len = first; }
+        var v4 = _agnostic_ipv4_span(d, len);
+        if (v4 <= 0) { return 0; }
+        return v4;
+    }
+    return _agnostic_ipv6_key(d, n);
+}
+
+# Whether a bucket key is a plain IPv4 address. An IPv6 prefix sits above the low 32 bits.
+fn _agnostic_key_is_ipv4(k): i64 {
+    if ((k >> 32) == 0) { return 1; }
+    return 0;
+}
+
+# Walk the comma-separated tokens in `n` bytes at `d`, from `client`, the answer so far. Answers
+# the new answer: the last address that is not trusted, or 0 past a token that does not parse.
+fn _agnostic_xff_walk(d, n, client): i64 {
+    var i = 0;
+    while (i <= n) {
+        var e = i;
+        while (e < n && load8(d + e) != 44) { e = e + 1; }
+        var s = i;
+        var f = e;
+        while (s < f && (load8(d + s) == 32 || load8(d + s) == 9)) { s = s + 1; }
+        while (f > s && (load8(d + f - 1) == 32 || load8(d + f - 1) == 9)) { f = f - 1; }
+        var k = _agnostic_xff_token(d + s, f - s);
+        if (k == 0) {
+            client = 0;
+        } else {
+            var skip = 0;
+            if (_agnostic_key_is_ipv4(k) == 1) { skip = agnostic_proxy_trusted(_agnostic_proxies, k); }
+            if (skip == 0) { client = k; }
+        }
+        i = e + 1;
+    }
+    return client;
+}
+
+# Whether the `n` bytes at `d` begin `x-forwarded-for:`, in any case. 1 or 0.
+fn _agnostic_is_xff_line(d, n): i64 {
+    var name = "x-forwarded-for:";
+    var m = 16;
+    if (n < m) { return 0; }
+    var i = 0;
+    while (i < m) {
+        var c = load8(d + i);
+        if (c >= 65 && c <= 90) { c = c + 32; }
+        if (c != load8(name + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# The address request `buf` of `blen` bytes came from, given that its socket peer is `peer`: the
+# bucket key for the rate limit and the address the audit trail records. See the header.
+fn agnostic_client_addr(peer, buf, blen): i64 {
+    if (agnostic_proxy_trusted(_agnostic_proxies, peer) == 0) { return peer; }
+    var client = 0;
+    var i = 0;
+    # Past the request line. A blank line ends the headers, and the body is not ours to read.
+    while (i < blen && load8(buf + i) != 10) { i = i + 1; }
+    i = i + 1;
+    while (i < blen) {
+        var e = i;
+        while (e < blen && load8(buf + e) != 10) { e = e + 1; }
+        var f = e;
+        if (f > i && load8(buf + f - 1) == 13) { f = f - 1; }
+        if (f == i) { break; }
+        if (_agnostic_is_xff_line(buf + i, f - i) == 1) {
+            client = _agnostic_xff_walk(buf + i + 16, f - i - 16, client);
+        }
+        i = e + 1;
+    }
+    if (client == 0) { return peer; }
+    return client;
+}
+
+# One hex group of a /64, with no leading zeros.
+fn _agnostic_add_group_a(a, sb, g): i64 {
+    var digits = "0123456789abcdef";
+    var one[2];
+    store8(&one + 1, 0);
+    var shift = 12;
+    var started = 0;
+    while (shift >= 0) {
+        var nib = (g >> shift) & 0xF;
+        if (nib != 0 || started == 1 || shift == 0) {
+            store8(&one, load8(digits + nib));
+            str_builder_add_cstr_a(a, sb, &one);
+            started = 1;
+        }
+        shift = shift - 4;
+    }
+    return 0;
+}
+
+# Address `ip`, as `agnostic_client_addr` gives it, as text in `a`: dotted, or the /64 it stands for.
+fn agnostic_addr_text_a(a, ip): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    if (_agnostic_key_is_ipv4(ip) == 1) {
+        str_builder_add_int_a(a, sb, ip & 0xFF);
+        str_builder_add_cstr_a(a, sb, ".");
+        str_builder_add_int_a(a, sb, (ip >> 8) & 0xFF);
+        str_builder_add_cstr_a(a, sb, ".");
+        str_builder_add_int_a(a, sb, (ip >> 16) & 0xFF);
+        str_builder_add_cstr_a(a, sb, ".");
+        str_builder_add_int_a(a, sb, (ip >> 24) & 0xFF);
+        return str_builder_build_a(a, sb);
+    }
+    var shift = 48;
+    while (shift >= 0) {
+        _agnostic_add_group_a(a, sb, (ip >> shift) & 0xFFFF);
+        if (shift > 0) { str_builder_add_cstr_a(a, sb, ":"); }
+        shift = shift - 16;
+    }
+    str_builder_add_cstr_a(a, sb, "::/64");
+    return str_builder_build_a(a, sb);
+}

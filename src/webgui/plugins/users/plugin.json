@@ -1,0 +1,9 @@
+{
+  "id": "users",
+  "name": "Users",
+  "description": "Who can sign in, and with what role: create users, change a role, set a password, revoke an API key, and, for a super administrator, tenants and their limits. Administrators only.",
+  "version": "0.1.0",
+  "data": "live",
+  "entry": "index.html",
+  "permissions": ["users:read", "users:write", "tenants:read", "tenants:write"]
+}

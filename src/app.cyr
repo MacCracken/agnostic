@@ -38,6 +38,7 @@ include "src/http/codec.cyr"
 # The two transport rules the ladder applies to socket requests (0.1.8). Pure
 # functions over header values; reads `strcase`'s folding only.
 include "src/http/guard.cyr"
+include "src/http/forwarded.cyr"
 
 # The compiled-in preset library (M3). Generated from `src/presets/*.json` by
 # `scripts/gen-presets.sh`; pure data with no dependencies, so it goes early.
@@ -64,6 +65,7 @@ include "src/auth/jwt.cyr"
 # Tenancy and the role->permission table. `perm` reads route ids, so it follows
 # `http/router.cyr`; `tenant` reads `_agnostic_auth_str_a` from `auth/store`.
 include "src/auth/tenant.cyr"
+include "src/auth/tenantlimit.cyr"
 include "src/auth/perm.cyr"
 # Credential -> principal. Reads `auth/jwt` and `auth/store`, and is read by the
 # dispatch ladder in `http/router.cyr`.
@@ -85,6 +87,7 @@ include "src/engine/ledger.cyr"
 # `crew.cyr` and the definition routes both do, and a `var` referenced from a
 # module included earlier resolves to 0.
 include "src/engine/audit.cyr"
+include "src/engine/refusal.cyr"
 include "src/engine/reject.cyr"
 include "src/engine/agentdef.cyr"
 include "src/engine/request.cyr"
@@ -104,6 +107,7 @@ include "src/webgui/plugins.cyr"
 include "src/routes/auth.cyr"
 include "src/routes/identity.cyr"
 include "src/routes/health.cyr"
+include "src/routes/metrics.cyr"
 include "src/routes/crews.cyr"
 include "src/routes/definitions.cyr"
 include "src/routes/presets.cyr"
