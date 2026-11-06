@@ -2,7 +2,7 @@
 name: agnostic
 description: "Drive an agnostic server over its HTTP API: check readiness, submit a crew of agents and tasks, follow its progress with the event cursor, read its results, token usage and cost, list or cancel crews, and look up presets and agent definitions. Use whenever the user asks to run, watch, inspect, cost or cancel an agnostic crew, or to script against an agnostic server (AGNOSTIC_URL, by default http://127.0.0.1:8000). Not for building or changing agnostic's own source code."
 license: GPL-3.0-only
-compatibility: "Needs curl or another HTTP client, and network access to the agnostic server. Describes the /api/v1 crew API of the agnostic 0.1 line, from 0.1.13."
+compatibility: "Needs curl or another HTTP client, and network access to the agnostic server. Describes the /api/v1 crew API of agnostic, from 0.1.13 on."
 ---
 
 # Driving agnostic
@@ -407,6 +407,17 @@ means someone changed it since — read it again rather than overwrite their cha
 - A crew has at most 100 agents and 1,000 tasks, 10,000 bytes per string, 64 dependencies per
   task and 64 tools per agent.
 
+## Routes this skill does not teach
+
+The server answers these as well. None is part of driving a crew, so leave them alone unless the
+user asks:
+
+- **The audit trail**, for an administrator: `GET /api/v1/audit`, `GET /api/v1/audit/entries`.
+- **WebGUI plugins and their documents:** `GET /api/v1/plugins`, `PUT /api/v1/plugins/{id}`,
+  `GET /api/v1/plugins/{id}/data`, `GET /api/v1/plugins/{id}/data/{key}`,
+  `PUT /api/v1/plugins/{id}/data/{key}`, `DELETE /api/v1/plugins/{id}/data/{key}`.
+- **The WebGUI itself:** `GET /ui`, `GET /ui/plugins/{id}`.
+
 ## Where these rules come from
 
 In the agnostic repository, `docs/api/generated/schema.json` is the API as the server itself
@@ -416,4 +427,5 @@ loopback Host and JSON-only writes), `0008` (tenancy, the cursor listing and the
 `0009` (the event cursor), `0012` (a cancelled crew keeps its results) and `0013` (a crew a restart
 interrupted); `docs/architecture/001` says what survives a restart. `scripts/check-skill.py` checks
 this file against the schema: every route, method, query parameter and header it uses, every
-response example, and each list marked `<!-- schema: … -->`.
+response example, each list marked `<!-- schema: … -->`, and that it names every route the server
+answers.

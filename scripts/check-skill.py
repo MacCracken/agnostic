@@ -28,7 +28,10 @@ parsing Cyrius. For every skills/*/SKILL.md this checks:
     only keys that route answers with, and has every key it always answers with;
   * after a `<!-- schema: a.b ... -->` line, the block (up to the next blank line) names
     every value of each schema list in backticks. A field, refused field, role or status
-    the server gains fails here until the skill says what it is.
+    the server gains fails here until the skill says what it is;
+  * every route of the schema, with its method, is named: taught, or listed under the skill's
+    "Routes this skill does not teach". A route the server gains fails here until someone
+    decides which. With several skills, naming it in any one is enough.
 
 What it cannot see: prose. A status code, a limit or a sentence about behaviour can still
 drift; the schema leaves out per-handler 4xx codes and nested shapes (`docs/api/README.md`).
@@ -62,6 +65,11 @@ def resolve(path, table):
                 (p.startswith(':') and PARAM_SEG.match(w)) or p == w for p, w in zip(ps, want)):
             return pat, methods
     return None, {}
+
+
+def route_key(method, pat):
+    """One route, whichever way it is spelled: `/ui` and `/ui/` are both answered, and name one page."""
+    return method, pat.strip('/')
 
 
 def frontmatter(text):
@@ -165,14 +173,14 @@ def check_markers(rel, lines, first, doc, table):
 
 
 def check(path, doc, table):
-    """Every finding for one SKILL.md, and (paths, examples, lists) checked."""
+    """Every finding for one SKILL.md, (paths, examples, lists) checked, and the routes named."""
     try:
         rel = path.resolve().relative_to(ROOT)
     except ValueError:
         rel = path
     fm, body, first = frontmatter(path.read_text())
     if fm is None:
-        return [f'{rel}: no YAML frontmatter between --- lines'], (0, 0, 0)
+        return [f'{rel}: no YAML frontmatter between --- lines'], (0, 0, 0), set()
     errs = []
     for k in sorted(set(fm) - ALLOWED_KEYS):
         errs.append(f'{rel}: frontmatter key {k!r} is not an Agent Skills field')
@@ -193,7 +201,7 @@ def check(path, doc, table):
 
     globals_ = set(doc['headers'])
     joined = re.sub(r'\\\n\s*', ' ', body)   # a curl command continued with a backslash
-    paths = 0
+    paths, named = 0, set()
     for m in PATH_RE.finditer(joined):
         paths += 1
         pat, methods = resolve(m.group(1), table)
@@ -212,6 +220,8 @@ def check(path, doc, table):
         pat, methods = resolve(m.group(2), table)
         if pat and m.group(1) not in methods:
             errs.append(f'{rel}: {m.group(1)} {m.group(2)}: {pat} answers {", ".join(sorted(methods))}')
+        elif pat:
+            named.add(route_key(m.group(1), pat))
     for line in joined.splitlines():
         if not re.search(r'\bcurl\s', line):
             continue
@@ -226,14 +236,13 @@ def check(path, doc, table):
             if route is None:
                 errs.append(f'{rel}: curl {meth} {m.group(1)}: {pat} answers {", ".join(sorted(methods))}')
                 continue
+            named.add(route_key(meth, pat))
             for h in sent:
                 if h not in globals_ and h not in route['headers']:
                     errs.append(f'{rel}: curl {meth} {pat} sends {h!r}, a header the server does not read')
 
     e, examples, lists = check_markers(rel, body.split('\n'), first, doc, table)
-    return errs + e, (paths, examples, lists)
-
-
+    return errs + e, (paths, examples, lists), named
 
 def main(argv):
     schema = ROOT / SCHEMA_REL
@@ -247,11 +256,16 @@ def main(argv):
     if not skills:
         print('skill: no skills/*/SKILL.md to check')
         return 1
-    errs, totals = [], [0, 0, 0]
+    errs, totals, named = [], [0, 0, 0], set()
     for s in skills:
-        e, counts = check(s, doc, table)
+        e, counts, n = check(s, doc, table)
         errs += e
         totals = [a + b for a, b in zip(totals, counts)]
+        named |= n
+    for r in doc['routes']:
+        if route_key(r['method'], r['path']) not in named:
+            errs.append(f'{r["method"]} {r["path"]} is a route no skill names: teach it, or list it '
+                        f'under "Routes this skill does not teach"')
     for e in errs:
         print(e)
     if errs:

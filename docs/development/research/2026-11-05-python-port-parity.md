@@ -80,12 +80,12 @@ Nothing to port.
 
 ### Questions for the user
 
-Each of these is on the release plan. What is left is a form only you can pick, so each is an ask, with no recommendation.
+All four were on the release plan and needed a form only you could pick. All four were answered on 2026-11-05.
 
-1. **Provisioning (G1):** routes, an `agnostic admin` command, or both?
-2. **A crew's target (G4):** a task field, or prose in `description`?
-3. **Reports (G5):** do they read crew outcomes, or a result model of their own (sessions, results, metrics)?
-4. **MCP surface (M7):** the 34 operations the former code exposed, the 38 QA classes, or both? They overlap in no name (§7).
+1. **Provisioning (G1):** answered 2026-11-05: routes, plus one recovery command. See the roadmap's *Settled decisions*.
+2. **A crew's target (G4):** answered 2026-11-05: a checked field on the crew, which a task may override. See the roadmap's *Settled decisions*.
+3. **Reports (G5):** answered 2026-11-05: crew outcomes, with no result model of their own. See the roadmap's *Settled decisions*.
+4. **MCP surface (M7):** answered 2026-11-05: agnostic's own API, beside the 38 QA tools, which were already settled. The former 34 are not the list (§7). See the roadmap's *Settled decisions*.
 
 ## 4. Area by area
 
@@ -544,7 +544,7 @@ None was ever registered (§3.15). Two names resolve in agnostic, and 34 do not.
 
 ### MCP tools are a different list
 
-`webgui/routes/mcp.py` declares **34** MCP tools, and **none of them is one of the 38**. They are operations, such as `agnostic_submit_task` and `agnostic_gpu_status`. M7 says the "full QA tool surface" of 38 is settled, so M7 needs to say whether `/mcp` exposes those 38, these 34, or both. Most of the 34 route to surfaces in G1, G5, G7, G9 and G10, so the answer shapes those gaps too.
+`webgui/routes/mcp.py` declares **34** MCP tools, and **none of them is one of the 38**. They are operations, such as `agnostic_submit_task` and `agnostic_gpu_status`. M7 says the "full QA tool surface" of 38 is settled. Answered 2026-11-05: `/mcp` carries those 38 beside tools that mirror agnostic's own routes, and these 34 are not the list. Most of them route to surfaces in G1, G5, G7, G9 and G10.
 
 | Category | Tools |
 |---|---|

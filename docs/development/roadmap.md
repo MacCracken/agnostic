@@ -55,7 +55,8 @@ deployment has one user, no issuable API key, and tokens that die on restart, an
 "a consumer green against the published API" cannot be met until it is done. Details under *Identity
 and deployment*.
 
-- [ ] **Provisioning** (G1): users, API keys and tenants, with an ADR.
+- [ ] **Provisioning** (G1): routes for users, API keys and tenants, plus one offline recovery command,
+  with an ADR.
 - [ ] **`AGNOSTIC_JWT_SECRET`** (G2), length-checked, so a restart does not log everyone out.
 - [ ] **Scope what is not scoped**: agent definitions, and ADMIN against SUPER (audit S3, S4). Both are
   latent today and become real the moment a second user can exist, so they ship together with it.
@@ -78,8 +79,14 @@ class name and a `focus`, so each tool is designed for agnostic as it is written
 - [ ] **M6**: every one of the 38 names resolved, written or struck, with a miss an error.
 - [ ] **The tool-registry seam** (`handoff.md` §8), decided with F1.
 - [ ] **The reviewer preset**, once F9 hands a dependent task its dependencies' outputs (agnosai 2.4.x).
-- [ ] **A crew's target** (G4): its form is question 2 in the parity review.
+- [ ] **A crew's target** (G4): a checked `target` on the crew that a task may override, and the
+  operator's list of hosts a deployment may test. Details under M6.
 - [ ] **Stored definitions in a crew body** (G4), so a client names one and does not re-send it.
+- [ ] **A task's `output_schema`**, forwarded to agnosai, which the reviewer preset and M8's structured
+  result both need.
+- [ ] **Field types and required-ness in the API schema**, as tables the decoders and the schema both
+  read. M7's input schemas need them, and the crew body widens on this line anyway. Details under
+  *API schema*.
 - [ ] **`GET /tools`** (G10), which the viability gate wants.
 - [ ] **The engine features with no route** (G10): definition versions and rollback, package export and
   import, GPU, fleet, the `team` crew spec and `recommend_preset`, which needs an owner. Definitions
@@ -91,12 +98,12 @@ class name and a `focus`, so each tool is designed for agnostic as it is written
 
 Waits on agnosai 2.6.x for MCP 2026-07-28 and A2A v1.0.x.
 
-- [ ] **M7**: `/mcp`, `/api/v1/mcp/invoke`, A2A, and the daimon registrar. Which surface it exposes is
-  question 4 in the parity review.
+- [ ] **M7**: `/mcp`, `/api/v1/mcp/invoke`, A2A, and the daimon registrar. MCP mirrors agnostic's API and
+  carries the 38 QA tools, each run as a job. Details under M7.
 - [ ] **The AGNOS clients** (G13): memory, RAG, reasoning, recording, RPC, screen and vector, beside the
   daimon registrar.
 - [ ] **The completion webhook** (G3), on agnosai's guarded fetch: how a CI job learns a run ended.
-- [ ] **M8**: exports, trends and comparison. What reports read is question 3 in the parity review.
+- [ ] **M8**: exports, trends and comparison, read from crew outcomes and rendered on request.
 - [ ] **Scheduled reports and delivery** (G6), on M8 and the webhook.
 - [ ] **Health alerts** (G8), on the webhook.
 - [ ] **M9**: streaming crew events, reports in the shell, and the "which crew needs me?" badge, which
@@ -107,6 +114,10 @@ Waits on agnosai 2.6.x for MCP 2026-07-28 and A2A v1.0.x.
 
 The v1.0 criteria below, the exported symbols' half of the API freeze, a security audit re-run, and
 the removal of `python-port/`.
+
+- [ ] **What the API schema must hold before the freeze:** nested response shapes, per-handler 4xx
+  statuses and a machine-readable code for the 422 refusals. A change to one does not show in the
+  snapshot diff, so it would get past the freeze. Details under *API schema*.
 
 ## Removing `python-port/` — once the release plan is finished and tagged
 
@@ -124,7 +135,7 @@ Nothing in the repo reads the tree: no script, suite or CI step, and `gen-preset
 
 - [ ] Tag the parent commit, and put that rev in `ORACLE-AUDIT.md`'s header, so its citations resolve.
 - [ ] `git rm -r python-port`, and clear its 8 untracked `benchmarks/__pycache__/*.pyc` from disk.
-- [ ] Edit `scripts/bench-history.sh:119`, or the mention returns to `BENCHMARKS.md`.
+- [ ] Edit `scripts/bench-history.sh:128`, or the mention returns to `BENCHMARKS.md`.
 - [ ] Update the prose that names it: `CONTRIBUTING.md`, `ORACLE-AUDIT.md`, `CYRIUS-PORT-BRIEF.md`,
   `SECURITY.md`, `docs/adr/0001…`, `docs/audit/*`, `state.md`, `handoff.md`, this file, and
   `src/routes/health.cyr:12`. All of it is stale prose: none of it breaks anything.
@@ -145,7 +156,7 @@ Nothing in the repo reads the tree: no script, suite or CI step, and `gen-preset
       are invalid, so parity is assessed on coverage and behaviour, not on its timings.
 - [x] Benchmarks captured in `BENCHMARKS.md` with a CSV trail — met at 0.1.16: all 18 benchmarks,
       run on the clean tagged tree (`024be8b`, 2026-10-08), the first full run since 0.1.0's one
-      row. Keep it met: re-run `./scripts/bench-history.sh` right after each tag.
+      row. Process step 7 keeps it met: each release records its rows before its tag.
 - [ ] At least one consumer green against the published API — Agnostic's own, not a
       pre-existing client's contract (see M7)
 - [ ] CHANGELOG complete from v0.1.0 onward
@@ -195,6 +206,24 @@ and an agent's `focus`. The rest of that intent is in the Python tool classes, t
     what it summarised) applies; (2) agnostic forwards a task's `output_schema` (agnosai validates
     and retries against it already; agnostic's task allow-list has no slot), a widening of the
     public request ahead of the v1.0 freeze; (3) the preset and its documentation.
+- [ ] **A crew's target (G4).** The form is settled (see *Settled decisions*); the ADR comes with the
+  work.
+  - **`"target": {"url": "…"}` on the crew body, and the same field on a task overrides it for that
+    task.** One checker serves both: `http` or `https` only, a length cap, and userinfo refused,
+    because the context reaches the model. It is an object so that a target that is not a URL can add
+    a key without a break.
+  - **It takes ADR 0017's path:** checked at the door, forwarded into each task's context, shown by the
+    plan route. agnosai renders the context into the prompt, so the model reads it with no change
+    there. The crew's target also goes in `agnostic_crew_index`, so a listing and a report can say what
+    was tested. That needs a store migration.
+  - **`AGNOSTIC_TARGET_HOSTS`:** the hosts a deployment may test, set by its operator. A target outside
+    the list is refused at the door, and with no list set every target is. A target is where load and
+    security tools point, so WRITE alone must not choose any host the server can reach, or someone
+    else's site. A crew with no target is unaffected.
+  - **A tool call is held to the target** once F1 lets agnostic refuse a call, and a declared private
+    host gets past `agnosai_is_safe_url` the same way. Both are under *Waiting on agnosai*.
+  - **A target behind a login** needs a credential that never enters the crew body, the task context or
+    the store. Its form is decided with the first tool that needs one.
 
 **Prerequisite:** `yantra` needs `Page.captureScreenshot` on its CDP surface.
 
@@ -236,6 +265,25 @@ non-MCP-aware caller actually want. The full QA tool surface (D4's "28"; 38 dist
 M6's count) is settled: the 5–8 figure in `first-party-standards.md:625` is a soft guideline for
 typical projects, not a ceiling for platform-scale ones.
 
+**The surface is agnostic's API plus the 38 QA tools** (settled 2026-11-05, see *Settled decisions*).
+The ADR comes with the work.
+
+- [ ] **Operations mirror the routes.** An MCP tool calls the same handler as its route, at the same
+  permission, and a route that tool clients need gets a tool. Today that is `agnostic_crew_run`,
+  `agnostic_crew_status`, `agnostic_crew_list`, `agnostic_crew_cancel`, `agnostic_crew_events`,
+  `agnostic_preset_list`, `agnostic_definition_list`, `agnostic_definition_create` and
+  `agnostic_health`, and reports join at M8. Names follow the first-party `{project}_{noun}` rule, the
+  38 take the same prefix, and each tool has a JSON schema, a happy-path test and an error test.
+- [ ] **agnostic owns dispatch, on bote.** `agnosai_route_mcp_a` runs a tool on the request worker with
+  no per-tool permission, tenant scope or target check, so it cannot be mounted as it stands.
+  `tools/list` shows only what the caller may call.
+- [ ] **A QA tool call runs as a job.** It returns a handle the client polls (the MCP Tasks item above)
+  and takes the same host list, tenant scope, audit entry and stored outcome as a crew, so reports see
+  it. A load test can run for 300 s against 16 default workers, so it cannot run on a request worker.
+  The ADR decides how a job fits the ledger, which is built around engine crews, and whether a job
+  involves a model. The caller has already named the tool and its inputs, so the leaning is no: the
+  result is deterministic and costs no tokens.
+
 **Agnostic stands on its own** (CYRIUS-PORT-BRIEF §7.3). An earlier draft treated SecureYeoman's
 live 43-tool client as a *frozen wire contract* this milestone had to preserve, on the assumption SY
 reaches the engine through Agnostic. It does not have to: **SY can consume AgnosAI directly**, since
@@ -253,9 +301,40 @@ now and expensive to retrofit.
 
 ### M8 — Reports
 
-- HTML + CSV + JSON export; quality trends and comparison reports
+- HTML, CSV, JSON and PDF export; quality trends and comparison reports
 
-**Decided 2026-08-20 — HTML + CSV + JSON only. No PDF in 1.0; wait for `bayan_pdf_*`.**
+**Reports read crew outcomes** (settled 2026-11-05, see *Settled decisions*). A crew is the session, so
+there is no separate result model and no route that writes results. What that needs, with the ADR:
+
+- [ ] **A structured result on each task.** A stored outcome holds status, timings, tokens, cost and
+  free-text output, and `completed` means the model answered, not that the system under test passed.
+  agnostic owns one QA result shape, carried through a task's `output_schema` (0.4.x), so trends work
+  across presets. The shape is designed in M8's ADR, for the user's review.
+- [ ] **Measured numbers from tools.** A load test's p99 is a measurement and a model saying "all passed"
+  is a claim, and a report labels which is which, as the swarm views label SIM and LIVE. It needs F1 to
+  keep each tool's result on the task result (*Waiting on agnosai*).
+- [ ] **Counts in `agnostic_crew_index`,** beside the crew's `target` (M6) and in the same store
+  migration, so trends read small rows and do not parse every outcome under the store lock.
+- [ ] **Rendered on request, as HTML, CSV, JSON or PDF.** Outcomes are write-once, so a report can be built
+  from one whenever it is asked for. No file is stored, and a report in another tenant answers 404 like
+  the crew does.
+
+Until the structured result lands, a report can show only status, time, cost and text.
+
+**PDF is in 1.0, on bayan** (settled 2026-11-05, replacing the 2026-08-20 decision of HTML, CSV and
+JSON only).
+
+- [ ] **The PDF form, on `bayan_pdf_*`.** bayan handles accented text and tables, the two things that
+  stopped the mneme attempt (probed and rendered 2026-11-05). What it lacks is filed with bayan (see
+  *Upstream*). If that has not landed when M8 starts, agnostic does the following:
+  - reads `bayan_pdf_doc_error_count` before it writes, because a run the writer refuses disappears
+    from a file that reports success;
+  - breaks a long token itself, because `bayan_pdf_wrap` lets a URL or a hash run off the page;
+  - writes its own flow and table layer;
+  - encodes with `PDF_WINANSI_SUBSTITUTE` and says on the first page how many characters were replaced.
+    A report is never refused for its text, and its HTML form keeps every character.
+
+**Why not mneme** (2026-08-20, still true):
 
 - "Lift mneme" is not the cheap proven option the brief assumed. It was built and run: a genuine
   PDF 1.4, 21 assertions green. But probed with QA-shaped input it fails on the two things a QA
@@ -268,16 +347,12 @@ now and expensive to retrofit.
   ImportError path writes **HTML into a `.pdf` file**, `_count_pages` is a hardcoded `return 1`,
   and `include_charts` is never read.
 
-- [ ] ⚠ **The decision's premise is stale.** It waits for `bayan_pdf_*`; bayan 1.5.0 (2026-08-21)
-  shipped it, and the vendored `lib/bayan.cyr` holds `bayan_pdf_new_a` and `bayan_pdf_write_file`,
-  so the old follow-up (file a writer-only `bayan_pdf_*` request) is moot. Whether reports gain a
-  PDF form in 1.0 is the user's call (also under "Decisions awaiting the user").
+⚠ **Audit point 6 (path traversal) stays closed for reports,** because a report rendered on request
+builds no filename. Artefact storage (M6's screenshots and the like) would be the first thing to build
+one from user-supplied text, so keep `agnostic_key_is_valid` narrow for that reason (Settled decisions,
+2026-08-21).
 
-⚠ **Audit point 6 (path traversal) re-opens here.** Report and artefact storage is the first thing
-that builds a filename from user-supplied text. Keep `agnostic_key_is_valid` narrow for that reason
-(Settled decisions, 2026-08-21).
-
-⚠ **Report storage must fit patra's limits.** It shares the one patra handle
+⚠ **What reports add to the store must fit patra's limits.** It shares the one patra handle
 (`src/engine/store.cyr`): at most 63 tables, one index each (column 0 auto-indexed when it is
 `COL_INT`), per-write fsync by default, and a single writer.
 
@@ -315,9 +390,20 @@ From the [parity review](research/2026-11-05-python-port-parity.md) (G1, G2, G7,
 
 - [ ] **Provisioning (G1).** Nothing can add anyone after the bootstrap admin:
   `agnostic_users_create_a` is called only by bootstrap, and `agnostic_tenant_create_a` and
-  `agnostic_apikey_issue_a` have no callers in `src/`. Admin routes or an `agnostic admin` command,
-  with an ADR. `src/auth/jwt.cyr:72` already says an operator can install a secret; nothing lets them.
-- [ ] **`AGNOSTIC_JWT_SECRET` (G2)**, refused at mount when short.
+  `agnostic_apikey_issue_a` have no callers in `src/`. The form is settled (see *Settled decisions*);
+  the ADR comes with the work.
+  - **Routes** for users, API keys and tenants, so provisioning works on a running server and the WebGUI
+    can use it. SUPER manages tenants and any tenant's users, ADMIN manages users in their own tenant,
+    and everyone manages their own password and API keys. Nobody grants a role above their own, and the
+    last super admin cannot be deleted or demoted. These rules rest on audit S4, below.
+  - **`agnostic admin reset-password <email>`**, the one command. It takes the database claim, so it
+    refuses while a server runs. It reads the password from stdin, because arguments are visible in
+    `/proc/<pid>/cmdline`, and it writes an audit entry.
+  - **The store needs:** listing users and keys, a role change, a password set, a user delete, and
+    revoking a key by id. `agnostic_apikey_revoke_a` takes the raw key, so an admin who does not hold it
+    cannot revoke it.
+- [ ] **`AGNOSTIC_JWT_SECRET` (G2)**, refused at mount when short. `src/auth/jwt.cyr:72` already says an
+  operator can install a secret; nothing lets them.
 - [ ] **Agent definitions are not tenant-scoped (audit S3).** A tenant-b OPERATOR listed, read, replaced
   and deleted tenant-a's definition, reproduced in-process through the real dispatcher. Key them by
   scope, as plugin documents are. It needs a store migration.
@@ -342,6 +428,11 @@ From the [parity review](research/2026-11-05-python-port-parity.md) (G1, G2, G7,
 Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity"), B33 under **B** ("Owed").
 
 - **F1 — tool loop:** M6's prerequisite.
+- **What a tool may reach (F1):** a tool sees only its own context and the model's input, so nothing
+  can hold a call to the crew's declared target, and `agnosai_is_safe_url` refuses every private host,
+  which is where a staging system usually lives. Filed with agnosai.
+- **What a tool measured (F1):** a task result has to carry each tool's result, or a report has only
+  the model's word for it. Filed with agnosai, in the same issue.
 - **F2 — hierarchical wired:** agnostic then accepts `hierarchical`, which
   `agnostic_process_from_wire` (`src/engine/request.cyr:149-159`) leaves out today, so it is a 400.
 - **F3 — approvals plus a lifecycle contract with `seq`:** builds on the event and status
@@ -404,6 +495,23 @@ its F1–F3, F5 and F9 rows; each goes into the ADR of the item it names.
 Found while building, grouped by area. H and B numbers in this file are those of the
 [2026-10-03 landscape review](research/2026-10-03-herdr-and-multi-agent-landscape.md).
 
+### API schema
+
+From [ADR 0015](../adr/0015-the-http-api-is-described-by-a-generated-schema.md)'s review, 2026-11-05.
+Each needs its source made a table first, or it would be a hand-kept copy, which is what the ADR exists
+to remove.
+
+- [ ] **Field types and required-ness of each request field (0.4.x).** Today they are decoder code
+  (`src/engine/request.cyr`, `src/engine/agentdef.cyr`), not data. The first-party rule gives every MCP
+  tool a JSON input schema, and M7's tools mirror the routes, so without these M7 hand-writes them.
+- [ ] **Nested response shapes (before the freeze).** H5's fourth change covers only top-level keys.
+- [ ] **Per-handler 4xx statuses (before the freeze).** The route modules' "Route | Codes" headers and
+  `state.md` keep them today.
+- [ ] **A machine-readable `code` for the 422 refusals (before the freeze):** `unknown_field` and
+  `refused_field`. Today they are `{"error": …}` only, with four different message forms
+  (`src/engine/request.cyr:668`, `:477`, `src/engine/agentdef.cyr:339`, `src/routes/plugins.cyr:76`,
+  `src/routes/auth.cyr:53`).
+
 ### Audit chain
 
 - [ ] **The audit route serves only the newest 1024 entries** (ADR 0011). A ranged, allocator-aware
@@ -463,6 +571,10 @@ Each is fixed at its source and reaches agnostic by a re-pin. One exception is w
 then, ADR 0022, with the gateway-URL scrub beside it. Filings are in each repo's
 `docs/development/issues/`.
 
+- [ ] → **bayan**: what M8's PDF form needs (`2026-11-05-pdf-writer-gaps-for-a-qa-report.md`): refused
+  text disappearing from a file that reports success, a long token running off the page, embedded
+  fonts, a replacement mark a reader can see, and a flow and table layer. bayan reaches agnostic through
+  the cyrius stdlib snapshot, so a fix arrives with a pin move.
 - [ ] → **cyrius**: `_arena_grow` keeps a chunk per slightly larger allocation (`lib/alloc.cyr`). A need
   over the chunk size gets a chunk of its own in front of the next, and a chunk too small for what comes
   next is not looked at again, so needs that keep rising each keep one. agnostic keeps its chunks at
@@ -512,40 +624,7 @@ then, ADR 0022, with the gateway-URL scrub beside it. Filings are in each repo's
 
 ## Decisions awaiting the user
 
-- [ ] **The parity review's four questions**
-  ([§3](research/2026-11-05-python-port-parity.md#questions-for-the-user)). Each item is on the release
-  plan, and these are the forms only you can pick: how provisioning is reached (routes, a command or
-  both), what form a crew's target takes, what reports read, and which MCP surface M7 exposes.
-- [ ] **Make the post-tag benchmark run part of the Process?** 0.1.16's was run on request, right
-  after the tag, on the clean tree: `./scripts/bench-history.sh`, then commit `BENCHMARKS.md` and
-  `bench-history.csv`, so each row names a tagged commit. The proposal is a clause in CLAUDE.md's
-  Process; CLAUDE.md is the user's file.
-
-- [ ] **Should a change to the HTTP surface also update its two derived artefacts?** The proposal is
-  a clause in CLAUDE.md's Process step 5: "an API change regenerates
-  `docs/api/generated/schema.json` (`scripts/gen-api-schema.sh`) and updates
-  `skills/agnostic/SKILL.md` in the same change".
-  - CI already enforces the schema (`gen-api-schema.sh --check`). `check-skill.py` catches drift
-    in routes, methods, parameters, headers, response keys and marked lists, but not in prose about
-    statuses or limits.
-  - The H5 and H6 plans both recommended the clause. CLAUDE.md is the user's file, so it is the
-    user's call.
-- [ ] **Review ADR 0015** ([the API schema](../adr/0015-the-http-api-is-described-by-a-generated-schema.md)).
-  It is marked Accepted, like every ADR here, but was written and accepted without the user's
-  review. ADRs 0013 and 0014 were approved through their roadmap items; 0015 was not.
-- [ ] **What the coverage gate measures.** `CONTRIBUTING.md:32-34` lists `cyrius coverage --min 80`
-  as "its own CI step", but `.github/workflows/ci.yml` has no such step, and the gate fails: 330 of
-  476 functions referenced, 69% at 0.1.13 (306 of 451, 67%, at 0.1.12). It is reference coverage, a
-  static floor: the route handlers (`src/routes/*.cyr`), which the suites drive through
-  `agnostic_route_dispatch_a`, count as unreferenced, as do most of `src/cli.cyr` (2/7) and
-  `src/server/serve.cyr` (2/7).
-  - Reproduce: `TMPDIR=$HOME/.cache/agnostic-work cyrius coverage --min 80` (exit 1, "coverage
-    gate FAILED: 69% < --min 80%").
-  - Fix direction: decide what the gate measures before wiring it. Either name the handlers the
-    suites reach by dispatch (a reference per route in the suite that drives it) and add the CI
-    step at 80, or say in `CONTRIBUTING.md` that it is a local report, not a CI gate.
-- [ ] **Whether reports gain a PDF form in 1.0.** M8's decision waits for `bayan_pdf_*`, which
-  bayan 1.5.0 shipped; see M8.
+None open. The answers are under *Settled decisions*.
 
 ## Later — recorded, not scheduled
 
@@ -564,17 +643,9 @@ then, ADR 0022, with the gateway-URL scrub beside it. Filings are in each repo's
 - **External coding agents as crew members over ACP.** Claude Code or Codex would be driven as
   structured JSON-RPC peers, not by scraping a PTY. This is a strategic option, not a
   commitment, and it only makes sense after F1.
-- **What the API schema leaves out** (recorded at H5's third change, ADR 0015;
-  `docs/api/README.md`, "Known gaps"). Each needs its source made a table first, or it would be a
-  hand-kept copy:
-  - field types and required-ness of each request field — today they are decoder code
-    (`src/engine/request.cyr`, `src/engine/agentdef.cyr`), not data;
-  - nested response shapes (H5's fourth change covers only top-level keys);
-  - a machine-readable `code` for the 422 refusals — `unknown_field` and `refused_field` — which
-    today are `{"error": …}` only, with four different message forms
-    (`src/engine/request.cyr:668`, `:477`, `src/engine/agentdef.cyr:339`,
-    `src/routes/plugins.cyr:76`, `src/routes/auth.cyr:53`);
-  - per-handler 4xx statuses — the route modules' "Route | Codes" headers and `state.md` keep them;
+- **What the API schema leaves out, beyond the freeze** (ADR 0015; `docs/api/README.md`, "Known
+  gaps"). What the freeze and M7 need is scheduled under *API schema*. Neither of these can break a
+  client, so neither is:
   - the reverse of the declared parts: a query parameter or header a handler starts reading without
     declaring it is caught only for the six known parameter names on GET routes
     (`tests/api_schema.tcyr`, `api/probes`). Closing it means handlers read parameters and headers
@@ -705,6 +776,46 @@ own section below.
 - **2026-10-07 — The MCP client is bote's.** A crew's agents reach external MCP servers through
   bote, the ecosystem's MCP layer, by way of agnosai's tool registry (F1). Neither agnostic nor
   agnosai carries its own MCP client. The client half is owed upstream (see "Upstream").
+- **2026-11-05 — Provisioning is routes plus one recovery command** (parity question 1). The server
+  claims its database for its whole life (`src/engine/store.cyr`), so a command could add a user only
+  with the server stopped, and the WebGUI could not use it at all. Routes alone leave one hole:
+  `agnostic_auth_bootstrap_a` acts only on an empty store, so a lost password on the last super admin
+  has no way back. `agnostic admin reset-password` fills that hole and does nothing else. The rules are
+  under *Identity and deployment*.
+- **2026-11-05 — A crew's target is a checked field on the crew, and a task may override it** (parity
+  question 2). Prose gives agnostic nothing to check a tool's call against, and the system under test
+  writes what those tools read. A task-only field means one copy per task and no single value for a
+  listing or a report; the override covers a comparison of two systems. The field needs an operator's
+  host list beside it, because a target is where load and security tools point. Details under M6.
+- **2026-11-05 — Reports read crew outcomes** (parity question 3). A crew is the session, so a result
+  model of its own would hold each run twice, need a writer, and with a client route let WRITE forge a
+  result. The outcome gains a structured result and measured tool numbers; reports are rendered on
+  request. Details under M8.
+- **2026-11-05 — MCP mirrors agnostic's API, beside the 38 QA tools** (parity question 4). The 38 were
+  already settled. The former 34 operations are not the list: five of them are one `run_crew`, and
+  others name things agnostic replaced. An MCP tool calls its route's handler at its route's permission,
+  and a QA tool call runs as a job, not on a request worker. Details under M7.
+- **2026-11-05 — A release records its benchmarks before its tag** (CLAUDE.md, Process step 7). A step
+  after the tag waited on someone coming back to it, and 3 of 22 tagged versions had rows. A row now
+  lands in the release commit, so its commit column names the parent with `-dirty` and its version
+  column identifies it. CI's `bench-results.txt` stays each tag's own snapshot, from a runner the local
+  trail cannot be compared with.
+- **2026-11-05 — An API change updates the schema and the skill in the same change** (CLAUDE.md, Process
+  step 5). The clause covers prose, which no tool can see. `scripts/check-skill.py` now fails on a route
+  no skill names, because 10 of 27 routes were unnamed and nothing noticed; a route the server gains
+  has to be taught, or listed as not taught.
+- **2026-11-05 — ADR 0015 reviewed and accepted, and its gaps scheduled.** The design stands. M7's tools
+  mirror the routes and need JSON input schemas, and a change to a type or a nested shape does not show
+  in the snapshot diff, so field types land on 0.4.x and the rest before the freeze.
+- **2026-11-05 — The coverage gate is execution coverage at 90%**, and a CI step. `cyrius coverage --exec`
+  builds each suite instrumented and counts a function once a run enters it: 93% against 70% for
+  reference coverage, which counted the route handlers as untested because the suites reach them
+  through the dispatcher. It is a floor: it says nothing of branches, and `main` and real signals are
+  the boot probe's and the load test's.
+- **2026-11-05 — Reports have a PDF form in 1.0, on bayan**, replacing the 2026-08-20 decision. bayan
+  handles accents and tables. It cannot show text outside WinAnsi, so `✓`, `→` and non-Latin text need
+  fonts it cannot embed yet. That and the other gaps are filed with bayan, and M8 says what agnostic does
+  if they have not landed.
 
 ## Release shape
 

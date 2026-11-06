@@ -182,6 +182,17 @@ jobs:
           fi
           grep -aE "^[0-9]+ passed" /tmp/agnostic-test.log | tail -1
 
+      - name: Coverage
+        # EXECUTION coverage: every suite is built instrumented and run, and a function counts
+        # once a run enters it. Reference coverage, the default, reads 70% only because the suites
+        # reach the route handlers through the dispatcher.
+        #
+        # ⚠ A floor. A function entered says nothing of its branches, and `main` and real signals
+        # are what `Boot and probe` and `Load test` are for. 90 sits under the 93% measured when
+        # the gate went in, so it catches a slide without failing on a few new functions.
+        timeout-minutes: 15
+        run: cyrius coverage --exec --min 90
+
       - name: Benchmarks
         # continue-on-error per first-party-standards.md:372 — bench numbers
         # vary by runner, so a regression here is signal, not a gate.

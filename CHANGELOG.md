@@ -4,6 +4,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The parity review's four forms are settled** (roadmap, *Settled decisions*). Provisioning is routes
+  plus one recovery command, a crew's target is a checked field on the crew that a task may override,
+  reports read crew outcomes, and MCP mirrors agnostic's API beside the 38 QA tools.
+- **A release records its benchmarks before its tag** (`CLAUDE.md`, Process step 7), so the rows are
+  inside the tag. 3 of 22 tagged versions had rows when the step came after it.
+- **`scripts/check-skill.py` fails on a route no skill names.** It only looked from the skill to the
+  schema, so 10 of 27 routes went unnamed and a new one would have too. `SKILL.md` now lists what it
+  does not teach, and `CLAUDE.md`'s Process step 5 covers the prose no tool can read.
+- **ADR 0015 is reviewed, and what the API schema leaves out has a release:** field types on 0.4.x, for
+  M7's input schemas, and nested response shapes, 4xx statuses and the 422 codes before the 1.0 freeze.
+- **Reports gain a PDF form in 1.0, on bayan**, replacing "HTML, CSV and JSON only". bayan handles accents
+  and tables, and the roadmap's M8 says what agnostic does about text it cannot show.
+
+### Fixed
+
+- **`scripts/bench-history.sh` writes a dirty tree into the CSV**, as `<sha>-dirty`. The flag reached only
+  `BENCHMARKS.md`, so a dirty run read as clean history, and a staged change did not count as dirty.
+- **`SKILL.md` no longer says it describes "the agnostic 0.1 line".**
+
+### Added
+
+- **A coverage gate in CI:** `cyrius coverage --exec --min 90`, at 93% today. `CONTRIBUTING.md` called it
+  a CI step and there was none, and the gate it named measured references, not execution, and failed
+  at 70%.
+- **A filing with bayan**, uncommitted in its `docs/development/issues/`, with a repro: what its PDF writer
+  needs to carry a QA report.
+- **A filing with agnosai**, uncommitted in its `docs/development/issues/`: a tool call cannot be held to
+  what its task declared, and leaves no result behind.
+
 ## [0.2.3] — 2026-11-06
 
 **The release plan holds everything, and the 0.2.x housekeeping is done.** Every gap and missing item

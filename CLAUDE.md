@@ -77,6 +77,7 @@ cyrius test                          # run [build].test + tests/*.tcyr
 2. **Build check** — `cyrius build`
 3. **Test + benchmark additions** for new code
 4. **Internal review** — performance, memory, correctness, edge cases
-5. **Documentation** — update CHANGELOG, `docs/development/state.md`, any ADR the change earned
+5. **Documentation** — update CHANGELOG, `docs/development/state.md`, any ADR the change earned; an API change regenerates `docs/api/generated/schema.json` (`scripts/gen-api-schema.sh`) and updates `skills/agnostic/SKILL.md` in the same change
 6. **Version sync** — `VERSION`, `cyrius.cyml`, CHANGELOG header
+7. **Benchmark record** — `./scripts/bench-history.sh` on the final tree, after the version sync, so the rows land in the release commit
 

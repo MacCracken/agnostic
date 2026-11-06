@@ -138,6 +138,8 @@ The snapshot also has a reader: `scripts/check-skill.py` (in `check-clean.sh`, 0
 [`skills/agnostic/SKILL.md`](../../skills/agnostic/SKILL.md), the Agent Skill for driving this API,
 to it — every route, method, query parameter and header the skill uses, its response examples' keys,
 and the lists it marks. A snapshot change that fails there means the skill needs the same change.
+It also fails on a route no skill names, so a route the server gains needs a decision: teach it, or
+list it under the skill's "Routes this skill does not teach".
 
 ## Known gaps
 
@@ -148,7 +150,8 @@ and the lists it marks. A snapshot change that fails there means the skill needs
 - No field types or required-ness, no nested response shapes, and no machine-readable code for the
   422 refusals (unknown or refused field): they live in decoder code, not in a table. So the shape of the
   plan's per-task `selection` and the types of a task's selection hints (0.1.14) are documented in
-  SKILL.md and ADRs 0016–0017; the schema lists the hints' names and `complexity`'s values.
+  SKILL.md and ADRs 0016–0017; the schema lists the hints' names and `complexity`'s values. Each of
+  these has a release: the roadmap's *API schema*.
 - Response keys are declared, not read from the handlers. `api/responses` checks them both ways, but
   only on the answers it drives: a key a handler writes only in a state the sweep does not reach
   would not be seen.

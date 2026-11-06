@@ -852,8 +852,7 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 ## Next
 
 See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x and holds every gap the
-parity review found. `python-port/` is removed once that plan is finished and tagged. Four forms are
-waiting on the user (*Decisions awaiting the user*). The notes below were written for M5 and remain true.
+parity review found. `python-port/` is removed once that plan is finished and tagged. The notes below were written for M5 and remain true.
 
 ✅ **patra's single index per table does NOT bind here — corrected 2026-08-21.**
 The earlier note said M5 needs users by id *and* by email and would therefore

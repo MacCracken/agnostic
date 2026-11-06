@@ -32,9 +32,18 @@ COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
 BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo nogit)"
 
 # `git describe --dirty` would be nicer but a dirty tree is the normal state
-# while benchmarking a change, so record it as a flag rather than refusing.
+# while benchmarking a change, and for a release, whose rows are recorded before
+# the tag (Process step 7), so record it rather than refusing. HEAD, not the index:
+# a staged change is as uncommitted as an unstaged one.
+#
+# ⚠ The CSV's commit column carries the flag too. The Markdown table is regenerated
+# on the next run; a CSV row that names a commit it was not measured on stays wrong.
 DIRTY=""
-if ! git diff --quiet 2>/dev/null; then DIRTY=" (dirty)"; fi
+ROW_COMMIT="$COMMIT"
+if ! git diff --quiet HEAD 2>/dev/null; then
+    DIRTY=" (dirty)"
+    ROW_COMMIT="${COMMIT}-dirty"
+fi
 
 if [ ! -f "$CSV" ]; then
     echo "date,version,commit,branch,benchmark,time_ns" > "$CSV"
@@ -64,7 +73,7 @@ while IFS= read -r line; do
     ns=$(awk -v v="$value" -v s="$scale" 'BEGIN { printf "%.0f", v * s }')
 
     if [ -n "$name" ] && [ "$ns" != "0" ]; then
-        echo "${DATE},${VERSION},${COMMIT},${BRANCH},${name},${ns}" >> "$CSV"
+        echo "${DATE},${VERSION},${ROW_COMMIT},${BRANCH},${name},${ns}" >> "$CSV"
         ROWS=$((ROWS + 1))
     fi
 done < <(grep -E '^[[:space:]]+[A-Za-z_][A-Za-z0-9_]*: [0-9.]+(ns|us|ms|s) avg' "$TMPFILE" || true)

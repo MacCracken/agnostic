@@ -29,9 +29,9 @@ cyrius build src/main.cyr build/agnostic
 # 4. Every test suite, recursively
 cyrius test tests
 
-# 5. Benchmarks and the coverage gate (its own CI step)
+# 5. Benchmarks and the coverage gate (its own CI step): functions a suite entered, not named
 cyrius bench
-cyrius coverage --min 80
+cyrius coverage --exec --min 90
 
 # 6. Everything else CI runs
 ./scripts/check-clean.sh && ./scripts/check-symbols.sh

@@ -29,7 +29,7 @@ The version is the one in `VERSION`. Per decision #4 the milestones ship togethe
 | **M0–M5** | Complete: scaffold, the HTTP skeleton, the crew surface on agnosai (in-process, `dist/agnosai.cyr`), agent definitions and presets, persistence on patra behind libro's tamper-evident audit chain, identity and tenancy. |
 | **M6** — QA tools | Started and blocked. The viability gate is built (2 of 38 preset tool names resolve); what blocks it is the tool-registry decision (§8) and agnosai's tool-calling loop (F1). |
 | **M7** — MCP and A2A | Not started; the target spec revisions are recorded in the roadmap. |
-| **M8** — reports | Not started; HTML, CSV and JSON. Whether PDF joins 1.0 is the user's call. |
+| **M8** — reports | Not started; HTML, CSV, JSON and PDF, on bayan. |
 | **M9** — WebGUI | Built: the shell at `/ui`, a plugin platform the server enforces (ADRs 0004–0007, 0010), and the Crews, Library, Audit trail and Swarm Command views. Owed: streaming events, reports, the approval roll-up (agnosai F3). |
 
 What a newcomer must not miss, wherever they start:
@@ -190,7 +190,7 @@ the roadmap carries each one against its milestone.
 |---|---|
 | Identity | **Own it, thin** — adapt `secureyeoman/yeo-cy-test/src/auth.cyr`. kavach struck (zero identity surface) |
 | Presets | **Agnostic's library is canonical** — the two sets share names and nothing else |
-| PDF reports | **HTML + CSV + JSON only** in 1.0, unless the user decides otherwise: `bayan_pdf_*` shipped (roadmap M8) |
+| PDF reports | **In 1.0, on bayan**, beside HTML, CSV and JSON (settled 2026-11-05; roadmap M8) |
 | Release shape | **One release, total** — M1–M9 ship together as 1.0.0 |
 | Daimon Tier 1 | **Deferred** — ADR 0002; it cannot be implemented as written |
 | MCP transports | **Both shapes**, justified on merit; the 5–8 tool figure is a soft guideline, not a ceiling |
