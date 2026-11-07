@@ -1,6 +1,6 @@
 # 0005 — Plugins reach the server only through the shell's host bridge, under their manifest's permissions
 
-**Status**: Accepted — amended by [0007](0007-plugin-requests-are-checked-by-the-server.md): the server checks every bridged request too, and the permission table below now lives in one file, `src/webgui/permissions.json`
+**Status**: Accepted — amended by [0007](0007-plugin-requests-are-checked-by-the-server.md): the server checks every bridged request too, and the permission table below now lives in one file, `src/webgui/permissions.json`; amended by [0039](0039-a-file-in-the-binary-is-an-embed-entry.md): `scripts/check-embedded.py` holds the closed list's check
 **Date**: 2026-10-01
 
 ## Context

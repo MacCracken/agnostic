@@ -50,7 +50,7 @@ mission itself — Swarm Command is `mixed`: SIM on a simulation, LIVE on a real
 
 1. **Create `src/webgui/plugins/<id>/`.** The id is `[a-z0-9][a-z0-9-]*`, at most 32 characters,
    and is also the directory name.
-2. **Write `plugin.json`** with exactly these keys — an unknown or missing key fails the generator:
+2. **Write `plugin.json`** with exactly these keys — an unknown or missing key fails `scripts/check-embedded.py`:
 
    ```json
    {
@@ -68,32 +68,31 @@ mission itself — Swarm Command is `mixed`: SIM on a simulation, LIVE on a real
    this server, and `mixed` only when the page labels each view as one or the other.
    `permissions` lists what the page may ask the server for — names from
    `src/webgui/permissions.json`, see below; ask for the least you need, because Settings shows the
-   list to whoever switches the plugin on. A name the vocabulary does not hold fails the generator.
-3. **Write `index.html`: one self-contained page.** The generator refuses a page that its CSP would
-   break, so these are build errors, not browser surprises:
+   list to whoever switches the plugin on. A name the vocabulary does not hold fails it too.
+3. **Write `index.html`: one self-contained page.** The gate refuses a page that its CSP would
+   break, so these are `check-clean.sh` failures, not browser surprises:
    - no external scripts, stylesheets, images or fonts — inline everything (`default-src 'none'`);
    - no inline event handlers (`onclick=`) and no `javascript:` URLs — use `addEventListener`;
      inline `<script>` blocks are fine, and are admitted by hash;
-   - LF line endings, and no NUL bytes;
-   - no line that starts with `fn`, `var`, `enum`, `struct` or `include` at column 0 — the gates
-     that scan `src/` read such a line as a Cyrius definition. Indent it.
+   - LF line endings, and no NUL bytes.
 4. **Carry the bridge client.** If `permissions` is not empty, the page must carry
    `src/webgui/kit/host.js` — put an empty pair of markers at the top of an inline script and let
-   the generator fill it (step 6):
+   the gate fill it (step 6):
 
    ```js
    /* agnostic-kit:host begin */
    /* agnostic-kit:host end */
    ```
 
-   The copy is verified byte for byte on every build: edit `src/webgui/kit/host.js`, never a page's
-   copy, and run `--sync-kit` again.
-5. **Add the id to `PLUGINS` in `scripts/gen-webgui.sh`.** The list is the order plugins are listed
-   and tabbed in; a directory missing from it fails the generator.
-6. **Fill in the client, regenerate, build, test:**
+   The copy is verified byte for byte: edit `src/webgui/kit/host.js`, never a page's copy, and run
+   `--sync-kit` again.
+5. **Embed it.** Add `AGNOSTIC_PAGE_<ID>` and `AGNOSTIC_MANIFEST_<ID>` to `[embed]` in `cyrius.cyml`,
+   give each its arm in `src/webgui/assets.cyr`, and raise the two counts there. Those chains are the
+   order plugins are listed and tabbed in. A directory left out of either fails the gate.
+6. **Fill in the client, check, build, test:**
 
 ```bash
-./scripts/gen-webgui.sh --sync-kit && cyrius build src/main.cyr build/agnostic && cyrius test
+./scripts/check-embedded.py --sync-kit && cyrius build src/main.cyr build/agnostic && cyrius test
 ```
 
 7. **Test the page's logic under Node.** Put `tests/webgui/<id>.test.mjs` beside the others:
@@ -131,7 +130,7 @@ with `403` and a `code` — `plugin_forbidden`, `plugin_off`, `plugin_unknown` �
 user's role, so a permission is the most a plugin can do, never more than its user can.
 
 The vocabulary lives in **one file, `src/webgui/permissions.json`**: each permission's name, the words
-Settings shows for it, and the routes it grants. The generator validates manifests against it, the
+Settings shows for it, and the routes it grants. `scripts/check-embedded.py` validates manifests against it, the
 server enforces it, and the shell reads it from `GET /api/v1/plugins` (`catalogue`). Today:
 
 | Permission | The plugin may call |

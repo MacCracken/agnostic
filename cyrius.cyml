@@ -1,5 +1,6 @@
 # Build configuration only. Why the pins and block order are what they are:
-# docs/architecture/002-the-dependency-pins.md. Versions and history: state.md, CHANGELOG.md.
+# docs/architecture/002-the-dependency-pins.md. What [embed] holds: docs/adr/0039.
+# Versions and history: state.md, CHANGELOG.md.
 
 [package]
 name = "agnostic"
@@ -23,6 +24,38 @@ stdlib = [
     "mmap", "dynlib", "fdlopen", "async", "bayan",
     "net", "http", "tls", "sakshi", "sandhi", "patra", "sigil",
 ]
+
+[embed]
+AGNOSTIC_PAGE_SHELL = "src/webgui/index.html"
+AGNOSTIC_PAGE_SWARM = "src/webgui/plugins/swarm/index.html"
+AGNOSTIC_PAGE_CREWS = "src/webgui/plugins/crews/index.html"
+AGNOSTIC_PAGE_LIBRARY = "src/webgui/plugins/library/index.html"
+AGNOSTIC_PAGE_USERS = "src/webgui/plugins/users/index.html"
+AGNOSTIC_PAGE_AUDIT = "src/webgui/plugins/audit/index.html"
+AGNOSTIC_MANIFEST_SWARM = "src/webgui/plugins/swarm/plugin.json"
+AGNOSTIC_MANIFEST_CREWS = "src/webgui/plugins/crews/plugin.json"
+AGNOSTIC_MANIFEST_LIBRARY = "src/webgui/plugins/library/plugin.json"
+AGNOSTIC_MANIFEST_USERS = "src/webgui/plugins/users/plugin.json"
+AGNOSTIC_MANIFEST_AUDIT = "src/webgui/plugins/audit/plugin.json"
+AGNOSTIC_PERMISSIONS = "src/webgui/permissions.json"
+AGNOSTIC_PRESET_QUALITY_LEAN = "src/presets/quality-lean.json"
+AGNOSTIC_PRESET_QUALITY_STANDARD = "src/presets/quality-standard.json"
+AGNOSTIC_PRESET_QUALITY_LARGE = "src/presets/quality-large.json"
+AGNOSTIC_PRESET_SOFTWARE_ENGINEERING_LEAN = "src/presets/software-engineering-lean.json"
+AGNOSTIC_PRESET_SOFTWARE_ENGINEERING_STANDARD = "src/presets/software-engineering-standard.json"
+AGNOSTIC_PRESET_SOFTWARE_ENGINEERING_LARGE = "src/presets/software-engineering-large.json"
+AGNOSTIC_PRESET_DEVOPS_LEAN = "src/presets/devops-lean.json"
+AGNOSTIC_PRESET_DEVOPS_STANDARD = "src/presets/devops-standard.json"
+AGNOSTIC_PRESET_DEVOPS_LARGE = "src/presets/devops-large.json"
+AGNOSTIC_PRESET_DATA_ENGINEERING_LEAN = "src/presets/data-engineering-lean.json"
+AGNOSTIC_PRESET_DATA_ENGINEERING_STANDARD = "src/presets/data-engineering-standard.json"
+AGNOSTIC_PRESET_DATA_ENGINEERING_LARGE = "src/presets/data-engineering-large.json"
+AGNOSTIC_PRESET_DESIGN_LEAN = "src/presets/design-lean.json"
+AGNOSTIC_PRESET_DESIGN_STANDARD = "src/presets/design-standard.json"
+AGNOSTIC_PRESET_DESIGN_LARGE = "src/presets/design-large.json"
+AGNOSTIC_PRESET_QUALITY_PERFORMANCE = "src/presets/quality-performance.json"
+AGNOSTIC_PRESET_QUALITY_SECURITY = "src/presets/quality-security.json"
+AGNOSTIC_PRESET_COMPLETE_LEAN = "src/presets/complete-lean.json"
 
 [test]
 stdlib = ["assert", "bench"]

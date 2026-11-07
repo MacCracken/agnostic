@@ -2,7 +2,12 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-06, at **0.4.3** — the WebGUI reaches what 0.4.2 added: a definition's versions, a
+> Last refreshed: 2026-11-06, at **0.4.4** — no generated source remains. Every file in the binary is an entry in
+> `cyrius.cyml`'s `[embed]` table, a page's CSP is worked out from its bytes at mount, and
+> `scripts/check-embedded.py` holds the rules the generators held
+> ([ADR 0039](../adr/0039-a-file-in-the-binary-is-an-embed-entry.md)). No route and no dependency moved. Version,
+> Source, the WebGUI section, Tests, Preset library and Next were refreshed then.
+> Before that, 2026-11-06, at **0.4.3** — the WebGUI reaches what 0.4.2 added: a definition's versions, a
 > rollback and a deletion undone in the Library, packages out and back in, and a crew started in the Crews view by
 > who it needs, with a preset recommendation
 > ([ADR 0038](../adr/0038-the-views-use-the-permissions-they-had-and-a-rollback-sends-its-revision.md)). No route
@@ -119,7 +124,7 @@
 
 ## Version
 
-**0.4.3** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.4.4** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -185,18 +190,17 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 62 files, 37,312 lines, 1,648 top-level definitions (0.4.3; 36,527 and 1,648 at
-0.4.2), all `agnostic_*`-prefixed. 13,277 of those lines are generated:
-`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (12,440 — six embedded pages and the plugin
-permission vocabulary).
+the real surface (0.1.10)** — 61 files, 24,267 lines, 1,630 top-level definitions (0.4.4; 62 files, 37,312 and 1,648
+at 0.4.3), all `agnostic_*`-prefixed. None of it is generated since 0.4.4: `[embed]` compiles the presets, the pages,
+the manifests and the permission vocabulary in as they stand (ADR 0039).
 
-**Tests: 42 suites, 4,300 assertions, 0 failed** (`cyrius test`, 0.4.3; 4,289 at 0.4.2), plus
+**Tests: 42 suites, 4,342 assertions, 0 failed** (`cyrius test`, 0.4.4; 4,300 at 0.4.3), plus
 **119 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+) — **and the
 same 42 suites natively on aarch64** (Raspberry Pi 4). Their counts match but for `crews_route`, 247 or 248
 from run to run, because two loops assert once per poll. Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
-shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
-which since 0.1.10 verifies every plugin's copy of the bridge client; the WebGUI's JavaScript; and,
+shipped target since 0.1.7), `check-clean.sh` (also `check-embedded.py`,
+which verifies every plugin's copy of the bridge client; the WebGUI's JavaScript; and,
 since 0.1.13, `check-skill.py`, the agent skill against the API schema, and `gen-api-schema.sh
 --check` on `build/agnostic` when nothing in `src/` or `cyrius.cyml` is newer than it), `deps
 --verify` 120/0.
@@ -277,13 +281,12 @@ refactor of any of it.
 | `src/engine/refusal.cyr` | what a refused request leaves behind: always counted, written within a budget (0.3.1) |
 | `src/auth/tenantlimit.cyr` | a tenant's crews a minute and unfinished crews, reserved before a crew is built (0.3.1) |
 | `src/engine/presets.cyr` | the canonical preset library, parsed once at mount |
-| `src/presets_data.cyr` | **generated** — the 18 documents as Cyrius literals |
 | `src/engine/settings.cyr` | deployment-wide settings, durable — the plugin switches (0.1.7) |
 | `src/engine/plugindata.cyr` | each plugin's own documents, per tenant, durable (0.1.8) |
 | `src/webgui/plugins.cyr` | the WebGUI's page table and plugin registry, loaded once at mount (0.1.7); the permission vocabulary and the plugin rung (0.1.9) |
-| `src/webgui/permissions.json` | the plugin permission vocabulary — the one source the generator, server and shell read (0.1.9) |
+| `src/webgui/permissions.json` | the plugin permission vocabulary — the one source the gate, server and shell read (0.1.9) |
 | `src/webgui/kit/host.js` | the bridge client every plugin page carries verbatim (0.1.10, ADR 0010) |
-| `src/webgui_data.cyr` | **generated** — the shell and each plugin page, verbatim, with SHA-256 and CSP (0.1.7) |
+| `src/webgui/assets.cyr` | which `[embed]` entry each page and manifest is, in the order they are listed (0.4.4, ADR 0039) |
 | `src/routes/health.cyr` | `/health` and `/ready` |
 | `src/routes/metrics.cyr` | `GET /api/v1/metrics`, and the scraper's token (0.3.1) |
 | `src/routes/crews.cyr` | the crew surface |
@@ -413,7 +416,7 @@ trail** — as plugins beside Swarm Command, starting OFF. A view's state is in 
 (`#plugin/<id>?<params>`); `init` carries `params` and the `views` switched on; a plugin opens another
 view with `agnostic:navigate` (checked by the shell's pure `checkNavigate`) and hears its own params
 change with `agnostic:params` (feature `navigate`). Every plugin carries `src/webgui/kit/host.js`
-verbatim, and the generator refuses a copy that differs (`--sync-kit` rewrites them). Two permissions
+verbatim, and `scripts/check-embedded.py` refuses a copy that differs (`--sync-kit` rewrites them). Two permissions
 joined the vocabulary: `definitions:write`, `audit:read`.
 
 **0.1.9, in one paragraph.** Plugin permissions live in `src/webgui/permissions.json` and are enforced
@@ -477,10 +480,11 @@ and carries query strings, revisions and idempotency keys. Plugin documents have
 and a page is the same compiled-in bytes for every caller. Everything it shows comes from
 authenticated API calls.
 
-⚠ **Each page's CSP is computed by the generator** — `default-src 'none'`, inline scripts
-admitted by SHA-256; the shell `connect-src 'self'`, a plugin **`connect-src 'none'`**
-(0.1.8: its only way out is the bridge). A page that needs anything else is refused at
-generation. `style-src 'unsafe-inline'` is accepted (the view styles from script and
+⚠ **Each page's CSP is worked out from the page, at mount** (0.4.4, ADR 0039) — `default-src 'none'`,
+inline scripts admitted by SHA-256; the shell `connect-src 'self'`, a plugin **`connect-src 'none'`**
+(0.1.8: its only way out is the bridge). A page that needs anything else is refused by
+`scripts/check-embedded.py`, and one with a script that never closes refuses the start.
+`style-src 'unsafe-inline'` is accepted (the view styles from script and
 markup); scripts are never inline-unsafe.
 
 ⚠ **Plugins run sandboxed** (`allow-scripts allow-downloads`, no `allow-same-origin`): an
@@ -489,16 +493,14 @@ modal dialog — or submit a form: without `allow-forms` the `submit` event neve
 at 0.1.10; the Library saves on a click). Opened in its own tab, Swarm Command finds no shell, keeps swarms in that
 browser and disables live runs.
 
-✅ **Permissions are ONE list since 0.1.9** — `src/webgui/permissions.json`, read by the generator
+✅ **Permissions are ONE list since 0.1.9** — `src/webgui/permissions.json`, read by the gate
 (manifests are checked against it), the server (it enforces it) and the shell (from
-`GET /api/v1/plugins`). The shell's `permitted()` and the generator's hard-coded `PERMISSIONS` are
+`GET /api/v1/plugins`). The shell's `permitted()` and a hard-coded `PERMISSIONS` are
 gone. A new permission is one edit to that file, and the docs.
 
-⚠ **The embedded pages are proven, not assumed.** `src/webgui_data.cyr` holds each page as
-a raw multi-line literal; `tests/webgui.tcyr` re-hashes the bytes in the binary against
-the source file's SHA-256, and `check-clean.sh` runs `gen-webgui.sh --check`. A
-`\`-continued literal would have been wrong: `cyrius fmt` indents continuation lines,
-and the spaces land inside the string.
+⚠ **The embedded pages are proven, not assumed.** `[embed]` compiles each page in as it stands,
+`tests/webgui.tcyr` compares the bytes in the binary with the file, and its fixtures hold the policy to
+digests Python computed. `scripts/boot-probe.sh` takes each served page's hashes again, over the socket.
 
 ⚠ **Verified in headless Chromium at 0.1.10** against a scratch server running real crews through a
 stand-in gateway that prices calls: **31 checks** with auth off — the Crews list, filter and detail, a
@@ -530,8 +532,11 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**42 suites, 4,300 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.3, 2026-11-06),
-with `CYRIUS_DCE=1` as CI runs them. 0.4.3's additions, the rules mutation-checked (44 mutants, CHANGELOG
+**42 suites, 4,342 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.4, 2026-11-06),
+with `CYRIUS_DCE=1` as CI runs them. `cyrius coverage --exec` reads 98%. 0.4.4's additions, the rules
+mutation-checked (96 mutants, CHANGELOG [0.4.4]): `webgui/csp`, whose fixtures hold the policy to digests Python
+computed, and `webgui/pages`, the bytes in the binary against each file.
+At 0.4.3: 42 suites and 4,300 assertions. Its additions, the rules mutation-checked (44 mutants, CHANGELOG
 [0.4.3]): 22 JavaScript tests over the Library's versions and packages and the Crews composer, `plugins/rung` on
 the new grants, and `tests/webgui/browser/library.e2e.mjs`, by hand in real Chromium. `crews.e2e.mjs` starts a crew
 by team. `cyrius coverage --exec` reads 98%.
@@ -800,10 +805,9 @@ one wins does not matter. Upstream, and it announces itself.
 ## Preset library
 
 **18 documents, 76 agents, 45 distinct agent keys, 38 distinct tool names.**
-Checked in at `src/presets/*.json` and embedded into `src/presets_data.cyr` by
-`scripts/gen-presets.sh`, because Cyrius has no `include_str!`. The generated file
-is committed; `check-clean.sh` runs the generator's `--check` mode so it cannot
-go stale.
+Checked in at `src/presets/*.json` and compiled in by `[embed]` (0.4.4, ADR 0039), so a document
+cannot go stale. `src/engine/presets.cyr` holds the library's order, and `scripts/check-embedded.py`
+refuses a document left out of the table.
 
 Parsed **once at mount** into a name-keyed registry — `agnosai_builtin_presets()`
 re-parses all eighteen on every call and the engine has no name lookup at all.
@@ -949,10 +953,10 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x and holds every gap the
 parity review found. `python-port/` is removed once that plan is finished and tagged.
 
-**At 0.4.3:** nothing on the 0.4.x line can move without agnosai. M6 proper, holding a tool to its target, the
-registry seam, the reviewer preset and the model picker wait on its 2.3.x and 2.4.x, whose tags are not out:
-`git tag` there ends at 2.2.5. Tool upload waits for a sandbox, and fleet routes for a fleet. What waits on
-nothing is `[embed]`.
+**At 0.4.4:** agnosai 2.3.0 was tagged as this release was finished, with the tool loop M6 needs
+(`agnosai_orchestrator_with_tools`), and agnostic is still on 2.2.5, so moving to it comes next. M6 proper, holding a
+tool to its target, the registry seam, the reviewer preset and the model picker lean on that and on its 2.4.x, which
+is not out. Tool upload waits for a sandbox, and fleet routes for a fleet.
 
 The notes below were written for M5 and remain true.
 

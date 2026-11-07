@@ -207,7 +207,7 @@ then, against a real requirement. Out of scope for v1.0.
 **Added at 0.1.10:**
 
 - **A plugin page never edits its own copy of the bridge client.** Edit `src/webgui/kit/host.js` and
-  run `./scripts/gen-webgui.sh --sync-kit`; the generator refuses a copy that differs by a byte, and a
+  run `./scripts/check-embedded.py --sync-kit`; the gate refuses a copy that differs by a byte, and a
   page with `permissions` that carries none.
 - **A sandboxed plugin cannot `confirm()`** — the shell's iframe has no `allow-modals`, so it answers
   false without asking. Ask inline (the Crews and Library views do). **Nor can it submit a form**: no
@@ -265,7 +265,7 @@ then, against a real requirement. Out of scope for v1.0.
   sandbox lacks `allow-modals`, so `confirm()` returns false without asking). It asks the
   shell (ADR 0005), and draws its own dialogs.
 - ~~**A new plugin permission is four edits**~~ — **one since 0.1.9**: `src/webgui/permissions.json`
-  (and the tables in ADR 0005 and `guides/webgui-plugins.md`). The generator, the server and the
+  (and the tables in ADR 0005 and `guides/webgui-plugins.md`). The gate, the server and the
   shell all read that file.
 - **Swarm Command's logic runs in Node.** Its page has no top-level DOM access, so its
   `<script>` evaluates in a `vm` context; the simulator, spec normalizer, estimator and crew
@@ -285,14 +285,10 @@ then, against a real requirement. Out of scope for v1.0.
   first declaration of a name wins.** That is why `[deps.libro]` sits after
   `[deps.agnosai]`: whenever the two declare different sigils, agnosai's (the fold's) must be the
   one the lock records. At 0.1.11 both declare 3.13.7.
-- **Embedding a page: a raw multi-line string literal, never `\`-continuations.** A
-  continuation keeps the newline and `cyrius fmt` indents the next line, putting spaces
-  inside the string — harmless between JSON tokens, a rewrite of an HTML page. Raw
-  newlines inside a literal are legal, and since 6.6.6 a line in a string that starts
-  `#ifdef` is data. `scripts/gen-webgui.sh` does this; `tests/webgui.tcyr` re-hashes it.
-- **A line at column 0 starting `fn ` / `var ` / `enum ` inside an embedded page** would
-  be read as a definition by `check-symbols.sh`, which scans `src/` line by line. The
-  generator refuses such a page.
+- **A file in the binary is an `[embed]` entry, and a new one has three places to be** (ADR 0039):
+  the table in `cyrius.cyml`, its arm in `src/webgui/assets.cyr` or `src/engine/presets.cyr`, and that
+  file's count. `scripts/check-embedded.py` refuses a file left out of any of them. `[embed]` hashes
+  nothing, so a page's CSP is worked out at mount, from the bytes it serves.
 - **`check-lib-symbols.py` must evaluate `#ifdef`.** It now does, per shipped target;
   before 0.1.7 it read both arms as live.
 - ✅ **The aarch64 binary starts again** (fixed upstream in cyrius 6.6.13, I9; verified at 0.1.10 on
@@ -373,13 +369,10 @@ then, against a real requirement. Out of scope for v1.0.
   completed crew can 404. Both are worked around in `src/engine/`, not upstream; read those module
   headers before changing either.
 - **A Cyrius line continuation KEEPS the newline.** `"abc\<newline>def"` is 7
-  bytes, not 6 — verified with a probe. So a generated string literal must never
-  break inside a JSON string: the newline would be spliced into the value, and a
-  raw newline inside a JSON string is illegal JSON. There is no C-style
-  adjacent-literal concatenation to split with either, and `#skip-lint` is scoped
-  to a **line**, so it cannot be placed on an offending line that sits inside a
-  literal. `scripts/gen-presets.sh` breaks only between JSON tokens for this
-  reason, and `check-clean.sh` skips lint for files marked `GENERATED FILE`.
+  bytes, not 6 — verified with a probe. And `cyrius fmt` indents the next line, which
+  puts spaces inside the string. There is no C-style adjacent-literal concatenation to
+  split with either, so a JSON fixture too long for a line carries `#skip-lint`. A
+  document too long for that is a file, and `[embed]` takes it.
 - **`src/app.cyr` holds the include order; add new modules there.** Every suite
   reaching the router includes it. Putting the order in `main.cyr` meant a new
   route module broke all of them with "undefined function" — three times before

@@ -1,0 +1,56 @@
+# agnostic/webgui/assets — the WebGUI's files, as `[embed]` puts them in the binary (0.4.4, ADR 0039).
+#
+# The build reads each file as it compiles, so there is no generated source to go stale, and the bytes
+# served are the file's bytes. What is left here is what `[embed]` cannot say: which page is which.
+#
+# ⚠ **The order is deliberate.** It is the order `GET /api/v1/plugins` lists the plugins and the shell
+# shows their tabs, and a plugin's page is the asset one past its own place, as asset 0 is the shell.
+# `tests/webgui.tcyr` pins it, and `scripts/check-embedded.py` fails on a file under `src/webgui/` that
+# the table does not name, so a plugin cannot be added by accident.
+
+# How many pages are embedded. Page 0 is the shell.
+var AGNOSTIC_WEBGUI_ASSET_COUNT = 6;
+
+# How many plugin manifests are embedded.
+var AGNOSTIC_WEBGUI_PLUGIN_COUNT = 5;
+
+# The `i`th page's bytes, NUL-terminated, or 0 when `i` is out of range.
+#
+# A chain rather than a table because a `var` array of function results has no spelling that runs
+# before the top-level code does, and the only callers run once, at mount.
+fn agnostic_webgui_asset_bytes(i): i64 {
+    if (i == 0) { return AGNOSTIC_PAGE_SHELL(); }
+    if (i == 1) { return AGNOSTIC_PAGE_SWARM(); }
+    if (i == 2) { return AGNOSTIC_PAGE_CREWS(); }
+    if (i == 3) { return AGNOSTIC_PAGE_LIBRARY(); }
+    if (i == 4) { return AGNOSTIC_PAGE_USERS(); }
+    if (i == 5) { return AGNOSTIC_PAGE_AUDIT(); }
+    return 0;
+}
+
+# The `i`th page's length in bytes, or 0.
+fn agnostic_webgui_asset_len(i): i64 {
+    if (i == 0) { return AGNOSTIC_PAGE_SHELL_len(); }
+    if (i == 1) { return AGNOSTIC_PAGE_SWARM_len(); }
+    if (i == 2) { return AGNOSTIC_PAGE_CREWS_len(); }
+    if (i == 3) { return AGNOSTIC_PAGE_LIBRARY_len(); }
+    if (i == 4) { return AGNOSTIC_PAGE_USERS_len(); }
+    if (i == 5) { return AGNOSTIC_PAGE_AUDIT_len(); }
+    return 0;
+}
+
+# The plugin permission vocabulary, `src/webgui/permissions.json`: `{name: {grants, routes[]}}`. Parsed
+# once at mount (`src/webgui/plugins.cyr`), which enforces it on every request a plugin makes (ADR 0007).
+fn agnostic_webgui_permissions_json(): i64 {
+    return AGNOSTIC_PERMISSIONS();
+}
+
+# The `i`th plugin's manifest, its `plugin.json`, or 0. Its page is asset `i + 1`.
+fn agnostic_webgui_plugin_manifest(i): i64 {
+    if (i == 0) { return AGNOSTIC_MANIFEST_SWARM(); }
+    if (i == 1) { return AGNOSTIC_MANIFEST_CREWS(); }
+    if (i == 2) { return AGNOSTIC_MANIFEST_LIBRARY(); }
+    if (i == 3) { return AGNOSTIC_MANIFEST_USERS(); }
+    if (i == 4) { return AGNOSTIC_MANIFEST_AUDIT(); }
+    return 0;
+}

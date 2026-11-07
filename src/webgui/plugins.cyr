@@ -3,10 +3,10 @@
 # ## A plugin is NATIVE: compiled in, switched at run time
 #
 # Each plugin is a directory under `src/webgui/plugins/<id>/` — a `plugin.json`
-# manifest and one self-contained page — embedded into the binary by
-# `scripts/gen-webgui.sh` (`src/webgui_data.cyr`). Nothing is loaded from disk and
-# nothing is fetched: the set of plugins is fixed by the build, and what an operator
-# changes is only whether each one is ON. That is a deployment-wide setting, kept in
+# manifest and one self-contained page — compiled into the binary by `cyrius.cyml`'s
+# `[embed]` table (ADR 0039). Nothing is loaded from disk and nothing is fetched: the
+# set of plugins is fixed by the build, and what an operator changes is only whether
+# each one is ON. That is a deployment-wide setting, kept in
 # `src/engine/settings.cyr` under `plugin.<id>.enabled`, so it survives a restart.
 # Every plugin starts OFF. Why compiled-in rather than loaded is ADR 0004.
 #
@@ -15,9 +15,14 @@
 # Same shape as the preset library: the manifests are parsed and every page's header
 # block built before any worker exists, and a shortfall REFUSES TO START —
 # `agnostic_webgui_init` returns how many plugins loaded and mount compares it with
-# the generator's count. A page whose embedded length disagrees with the generator's
-# is refused the same way: it means the literal was damaged, and serving a damaged
-# page under a CSP built from the undamaged one would fail in the browser instead.
+# `AGNOSTIC_WEBGUI_PLUGIN_COUNT`.
+#
+# ## A page's script hashes are worked out from the page, at mount (ADR 0039)
+#
+# A CSP that admits scripts by hash and a page are one fact, so the hashes are taken
+# from the bytes this binary serves rather than kept beside them. A page whose script
+# never closes has no honest policy: it is refused the same way, because serving it
+# under one would fail in the browser instead.
 #
 # ## What a plugin may ask for is checked HERE, not only in the shell (0.1.9, ADR 0007)
 #
@@ -25,7 +30,7 @@
 # makes for it carries `X-Agnostic-Plugin: <id>`. The router hands such a request to
 # `agnostic_plugin_gate_a` before anything else looks at it: the plugin must be built in,
 # switched on, and granted the route by its manifest's `permissions` — the vocabulary in
-# `src/webgui/permissions.json`, embedded by the generator and parsed here once, at mount.
+# `src/webgui/permissions.json`, embedded and parsed here once, at mount.
 # The shell checks the same table first (from `GET /api/v1/plugins`), so a refusal usually
 # never leaves the browser; this is the wall that does not depend on the shell being right.
 #
@@ -84,7 +89,6 @@ var AGNOSTIC_JK_ENABLED = str_from("enabled");
 var AGNOSTIC_JK_PLUGIN  = str_from("plugin");
 var AGNOSTIC_JK_PLUGINS = str_from("plugins");
 var AGNOSTIC_JK_CHANGED = str_from("changed");
-var _AGNOSTIC_JK_ASSET  = str_from("asset");
 var _AGNOSTIC_JK_ENTRY  = str_from("entry");
 var AGNOSTIC_JK_PERMISSIONS = str_from("permissions");
 var AGNOSTIC_JK_CATALOGUE   = str_from("catalogue");
@@ -118,15 +122,157 @@ fn agnostic_plugin_id_is_valid(id: Str): i64 {
     return 1;
 }
 
+# ## A page's Content-Security-Policy is worked out from the page (0.4.4, ADR 0039)
+#
+# A page may run its own inline scripts and nothing else, and a CSP says which by the SHA-256 of each.
+# `[embed]` hashes nothing, and a hash kept in a generated file can fall behind its page, which shows
+# as a view that opens blank. So the hashes are taken here, at mount, from the bytes that are served,
+# and a page cannot disagree with its policy.
+#
+# ⚠ **This reads like a browser where it matters, and no further.** A script's content is what lies
+# between `<script…>` and the first `</script…>`, which is what a browser hashes. A browser reads more:
+# a `>` in a quoted attribute of the tag, a `<!--` inside a script. Only these six pages reach this,
+# `scripts/check-embedded.py` refuses what the policy could not admit (an inline handler, an external
+# script), and a hash that came out wrong would fail closed, as a blocked script: the browser suites
+# and `scripts/boot-probe.sh` would see it.
+
+# The lowercase of ASCII byte `c`.
+fn _agnostic_csp_lower(c): i64 {
+    if (c >= 65 && c <= 90) { return c + 32; }
+    return c;
+}
+
+# Whether HTML whitespace is byte `c`.
+fn _agnostic_csp_is_space(c): i64 {
+    if (c == 32 || c == 9 || c == 10 || c == 12 || c == 13) { return 1; }
+    return 0;
+}
+
+# Whether `word`, lowercase, of `m` bytes stands at `at` in the `n` bytes at `d`, in any case.
+fn _agnostic_csp_word_at(d, n, at, word, m): i64 {
+    if (at + m > n) { return 0; }
+    var k = 0;
+    while (k < m) {
+        if (_agnostic_csp_lower(load8(d + at + k) & 255) != (load8(word + k) & 255)) { return 0; }
+        k = k + 1;
+    }
+    return 1;
+}
+
+# Where the tag name that was just matched, ending before `at`, closes its tag: the index past the next
+# `>`, or -1 when no `>` follows, or when the name runs on. `<scripty>` is not a script tag, and
+# `</script foo>` is a closing one: whitespace, `/` or `>` ends a name.
+fn _agnostic_csp_tag_end(d, n, at): i64 {
+    if (at >= n) { return 0 - 1; }
+    var c = load8(d + at) & 255;
+    if (c != 47 && c != 62 && _agnostic_csp_is_space(c) == 0) { return 0 - 1; }
+    var i = at;
+    while (i < n) {
+        if ((load8(d + i) & 255) == 62) { return i + 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Where the content of the script tag opening at `at` begins, or -1 when no tag opens there.
+fn _agnostic_csp_open_end(d, n, at): i64 {
+    if (_agnostic_csp_word_at(d, n, at, "<script", 7) == 0) { return 0 - 1; }
+    return _agnostic_csp_tag_end(d, n, at + 7);
+}
+
+# Where the closing tag at or after `at` starts, through `out_end` where it ends, or -1 for none.
+fn _agnostic_csp_close(d, n, at, out_end): i64 {
+    var i = at;
+    while (i < n) {
+        if ((load8(d + i) & 255) == 60 && _agnostic_csp_word_at(d, n, i, "</script", 8) == 1) {
+            var end = _agnostic_csp_tag_end(d, n, i + 8);
+            if (end >= 0) {
+                store64(out_end, end);
+                return i;
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Append `'sha256-<base64>'` of the `n` bytes at `d` to `sb`. 1, or 0 when memory ran out.
+fn _agnostic_csp_add_hash(sb, d, n): i64 {
+    var dg[32];
+    agnostic_sha256(d, n, &dg);
+    var b = bayan_base64_encode(&dg, 32);
+    if (b == 0) { return 0; }
+    str_builder_add_cstr(sb, "'sha256-");
+    str_builder_add_cstr(sb, b);
+    str_builder_add_cstr(sb, "'");
+    return 1;
+}
+
+# The `script-src` sources of the `n` bytes at `d`, on `sb`: each inline script's hash, or `'none'`
+# for a page with none. 1, or 0 for a script that is never closed, which refuses the page.
+fn _agnostic_csp_scripts(sb, d, n): i64 {
+    var found = 0;
+    var i = 0;
+    while (i < n) {
+        var open = 0 - 1;
+        if ((load8(d + i) & 255) == 60) { open = _agnostic_csp_open_end(d, n, i); }
+        if (open < 0) {
+            i = i + 1;
+        } else {
+            var after: i64[1];
+            store64(&after, 0);
+            var close = _agnostic_csp_close(d, n, open, &after);
+            if (close < 0) { return 0; }
+            if (found > 0) { str_builder_add_cstr(sb, " "); }
+            if (_agnostic_csp_add_hash(sb, d + open, close - open) == 0) { return 0; }
+            found = found + 1;
+            i = load64(&after);
+        }
+    }
+    if (found == 0) { str_builder_add_cstr(sb, "'none'"); }
+    return 1;
+}
+
+# The Content-Security-Policy of the `n` bytes at `d`, a C string on the global heap, or 0 when a script
+# in it is never closed. `shell` is 1 for the shell, which frames plugin pages from its own origin and
+# is framed by nothing. A plugin page is framed by the shell and nothing else, and connects to NOTHING:
+# every request goes through the shell's host bridge, which checks it against the plugin's `permissions`
+# (ADR 0005).
+fn agnostic_webgui_csp(d, n, shell): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "default-src 'none'; script-src ");
+    if (_agnostic_csp_scripts(sb, d, n) == 0) { return 0; }
+    str_builder_add_cstr(sb, "; style-src 'unsafe-inline'");
+    if (shell == 1) {
+        str_builder_add_cstr(sb, "; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'");
+    } else {
+        str_builder_add_cstr(sb, "; connect-src 'none'; frame-ancestors 'self'");
+    }
+    str_builder_add_cstr(sb, "; base-uri 'none'; form-action 'none'");
+    return str_data(str_builder_build(sb));
+}
+
+# The Content-Security-Policy the `i`th page is served with, or 0.
+fn agnostic_webgui_asset_csp(i): i64 {
+    var bytes = agnostic_webgui_asset_bytes(i);
+    if (bytes == 0) { return 0; }
+    var shell = 0;
+    if (i == 0) { shell = 1; }
+    return agnostic_webgui_csp(bytes, agnostic_webgui_asset_len(i), shell);
+}
+
 # The header block a page is sent with — its CSP plus three that every page shares —
-# as one CRLF-terminated C string, the form sandhi's `extra_headers` takes.
+# as one CRLF-terminated C string, the form sandhi's `extra_headers` takes. 0 when the
+# page has no policy.
 #
 # `Cache-Control: no-cache` because a plugin page must not outlive its switch: a
 # browser holding a cached copy would keep showing a view an administrator turned off.
 fn _agnostic_webgui_header_block(i): i64 {
+    var csp = agnostic_webgui_asset_csp(i);
+    if (csp == 0) { return 0; }
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "Content-Security-Policy: ");
-    str_builder_add_cstr(sb, agnostic_webgui_asset_csp(i));
+    str_builder_add_cstr(sb, csp);
     str_builder_add_cstr(sb, "\r\nX-Content-Type-Options: nosniff\r\n");
     str_builder_add_cstr(sb, "Referrer-Policy: no-referrer\r\nCache-Control: no-cache\r\n");
     return str_data(str_builder_build(sb));
@@ -145,13 +291,13 @@ fn _agnostic_plugin_from_manifest(i): i64 {
     var desc = agnostic_req_str(v, AGNOSTIC_JK_DESCRIPTION);
     var ver = agnostic_req_str(v, AGNOSTIC_JK_VERSION);
     var data = agnostic_req_str(v, AGNOSTIC_JK_DATA);
-    var asset = agnostic_req_int(v, _AGNOSTIC_JK_ASSET, 0 - 1);
+    # Page 0 is the shell, so a plugin's page is the one past its own place.
+    var asset = i + 1;
     if (id == 0 || name == 0 || desc == 0 || ver == 0 || data == 0) { return 0; }
     if (agnostic_plugin_id_is_valid(id) == 0) { return 0; }
-    # Page 0 is the shell, never a plugin's.
-    if (asset < 1 || asset >= AGNOSTIC_WEBGUI_ASSET_COUNT) { return 0; }
+    if (asset >= AGNOSTIC_WEBGUI_ASSET_COUNT) { return 0; }
     if (agnostic_req_str(v, _AGNOSTIC_JK_ENTRY) == 0) { return 0; }
-    # What the plugin may ask the shell to do (0.1.8, ADR 0005). The generator has
+    # What the plugin may ask the shell to do (0.1.8, ADR 0005). `scripts/check-embedded.py` has
     # already refused a name outside the vocabulary; an absent or non-array value here
     # is a damaged manifest, and refuses the plugin rather than granting nothing quietly.
     var perms = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_PERMISSIONS);
@@ -276,13 +422,14 @@ fn agnostic_webgui_init(): i64 {
     while (i < AGNOSTIC_WEBGUI_ASSET_COUNT) {
         var bytes = agnostic_webgui_asset_bytes(i);
         if (bytes == 0) { return 0 - 1; }
-        if (strlen(bytes) != agnostic_webgui_asset_len(i)) {
+        var block = _agnostic_webgui_header_block(i);
+        if (block == 0) {
             agnostic_log_kv_int(SK_ERROR, "embedded WebGUI page is damaged", 31,
               "page", 4, i);
             return 0 - 1;
         }
         vec_push(pages, str_new(bytes, agnostic_webgui_asset_len(i)));
-        vec_push(headers, _agnostic_webgui_header_block(i));
+        vec_push(headers, block);
         i = i + 1;
     }
 

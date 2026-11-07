@@ -1,6 +1,6 @@
 # 0004 — WebGUI plugins are compiled in and switched at run time
 
-**Status**: Accepted — amended by [0005](0005-plugins-reach-the-server-through-the-host-bridge.md): a plugin page's CSP is now `connect-src 'none'`, and plugins reach the API only through the shell's host bridge
+**Status**: Accepted — amended by [0005](0005-plugins-reach-the-server-through-the-host-bridge.md): a plugin page's CSP is now `connect-src 'none'`, and plugins reach the API only through the shell's host bridge; amended by [0039](0039-a-file-in-the-binary-is-an-embed-entry.md): `cyrius.cyml`'s `[embed]` table compiles the pages in, and nothing is generated
 **Date**: 2026-10-01
 
 ## Context

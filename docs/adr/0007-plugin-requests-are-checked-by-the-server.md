@@ -1,6 +1,6 @@
 # 0007 — Plugin requests are checked by the server, against one permission vocabulary
 
-**Status**: Accepted — amends [0005](0005-plugins-reach-the-server-through-the-host-bridge.md): the shell's gate is no longer the only wall, and the permission table has one source
+**Status**: Accepted — amends [0005](0005-plugins-reach-the-server-through-the-host-bridge.md): the shell's gate is no longer the only wall, and the permission table has one source; amended by [0039](0039-a-file-in-the-binary-is-an-embed-entry.md): `scripts/check-embedded.py` validates the vocabulary
 **Date**: 2026-10-02
 
 ## Context

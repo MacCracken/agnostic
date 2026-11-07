@@ -1,6 +1,6 @@
 # 0010 — Views link to each other through the shell, and every plugin carries one bridge client
 
-**Status**: Accepted
+**Status**: Accepted — amended by [0039](0039-a-file-in-the-binary-is-an-embed-entry.md): `scripts/check-embedded.py` holds the kit check and `--sync-kit`
 **Date**: 2026-10-02
 
 ## Context

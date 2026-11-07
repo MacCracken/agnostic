@@ -1,7 +1,7 @@
 // The bridge client every plugin page carries verbatim (src/webgui/kit/host.js, 0.1.10):
 // the hello/init handshake, requests and their answers, params and navigation, standalone.
 //
-// scripts/gen-webgui.sh refuses a page whose copy differs from this file by a byte, so testing
+// scripts/check-embedded.py refuses a page whose copy differs from this file by a byte, so testing
 // the file tests every page's copy.
 
 import { test } from 'node:test';

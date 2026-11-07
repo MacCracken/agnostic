@@ -40,12 +40,9 @@ include "src/http/codec.cyr"
 include "src/http/guard.cyr"
 include "src/http/forwarded.cyr"
 
-# The compiled-in preset library (M3). Generated from `src/presets/*.json` by
-# `scripts/gen-presets.sh`; pure data with no dependencies, so it goes early.
-include "src/presets_data.cyr"
-# The WebGUI's pages and plugin manifests (0.1.7). Generated from `src/webgui/` by
-# `scripts/gen-webgui.sh`; pure data too, for the same reason.
-include "src/webgui_data.cyr"
+# Which of the files `cyrius.cyml` embeds is which WebGUI page (0.4.4, ADR 0039). Pure data with no
+# dependencies, so it goes early.
+include "src/webgui/assets.cyr"
 
 # The engine tier. `outcome` defines the status vocabulary `ledger` latches,
 # `request` decodes what `crew` submits, `presets` is self-contained data, and

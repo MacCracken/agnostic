@@ -36,12 +36,6 @@ release that completes M6–M9 (see *Release shape*).
 agnostic's lines lean on agnosai's: its 2.3.x carries the tool loop M6 needs, 2.4.x the approvals and
 budgets, 2.5.x the durable crew log, and 2.6.x MCP 2026-07-28 and A2A v1.0.x.
 
-### 0.2.x — hardening and housekeeping
-
-**Any time:**
-
-- [ ] `[embed]` (*Available from the toolchain*).
-
 ### 0.4.x — the QA tool surface and the crew body (M6)
 
 The tools wait on agnosai 2.3.x: F1, and B33. M6 says "preset-declared intent", and a preset declares
@@ -91,7 +85,7 @@ the removal of `python-port/`.
 397 tracked files, 106 routes and 192 environment variables, and what agnostic already answers is
 listed there, so it is not on this plan.
 
-Nothing in the repo reads the tree: no script, suite or CI step, and `gen-presets.sh` reads
+Nothing in the repo reads the tree: no script, suite or CI step, and `[embed]` reads
 `src/presets/`, whose 18 documents match byte for byte. All of it stays reachable with
 `git show <rev>:python-port/...`.
 
@@ -473,6 +467,9 @@ Each is fixed at its source and reaches agnostic by a re-pin. Filings are in eac
   cap is what closes it, since `AGNOSTIC_REQUEST_MS` only shortens it. `AGNOSTIC_IDLE_MS` also has no
   effect on that wait: `_sandhi_server_wait_request` polls until the deadline, so a shorter idle
   limit is ignored. Accepted sockets have no `SO_SNDTIMEO` either.
+- [ ] → **sigil**: SHA-256 runs in software on a Raspberry Pi 4 at about 2.2 MB/s, against about 330 MB/s with
+  SHA-NI on x86_64. Since 0.4.4 a Pi hashes all six pages at each start, about 290 ms of its 530 ms (ADR 0039), and
+  every token and audit entry goes through the same path. To file with sigil.
 - [ ] → **patra**: its database and WAL files are created 0644 (`lib/patra.cyr:404`, `:1379`). agnostic
   sets the database to 0600 at mount and uses no transaction, so no WAL exists today.
 - [ ] → **sandhi**, through agnosai: an exporter batch still leaves ~480 B, and an inference call
@@ -738,21 +735,3 @@ are tagged from `main` as work lands.
   v1.0. If one is wanted later it is *additive* — a translation layer mounted over the published
   API — and it is built then, against a real requirement, rather than pre-emptively shaping v1.0
   around a client that may never call us.
-
-## Available from the toolchain, not adopted
-
-Each is optional, and nothing here gates a release.
-
-- **`scripts/gen-presets.sh` retires, and `scripts/gen-webgui.sh` keeps only its CSP half, via `[embed]`**
-  (cyrius P2, shipped in 6.6.19).
-  `[embed] NAME = "path"` in cyrius.cyml gives every compile `NAME()` (the file's bytes, NUL-terminated) and
-  `NAME_len()`, read from the file at build time — no generated `.cyr`, nothing to drift. Explicit entries only
-  (the `{dir, glob}` set form is refused by name). All embeds share cycc's 2 MiB string pool with the program's
-  own literals, and every binary of the project (test binaries too) carries every declared embed. Reference: the
-  cyrius guide's *Embedding data files: [embed]*, CHANGELOG [6.6.19] *Embed — P2*.
-  - Replaces `gen-presets.sh` outright (one `[embed]` entry per preset) and the ESCAPING half of `gen-webgui.sh`:
-    the pages embed verbatim (`WEBGUI_INDEX = "webgui/index.html"`), bytes exact, no raw-LF literal shaping.
-  - Stays yours: the Content-Security-Policy hashing and validation (`check-webgui-js.sh` and the hash step of
-    `gen-webgui.sh`). `[embed]` does not hash; compute the CSP hashes from the same files in a script, or at run
-    time from `NAME()` / `NAME_len()`.
-  - Freshness: a page edited without a rebuild can no longer ship stale — the build reads the file.

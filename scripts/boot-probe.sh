@@ -91,6 +91,27 @@ expect 200 "GET /ui/" "$BASE/ui/"
 grep -q '<html' "$WORK/body" || fail "/ui/ did not serve the page"
 expect 404 "an unknown route" "$BASE/no/such/route"
 
+# Each page's policy names the scripts of the page as a browser receives it, and no others (0.4.4,
+# ADR 0039): the server takes those hashes from its own bytes at mount, so this takes them again from
+# outside, over the socket, with another reader. A wrong one would be a view that opens blank.
+for page in swarm crews library users audit; do
+  expect 200 "switch on $page" -X PUT -H 'Content-Type: application/json' -d '{"enabled":true}' \
+    "$BASE/api/v1/plugins/$page" > /dev/null
+done
+python3 - "$BASE" <<'PY' || fail "a page's policy does not name its scripts"
+import base64, hashlib, re, sys, urllib.request
+
+for path in ["/ui/"] + ["/ui/plugins/" + p for p in ("swarm", "crews", "library", "users", "audit")]:
+    with urllib.request.urlopen(sys.argv[1] + path, timeout=10) as r:
+        csp, body = r.headers["Content-Security-Policy"], r.read()
+    scripts = re.findall(rb"<script(?:\s[^>]*)?>(.*?)</script\s*>", body, re.S | re.I)
+    want = ["'sha256-%s'" % base64.b64encode(hashlib.sha256(s).digest()).decode() for s in scripts]
+    got = re.search(r"script-src ([^;]*);", csp).group(1).split(" ")
+    if not want or got != want:
+        sys.exit("%s: its %d script(s) are not what script-src names: %s" % (path, len(want), got))
+print("  ok: all six policies name their pages' scripts")
+PY
+
 # A second server on the same port must say so and exit non-zero. It has its own store, so the
 # store's lock is not what stops it.
 SECOND=0

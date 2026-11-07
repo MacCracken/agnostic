@@ -125,6 +125,38 @@ fn _agnostic_preset_collect_tools(agent): i64 {
     return added;
 }
 
+# How many preset documents are embedded (`cyrius.cyml`, `[embed]`).
+var AGNOSTIC_PRESET_JSON_COUNT = 18;
+
+# The `i`th preset document, NUL-terminated, or 0 when `i` is out of range.
+#
+# ⚠ **The order is deliberate and is not the directory's.** Presets are looked up by name through a
+# map, so a lookup cannot see it, but `GET /api/v1/presets` renders in this order, and one that ran
+# `complete-lean, data-engineering-large, data-engineering-lean, …` would read as the accident it was.
+# Grouped by domain, lean -> standard -> large, with the three off-pattern documents last.
+# `tests/presets.tcyr` pins it, and `scripts/check-embedded.py` fails on a document this does not name.
+fn agnostic_preset_json(i): i64 {
+    if (i == 0) { return AGNOSTIC_PRESET_QUALITY_LEAN(); }
+    if (i == 1) { return AGNOSTIC_PRESET_QUALITY_STANDARD(); }
+    if (i == 2) { return AGNOSTIC_PRESET_QUALITY_LARGE(); }
+    if (i == 3) { return AGNOSTIC_PRESET_SOFTWARE_ENGINEERING_LEAN(); }
+    if (i == 4) { return AGNOSTIC_PRESET_SOFTWARE_ENGINEERING_STANDARD(); }
+    if (i == 5) { return AGNOSTIC_PRESET_SOFTWARE_ENGINEERING_LARGE(); }
+    if (i == 6) { return AGNOSTIC_PRESET_DEVOPS_LEAN(); }
+    if (i == 7) { return AGNOSTIC_PRESET_DEVOPS_STANDARD(); }
+    if (i == 8) { return AGNOSTIC_PRESET_DEVOPS_LARGE(); }
+    if (i == 9) { return AGNOSTIC_PRESET_DATA_ENGINEERING_LEAN(); }
+    if (i == 10) { return AGNOSTIC_PRESET_DATA_ENGINEERING_STANDARD(); }
+    if (i == 11) { return AGNOSTIC_PRESET_DATA_ENGINEERING_LARGE(); }
+    if (i == 12) { return AGNOSTIC_PRESET_DESIGN_LEAN(); }
+    if (i == 13) { return AGNOSTIC_PRESET_DESIGN_STANDARD(); }
+    if (i == 14) { return AGNOSTIC_PRESET_DESIGN_LARGE(); }
+    if (i == 15) { return AGNOSTIC_PRESET_QUALITY_PERFORMANCE(); }
+    if (i == 16) { return AGNOSTIC_PRESET_QUALITY_SECURITY(); }
+    if (i == 17) { return AGNOSTIC_PRESET_COMPLETE_LEAN(); }
+    return 0;
+}
+
 # Parse one embedded document into a preset record. 0 when it is unusable.
 #
 # ⚠ **A document that does not parse is dropped, and `agnostic_presets_init`
@@ -212,9 +244,9 @@ fn agnostic_presets_count(): i64 {
 
 # The `i`th preset in library order, or 0 when out of range.
 #
-# Library order is the generator's declared order — grouped by domain,
+# Library order is `agnostic_preset_json`'s declared order — grouped by domain,
 # lean -> standard -> large — not the directory's alphabetical order. It is what
-# `GET /api/v1/presets` renders, and `scripts/gen-presets.sh` owns it.
+# `GET /api/v1/presets` renders.
 fn agnostic_preset_at(i): i64 {
     if (_agnostic_presets == 0) { return 0; }
     if (i < 0 || i >= vec_len(_agnostic_presets)) { return 0; }

@@ -59,3 +59,4 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0036](0036-a-package-is-json-and-all-of-itself.md) | A package is JSON, and all of itself or none |
 | [0037](0037-a-team-becomes-agents-and-a-recommendation-is-words.md) | A team becomes agents at the door, and a recommendation is a table of words |
 | [0038](0038-the-views-use-the-permissions-they-had-and-a-rollback-sends-its-revision.md) | The views reach the new routes through the permissions they had, and a rollback sends its revision |
+| [0039](0039-a-file-in-the-binary-is-an-embed-entry.md) | A file in the binary is an `[embed]` entry, and a page's policy comes from the page |

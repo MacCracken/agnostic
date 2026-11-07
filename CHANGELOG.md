@@ -4,6 +4,71 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-11-06
+
+**No generated source remains.** Every file in the binary is now an entry in `cyrius.cyml`'s `[embed]` table, read as it
+stands at build time, so a page or a preset cannot ship stale. 13,277 generated lines leave `src/`, and one gate holds
+the rules the two generators held ([ADR 0039](docs/adr/0039-a-file-in-the-binary-is-an-embed-entry.md)). No route and no
+dependency moved, and a response differs only by one comment in each plugin page and that page's hash.
+
+### Added
+
+- **`[embed]` in `cyrius.cyml`:** 30 entries, the 18 presets, the 6 pages, the 5 manifests and the permission vocabulary.
+  `src/webgui/assets.cyr` and `src/engine/presets.cyr` say which entry each index is.
+- **`scripts/check-embedded.py`, in `check-clean.sh`:** the table against the tree both ways, the chains against the
+  table, each manifest, the vocabulary, the page rules and each page's copy of the bridge client, with every fault
+  listed at once. `--sync-kit` rewrites those copies, as it did. A page with a script that never closes fails here too.
+- **`scripts/boot-probe.sh` takes each served page's script hashes again,** over the socket with another reader, and holds
+  them to the page's `script-src`.
+
+### Changed
+
+- **A page's Content-Security-Policy is worked out at mount, from the bytes it serves,** by `agnostic_webgui_csp`. `[embed]`
+  hashes nothing, and a stored hash can fall behind its page. A page whose script never closes refuses the start.
+- **Adding a plugin** is now an entry in `[embed]` and an arm in `src/webgui/assets.cyr`: `docs/guides/webgui-plugins.md`.
+
+### Removed
+
+- **`scripts/gen-presets.sh`, `scripts/gen-webgui.sh`, `src/presets_data.cyr` and `src/webgui_data.cyr`,** with the lint
+  exemption for generated files and the rule against a page line at column 0 that looks like a definition.
+- **`agnostic_webgui_asset_path` and `agnostic_webgui_asset_sha256`.** `tests/webgui.tcyr` compares the bytes in the
+  binary with the file instead.
+
+### Performance
+
+- **A start pays for the hashing, once, before a worker exists:** x86_64 61 → 65 ms from start to listening, and a
+  Raspberry Pi 4 about 240 → 530 ms. On the Pi nearly all of that is SHA-256, which sigil runs in software there at about
+  2.2 MB/s, and the roadmap holds that as owed by sigil.
+- **A compile carries every embed,** even under dead-code elimination, so a suite that held no page grew: `tests/health`
+  3.86 → 4.49 s to compile and 6.0 → 6.8 MB. That is about 27 s across the 42 suites.
+- **The x86_64 binary:** 4,420,440 → 4,431,808 B. Nothing on a request's path moved: of the 43 benchmarks the largest
+  rise is `crew_save_row`, +4.6%.
+
+### Verified
+
+- **x86_64, `CYRIUS_DCE=1`:** 42 suites, 4,342 assertions, 0 failed, and 119 JavaScript tests. Coverage 98% against the
+  gate of 95. `check-clean.sh`, `check-symbols.sh`, `check-skill.py` and the schema check pass, and the boot probe and all
+  8 load-test steps, with 7,500 crews through a restart and 20,457 reads of crews about to go. Step 8 alone reads 914 B a
+  crew on this build and on the 0.4.3 binary.
+- **A Raspberry Pi 4, natively:** the same 42 suites, 4,341 assertions because `crews_route` asserts once per poll, 0
+  failed, and the boot probe, on 109 files compared by hash. Load-test steps 1 to 7 ran there one line of `src/` earlier:
+  the line checks for `<` before it compares `</script`, and it is reached only at mount.
+- **Real Chromium:** the Library 35 of 35, Crews 24 of 24, Users 25 of 25. These pages run only if the policy worked out
+  at mount admits them.
+- **Against the 0.4.3 binary,** every page, every preset and the plugin list: 27 responses identical in status, CSP,
+  cache and body before the comment in the bridge client changed. The five plugin pages now differ by that comment
+  and their hashes, and the other 22 are still identical.
+- **An empty dependency cache with no siblings:** `lib sync --full`, `deps`, a clean `git status`, and the same SHA-256
+  as this tree's binary.
+- **A page with a script that never closes,** built and started: exit 1, naming the page.
+- **96 mutants:** 58 on the gate, all caught, and 38 on the scanner and the chains, where 36 are caught and 2 are
+  equivalent: each moves a bounds check onto the terminating NUL, which is no tag's next byte. Two others survived the
+  first run and each gave a fixture.
+
+**What this does not show.** The pages ran in Chromium alone. The scanner stops short of a browser's reading, a `>` in a
+quoted attribute of a script tag, and a page that needed it would fail closed, as a blocked script. `boot-probe.sh`
+would see that, and so would the browser suites, which CI does not run.
+
 ## [0.4.3] — 2026-11-06
 
 **The WebGUI reaches what 0.4.2 added.** A definition shows what it has been, an edit can be undone from the page, a

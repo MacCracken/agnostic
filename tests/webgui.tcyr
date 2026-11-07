@@ -2,9 +2,9 @@
 #
 # What this suite holds:
 #
-#   1. The embedded pages ARE the source files: their SHA-256 is recomputed here from
-#      the bytes in the binary and compared with the generator's. An escaping slip in
-#      `scripts/gen-webgui.sh` fails here, not in a browser.
+#   1. The embedded pages ARE the source files, byte for byte, and each is served under a
+#      policy worked out from those bytes (ADR 0039). The hashes the fixtures expect were
+#      computed outside this code, so the two cannot share a slip.
 #   2. A plugin is OFF until switched on, the switch survives a store reopen, and an
 #      unrecognised stored value reads as OFF.
 #   3. The pages are public and the API is not: listing is READ, switching is SUPER —
@@ -69,25 +69,30 @@ fn _t_field(r, key) {
     return bayan_json_v_obj_get_by_str(agnostic_response_body(r), str_from(key));
 }
 
+# The file the `i`th page comes from.
+fn _t_page_path(i): i64 {
+    if (i == 0) { return "src/webgui/index.html"; }
+    if (i == 1) { return "src/webgui/plugins/swarm/index.html"; }
+    if (i == 2) { return "src/webgui/plugins/crews/index.html"; }
+    if (i == 3) { return "src/webgui/plugins/library/index.html"; }
+    if (i == 4) { return "src/webgui/plugins/users/index.html"; }
+    return "src/webgui/plugins/audit/index.html";
+}
+
 fn test_pages_are_the_source_files() {
     test_group("webgui/pages");
-    var a = arena_allocator(262144);
     assert_eq(AGNOSTIC_WEBGUI_ASSET_COUNT, 6, "six pages: the shell and five plugins");
-    assert_eq(str_eq_cstr(str_from(agnostic_webgui_asset_path(0)), "index.html"), 1,
-      "page 0 is the shell");
-    assert_eq(str_eq_cstr(str_from(agnostic_webgui_asset_path(1)), "plugins/swarm/index.html"), 1,
-      "page 1 is the swarm plugin");
     var i = 0;
     while (i < AGNOSTIC_WEBGUI_ASSET_COUNT) {
         var bytes = agnostic_webgui_asset_bytes(i);
         assert_neq(bytes, 0, "the page is embedded");
-        assert_eq(strlen(bytes), agnostic_webgui_asset_len(i),
-          "no NUL inside it: its C-string length is the generator's byte count");
-        # ⭐ THE CLAIM. The digest of the bytes in this binary equals the digest of
-        # the source file the generator read, so the literal is the file.
-        var got = agnostic_sha256_hex_a(a, str_new(bytes, agnostic_webgui_asset_len(i)));
-        assert_eq(str_eq_cstr(got, agnostic_webgui_asset_sha256(i)), 1,
-          "the embedded bytes hash to the source file's SHA-256");
+        assert_eq(strlen(bytes), agnostic_webgui_asset_len(i), "no NUL inside it: a page is one C string");
+        # ⭐ THE CLAIM. What this binary serves is the file, and each index is the page it should be.
+        var n = 0;
+        var disk = file_read_whole(_t_page_path(i), &n);
+        assert_neq(disk, 0, "the source file reads");
+        assert_eq(n, agnostic_webgui_asset_len(i), "as long as the page");
+        assert_eq(memeq(bytes, disk, n), 1, "and the same bytes");
         var csp = str_from(agnostic_webgui_asset_csp(i));
         assert_eq(_t_has(csp, "default-src 'none'"), 1, "the CSP denies by default");
         assert_eq(_t_has(csp, "script-src 'sha256-"), 1, "and admits scripts by hash");
@@ -106,6 +111,85 @@ fn test_pages_are_the_source_files() {
       "while the shell, which holds the token, talks to its own origin");
     assert_eq(agnostic_webgui_asset_bytes(6), 0, "out of range is 0");
     assert_eq(agnostic_webgui_asset_bytes(0 - 1), 0, "and so is negative");
+    assert_eq(agnostic_webgui_asset_len(6), 0, "as is its length");
+    assert_eq(agnostic_webgui_asset_csp(6), 0, "and it has no policy");
+}
+
+# Whether the policy of the fixture page `html` names exactly `want` as its script sources.
+fn _t_scripts(html, want): i64 {
+    var csp = agnostic_webgui_csp(html, strlen(html), 0);
+    if (csp == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "default-src 'none'; script-src ");
+    str_builder_add_cstr(sb, want);
+    str_builder_add_cstr(sb, "; style-src");
+    return _t_has(str_from(csp), str_data(str_builder_build(sb)));
+}
+
+# Whether byte `c` ends the name of an opening tag and of a closing one.
+fn _t_ends_name(c): i64 {
+    var one[2];
+    store8(&one, c);
+    store8(&one + 1, 0);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "<script");
+    str_builder_add_cstr(sb, &one);
+    str_builder_add_cstr(sb, "x>a</script");
+    str_builder_add_cstr(sb, &one);
+    str_builder_add_cstr(sb, ">");
+    return _t_scripts(str_data(str_builder_build(sb)), "'sha256-ypeBEsobvcr6wjGzmiPcTaeG7/gUfE5yuYB3ha/uSLs='");
+}
+
+# ⭐ 0.4.4: the hashes are taken at mount, so what counts as a script is this code's to get right.
+# Each digest here was computed outside it: `base64(sha256(content))`, by Python.
+fn test_policy_comes_from_the_page() {
+    test_group("webgui/csp");
+    var ha = "'sha256-ypeBEsobvcr6wjGzmiPcTaeG7/gUfE5yuYB3ha/uSLs='";
+    var hb = "'sha256-PiPoFgA5WUoziU9lZOGxNIu9egCI1CxKy3PurtWcAJ0='";
+    var both = "'sha256-ypeBEsobvcr6wjGzmiPcTaeG7/gUfE5yuYB3ha/uSLs=' 'sha256-PiPoFgA5WUoziU9lZOGxNIu9egCI1CxKy3PurtWcAJ0='";  #skip-lint
+    assert_eq(_t_scripts("<script>a</script>", ha), 1, "a script is admitted by its own hash");
+    assert_eq(_t_scripts("<p>x<script>a</script>y</p>", ha), 1, "and only its content is hashed");
+    assert_eq(_t_scripts("<script>a</script><p><script>b</script>", both), 1, "two are named in order");
+    assert_eq(_t_scripts("<SCRIPT type=\"x\">b</SCRIPT >", hb), 1, "in any case, with attributes");
+    assert_eq(_t_scripts("<script\ntype=\"x\">a</script\n>", ha), 1, "whitespace ends the tag's name");
+    assert_eq(_t_scripts("<script/>a</script>", ha), 1, "a script cannot close itself");
+    assert_eq(_t_scripts("<script>a</script foo>", ha), 1, "a closing tag may carry anything");
+    assert_eq(_t_scripts("<script>a</script/>", ha), 1, "even a slash");
+    assert_eq(_t_scripts("<script>a</scripty></script>",
+        "'sha256-pYwaksXQ8eM9oDbroChprt9JgDGMsik23kSWJspv3h0='"), 1, "and `</scripty>` closes nothing");
+    assert_eq(_t_scripts("<script>a<script></script>",
+        "'sha256-3QzuHoKoHEPMqFIxXZ5ZizrpDQQhjZtw5wnuWBsQyt4='"), 1, "a `<script>` inside a script is its text");
+    assert_eq(_t_scripts("<script></script>",
+        "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='"), 1, "an empty script has a hash too");
+    assert_eq(_t_ends_name(32), 1, "a space ends a tag's name");
+    assert_eq(_t_ends_name(9), 1, "and so does a tab");
+    assert_eq(_t_ends_name(10), 1, "a line feed");
+    assert_eq(_t_ends_name(12), 1, "a form feed");
+    assert_eq(_t_ends_name(13), 1, "and a carriage return");
+    assert_eq(_t_ends_name(95), 0, "while another byte runs the name on");
+    assert_eq(_t_scripts("<scripty>a</scripty>", "'none'"), 1, "`<scripty>` opens nothing");
+    assert_eq(_t_scripts("<scripx >a</script>", "'none'"), 1, "and every letter of the name counts");
+    assert_eq(_t_scripts("<script>a</scripx ></script>",
+        "'sha256-Kq8MB+pfGiZsvd3OG1ARPh6PMMlwBWY2x2QY7++elFc='"), 1, "in a closing tag too");
+    assert_eq(_t_scripts("<p>nothing to run</p>", "'none'"), 1, "a page without one admits none");
+    assert_eq(_t_scripts("", "'none'"), 1, "and so does an empty one");
+    assert_eq(_t_scripts("<script", "'none'"), 1, "a tag that never ends is not a script");
+    assert_eq(_t_scripts("<script x", "'none'"), 1, "with attributes or without");
+
+    # ⚠ A script that never closes has no honest policy, and a page with one is refused at mount.
+    assert_eq(agnostic_webgui_csp("<script>a", 9, 0), 0, "an unclosed script refuses the page");
+    assert_eq(agnostic_webgui_csp("<script>a</script", 17, 0), 0, "as does a tag that stops short");
+    assert_eq(agnostic_webgui_csp("<script>a</script x", 19, 0), 0, "with or without attributes");
+    assert_eq(agnostic_webgui_csp("<script>a</script>x<script>b", 28, 0), 0,
+      "and a second one that never closes");
+
+    # The rest of the policy, whole, since nothing else states it.
+    var shell = agnostic_webgui_csp("<p>", 3, 1);
+    assert_eq(str_eq_cstr(str_from(shell), "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"), 1,  #skip-lint
+      "the shell's policy, whole");
+    var plugin = agnostic_webgui_csp("<p>", 3, 0);
+    assert_eq(str_eq_cstr(str_from(plugin), "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"), 1,  #skip-lint
+      "a plugin page's, whole");
 }
 
 fn test_init() {
@@ -119,7 +203,7 @@ fn test_init() {
     var p = agnostic_plugin_find(str_from("swarm"));
     assert_neq(p, 0, "swarm is found by id");
     assert_eq(agnostic_plugin_at(0), p, "and is first in the listing");
-    # ⭐ 0.1.10: the views over the real surface, in the order scripts/gen-webgui.sh lists them.
+    # ⭐ 0.1.10: the views over the real surface, in the order src/webgui/assets.cyr lists them.
     assert_eq(agnostic_plugin_at(1), agnostic_plugin_find(str_from("crews")), "then Crews");
     assert_eq(agnostic_plugin_at(2), agnostic_plugin_find(str_from("library")), "then Library");
     assert_eq(agnostic_plugin_at(3), agnostic_plugin_find(str_from("users")), "then Users");
@@ -584,6 +668,7 @@ fn main() {
     alloc_init();
     thread_local_init();
     test_pages_are_the_source_files();
+    test_policy_comes_from_the_page();
     test_init();
     test_ids();
     test_settings();

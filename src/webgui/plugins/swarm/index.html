@@ -781,12 +781,12 @@ function makeCommand(type, agentIds, target, payload) {
 
 /* =====================================================================================
  *  SECTION 1b · HOST — the plugin side of agnostic's host bridge, carried verbatim from
- *  src/webgui/kit/host.js: scripts/gen-webgui.sh refuses a copy that differs by a byte, and
- *  `./scripts/gen-webgui.sh --sync-kit` rewrites it. Opened on its own (a new tab) there is no
+ *  src/webgui/kit/host.js: scripts/check-embedded.py refuses a copy that differs by a byte, and
+ *  `./scripts/check-embedded.py --sync-kit` rewrites it. Opened on its own (a new tab) there is no
  *  shell: `mode` is 'standalone', and this page keeps its swarms in this browser instead.
  * ===================================================================================== */
 /* agnostic-kit:host begin — DO NOT EDIT A COPY: the canonical source is src/webgui/kit/host.js,
- * and scripts/gen-webgui.sh refuses a plugin page whose copy differs (`--sync-kit` rewrites them).
+ * and scripts/check-embedded.py refuses a plugin page whose copy differs (`--sync-kit` rewrites them).
  *
  *  Host — the plugin side of agnostic's host bridge (ADR 0005, 0007, 0010).
  *
