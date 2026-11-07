@@ -112,7 +112,11 @@ fn agnostic_serve_install_signals(): i64 {
 #
 # Errors from the send are not propagated: the client is already gone in every case that
 # produces one, and sandhi closes the connection regardless.
-fn _agnostic_serve_send(a, cfd, resp): i64 {
+#
+# ⚠ **Closes the ledger bracket `bracket`, between the encode and the write** (ADR 0034). A response
+# can point into a crew's arena until it is encoded, and a client that stops reading can hold the
+# write for as long as it likes, which must not hold every finished crew's memory with it.
+fn _agnostic_serve_send(a, cfd, resp, bracket): i64 {
     var status = agnostic_response_status(resp);
     var reason = agnostic_http_reason(status);
 
@@ -151,6 +155,8 @@ fn _agnostic_serve_send(a, cfd, resp): i64 {
         # with a fixed literal — allocating here would fail for the same reason.
         body = str_from("{\"error\":\"internal error\"}");
     }
+
+    agnostic_ledger_read_end(bracket);
 
     if (a != 0) {
         sandhi_server_send_response_a(a, cfd, status, reason, ctype,
@@ -311,9 +317,13 @@ fn agnostic_serve_handler(ctx, cfd, buf, blen): i64 {
     # ⚠ Fail CLOSED without a context. A null `rctx` reads to the ladder as an
     # in-process caller, which skips the transport rules — so a request whose
     # context could not be built is refused, never dispatched without them.
+    #
+    # The bracket is every request's, /health's too: one a route forgot would be a read of a crew
+    # that is being scrubbed, seen by nobody, and two lock operations cost less than that.
+    var bracket = agnostic_ledger_read_begin();
     var resp = 0;
     if (rctx != 0) { resp = agnostic_route_dispatch_a(a, method, path, body, max_body, rctx); }
-    var sent = _agnostic_serve_send(a, cfd, resp);
+    var sent = _agnostic_serve_send(a, cfd, resp, bracket);
     agnostic_metrics_note_status(sent);
     # After the send, so the span covers the whole answer; before the clear below, which
     # takes the trace id with it.
@@ -466,6 +476,7 @@ fn agnostic_serve_mount(cfg): i64 {
     agnostic_gpu_detect(agnostic_config_gpu_tools(cfg));
     var target_hosts = agnostic_config_target_hosts(cfg);
     agnostic_target_set_hosts(target_hosts);
+    agnostic_definitions_set_versions_max(agnostic_config_max_versions(cfg));
     if (target_hosts != 0) {
         agnostic_log_kv_int(SK_INFO, "target hosts", 12, "entries", 7, vec_len(target_hosts));
     }

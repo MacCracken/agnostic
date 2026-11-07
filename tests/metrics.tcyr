@@ -108,7 +108,7 @@ fn test_the_format() {
         i = e + 1;
     }
     assert_eq(bad, 0, "⭐ every line parses");
-    assert_eq(types, 13, "thirteen families");
+    assert_eq(types, 15, "fifteen families");
 
     var version = str_builder_new();
     str_builder_add_cstr(version, "agnostic_build_info{version=\"");
@@ -202,6 +202,8 @@ fn test_the_engine_families() {
     assert_eq(_t_sample(t, "agnosai_crews_total"), before + 1, "⭐ the engine's counter is the one served");
     assert_eq(_t_sample(t, "agnostic_ledger_crews"), agnostic_ledger_count(), "the ledger's size");
     assert_eq(_t_sample(t, "agnostic_engine_crews"), agnostic_engine_crew_count(), "the registry's");
+    assert_eq(_t_sample(t, "agnostic_ledger_readers"), 0, "no bracket here: a suite calls the router itself");
+    assert_eq(_t_sample(t, "agnostic_crew_arenas"), agnostic_crew_arenas_made(), "the arenas made");
     agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
 }
 

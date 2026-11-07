@@ -44,7 +44,10 @@ Every `POST` and `PUT` must send `Content-Type: application/json` — **415** ot
 other `Host` is refused (**403**). Both are in [ADR 0006](docs/adr/0006-loopback-host-and-json-only-writes.md).
 
 A crew can name its `target`, within the hosts its operator lists in `AGNOSTIC_TARGET_HOSTS`, name a stored
-definition in place of an agent, and hold a task's answer to an `output_schema`.
+definition in place of an agent, say who it needs by role with `team`, and hold a task's answer to an
+`output_schema`. Every write of an agent definition is a version you can read and roll back to, and
+`POST /api/v1/packages/export` and `/import` move a tenant's definitions as one document.
+`POST /api/v1/preset-recommendations` says which preset fits a description, and
 `GET /api/v1/tools` says which of the presets' tools have an engine tool behind them; no crew calls one yet.
 
 Crews belong to the tenant that submitted them, and `GET /api/v1/crews` lists yours; send an

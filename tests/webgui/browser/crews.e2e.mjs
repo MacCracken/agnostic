@@ -1,5 +1,6 @@
 // The Crews view in a real browser, on what a crew's body can say since 0.4.0: its target, a task's own,
-// and an answer out of the shape it declared. The same harness as `users.e2e.mjs`.
+// and an answer out of the shape it declared, which takes a gateway since 0.4.2: a placeholder is not
+// judged, so this runs `scripts/fake-gateway.py`. The same harness as `users.e2e.mjs`.
 //
 // By hand, and not in CI, which has no browser:
 //   node tests/webgui/browser/crews.e2e.mjs "$PWD/build/agnostic" <directory for screenshots>
@@ -11,9 +12,11 @@ import { join } from 'node:path';
 const BIN = process.argv[2], PORT = 18752, DEBUG = 18753, BASE = `http://127.0.0.1:${PORT}`;
 const OUT = process.argv[3];
 const work = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'e2e-'));
+const GATEWAY = 18754;
+const gateway = spawn('python3', ['scripts/fake-gateway.py', String(GATEWAY)], { stdio: 'ignore' });
 const server = spawn(BIN, [], { env: { ...process.env, AGNOSTIC_ADDR: '127.0.0.1', AGNOSTIC_PORT: String(PORT), AGNOSTIC_AUTH: 'required',
   AGNOSTIC_BOOTSTRAP_EMAIL: 'root@example.com', AGNOSTIC_BOOTSTRAP_PASSWORD: 'root-password-123',
-  AGNOSTIC_TARGET_HOSTS: 'sut.example,other.example',
+  AGNOSTIC_TARGET_HOSTS: 'sut.example,other.example', AGNOSTIC_LLM_URL: `http://127.0.0.1:${GATEWAY}`,
   AGNOSTIC_DB_PATH: join(work, 'db.patra'), AGNOSTIC_AUDIT_PATH: join(work, 'audit.patra') }, stdio: 'ignore' });
 const chrome = spawn('/usr/bin/chromium', ['--headless=new', `--remote-debugging-port=${DEBUG}`, `--user-data-dir=${join(work, 'chrome')}`,
   '--no-sandbox', '--disable-gpu', '--disable-features=IsolateSandboxedIframes', '--disable-site-isolation-trials', '--window-size=1280,860', 'about:blank'], { stdio: 'ignore' });
@@ -22,17 +25,18 @@ let pass = 0, fail = 0;
 const ok = (c, what) => { if (c) { pass++; console.log('  ok: ' + what); } else { fail++; console.log('  FAIL: ' + what); } };
 
 async function waitUrl(u) { for (let i = 0; i < 100; i++) { try { const r = await fetch(u); if (r.ok) return r; } catch (e) {} await sleep(100); } throw new Error('no answer from ' + u); }
-process.on('exit', () => { try { chrome.kill('SIGKILL'); server.kill('SIGKILL'); } catch (e) {} });
+process.on('exit', () => { try { chrome.kill('SIGKILL'); server.kill('SIGKILL'); gateway.kill('SIGKILL'); } catch (e) {} });
 process.on('uncaughtException', (e) => { console.log('HARNESS ERROR:', e.message); process.exit(2); });
 process.on('unhandledRejection', (e) => { console.log('HARNESS ERROR:', e && e.message); process.exit(2); });
 await waitUrl(BASE + '/health');
+await sleep(500);   // the gateway has no route to wait on
 const login = await (await fetch(BASE + '/api/v1/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'root@example.com', password: 'root-password-123' }) })).json();
 const auth = { Authorization: 'Bearer ' + login.token, 'Content-Type': 'application/json' };
 await fetch(BASE + '/api/v1/plugins/crews', { method: 'PUT', headers: auth, body: '{"enabled":true}' });
 await fetch(BASE + '/api/v1/agents/definitions', { method: 'POST', headers: auth, body: JSON.stringify({ key: 'reviewer', name: 'Reviewer', role: 'reviewer', goal: 'find what is wrong' }) });
 const crew = await fetch(BASE + '/api/v1/crews', { method: 'POST', headers: auth, body: JSON.stringify({
   name: 'aimed crew', target: { url: 'https://sut.example/app' }, agents: [{ definition: 'reviewer' }],
-  tasks: [{ description: 'check the login page', output_schema: { type: 'object', required: ['verdict'] } },
+  tasks: [{ description: 'say-prose about the login page', output_schema: { type: 'object', required: ['verdict'] } },
           { description: 'compare with the other one', target: { url: 'https://other.example/' } }] }) });
 console.log('submitted:', crew.status);
 const crewId = (await crew.json()).crew_id;
@@ -89,7 +93,8 @@ const page = await inFrame(`document.body.innerText`);
 ok(/target/i.test(page) && page.includes('https://sut.example/app'), '⭐ the detail has a Target fact');
 ok(page.includes('against https://other.example/'), '⭐ a task with its own target says so');
 ok(!page.includes('against https://sut.example/app'), 'and one running against its crew’s does not repeat it');
-ok(page.includes('Its output is not in the shape this task declared.'), '⭐ a completed task out of shape says so');
+ok(page.includes('Its output is not in the shape this task declared.'), '⭐ a task the engine failed for its shape says so');
+ok(page.includes('output failed validation'), '⭐ and why');
 const plan = await (await fetch(BASE + '/api/v1/crews/' + crewId + '/plan', { headers: auth })).json();
 ok(plan.agents[0].key === 'reviewer' && plan.agents[0].name === 'Reviewer', 'the agent is the stored definition it named');
 ok((await inFrame(`[...document.querySelectorAll('.fact a')].length`)) === 0, '⭐ a target is text, never a link');

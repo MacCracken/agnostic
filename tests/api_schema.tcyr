@@ -408,7 +408,7 @@ fn test_routes() {
     assert_eq(bayan_json_v_int(_t_get(doc, "schema")), 1, "it is format 1");
     var routes = _t_get(doc, "routes");
     var n = bayan_json_v_arr_len(routes);
-    assert_eq(n, 48, "48 routes: one per method each of the router's 35 rows answers");
+    assert_eq(n, 54, "54 routes: one per method each of the router's 41 rows answers");
 
     var shape = 0;
     var unresolved = 0;
@@ -692,6 +692,8 @@ fn test_bodies() {
     vec_push(used, str_from("target"));
     vec_push(used, str_from("output_schema"));
     vec_push(used, str_from("task"));
+    vec_push(used, str_from("team"));
+    vec_push(used, str_from("team_member"));
     var r = 0;
     while (r < bayan_json_v_arr_len(routes)) {
         var name = _t_s(bayan_json_v_arr_get(routes, r), "body");
@@ -1064,6 +1066,7 @@ fn _t_bad_query(name) {
     if (str_eq_cstr(name, "after") == 1) { return "-1"; }
     if (str_eq_cstr(name, "explain") == 1) { return "nope"; }
     if (str_eq_cstr(name, "task") == 1) { return "x"; }
+    if (str_eq_cstr(name, "overwrite") == 1) { return "maybe"; }
     return 0;
 }
 
@@ -1113,7 +1116,7 @@ fn test_probes() {
         }
         i = i + 1;
     }
-    assert_eq(takers, 12, "twelve routes take an allow-listed body");
+    assert_eq(takers, 16, "sixteen routes take an allow-listed body");
     assert_eq(probe_bad, 0, "each refuses an unknown key as unknown (422)");
     assert_eq(field_bad, 0, "and accepts every field its declared body lists as known");
 
@@ -1197,7 +1200,7 @@ fn test_probes() {
         i = i + 1;
     }
     assert_eq(unknown_q, 0, "the suite knows an invalid value for every declared query parameter");
-    assert_eq(queried, 8,
+    assert_eq(queried, 9,
       "eight declared: limit, status, before on crews; after on events; explain, task on plan; limit, before on audit");
     assert_eq(query_bad, 0, "and each is read: an invalid value is a 422");
 
@@ -1282,8 +1285,8 @@ fn test_probes() {
         }
         i = i + 1;
     }
-    assert_eq(headed, 6,
-      "six declared: idempotency-key on submit; if-match, if-none-match on a document put; if-match on its delete, and on a definition's put and delete"); #skip-lint
+    assert_eq(headed, 7,
+      "seven declared: idempotency-key on submit; if-match, if-none-match on a document put; if-match on its delete, and on a definition's put, delete and rollback"); #skip-lint
     assert_eq(header_bad, 0, "and each is read: an invalid value is refused, a precondition with code revision");
 
     # ⭐ A grant's `self`, against the plugin gate: a plugin holding the grant may name itself in
@@ -1762,6 +1765,11 @@ fn _t_prove_every_body(a, doc, ctx) {
       "{\"name\":\"p\",\"agents\":[{\"key\":\"k\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"d\"}],\"target\":", "}", ctx); #skip-lint
     _t_prove_types(a, AGNOSTIC_METHOD_POST, crews, _t_get(_t_get(bodies, "output_schema"), "types"),
       "{\"name\":\"p\",\"agents\":[{\"key\":\"k\",\"role\":\"r\",\"goal\":\"g\"}],\"tasks\":[{\"description\":\"d\",\"output_schema\":", "}]}", ctx); #skip-lint
+    # A crew's team (0.4.2), and each of its members.
+    _t_prove_types(a, AGNOSTIC_METHOD_POST, crews, _t_get(_t_get(bodies, "team"), "types"),
+      "{\"name\":\"p\",\"tasks\":[{\"description\":\"d\"}],\"team\":", "}", ctx);
+    _t_prove_types(a, AGNOSTIC_METHOD_POST, crews, _t_get(_t_get(bodies, "team_member"), "types"),
+      "{\"name\":\"p\",\"tasks\":[{\"description\":\"d\"}],\"team\":{\"members\":[", "]}}", ctx);
     var ref = _t_req(a, AGNOSTIC_METHOD_POST, crews,
       "{\"name\":\"p\",\"agents\":[{\"definition\":7}],\"tasks\":[{\"description\":\"d\"}]}", ctx);
     assert_eq(_t_has(_t_msg(ref), "'definition' is required and must be a string"), 1,
@@ -1888,6 +1896,20 @@ fn test_responses() {
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions", "/api/v1/agents/definitions", "", cx);
     _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/:key", dpath, "", cx);
     _t_go(a, AGNOSTIC_METHOD_PUT, "/api/v1/agents/definitions/:key", dpath, _T_DEF, cx);
+    # What it has been (0.4.2): the rollback goes first, so that `saved_at` is on a version it made.
+    _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions/:key/rollback", _t_body("", str_from(dpath), "/rollback"), #skip-lint
+      "{\"version\":1}", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/:key/versions", _t_body("", str_from(dpath), "/versions"),
+      "", cx);
+    _t_go(a, AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/:key/versions/:n",
+      _t_body("", str_from(dpath), "/versions/1"), "", cx);
+    # And as a package: what `export` answers, `import` takes as it is.
+    var pkg = _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/packages/export", "/api/v1/packages/export",
+      "{\"name\":\"sweep\",\"version\":\"1\",\"description\":\"d\"}", cx);
+    _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/packages/import", "/api/v1/packages/import?overwrite=true",
+      _t_cstr(bayan_json_v_build(agnostic_response_body(pkg))), cx);
+    _t_go(a, AGNOSTIC_METHOD_POST, "/api/v1/preset-recommendations", "/api/v1/preset-recommendations",
+      "{\"description\":\"regression tests\"}", cx);
     _t_go(a, AGNOSTIC_METHOD_DELETE, "/api/v1/agents/definitions/:key", dpath, "", cx);
 
     # Provisioning (0.3.0): yourself, then a tenant and a user in it, then undoing both.

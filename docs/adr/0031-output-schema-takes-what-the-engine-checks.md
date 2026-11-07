@@ -1,6 +1,6 @@
 # 0031 — `output_schema` takes what the engine checks, and a result says whether it was met
 
-**Status**: Accepted
+**Status**: Accepted. What `output_valid` means was changed by [0033](0033-output-valid-is-the-engines-word.md).
 **Date**: 2026-11-06
 
 ## Context

@@ -26,10 +26,9 @@
 #
 # ## ⚠ Admission comes before the crew is built
 #
-# `agnostic_crew_req_from_value_a` keeps parts of a crew on the global heap, which has no `free`.
-# Refusing after that step would make a refusal leak, so a tenant held at its limit could spend
-# memory faster than one under it. A body that then fails validation has its place and its token
-# handed back (`agnostic_tenant_unadmit`), so a typo does not cost a tenant its minute.
+# Building a crew takes an arena from the pool, and a tenant held at its limit must not spend what
+# one under it would. A body that then fails validation has its place and its token handed back
+# (`agnostic_tenant_unadmit`), so a typo does not cost a tenant its minute.
 #
 # ## A replay is not a crew
 #

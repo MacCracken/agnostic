@@ -77,7 +77,8 @@ enum AgnosticCrewReqOff {
     AGNOSTIC_CQ_AGENTS      = 24;
     AGNOSTIC_CQ_TASKS       = 32;
     AGNOSTIC_CQ_TARGET      = 40;   # the crew's target URL, a Str, or 0 (0.4.0, ADR 0029)
-    AGNOSTIC_CQ_SIZE        = 48;
+    AGNOSTIC_CQ_ALLOC       = 48;   # the allocator all of this is in: a crew arena, or the heap (ADR 0034)
+    AGNOSTIC_CQ_SIZE        = 56;
 }
 
 # A decoded task — 88 bytes. `dependencies` is a vec of **indices into the
@@ -211,7 +212,9 @@ fn agnostic_crew_req_fields_a(a): i64 {
     agnostic_field_a(a, f, "process", AGNOSTIC_FK_STRING);
     agnostic_field_a(a, f, "max_concurrency", AGNOSTIC_FK_INT);
     agnostic_field_a(a, f, "target", AGNOSTIC_FK_OBJECT);
-    agnostic_field_req_a(a, f, "agents", AGNOSTIC_FK_ARRAY);
+    # One of the two, and `agnostic_crew_agents_resolve_a` says so: a row can say only "this one".
+    agnostic_field_a(a, f, "agents", AGNOSTIC_FK_ARRAY);
+    agnostic_field_a(a, f, "team", AGNOSTIC_FK_OBJECT);
     agnostic_field_req_a(a, f, "tasks", AGNOSTIC_FK_ARRAY);
     return f;
 }
@@ -269,6 +272,12 @@ fn agnostic_crew_req_concurrency(r): i64 {
 fn agnostic_crew_req_target(r): i64 {
     if (r == 0) { return 0; }
     return load64(r + AGNOSTIC_CQ_TARGET);
+}
+
+# The allocator the record, and the crew built from it, live in.
+fn agnostic_crew_req_alloc(r): i64 {
+    if (r == 0) { return 0; }
+    return load64(r + AGNOSTIC_CQ_ALLOC);
 }
 
 # The vec of `AgnosticAgentDef` records the submission carries.
@@ -603,37 +612,37 @@ fn _agnostic_task_req_hints_rendered_len_a(a, t, crew_target: Str): i64 {
     return str_len(s);
 }
 
-# A copy of task `t` on the global heap, whatever `t` was decoded into, with every Str and vec
-# it holds copied too, so nothing of it points into the request's arena (0.1.17). 0 if an
-# allocation failed. What a door builds an accepted crew's tasks with: decoding the body a
-# second time would repeat every JSON lookup and each task's hint rendering for nothing.
+# A copy of task `t` in `al`, whatever `t` was decoded into, with every Str and vec it holds
+# copied too, so nothing of it points into the request's arena (0.1.17). 0 if an allocation
+# failed. What a door builds an accepted crew's tasks with: decoding the body a second time would
+# repeat every JSON lookup and each task's hint rendering for nothing.
 #
 # ⚠ **Field by field.** A field added to the task record must be added here too, or an accepted
 # crew's tasks lose it. `tests/crew_request.tcyr` reads every field back from a built crew.
-fn _agnostic_task_req_copy(t): i64 {
-    var c = alloc(AGNOSTIC_TQ_SIZE);
-    var deps = vec_new();
+fn _agnostic_task_req_copy_a(al, t): i64 {
+    var c = alloc_via(al, AGNOSTIC_TQ_SIZE);
+    var deps = vec_new_a(al);
     if (c == 0 || deps == 0) { return 0; }
-    store64(c + AGNOSTIC_TQ_DESCRIPTION, str_clone(load64(t + AGNOSTIC_TQ_DESCRIPTION)));
+    store64(c + AGNOSTIC_TQ_DESCRIPTION, str_clone_a(al, load64(t + AGNOSTIC_TQ_DESCRIPTION)));
     var eo = load64(t + AGNOSTIC_TQ_EXPECTED_OUTPUT);
-    if (eo != 0) { eo = str_clone(eo); }
+    if (eo != 0) { eo = str_clone_a(al, eo); }
     store64(c + AGNOSTIC_TQ_EXPECTED_OUTPUT, eo);
     store64(c + AGNOSTIC_TQ_PRIORITY, load64(t + AGNOSTIC_TQ_PRIORITY));
     store64(c + AGNOSTIC_TQ_RISK, load64(t + AGNOSTIC_TQ_RISK));
     var from = load64(t + AGNOSTIC_TQ_DEPENDENCIES);
     var i = 0;
     while (i < vec_len(from)) {
-        vec_push(deps, vec_get(from, i));
+        vec_push_a(al, deps, vec_get(from, i));
         i = i + 1;
     }
     store64(c + AGNOSTIC_TQ_DEPENDENCIES, deps);
     var tools = load64(t + AGNOSTIC_TQ_REQ_TOOLS);
     if (tools != 0) {
-        var copied = vec_new();
+        var copied = vec_new_a(al);
         if (copied == 0) { return 0; }
         i = 0;
         while (i < vec_len(tools)) {
-            vec_push(copied, str_clone(vec_get(tools, i)));
+            vec_push_a(al, copied, str_clone_a(al, vec_get(tools, i)));
             i = i + 1;
         }
         tools = copied;
@@ -641,15 +650,15 @@ fn _agnostic_task_req_copy(t): i64 {
     store64(c + AGNOSTIC_TQ_REQ_TOOLS, tools);
     store64(c + AGNOSTIC_TQ_COMPLEXITY, load64(t + AGNOSTIC_TQ_COMPLEXITY));
     var dom = load64(t + AGNOSTIC_TQ_DOMAIN);
-    if (dom != 0) { dom = str_clone(dom); }
+    if (dom != 0) { dom = str_clone_a(al, dom); }
     store64(c + AGNOSTIC_TQ_DOMAIN, dom);
     store64(c + AGNOSTIC_TQ_GPU_REQUIRED, load64(t + AGNOSTIC_TQ_GPU_REQUIRED));
     var target = load64(t + AGNOSTIC_TQ_TARGET);
-    if (target != 0) { target = str_clone(target); }
+    if (target != 0) { target = str_clone_a(al, target); }
     store64(c + AGNOSTIC_TQ_TARGET, target);
     var schema = load64(t + AGNOSTIC_TQ_OUTPUT_SCHEMA);
     if (schema != 0) {
-        schema = _agnostic_output_schema_build_a(default_alloc(), schema);
+        schema = _agnostic_output_schema_build_a(al, schema);
         if (schema == 0) { return 0; }
     }
     store64(c + AGNOSTIC_TQ_OUTPUT_SCHEMA, schema);
@@ -856,6 +865,12 @@ fn agnostic_crew_req_has_cycle_a(a, tasks): i64 {
 # field**, then required fields, then optional. Validating the shape first means
 # a request is refused whole rather than half-applied.
 fn agnostic_crew_req_from_value_a(a, v, agents, out): i64 {
+    return agnostic_crew_req_in_a(a, default_alloc(), v, agents, out);
+}
+
+# `agnostic_crew_req_from_value_a` with the record, and all it holds, in allocator `al`: the arena
+# the crew will live in, from `agnostic_crew_arena_take_a` (ADR 0034).
+fn agnostic_crew_req_in_a(a, al, v, agents, out): i64 {
     if (bayan_json_v_is_obj(v) != 1) {
         return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
           str_from_a(a, "request body must be a JSON object"));
@@ -908,8 +923,16 @@ fn agnostic_crew_req_from_value_a(a, v, agents, out): i64 {
     if (target == 0) { return 0; }
     if (target == 0 - 1) { target = 0; }
 
+    # One or the other (0.4.2). A team has become `agents` by here, with no such key in the body.
     var agents_v = agents;
-    if (agents_v == 0) { agents_v = bayan_json_v_obj_get_by_str(v, str_from_a(a, "agents")); }
+    var spelled = bayan_json_v_obj_get_by_str(v, str_from_a(a, "agents"));
+    var team = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_TEAM);
+    if (spelled != 0 && team != 0) {
+        if (bayan_json_v_is_null(spelled) == 0 && bayan_json_v_is_null(team) == 0) {
+            return _agnostic_reject(a, out, HTTP_BAD_REQUEST, str_from_a(a, "send 'agents' or 'team', not both"));
+        }
+    }
+    if (agents_v == 0) { agents_v = spelled; }
     var an = bayan_json_v_arr_len(agents_v);
     if (an == 0) {
         return _agnostic_reject(a, out, HTTP_BAD_REQUEST,
@@ -936,10 +959,10 @@ fn agnostic_crew_req_from_value_a(a, v, agents, out): i64 {
 
     # ⚠ **Every refusal before anything is built** (0.1.17). The agents are checked, the tasks
     # decoded into the request's arena and the dependency graph checked there; only then are the
-    # agents decoded into the global heap, where the engine's objects outlive the request, and
-    # the checked tasks copied there. Until 0.1.17 a body refused part-way kept everything decoded before the refusal
-    # — 152 B for a crew refused at its second agent, 672 B at its second task, and a whole
-    # crew's worth for a cycle, found last.
+    # agents decoded into `al`, where the engine's objects outlive the request, and the checked
+    # tasks copied there. Until 0.1.17 a body refused part-way kept everything decoded before the
+    # refusal — 152 B for a crew refused at its second agent, 672 B at its second task, and a
+    # whole crew's worth for a cycle, found last.
     var ai = 0;
     while (ai < an) {
         if (agnostic_agent_def_check_a(a, bayan_json_v_arr_get(agents_v, ai), ai, out) == 0) { return 0; }
@@ -978,35 +1001,36 @@ fn agnostic_crew_req_from_value_a(a, v, agents, out): i64 {
     }
 
     # Built — nothing below refuses but an allocation that fails.
-    var built = vec_new();
+    var built = vec_new_a(al);
     ai = 0;
     while (ai < an) {
-        var def = agnostic_agent_def_decode_a(a, bayan_json_v_arr_get(agents_v, ai), ai, out);
+        var def = agnostic_agent_def_decode_in_a(a, al, bayan_json_v_arr_get(agents_v, ai), ai, out);
         if (def == 0) { return 0; }
-        vec_push(built, def);
+        vec_push_a(al, built, def);
         ai = ai + 1;
     }
-    var tasks = vec_new();
+    var tasks = vec_new_a(al);
     ti = 0;
     while (ti < tn) {
-        var t = _agnostic_task_req_copy(vec_get(checked, ti));
+        var t = _agnostic_task_req_copy_a(al, vec_get(checked, ti));
         if (t == 0) { return _agnostic_task_req_oom_a(a, out, ti); }
-        vec_push(tasks, t);
+        vec_push_a(al, tasks, t);
         ti = ti + 1;
     }
 
-    var r = alloc(AGNOSTIC_CQ_SIZE);
+    var r = alloc_via(al, AGNOSTIC_CQ_SIZE);
     if (r == 0) {
         return _agnostic_reject(a, out, HTTP_INTERNAL,
           str_from_a(a, "could not allocate crew request"));
     }
-    store64(r + AGNOSTIC_CQ_NAME, str_clone(name));
+    store64(r + AGNOSTIC_CQ_ALLOC, al);
+    store64(r + AGNOSTIC_CQ_NAME, str_clone_a(al, name));
     store64(r + AGNOSTIC_CQ_PROCESS, process);
     store64(r + AGNOSTIC_CQ_CONCURRENCY, concurrency);
     store64(r + AGNOSTIC_CQ_AGENTS, built);
     store64(r + AGNOSTIC_CQ_TASKS, tasks);
     var crew_target = 0;
-    if (target != 0) { crew_target = str_clone(target); }
+    if (target != 0) { crew_target = str_clone_a(al, target); }
     store64(r + AGNOSTIC_CQ_TARGET, crew_target);
     return r;
 }
@@ -1062,35 +1086,35 @@ fn agnostic_unforwarded_value_a(a, bits): i64 {
 # into the model request (`_agnosai_crew_build_request`), so a hinted task's prompt says
 # what it was hinted with — and that request is also hoosh's cache key. ADR 0017 records it.
 #
-# Global allocator: the values are the engine task's, and outlive the request.
-fn _agnostic_task_spec_hints(t, tr, crew_target: Str): i64 {
+# In `al`, the crew's: the values are the engine task's, and outlive the request.
+fn _agnostic_task_spec_hints(al, t, tr, crew_target: Str): i64 {
     var tools = agnostic_task_req_required_tools(tr);
     if (tools != 0) {
-        var arr = bayan_json_v_arr_new();
+        var arr = bayan_json_v_arr_new_a(al);
         var i = 0;
         while (i < vec_len(tools)) {
-            bayan_json_v_arr_push(arr, bayan_json_v_str_new(vec_get(tools, i)));
+            bayan_json_v_arr_push_a(al, arr, bayan_json_v_str_new_a(al, vec_get(tools, i)));
             i = i + 1;
         }
-        agnosai_task_with_context(t, AGNOSTIC_JK_REQ_TOOLS, arr);
+        agnosai_task_with_context_a(al, t, AGNOSTIC_JK_REQ_TOOLS, arr);
     }
     var cx = agnostic_task_req_complexity(tr);
     if (cx != AGNOSTIC_REQ_UNSET) {
-        agnosai_task_with_context(t, AGNOSTIC_JK_COMPLEXITY,
-          bayan_json_v_str_new(agnostic_complexity_to_wire(cx)));
+        agnosai_task_with_context_a(al, t, AGNOSTIC_JK_COMPLEXITY,
+          bayan_json_v_str_new_a(al, agnostic_complexity_to_wire(cx)));
     }
     var dom = agnostic_task_req_domain(tr);
-    if (dom != 0) { agnosai_task_with_context(t, AGNOSTIC_JK_DOMAIN, bayan_json_v_str_new(dom)); }
+    if (dom != 0) { agnosai_task_with_context_a(al, t, AGNOSTIC_JK_DOMAIN, bayan_json_v_str_new_a(al, dom)); }
     var gpu = agnostic_task_req_gpu_required(tr);
     if (gpu != AGNOSTIC_REQ_UNSET) {
-        agnosai_task_with_context(t, AGNOSTIC_JK_GPU_REQ, bayan_json_v_bool_new(gpu));
+        agnosai_task_with_context_a(al, t, AGNOSTIC_JK_GPU_REQ, bayan_json_v_bool_new_a(al, gpu));
     }
     # The task's own target, else its crew's (ADR 0029). Left out with neither, so a crew with no
     # target has the prompt it always had, and hoosh the same cache key.
     var target = agnostic_task_req_target(tr);
     if (target == 0) { target = crew_target; }
     if (target != 0) {
-        agnosai_task_with_context(t, AGNOSTIC_JK_TARGET, agnostic_target_value_a(default_alloc(), target));
+        agnosai_task_with_context_a(al, t, AGNOSTIC_JK_TARGET, agnostic_target_value_a(al, target));
     }
     return t;
 }
@@ -1102,11 +1126,15 @@ fn _agnostic_task_spec_hints(t, tr, crew_target: Str): i64 {
 # engine id does not exist until `agnosai_task_new` has built it — so every task
 # must exist before any edge can be resolved.
 #
-# Global allocator throughout: `agnosai_orchestrator_submit_crew` registers this
-# spec and a detached thread runs it, both of which outlive the request.
+# In the request's own allocator throughout, which is the crew's arena on the serving path (ADR
+# 0034): `agnosai_orchestrator_submit_crew` registers this spec and a detached thread runs it, both
+# of which outlive the request.
 fn agnostic_crew_spec_build(r): i64 {
     if (r == 0) { return 0; }
-    var spec = agnosai_crew_new(agnostic_crew_req_name(r));
+    var al = agnostic_crew_req_alloc(r);
+    var spec = 0;
+    if (agnosai_crew_arena_is(al) == 1) { spec = agnosai_crew_new_in(al, agnostic_crew_req_name(r)); }
+    else { spec = agnosai_crew_new_a(al, agnostic_crew_req_name(r)); }
     if (spec == 0) { return 0; }
 
     # Unwrap to the engine's records. The Agnostic wrapper carries `focus` and
@@ -1114,32 +1142,32 @@ fn agnostic_crew_spec_build(r): i64 {
     # request record and are reported in `unforwarded` rather than being
     # silently handed to a constructor that would drop them.
     var wrapped = agnostic_crew_req_agents(r);
-    var engine_agents = vec_new();
+    var engine_agents = vec_new_a(al);
     var ai = 0;
     while (ai < vec_len(wrapped)) {
-        vec_push(engine_agents, agnostic_agent_def_engine(vec_get(wrapped, ai)));
+        vec_push_a(al, engine_agents, agnostic_agent_def_engine(vec_get(wrapped, ai)));
         ai = ai + 1;
     }
     agnosai_crew_with_agents(spec, engine_agents);
 
     var mode = agnostic_crew_req_process(r);
     if (mode == AGNOSTIC_PROCESS_DAG) {
-        agnosai_crew_with_process(spec, agnosai_process_dag());
+        agnosai_crew_with_process(spec, agnosai_process_dag_a(al));
     } elif (mode == AGNOSTIC_PROCESS_PARALLEL) {
         var n = agnostic_crew_req_concurrency(r);
         if (n == AGNOSTIC_REQ_UNSET) { n = AGNOSTIC_REQ_DEFAULT_CONCURRENCY; }
-        agnosai_crew_with_process(spec, agnosai_process_parallel(n));
+        agnosai_crew_with_process(spec, agnosai_process_parallel_a(al, n));
     } else {
-        agnosai_crew_with_process(spec, agnosai_process_sequential());
+        agnosai_crew_with_process(spec, agnosai_process_sequential_a(al));
     }
 
     var reqs = agnostic_crew_req_tasks(r);
     var n2 = vec_len(reqs);
-    var tasks = vec_new();
+    var tasks = vec_new_a(al);
     var i = 0;
     while (i < n2) {
         var tr = vec_get(reqs, i);
-        var t = agnosai_task_new(agnostic_task_req_description(tr));
+        var t = agnosai_task_new_a(al, agnostic_task_req_description(tr));
         if (t == 0) { return 0; }
         var eo = agnostic_task_req_expected_output(tr);
         if (eo != 0) { agnosai_task_with_expected_output(t, eo); }
@@ -1150,10 +1178,10 @@ fn agnostic_crew_spec_build(r): i64 {
         if (p != AGNOSTIC_REQ_UNSET) { agnosai_task_with_priority(t, p); }
         var rk = agnostic_task_req_risk(tr);
         if (rk != AGNOSTIC_REQ_UNSET) { agnosai_task_with_risk(t, rk); }
-        _agnostic_task_spec_hints(t, tr, agnostic_crew_req_target(r));
+        _agnostic_task_spec_hints(al, t, tr, agnostic_crew_req_target(r));
         var schema = agnostic_task_req_output_schema(tr);
         if (schema != 0) { agnosai_task_with_output_schema(t, schema); }
-        vec_push(tasks, t);
+        vec_push_a(al, tasks, t);
         i = i + 1;
     }
 
@@ -1166,7 +1194,7 @@ fn agnostic_crew_spec_build(r): i64 {
             # Bounds already enforced at decode; re-checked because this function
             # is reachable from a caller that built the record another way.
             if (idx >= 0 && idx < n2) {
-                agnosai_task_with_dependency(vec_get(tasks, j),
+                agnosai_task_with_dependency_a(al, vec_get(tasks, j),
                   agnosai_task_id(vec_get(tasks, idx)));
             }
             k = k + 1;

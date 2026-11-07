@@ -770,6 +770,31 @@
       }
     },
     {
+      "method": "POST",
+      "path": "/api/v1/preset-recommendations",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": "preset_recommendation",
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "preset",
+          "domain",
+          "size",
+          "reason",
+          "matched",
+          "alternatives"
+        ]
+      }
+    },
+    {
       "method": "GET",
       "path": "/api/v1/tools",
       "auth": true,
@@ -962,6 +987,132 @@
         "keys": [
           "key",
           "status",
+          "storage"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agents/definitions/:key/versions",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "key",
+          "versions",
+          "total",
+          "storage"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agents/definitions/:key/versions/:n",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": null,
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "definition",
+          "unforwarded",
+          "etag",
+          "storage",
+          "version",
+          "saved_at?"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agents/definitions/:key/rollback",
+      "auth": true,
+      "permission": "write",
+      "min_role": "operator",
+      "plugin_permissions": [],
+      "body": "definition_rollback",
+      "query": [],
+      "headers": [
+        "if-match"
+      ],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "definition",
+          "unforwarded",
+          "etag",
+          "storage",
+          "rolled_back_to"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/packages/export",
+      "auth": true,
+      "permission": "read",
+      "min_role": "viewer",
+      "plugin_permissions": [],
+      "body": "package_export",
+      "query": [],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "format",
+          "name",
+          "version",
+          "description?",
+          "exported_at",
+          "definitions",
+          "total"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/packages/import",
+      "auth": true,
+      "permission": "write",
+      "min_role": "operator",
+      "plugin_permissions": [],
+      "body": "package",
+      "query": [
+        "overwrite"
+      ],
+      "headers": [],
+      "ok": [
+        200
+      ],
+      "response": {
+        "kind": "json",
+        "keys": [
+          "name",
+          "created",
+          "replaced",
+          "total",
           "storage"
         ]
       }
@@ -1275,6 +1426,7 @@
         "max_concurrency",
         "target",
         "agents",
+        "team",
         "tasks"
       ],
       "types": {
@@ -1296,7 +1448,11 @@
         },
         "agents": {
           "type": "array",
-          "required": true
+          "required": false
+        },
+        "team": {
+          "type": "object",
+          "required": false
         },
         "tasks": {
           "type": "array",
@@ -1311,8 +1467,13 @@
         "tasks": "task"
       },
       "objects": {
-        "target": "target"
-      }
+        "target": "target",
+        "team": "team"
+      },
+      "one_of": [
+        "agents",
+        "team"
+      ]
     },
     "task": {
       "fields": [
@@ -1478,6 +1639,145 @@
       ],
       "types": {
         "definition": {
+          "type": "string",
+          "required": true
+        }
+      }
+    },
+    "team": {
+      "fields": [
+        "members",
+        "project_context"
+      ],
+      "types": {
+        "members": {
+          "type": "array",
+          "required": true
+        },
+        "project_context": {
+          "type": "string",
+          "required": false
+        }
+      },
+      "items": {
+        "members": "team_member"
+      }
+    },
+    "team_member": {
+      "fields": [
+        "role",
+        "context",
+        "tools",
+        "lead"
+      ],
+      "types": {
+        "role": {
+          "type": "string",
+          "required": true
+        },
+        "context": {
+          "type": "string",
+          "required": false
+        },
+        "tools": {
+          "type": "array",
+          "items": "string",
+          "required": false
+        },
+        "lead": {
+          "type": "boolean",
+          "required": false
+        }
+      }
+    },
+    "definition_rollback": {
+      "fields": [
+        "version"
+      ],
+      "types": {
+        "version": {
+          "type": "integer",
+          "required": true
+        }
+      }
+    },
+    "package_export": {
+      "fields": [
+        "name",
+        "version",
+        "description",
+        "definitions"
+      ],
+      "types": {
+        "name": {
+          "type": "string",
+          "required": true
+        },
+        "version": {
+          "type": "string",
+          "required": false
+        },
+        "description": {
+          "type": "string",
+          "required": false
+        },
+        "definitions": {
+          "type": "array",
+          "items": "string",
+          "required": false
+        }
+      }
+    },
+    "package": {
+      "fields": [
+        "format",
+        "name",
+        "version",
+        "description",
+        "exported_at",
+        "definitions",
+        "total"
+      ],
+      "types": {
+        "format": {
+          "type": "string",
+          "required": true
+        },
+        "name": {
+          "type": "string",
+          "required": true
+        },
+        "version": {
+          "type": "string",
+          "required": false
+        },
+        "description": {
+          "type": "string",
+          "required": false
+        },
+        "exported_at": {
+          "type": "integer",
+          "required": false
+        },
+        "definitions": {
+          "type": "array",
+          "required": true
+        },
+        "total": {
+          "type": "integer",
+          "required": false
+        }
+      },
+      "items": {
+        "definitions": "agent_definition"
+      }
+    },
+    "preset_recommendation": {
+      "fields": [
+        "description"
+      ],
+      "types": {
+        "description": {
           "type": "string",
           "required": true
         }

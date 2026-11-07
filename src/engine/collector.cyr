@@ -59,7 +59,18 @@ var AGNOSTIC_COLLECTOR_WRITE_MS = 150;
 # stops the sweep from reading the engine. What the budget leaves stays live, and the next sweep
 # has it. Returns how many entries it looked at. Safe to call from any thread, concurrently with
 # the routes — it is exactly the refresh a poll performs.
+#
+# ⚠ **In a bracket**, as a request is: `live` holds entries that eviction can take at any moment
+# (`agnostic_ledger_read_begin`).
 fn agnostic_collector_sweep_a(a): i64 {
+    var bracket = agnostic_ledger_read_begin();
+    var n = _agnostic_collector_sweep_held_a(a);
+    agnostic_ledger_read_end(bracket);
+    return n;
+}
+
+# `agnostic_collector_sweep_a`'s body. The caller holds a bracket.
+fn _agnostic_collector_sweep_held_a(a): i64 {
     var live = agnostic_ledger_live_entries_a(a);
     if (live == 0) { return 0; }
     var n = vec_len(live);
@@ -82,6 +93,14 @@ fn agnostic_collector_sweep_a(a): i64 {
 # server has stopped accepting: a crew that finished must not read `interrupted` after a restart
 # because its write was still waiting for a sweep. Returns how many entries it looked at.
 fn agnostic_collector_finish_a(a): i64 {
+    var bracket = agnostic_ledger_read_begin();
+    var n = _agnostic_collector_finish_held_a(a);
+    agnostic_ledger_read_end(bracket);
+    return n;
+}
+
+# `agnostic_collector_finish_a`'s body. The caller holds a bracket.
+fn _agnostic_collector_finish_held_a(a): i64 {
     var live = agnostic_ledger_live_entries_a(a);
     if (live == 0) { return 0; }
     var n = vec_len(live);

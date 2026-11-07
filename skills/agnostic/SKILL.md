@@ -152,11 +152,20 @@ curl -sS -X POST "$AGNOSTIC_URL/api/v1/crews" \
 | key | | |
 |---|---|---|
 | `name` | required | 1 to 10,000 bytes |
-| `agents` | required | 1 to 100 agent objects |
+| `agents` | one of these | 1 to 100 agent objects |
+| `team` | one of these | Who the crew needs, by role. See below. |
 | `tasks` | required | 1 to 1,000 task objects |
 | `process` | optional | `sequential` (the default), `parallel` or `dag` |
 | `max_concurrency` | optional | 1 to 64, only with `parallel` (default 4) |
 | `target` | optional | `{"url": "https://…"}`: what the crew tests. See below. |
+
+**`team`** stands where `agents` would, and is **400** beside it. It holds `members`, 1 to 20, and
+optionally `project_context`, at most 2,000 bytes.
+<!-- schema: bodies.team_member.fields -->
+Each member has a `role` (1 to 200 bytes), and optionally `context` (what it should focus on, at most 1,000
+bytes), `tools`, and `lead` (with none named, the first leads). A member takes the best of what is known, your
+stored definitions before the preset library's agents, and a role nothing knows is written from the role. So read
+`GET /api/v1/crews/{id}/plan` before telling the user who is on it. Both contexts reach the model.
 
 <!-- schema: bodies.agent_definition.fields -->
 **Agent**: `key`, `role` and `goal` are required. `key` matches `[a-z0-9][a-z0-9-]*`, at most 100
@@ -192,9 +201,10 @@ answer to a shape.
   prompt. Send only what you would let the model read. So does a `target`.
 - **`output_schema`** takes `type` (`object`, `array`, `string`, `number`, `boolean`, `null`) and
   `required` (names, with `type` `object` or none). Those are all the engine checks, so anything else,
-  `properties` included, is a **422**, not a silent no-op. The model is shown the schema only after it
-  has failed one, so describe the shape in `expected_output` too. A task that never meets it still
-  reads `completed`: section 7's `output_valid` is what says.
+  `properties` included, is a **422**, not a silent no-op. The model sees the schema from its first
+  prompt and is re-asked twice. A task that never meets it is **`failed`**, so its crew fails too and
+  a `dag` task that depends on it does not run. A task that met it has the block as its `output`, with
+  any code fence taken off, so you can parse it as it stands.
 - **`target`**: `http` or `https`, no user name or password, at most 2048 bytes. The operator names the
   hosts a deployment may test with `AGNOSTIC_TARGET_HOSTS`. A host off that list, or any host when
   there is no list, is a **403**: do not try another spelling of it, tell the user. Nothing calls the
@@ -325,9 +335,11 @@ curl -sS "$AGNOSTIC_URL/api/v1/crews/$CREW" -H "Authorization: Bearer $AGNOSTIC_
   default.
 - A `cancelled` crew keeps the results of the tasks that had finished.
 - A crew given a `target` says so here, and in its listing row and plan.
-- A completed task that declared an `output_schema` has `output_valid`, `true` or `false`. `false`
-  means the task completed and its answer is not in that shape: `completed` means the model answered.
-  Report it, and do not treat its `output` as structured.
+- A task of a `live` crew that declared an `output_schema` has `output_valid`. `true` means the engine
+  checked the answer and it is in that shape. `false` means no answer was: the task is `failed`, its
+  `error` says why, and its `output` is what the model last said, which is not structured. A task that
+  failed for another reason has no `output_valid`, and neither does a `placeholder` crew's: no model
+  answered, and nothing was checked.
 - `submitted_at`, `started_at` and `finished_at` are epoch milliseconds. An event's `at_ms` is
   milliseconds since the crew was accepted.
 - **`interrupted`**: the server restarted while the crew was in flight. It cannot be resumed. Its
@@ -423,7 +435,8 @@ build the crew yourself:
 `key`, `name`, `role` and, when set, `domain` for each. `GET /api/v1/agents/definitions/{key}`
 returns `{"definition":{…},"unforwarded":[…],"etag":"…","storage":"patra"}`, and the same `etag` as
 an `ETag` header. A crew names one with `{"definition": "<key>"}` in `agents` (section 4), and the
-`definition` object is also the right shape to copy there and change. Writing one (`POST /api/v1/agents/definitions`
+`definition` object is also the right shape to copy there and change. To say who a crew needs without
+naming them, send `team` in place of `agents`: section 4. Writing one (`POST /api/v1/agents/definitions`
 answers 201, or 409 when the key exists; `PUT /api/v1/agents/definitions/{key}` answers 200, or 404
 when it is absent, and the body's `key` must match the path; `DELETE /api/v1/agents/definitions/{key}`
 answers 200) changes what every user sees. Do it only when asked (guardrail 8). To change one you
@@ -438,10 +451,22 @@ means someone changed it since — read it again rather than overwrite their cha
 - A crew has at most 100 agents and 1,000 tasks, 10,000 bytes per string, 64 dependencies per
   task and 64 tools per agent.
 
+**Which preset fits?** `POST /api/v1/preset-recommendations` with `{"description":"…"}` answers `preset`,
+`reason`, `matched` and `alternatives`. It matches words and costs no tokens. An empty `matched` means it had
+nothing to go on. Offer the answer to the user: a preset is not a crew until someone builds one from it.
+
 ## Routes this skill does not teach
 
 The server answers these as well. None is part of driving a crew, so leave them alone unless the
 user asks:
+
+- **What a definition has been:** `GET /api/v1/agents/definitions/{key}/versions` and
+  `GET /api/v1/agents/definitions/{key}/versions/{n}`. Every write is a version.
+  `POST /api/v1/agents/definitions/{key}/rollback` with `{"version": N}` makes one current again, as a
+  new version, for the whole tenant, and brings back a deleted definition. So ask first (guardrail 8).
+- **A tenant's definitions as one document:** `POST /api/v1/packages/export` takes `{"name":"…"}`, and
+  `definitions` to name some. `POST /api/v1/packages/import` takes what that answered. It is refused whole:
+  a key already stored is a **409** naming them, unless `?overwrite=true`.
 
 - **Your own password and keys**, past minting one: `PUT /api/v1/auth/password`,
   `GET /api/v1/auth/api-keys`, `DELETE /api/v1/auth/api-keys/{id}`.

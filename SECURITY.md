@@ -56,6 +56,9 @@ patch release; anything actively exploitable gets an out-of-band release.
 - agnostic serves plain HTTP. Terminate TLS in a reverse proxy, and set `AGNOSTIC_TRUSTED_PROXIES`, or
   every client shares its login limit. [Deployment](docs/guides/deployment.md) has a working setup.
 - `AGNOSTIC_TRUSTED_PROXIES` is a list of who may claim to be any client. Name only what you run.
+- Deleting an agent definition keeps its versions, so that a rollback can bring it back. A delete is not an
+  erasure: what a definition said stays in the database until `AGNOSTIC_MAX_VERSIONS` pushes it out or an
+  operator removes it. Keep credentials out of definitions.
 - `AGNOSTIC_GPU_TOOLS=on` runs vendor tools, found on the server's `PATH`, once at start. Nothing else in
   agnostic spawns a process. Leave it off unless you need an NVIDIA GPU listed.
 - `AGNOSTIC_TARGET_HOSTS` is what crews may name as a target, and it is compared by name: a listed name

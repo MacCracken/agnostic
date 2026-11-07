@@ -1,0 +1,282 @@
+# agnostic/engine — a crew lives in an arena, and leaves nothing when it goes (ADR 0034).
+#
+# What this suite holds:
+#
+#   1. Everything of a crew agnostic allocates is in the crew's arena, its ledger entry included.
+#   2. Crews past the ledger's cap cost nothing: the global heap stops moving and the arenas stop
+#      being made. That is the measurement audit P2 and agnosai's ADR 028 asked for.
+#   3. A crew is not given back while anything that could hold it is still running. A suite is one
+#      thread, so this proves the bookkeeping, and `scripts/load-test.py` the race.
+#   4. A body refused after its arena was taken gives the arena back.
+include "src/app.cyr"
+include "tests/support/tmp.cyr"
+
+var _T_DB = _tt_tmp_path("crew-arena-suite");
+var _T_MAXB = 1048576;
+var _T_BODY = "{\"name\":\"c\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"look\"}]}"; #skip-lint
+var _T_RICH = "{\"name\":\"rich\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"tools\":[\"t1\",\"t2\"],\"focus\":\"edges\"}],\"tasks\":[{\"description\":\"one\",\"expected_output\":\"a list\",\"domain\":\"qa\",\"complexity\":\"high\",\"required_tools\":[\"t1\"],\"gpu_required\":false,\"output_schema\":{\"type\":\"object\",\"required\":[\"verdict\"]}},{\"description\":\"two\",\"dependencies\":[0],\"target\":{\"url\":\"https://two.example/\"}}],\"target\":{\"url\":\"https://one.example/\"}}"; #skip-lint
+var _T_PARALLEL = "{\"name\":\"p\",\"process\":\"parallel\",\"max_concurrency\":4,\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"one\"},{\"description\":\"two\"},{\"description\":\"three\"},{\"description\":\"four\"}]}"; #skip-lint
+var _T_CYCLE = "{\"name\":\"c\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\"}],\"tasks\":[{\"description\":\"one\",\"dependencies\":[1]},{\"description\":\"two\",\"dependencies\":[0]}]}"; #skip-lint
+
+fn _t_open() {
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    patra_init();
+    agnostic_definitions_open(str_from(_T_DB));
+    agnostic_definitions_reset();
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_crews_ensure();
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+    agnostic_presets_init();
+    agnostic_target_set_hosts(agnostic_config_parse_target_hosts(str_from("one.example,two.example")));
+    return 0;
+}
+
+fn _t_post(a, body) {
+    return agnostic_route_dispatch_a(a, AGNOSTIC_METHOD_POST, str_from_a(a, "/api/v1/crews"), str_from_a(a, body), _T_MAXB, 0); #skip-lint
+}
+
+# Bring the crew `id` to its end, with its outcome stored: what the collector does.
+fn _t_settle(a, id: Str) {
+    var e = agnostic_ledger_entry(id);
+    while (agnostic_ledger_is_live(e) == 1) {
+        agnostic_crew_refresh_a(a, e, id);
+        sys_sched_yield();
+    }
+    return e;
+}
+
+# Submit `body` and run it to its end. Returns the crew's id, in `a`.
+fn _t_run(a, body) {
+    var r = _t_post(a, body);
+    if (agnostic_response_status(r) != 202) {
+        assert_eq(agnostic_response_status(r), 202, "the crew was accepted");
+        return 0;
+    }
+    var id = agnostic_req_str(agnostic_response_body(r), AGNOSTIC_JK_CREW_ID);
+    _t_settle(a, id);
+    return id;
+}
+
+# `n` crews, each in an arena rewound after it.
+fn _t_run_many(a, body, n) {
+    var i = 0;
+    while (i < n) {
+        reset_via(a);
+        _t_run(a, body);
+        i = i + 1;
+    }
+    return n;
+}
+
+fn test_a_crew_is_all_in_its_arena() {
+    test_group("crew-arena/holds");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var id = _t_run(a, _T_RICH);
+    var e = agnostic_ledger_entry(id);
+    var spec = agnostic_ledger_spec(e);
+    var al = agnosai_crew_arena(spec);
+    assert_neq(al, 0, "⭐ the crew is in an arena");
+    assert_eq(agnosai_crew_arena_holds(al, spec), 1, "its spec");
+    assert_eq(agnosai_crew_arena_holds(al, e), 1, "⭐ its ledger entry");
+    assert_eq(agnosai_crew_arena_holds(al, agnostic_ledger_crew_id(e)), 1, "its id");
+    assert_eq(agnosai_crew_arena_holds(al, agnostic_ledger_name(e)), 1, "its name");
+    assert_eq(agnosai_crew_arena_holds(al, agnostic_ledger_scope(e)), 1, "its scope");
+    assert_eq(agnosai_crew_arena_holds(al, agnostic_ledger_target(e)), 1, "its target");
+    var results = agnostic_ledger_results(e);
+    assert_eq(agnosai_crew_arena_holds(al, results), 1, "its results");
+    var t0 = vec_get(agnosai_crew_tasks(spec), 0);
+    assert_eq(agnosai_crew_arena_holds(al, agnosai_task_output_schema(t0)), 1, "a task's schema");
+    assert_eq(agnosai_crew_arena_holds(al, agnosai_task_context(t0)), 1, "and its context");
+    var ag = vec_get(agnosai_crew_agents(spec), 0);
+    assert_eq(agnosai_crew_arena_holds(al, ag), 1, "an agent");
+    assert_eq(agnosai_crew_arena_holds(al, agnosai_agent_tools(ag)), 1, "and its tools");
+}
+
+# ⭐ Audit P2. Through 0.4.1 a crew kept 11,080 B on the global heap for life, 11 GB per million.
+fn test_crews_past_the_cap_cost_nothing() {
+    test_group("crew-arena/flat");
+    _t_open();
+    var a = arena_allocator(1048576);
+    # Past the cap, past two evictions in limbo, and every arena in the pool has served once.
+    _t_run_many(a, _T_BODY, AGNOSTIC_LEDGER_MAX + 3 * 256);
+    assert_eq(agnostic_ledger_count() <= AGNOSTIC_LEDGER_MAX, 1, "the ledger is at its cap");
+    var made = agnostic_crew_arenas_made();
+    assert_eq(made <= AGNOSTIC_LEDGER_MAX + 3 * 256, 1, "the arenas stop near what the ledger holds");
+    var before = alloc_used();
+    _t_run_many(a, _T_BODY, 1024);
+    assert_eq(alloc_used() - before, 0, "⭐ a thousand more crews keep nothing on the global heap");
+    assert_eq(agnostic_crew_arenas_made(), made, "⭐ and need no new arena");
+
+    # Each process mode, and a crew with every field a body can carry.
+    _t_run_many(a, _T_RICH, 1024 + 256);
+    _t_run_many(a, _T_PARALLEL, 1024 + 256);
+    before = alloc_used();
+    _t_run_many(a, _T_RICH, 512);
+    _t_run_many(a, _T_PARALLEL, 512);
+    assert_eq(alloc_used() - before, 0, "⭐ nor do crews that use all of it");
+}
+
+fn test_a_refused_body_gives_its_arena_back() {
+    test_group("crew-arena/refused");
+    _t_open();
+    var a = arena_allocator(1048576);
+    _t_run(a, _T_BODY);
+    var made = agnostic_crew_arenas_made();
+    var i = 0;
+    while (i < 200) {
+        reset_via(a);
+        # Refused past the point an arena is taken: the graph is checked last.
+        assert_eq(agnostic_response_status(_t_post(a, _T_CYCLE)), HTTP_BAD_REQUEST, "a cycle is refused");
+        i = i + 1;
+    }
+    assert_eq(agnostic_crew_arenas_made(), made + 1, "⭐ 200 refusals share the one arena they each gave back");
+}
+
+# Three entries, chained, as an eviction hands them over. None holds a crew.
+fn _t_chain(n) {
+    var chain = 0;
+    var i = 0;
+    while (i < n) {
+        var e = alloc(AGNOSTIC_LE_SIZE);
+        store64(e + AGNOSTIC_LE_LIMBO, chain);
+        chain = e;
+        i = i + 1;
+    }
+    return chain;
+}
+
+fn _t_len(chain) {
+    var n = 0;
+    while (chain != 0) {
+        n = n + 1;
+        chain = load64(chain + AGNOSTIC_LE_LIMBO);
+    }
+    return n;
+}
+
+# ⭐ What the race comes down to: a crew leaves only once nobody who could have found it is left.
+fn test_limbo_waits_for_every_reader() {
+    test_group("crew-arena/limbo");
+    agnostic_ledger_init();
+    agnostic_ledger_reset();
+    # Two empty passes, so the test starts wherever the generation was.
+    _agnostic_ledger_limbo_pass(0);
+
+    var first = agnostic_ledger_read_begin();
+    assert_eq(_t_len(_agnostic_ledger_limbo_pass(_t_chain(3))), 0, "a crew evicted just now does not go");
+    assert_eq(_t_len(_agnostic_ledger_limbo_pass(0)), 0, "⭐ nor while a reader that could hold it is open");
+    var second = agnostic_ledger_read_begin();
+    assert_neq(second, first, "⭐ a reader that came after the eviction joins the other generation");
+    assert_eq(_t_len(_agnostic_ledger_limbo_pass(0)), 0, "and still none goes");
+    agnostic_ledger_read_end(first);
+    assert_eq(_t_len(_agnostic_ledger_limbo_pass(0)), 3,
+      "⭐ the last reader that could have held them is gone, and one that could not holds nothing up");
+
+    # The second reader is now the older generation of the next round.
+    assert_eq(_t_len(_agnostic_ledger_limbo_pass(_t_chain(2))), 0, "the next eviction waits");
+    assert_eq(_t_len(_agnostic_ledger_limbo_pass(0)), 0, "⭐ for the reader already open");
+    agnostic_ledger_read_end(second);
+    assert_eq(_t_len(_agnostic_ledger_limbo_pass(0)), 2, "and goes once it closes");
+    assert_eq(_t_len(_agnostic_ledger_limbo_pass(0)), 0, "with nothing left over");
+
+    # Crews evicted while a generation drains are not lost.
+    var r = agnostic_ledger_read_begin();
+    assert_eq(_t_len(_agnostic_ledger_limbo_pass(_t_chain(1))), 0, "one waits");
+    assert_eq(_t_len(_agnostic_ledger_limbo_pass(_t_chain(4))), 0, "and four more join behind it");
+    agnostic_ledger_read_end(r);
+    var a = _t_len(_agnostic_ledger_limbo_pass(0));
+    var b = _t_len(_agnostic_ledger_limbo_pass(0));
+    var c = _t_len(_agnostic_ledger_limbo_pass(0));
+    assert_eq(a + b + c, 5, "⭐ every one of them goes in the end");
+    var last = agnostic_ledger_read_begin();
+    assert_eq(last >= 0, 1, "a bracket opens after all that");
+    agnostic_ledger_read_end(last);
+}
+
+# What the first allocation of a sweep found: how many brackets were open.
+var _t_spy_first = 0 - 1;
+
+fn _t_spy_alloc(state, size): i64 {
+    if (_t_spy_first < 0) { _t_spy_first = agnostic_ledger_readers_open(); }
+    return alloc_via(state, size);
+}
+
+fn _t_spy_realloc(state, old, old_size, new_size): i64 {
+    var p = alloc_via(state, new_size);
+    var n = old_size;
+    if (new_size < n) { n = new_size; }
+    if (old != 0 && n > 0) { memcpy(p, old, n); }
+    return p;
+}
+
+fn _t_spy_free(state, ptr): i64 { return 0; }
+fn _t_spy_reset(state): i64 { return reset_via(state); }
+
+# ⭐ The collector holds entries as a request does, so it holds a bracket as a request does.
+fn test_a_sweep_holds_the_ledger() {
+    test_group("crew-arena/sweep");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var spy = allocator_new(&_t_spy_alloc, &_t_spy_realloc, &_t_spy_free, &_t_spy_reset, a);
+    assert_eq(agnostic_ledger_readers_open(), 0, "no bracket before");
+    agnostic_collector_sweep_a(spy);
+    assert_eq(_t_spy_first, 1, "⭐ a sweep looks at the ledger inside one");
+    assert_eq(agnostic_ledger_readers_open(), 0, "and closes it");
+    _t_spy_first = 0 - 1;
+    agnostic_collector_finish_a(spy);
+    assert_eq(_t_spy_first, 1, "⭐ and so does the last sweep of a stop");
+    assert_eq(agnostic_ledger_readers_open(), 0, "and closes it");
+}
+
+# ⭐ A reader holds a real crew through its eviction, and everything behind the entry still reads.
+fn test_a_held_crew_survives_its_eviction() {
+    test_group("crew-arena/held");
+    _t_open();
+    var a = arena_allocator(1048576);
+    var b = arena_allocator(1048576);
+    var id = str_clone(_t_run(b, _T_BODY));
+
+    var bracket = agnostic_ledger_read_begin();
+    var e = agnostic_ledger_entry(id);
+    var spec = agnostic_ledger_spec(e);
+    var name = agnostic_ledger_name(e);
+
+    # Enough crews to evict it and turn the generations over more than once.
+    _t_run_many(a, _T_BODY, AGNOSTIC_LEDGER_MAX + 3 * 256);
+    assert_eq(agnostic_ledger_entry(id), 0, "⭐ the crew was evicted");
+    assert_eq(str_eq_cstr(name, "c"), 1, "⭐ and what a reader held still reads");
+    assert_eq(str_eq(agnosai_crew_id(spec), id), 1, "⭐ the crew has not been given back");
+    assert_eq(vec_len(agnosai_crew_tasks(spec)), 1, "with its tasks");
+    assert_eq(vec_len(agnostic_ledger_results(e)), 1, "and its results");
+    assert_eq(str_eq(agnostic_ledger_crew_id(e), id), 1, "and its entry");
+    agnostic_ledger_read_end(bracket);
+
+    # With the reader gone, the next two evictions release it.
+    var used = agnosai_crew_arena_used(agnosai_crew_arena(spec));
+    assert_lt(0, used, "it still holds its memory");
+    var al = agnosai_crew_arena(spec);
+    _t_run_many(a, _T_BODY, 3 * 256);
+    assert_neq(agnosai_crew_id(spec) != 0 && str_eq(agnosai_crew_id(spec), id) == 1, 1,
+      "⭐ and it is given back once the reader has gone");
+    assert_eq(agnosai_crew_arena_is(al), 1, "to the pool, for the next crew");
+}
+
+fn main() {
+    test_a_crew_is_all_in_its_arena();
+    test_limbo_waits_for_every_reader();
+    test_a_refused_body_gives_its_arena_back();
+    test_a_sweep_holds_the_ledger();
+    test_a_held_crew_survives_its_eviction();
+    test_crews_past_the_cap_cost_nothing();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    return assert_summary();
+}
+
+var _agnostic_crew_arena_test_exit = main();
+sys_exit_group(_agnostic_crew_arena_test_exit);

@@ -626,6 +626,7 @@ fn test_definitions_are_per_tenant() {
 
     _t_open();
     agnostic_store_ensure(AGNOSTIC_DEF_TABLE_SQL);
+    agnostic_store_ensure(AGNOSTIC_DEF_VER_TABLE_SQL);
     agnostic_store_ensure(AGNOSTIC_DEF_INDEX_SQL);
     agnostic_definitions_reset();
     agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);

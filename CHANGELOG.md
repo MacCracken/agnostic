@@ -4,6 +4,129 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-11-06
+
+**A crew leaves nothing behind.** agnosai 2.2.5 repaired both reports agnostic filed with it, and this release is
+the consumer's half: a crew lives in an arena and goes back when no reader can hold it, which closes audit P2, and
+a task with an `output_schema` is now held to it. The rest of the engine's features with no route come across:
+every write of a definition is a version, a tenant's definitions travel as one document, a crew can say who it
+needs by role, and a route says which preset fits. One old bug found on the way: a crew evicted as it was read
+lost its name.
+
+⚠ **Behaviour changes.** A crew with a task that never meets its `output_schema` is now `failed`, and a DAG's
+dependents do not run. A placeholder crew's tasks no longer carry `output_valid`. A fenced answer that passes is
+returned as the block. `tokens` and cost on such a task count every call. A definition write is now two writes, and
+in the schema `agents` is no longer `required`: a crew takes `agents` or `team`.
+
+### Added
+
+- **Definition versions and rollback** (G10, [ADR 0035](docs/adr/0035-every-write-of-a-definition-is-a-version.md)):
+  every write of a definition is a version, so no route saves one. `GET /api/v1/agents/definitions/{key}/versions`
+  and `/versions/{n}` read them, READ. `POST /api/v1/agents/definitions/{key}/rollback` with `{"version": N}` makes one
+  current as a new version, WRITE, audited at WARNING, and takes `If-Match`. A delete keeps its versions, so a
+  rollback brings a deleted definition back. One today's door would refuse is a 409.
+- **`AGNOSTIC_MAX_VERSIONS`,** 50 by default, 1 to 1000. Anything else stops the server.
+- **Packages** (G10, [ADR 0036](docs/adr/0036-a-package-is-json-and-all-of-itself.md)): `POST /api/v1/packages/export`,
+  READ, and `POST /api/v1/packages/import[?overwrite=true]`, WRITE. A package is one JSON document, not a ZIP: agnosai's
+  form loses `focus` and `allow_delegation` and allocates for life. An import is refused whole, and a key already
+  stored is a 409 naming them all.
+- **`team` on a crew** (G10, [ADR 0037](docs/adr/0037-a-team-becomes-agents-and-a-recommendation-is-words.md)), where
+  `agents` would go: each member takes the best of your stored definitions and the preset library's agents, or is
+  written from its role. The plan route shows who it became.
+- **`POST /api/v1/preset-recommendations`** (G10, ADR 0037), READ: which preset fits a description, from a table of
+  words and no model, with `matched` saying what it went on.
+- **`agnostic_ledger_readers` and `agnostic_crew_arenas`** on `GET /api/v1/metrics`: a bracket that never closes, and
+  what is being held for one.
+- **`scripts/fake-gateway.py`,** which answers as a model would, so that the boot probe runs live crews on a real
+  socket. Nothing did before: with no gateway the engine takes its placeholder path and checks nothing.
+- **`scripts/load-test.py` step 8:** 16 readers aimed at the crews about to go while 16 writers push through the
+  ledger's cap, each crew in words of its own, and the memory the process holds read from `/proc`.
+- **`tests/crew_arena.tcyr` and `tests/definition_library.tcyr`.**
+
+### Changed
+
+- **agnosai 2.2.4 → 2.2.5, and kavach 3.14.2 → 3.14.6 with it.** Every other dep and Cyrius 6.7.18 were already on
+  their latest tags.
+- **A crew lives in an arena** ([ADR 0034](docs/adr/0034-a-crew-lives-in-an-arena-and-readers-are-waited-for.md)):
+  everything agnostic allocates for it, from its decoded request to its ledger entry. Eviction takes a crew out of the
+  map, and it waits in limbo until nothing that could have found it is running. A request and a collector sweep each
+  hold a bracket for that, which closes after the response is encoded and before it is written.
+- **`output_valid` is the engine's word** ([ADR 0033](docs/adr/0033-output-valid-is-the-engines-word.md)). `true` for a
+  live task that completed, `false` for one the engine failed for its answers, and left out otherwise, for a
+  placeholder crew too. agnostic's own check is gone, and with it a parse, a three-way result and a map per crew. `false`
+  now tells a wrong shape from a failed gateway.
+- **A definition's writes build in the request's arena,** where they built on the global heap.
+
+### Fixed
+
+- **A crew evicted as it was read lost its name, target and mode,** in a 200. `GET /api/v1/crews/{id}` looked the crew up
+  three times, and one that left between them was answered without what the ledger knew. It has done since 0.1.9.
+  Found by step 8 against 0.4.1: 1 read in 14,844.
+- **A crew with no target kept 32 B for life,** an empty `Str` on the no-free heap at each of two writes.
+
+### Removed
+
+- **`_agnostic_ledger_output_checks_a`, `_agnostic_output_in_shape_a`, `_agnostic_output_parsed_ok_a` and
+  `agnostic_crew_poll_a`,** which nothing called any more.
+
+### Found, and filed or scheduled
+
+- **agnosai has no `_a` form of `agnosai_team_member_new`,** so `src/engine/team.cyr` builds the record from its enum
+  offsets. On the roadmap, under *Upstream*.
+- **Nothing in the shell reaches the new routes.** Versions in the Library, and a team or a recommendation in Crews, are
+  on the roadmap under M9.
+
+### Performance
+
+| Crews held in memory, resident, measured from `/proc` under load | 0.4.1 | 0.4.2 |
+|---|---|---|
+| x86_64, 12-task crews, per crew past 3,000 | 38,198 B | **914 to 973 B** |
+| Raspberry Pi 4, the same, past 4,500 | | **1,008 B** |
+
+What is left is the audit trail and the store's cache. On the global heap, a crew keeps **0 B**, against 11,080 B.
+
+- **New rows:** `ledger_bracket` 96 ns, the two lock operations every request now takes, `recommend_route` 18 µs and
+  `team_assemble` 100 µs for three members against all 76 preset agents.
+- **Six more routes cost what they cost:** the table is a flat scan, so `route_miss_404` 1.16 → 1.40 µs and
+  `route_last_ui_plugin` 1.32 → 1.55 µs. `metrics_render` +8% for its two new gauges.
+- **Nothing else moved.** The recorded run was on a loaded machine and reads about 5% high across the board, on rows
+  this release does not touch as well. In interleaved runs against a 0.4.1 build, `authn_bearer` and `user_get` were flat.
+- **`crew_decode_4a_8t`,** which now builds through an allocator, read +0.8% in a quieter run and +6% in that one.
+
+**Memory held is now bounded and does not fall.** It stops at the ledger's size times a crew's size, about 180 MB for
+12-task crews here, and an arena keeps the largest it has grown to. A write backlog keeps crews in the ledger past its
+cap, with their arenas: writers unpaced at 250 crews a second reached 2,700 held crews.
+
+### Verified
+
+- **x86_64, `CYRIUS_DCE=1`:** 42 suites, 4,289 assertions, 0 failed, and 97 JavaScript tests. Coverage 98% (682 of
+  693) against the gate of 95. `check-clean.sh`, `check-symbols.sh`, `check-skill.py`, the schema check and
+  `deps --locked` pass.
+- **A sibling-free replica with an empty dep cache,** in CI's order: all 9 deps fetched from their tags, the tree clean
+  afterwards, and the x86_64 binary byte-identical to this one (`071ccebc…`).
+- **A Raspberry Pi 4, natively:** the same 42 suites and 4,289 assertions, the boot probe and all eight load-test steps,
+  on 95 files compared by hash. Step 8 at 16 clients and 5,000 crews failed its memory limit, at 2,859 B a crew, with
+  the pool still filling. At 9,000 crews and 6 clients it read 1,008 B, so 9,000 is now its default. This is also the
+  first run of agnosai 2.2.5's fences on aarch64 hardware, which its release notes say it did not have.
+- **A live crew, on a real socket,** on both machines: a task that never meets its shape fails, says so, and bills its
+  three calls; a fenced answer passes as the block alone; a retry that comes right passes and bills both; and a task that
+  depends on a failed one does not run.
+- **The release race:** step 8 on x86_64 read crews about to go 20,701 times beside 9,000 crews, and 44,097 times over
+  three runs of 7,000, with 0 faults. On the Pi, 7,022 and 17,195 reads, 0 faults. With limbo removed the server dies
+  of SIGSEGV in that step.
+- **Load test:** 9,375 crews on x86_64 at 216/s and 3,906 on the Pi at 45/s, all `completed` through a restart.
+- **Real Chromium,** 10 of 10: the Crews view against a live crew, showing a task the engine failed and why.
+- **39 mutants.** 37 are caught, 21 of them on the new routes and 12 on the arena. One is equivalent: skipping the walk
+  for a crew with no shape changes only what it costs. **One survives:** the handler closing its bracket just before it
+  calls `_agnostic_serve_send` passes every suite and the race, so that line is held by reading (ADR 0034). A request
+  with no bracket at all passes the race too, because limbo alone waits longer than a request takes, and only the
+  suites catch it.
+
+**What this does not show.** The race is hard to hit on demand, so the brackets are proven by seeing that one is
+open, and not by a read caught in the act. Nobody has run a real model through this: the live crews answer from a
+fake gateway. A definition that has been through 50 versions at the size caps has not been measured. `.agpkg` files
+do not import, on purpose. The shell has no view of the new routes yet.
+
 ## [0.4.1] — 2026-11-06
 
 **`GET /api/v1/gpu`: the accelerators this host had at start, and that a crew is not held to them.** One route

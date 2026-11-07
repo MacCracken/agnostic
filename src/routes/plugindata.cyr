@@ -38,7 +38,6 @@
 var AGNOSTIC_JK_DOCUMENTS = str_from("documents");
 var AGNOSTIC_JK_UPDATED   = str_from("updated");
 var AGNOSTIC_JK_BYTES     = str_from("bytes");
-var AGNOSTIC_JK_CREATED   = str_from("created");
 var AGNOSTIC_JK_SCOPE     = str_from("scope");
 
 # The 422 a malformed plugin id earns.

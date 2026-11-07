@@ -29,7 +29,7 @@ stdlib = ["assert", "bench"]
 
 [deps.agnosai]
 git = "https://github.com/MacCracken/agnosai.git"
-tag = "2.2.4"
+tag = "2.2.5"
 modules = ["dist/agnosai.cyr"]
 
 [deps.libro]

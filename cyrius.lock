@@ -1,13 +1,13 @@
-commit	e16832b0bf9f74a2629b83cfc5615c2602d0f217	agnosai	https://github.com/MacCracken/agnosai.git	2.2.4
+commit	9ef847473ee40dd7b682516b81aace06b68c18e6	agnosai	https://github.com/MacCracken/agnosai.git	2.2.5
 commit	ccdcd9c035e205c1373b3c0d2c5878004da6edbc	ai-hwaccel	https://github.com/MacCracken/ai-hwaccel.git	2.5.6
 commit	1503109df263d74006ae16f76a4c4209b680a49d	bote	https://github.com/MacCracken/bote.git	3.8.15
-commit	a12e38da66f9a61fb74ecd33e680c8ed4f69b166	kavach	https://github.com/MacCracken/kavach.git	3.14.2
+commit	b772c15224bbdaee0e4b2a6bf01fcd722603ca20	kavach	https://github.com/MacCracken/kavach.git	3.14.6
 commit	f4a31a450a112587d6fcc46a946e1b6061878e6f	libro	https://github.com/MacCracken/libro.git	2.11.3
 commit	40b827f275c452f592e0735b19b0cb47448c2794	majra	https://github.com/MacCracken/majra.git	2.13.0
 commit	efa2e34aefcb1dc65a01e734b2b19bfe18b10c7f	patra	https://github.com/MacCracken/patra.git	1.16.6
 commit	3c47656154ecd4b07abee1f8b174b2389bb83a8b	sigil	https://github.com/MacCracken/sigil.git	3.13.15
 commit	cdb74e281920da6130bd48f1de37d9b150ab0d3d	tyche	https://github.com/MacCracken/tyche.git	1.2.2
-2f06fb62d40dcf3846633a2778f797370d037978b07e0e1e7b5c26d931b59d79  lib/agnosai.cyr
+c4420ffef3a7edc2f7845facc10c2f9c172ccc4f75b6f64e54e9e099d71abb5a  lib/agnosai.cyr
 807532a0cfad2147fdb6ecebea11a5e2224611d89454349545f50b3daed59d9d  lib/ai-hwaccel.cyr
 346716377b00f36e58eb16cf7fe1dd62dd8fe577930d0d0429f822795b35817c  lib/alloc.cyr
 5afd5bb7cba4e49fee331f6a2838f4e01d9781defaf531403f6616f42ac7151b  lib/alloc_agnos.cyr
@@ -50,7 +50,7 @@ d0c40dfccf051ca0b141c31633570b3fa08d82b71729d237bbb519c287d2e5bb  lib/fdlopen.cy
 7ed650c49b548d1a1895a2c4a3f08bbe0378248131464b1952e8744821a10ecd  lib/hashseed.cyr
 4b40ccbf5397bf6c2cef1cff8e13d8d689eba48f4d9f65e3efe2f9f00ff6d086  lib/http.cyr
 e532c082ce75b0f18dc8e3c07462300b428e432aa19e6a5fcc2b0b6b174be45d  lib/io.cyr
-20b8ce5dd1c250ed79bb2de7ed84f40d4e4a6ce2d8f96771d3b2f3ca05093802  lib/kavach.cyr
+1c1adf8bbb001a42419eaae6bd95a0e6d01304601808527aa5402be5353feacf  lib/kavach.cyr
 f38092748e5a9197f7a526e54801fd15fab70d2a04d1c23f4f71003f564fb3d6  lib/keccak.cyr
 57d0fb6111127ee0305b6525ca90a790e001c1e7f705b3a9a72ed2db96a3c341  lib/libro.cyr
 af05f6b5ad67b9379f0d8d747255c7763d0209e1e5b51fe16a872d184673af35  lib/log.cyr

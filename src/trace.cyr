@@ -150,7 +150,7 @@ fn agnostic_trace_clear(): i64 {
 # everywhere else, and a trace id and a parent id that are not all zeros.
 #
 # ⚠ **The engine's parser, not a copy of its rule.** Every crew a request submits joins
-# the request's trace (`agnostic_crew_submit_owned`), and agnosai parses the value with
+# the request's trace (`agnostic_crew_submit_owned_a`), and agnosai parses the value with
 # `agnosai_otlp_span_context_parse_a` when the crew starts, starting a NEW trace for one
 # it refuses. Asking that same function here is what makes "agnostic accepted it" and
 # "the crew joined it" one fact: a value only one of them accepted would put a request's

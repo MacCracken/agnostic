@@ -207,6 +207,10 @@ Worth an alert:
 - `agnostic_refusals_total{reason="unauthenticated"}` rising fast: someone is guessing.
 - `agnostic_refusals_total{reason="argon_shed"}`: logins are being refused for want of capacity.
 - `agnostic_audit_dropped_total` above 0: audit records could not be stored.
+- `agnostic_ledger_readers` that never returns to 0 on a quiet server: a request is stuck, and finished
+  crews' memory waits for it.
+- `agnostic_crew_arenas` still rising once the server has settled: more crews are held at once than ever
+  were. It stops near what the ledger holds, 1,024 finished crews and those still running.
 - `agnostic_http_responses_total{class="5xx"}` rising.
 
 Refusals also reach the audit trail: at most 16 entries a minute with the details, then one entry

@@ -308,8 +308,9 @@ fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, pri
     }
 
     # A replay's body hashed to the accepted one, so it has been checked, and building it again
-    # would keep a whole crew on the global heap for the one list the response takes from it.
+    # would take a whole crew's arena for the one list the response takes from it.
     var req = 0;
+    var arena = 0;
     if (prior == 0) {
         # Before the crew is built: `src/auth/tenantlimit.cyr` says why. A replay takes no place.
         var rate: i64[1];
@@ -322,8 +323,18 @@ fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, pri
         var reject: i64[1];
         store64(&reject, 0);
         var agents = agnostic_crew_agents_resolve_a(a, v, scope, &reject);
-        if (load64(&reject) == 0) { req = agnostic_crew_req_from_value_a(a, v, agents, &reject); }
+        # The arena is taken here and not sooner: everything above refuses for nothing.
+        if (load64(&reject) == 0) {
+            arena = agnostic_crew_arena_take_a(a);
+            if (arena == 0) {
+                agnostic_tenant_unadmit(scope);
+                return agnostic_response_error_a(a, HTTP_INTERNAL,
+                  str_from_a(a, "could not build the crew specification"));
+            }
+            req = agnostic_crew_req_in_a(a, arena, v, agents, &reject);
+        }
         if (req == 0) {
+            agnostic_crew_arena_give(arena);
             agnostic_tenant_unadmit(scope);
             var rj = load64(&reject);
             # The one 403 a body earns: a target off the operator's list. Someone tried to aim
@@ -341,7 +352,7 @@ fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, pri
     if (e == 0) {
         var entry: i64[1];
         store64(&entry, 0);
-        var rc = agnostic_crew_submit_owned(req, &entry, scope, idem, fprint);
+        var rc = agnostic_crew_submit_owned_a(a, req, &entry, scope, idem, fprint);
 
         if (rc == AGNOSTIC_SUBMIT_NO_ENGINE) {
             agnostic_tenant_unadmit(scope);
@@ -349,6 +360,7 @@ fn _agnostic_crew_submit_a(a, body: Str, scope: Str, idem: Str, fprint: Str, pri
               str_from_a(a, "engine is not available"));
         }
         if (rc == AGNOSTIC_SUBMIT_SPEC_FAILED) {
+            agnostic_crew_arena_give(arena);
             agnostic_tenant_unadmit(scope);
             return agnostic_response_error_a(a, HTTP_INTERNAL,
               str_from_a(a, "could not build the crew specification"));
@@ -420,9 +432,19 @@ fn agnostic_route_crew_get_a(a, id: Str, ctx): i64 {
     var scope = agnostic_reqctx_scope(ctx);
 
     # Another tenant's crew is answered exactly like one never submitted (0.1.9).
+    #
+    # ⚠ **One lookup, kept (0.4.2).** This looked the crew up three times, and one evicted between
+    # them answered with its outcome and without its name, target or mode. The bracket keeps the entry
+    # valid past its eviction, so the entry found here is the one answered from.
+    var e = agnostic_ledger_entry(key);
+    if (e != 0) {
+        if (str_eq(agnostic_ledger_scope(e), scope) == 0) { return _agnostic_crew_not_found_a(a); }
+    }
     var outcome = 0;
-    if (agnostic_ledger_entry_in(key, scope) != 0) { outcome = agnostic_crew_poll_a(a, key); }
-    elif (agnostic_ledger_entry(key) != 0) { return _agnostic_crew_not_found_a(a); }
+    if (e != 0) {
+        agnostic_crew_refresh_a(a, e, key);
+        outcome = agnostic_ledger_outcome_a(a, e);
+    }
     if (outcome == 0) {
         # ⚠ **Not in this process's ledger — but it may be on disk from a
         # previous run.** Only terminal outcomes are ever persisted: completed,
@@ -447,8 +469,7 @@ fn agnostic_route_crew_get_a(a, id: Str, ctx): i64 {
     # description below; this process's mode is the fallback for an entry that has none.
     # ⚠ Only one of them: bayan's object set APPENDS, so setting both sent the key twice
     # (0.1.9 to 0.1.14).
-    var e = agnostic_ledger_entry(key);
-    if (e == 0 || agnostic_ledger_mode(e) == 0) {
+    if (agnostic_ledger_mode(e) == 0) {
         bayan_json_v_obj_set_a(a, body, AGNOSTIC_JK_MODE,
           bayan_json_v_str_new_a(a, agnostic_engine_mode()));
     }

@@ -41,11 +41,11 @@
 #
 # ## ⚠ Bounded, because `lib/alloc.cyr` has no `free()`
 #
-# Everything here is global-allocated and never released, so every collection is
-# capped: `AGNOSTIC_LEDGER_MAX` entries, `AGNOSTIC_LEDGER_MAX_EVENTS` progress
-# events per entry. The entry cap is deliberately **larger than the engine's
-# 1000** — a ledger that evicted first would lose exactly the latched outcomes it
-# exists to preserve, which is the one thing it must not do.
+# An entry lives in its crew's arena and goes back with it (0.4.2, ADR 0034), and what is left on the
+# global heap never does, so every collection is capped: `AGNOSTIC_LEDGER_MAX` entries,
+# `AGNOSTIC_LEDGER_MAX_EVENTS` progress events per entry. The entry cap is deliberately **larger than
+# the engine's 1000** — a ledger that evicted first would lose exactly the latched outcomes it exists
+# to preserve, which is the one thing it must not do.
 
 # ## The event window is a RING, and every event carries a sequence number (0.1.9)
 #
@@ -69,7 +69,7 @@
 # that falls behind is told exactly how many it missed). `dropped_events` on the wire is
 # still their sum, as it has been since M2.
 
-# One submitted crew — 144 bytes.
+# One submitted crew — 200 bytes.
 enum AgnosticLedgerEntryOff {
     AGNOSTIC_LE_CREW_ID   = 0;
     AGNOSTIC_LE_NAME      = 8;
@@ -94,8 +94,9 @@ enum AgnosticLedgerEntryOff {
     AGNOSTIC_LE_ADMITTED  = 160;  # 1 once it holds a place in its tenant's `max_crews` (0.3.1)
     AGNOSTIC_LE_TARGET    = 168;  # the crew's target URL, or 0 (0.4.0, ADR 0029)
     AGNOSTIC_LE_UNFORWARD = 176;  # AGNOSTIC_UNFORWARDED_* bits: what its agents carry to no effect
-    AGNOSTIC_LE_CHECKS    = 184;  # task id -> AGNOSTIC_OUTPUT_*, once read; -1 when no task declares a shape
-    AGNOSTIC_LE_SIZE      = 192;
+    AGNOSTIC_LE_CHANNEL   = 184;  # the subscription, kept after `SUB` clears, for the bus to take back
+    AGNOSTIC_LE_LIMBO     = 192;  # the next entry waiting for its readers to go (ADR 0034)
+    AGNOSTIC_LE_SIZE      = 200;
 }
 
 # The event type that carries a finished task's output (0.1.15, ADR 0019).
@@ -158,16 +159,14 @@ var _agnostic_ledger = 0;
 
 # ## ⚠ An evicted entry gives its ring back (0.3.1, audit P2)
 #
-# An entry stays for good: a request may hold it past eviction, and the heap has no `free`. Its
-# ring does not have to. 4,096 B a crew was the largest thing the ledger kept, so rings go on a
-# free list here and the next crew takes one. The rings in use then stop at the most crews the
-# ledger has held at once, and a crew costs that much less for life.
+# A request may hold an entry past eviction. Its ring goes back at once all the same, as it is on the
+# global heap and not in the crew's arena: rings go on a free list here and the next crew takes one, so
+# the rings in use stop at the most crews the ledger has held at once.
 #
 # It is safe because the ring is only ever read and written under `_agnostic_ledger_mutex`. Eviction
 # clears the pointer under that lock, so a request still holding the entry finds no ring, and reads
 # no events with all of them counted as missed. It can never read another crew's: that would be
-# one tenant's output in another tenant's answer. The other half of P2, the channel and the spec, is
-# agnosai's to give back.
+# one tenant's output in another tenant's answer. The rest of the crew waits for such a request.
 var _agnostic_ledger_free_rings = 0;    # a stack: a free ring's first word is the next
 var _agnostic_ledger_rings_made = 0;
 
@@ -191,6 +190,10 @@ fn agnostic_ledger_init(): i64 {
     if (_agnostic_ledger == 0) { _agnostic_ledger = map_new_str(); }
     if (_agnostic_ledger_mutex == 0) { _agnostic_ledger_mutex = mutex_new(); }
     if (_agnostic_ledger_idem_mutex == 0) { _agnostic_ledger_idem_mutex = mutex_new(); }
+    if (_agnostic_ledger_read_mutex == 0) {
+        _agnostic_ledger_read_mutex = mutex_new();
+        _agnostic_ledger_readers = alloc(16);
+    }
     return 1;
 }
 
@@ -199,6 +202,8 @@ fn agnostic_ledger_reset(): i64 {
     _agnostic_ledger = map_new_str();
     if (_agnostic_ledger_mutex == 0) { _agnostic_ledger_mutex = mutex_new(); }
     if (_agnostic_ledger_idem_mutex == 0) { _agnostic_ledger_idem_mutex = mutex_new(); }
+    _agnostic_ledger_limbo_new = 0;
+    _agnostic_ledger_limbo_old = 0;
     return 0;
 }
 
@@ -298,6 +303,9 @@ var AGNOSTIC_LEDGER_EVICT_MAX = 512;
 # ⚠ This is the one place a latched outcome can be lost. A client that polls
 # promptly always gets its answer; one that waits out the eviction reads the stored outcome. That
 # is a bounded, honest degradation — not a wrong answer.
+#
+# Returns what left, chained through `AGNOSTIC_LE_LIMBO`, or 0. A reader may still hold any of them,
+# so they go to `_agnostic_ledger_limbo_pass` and not straight back.
 fn _agnostic_ledger_evict_locked(): i64 {
     var size = map_size(_agnostic_ledger);
     if (size < AGNOSTIC_LEDGER_MAX) { return 0; }
@@ -335,14 +343,18 @@ fn _agnostic_ledger_evict_locked(): i64 {
         }
         i = i + 1;
     }
+    var chain = 0;
     var n = 0;
     while (n < held) {
         var key = load64(&oldest + n * 16 + 8);
-        _agnostic_ledger_ring_give_locked(map_get(_agnostic_ledger, key));
+        var gone = map_get(_agnostic_ledger, key);
+        _agnostic_ledger_ring_give_locked(gone);
         map_delete(_agnostic_ledger, key);
+        store64(gone + AGNOSTIC_LE_LIMBO, chain);
+        chain = gone;
         n = n + 1;
     }
-    return held;
+    return chain;
 }
 
 # A ring for a new crew, cleared: a free one, else a new one. 0 on exhaustion.
@@ -377,6 +389,112 @@ fn agnostic_ledger_rings_made(): i64 {
     return _agnostic_ledger_rings_made;
 }
 
+# ## ⚠ A crew leaves in three steps, because a reader can hold it past the first (0.4.2, ADR 0034)
+#
+# A crew lives in an arena now, and its entry with it, so eviction can give a crew's memory back. The
+# scrub is the danger. `agnostic_ledger_entry` hands out a pointer and lets go of the lock, and from
+# then on a request reads the entry, the spec, the results and the events behind it. Every one of
+# those pointers is valid only while the arena is held. Given back at eviction, a poll that looked
+# the crew up a moment earlier would read zeros, or the next crew's memory: one tenant's output in
+# another's answer.
+#
+# So a crew leaves in three steps:
+#
+#   1. **Eviction takes it out of the map**, under the ledger lock. Nothing new can find it.
+#   2. **It waits in limbo** while anything that might have found it is still running.
+#   3. **`agnosai_orchestrator_release_crew` gives it back**, with no lock held.
+#
+# What counts as "running" is one bracket, not a count on each entry: `agnostic_ledger_read_begin`
+# and `_end` around a whole request and a whole collector sweep. Every pointer to an entry comes
+# out of the map and goes no further than the bracket it was found in, so nothing has to be counted
+# at the thirty places that read one, and a route added later cannot forget.
+#
+# A bracket joins one of two generations. Limbo has two lists, and an eviction's crews join the newer.
+# When nobody is left in the older generation, whatever was in the older list has outlived everyone
+# who could have held it, so it goes. The newer list then takes its place and new brackets join the
+# other generation. Nobody who starts after that can find those crews, so they wait only for
+# the brackets already open. This is the two-counter form of RCU.
+#
+# ⚠ **A plain lock, on its own, and never held with another.** The counters could be atomics, but the
+# stdlib's atomics do not order on aarch64, and every request passes through here, so a wrong one
+# would be wrong everywhere. Its hold is a few instructions.
+#
+# ⚠ **A bracket ends before the response is written.** `bayan_json_v_str_new_a` keeps a pointer, so a
+# response still points into the entry until it is encoded, and the bracket has to reach that far.
+# It stops there because a client that stops reading can hold a write for as long as it likes, and
+# nothing would be given back meanwhile.
+var _agnostic_ledger_read_mutex = 0;
+var _agnostic_ledger_readers = 0;       # two words: how many brackets are open in each generation
+var _agnostic_ledger_generation = 0;    # 0 or 1, the one a new bracket joins
+var _agnostic_ledger_limbo_new = 0;     # evicted since the last turn
+var _agnostic_ledger_limbo_old = 0;     # waiting for the older generation to empty
+
+# Open a bracket: what the caller holds of the ledger stays valid until the matching
+# `agnostic_ledger_read_end`. Answers what to hand that call. -1 with no ledger, which that call
+# takes.
+fn agnostic_ledger_read_begin(): i64 {
+    if (_agnostic_ledger_read_mutex == 0) { return 0 - 1; }
+    mutex_lock(_agnostic_ledger_read_mutex);
+    var g = _agnostic_ledger_generation;
+    var at = _agnostic_ledger_readers + g * 8;
+    store64(at, load64(at) + 1);
+    mutex_unlock(_agnostic_ledger_read_mutex);
+    return g;
+}
+
+# Close the bracket `g` opened. Nothing of the ledger may be read after this.
+fn agnostic_ledger_read_end(g): i64 {
+    if (g < 0) { return 0; }
+    mutex_lock(_agnostic_ledger_read_mutex);
+    var at = _agnostic_ledger_readers + g * 8;
+    store64(at, load64(at) - 1);
+    mutex_unlock(_agnostic_ledger_read_mutex);
+    return 0;
+}
+
+# How many brackets are open: a gauge, as a bracket that never closes is memory that never comes back.
+fn agnostic_ledger_readers_open(): i64 {
+    if (_agnostic_ledger_read_mutex == 0) { return 0; }
+    mutex_lock(_agnostic_ledger_read_mutex);
+    var n = load64(_agnostic_ledger_readers) + load64(_agnostic_ledger_readers + 8);
+    mutex_unlock(_agnostic_ledger_read_mutex);
+    return n;
+}
+
+# Add `chain`, evicted just now, to limbo, and answer what has outlived every reader that could
+# have held it: a chain, for `_agnostic_ledger_give_back`. No other lock is held.
+fn _agnostic_ledger_limbo_pass(chain): i64 {
+    mutex_lock(_agnostic_ledger_read_mutex);
+    while (chain != 0) {
+        var next = load64(chain + AGNOSTIC_LE_LIMBO);
+        store64(chain + AGNOSTIC_LE_LIMBO, _agnostic_ledger_limbo_new);
+        _agnostic_ledger_limbo_new = chain;
+        chain = next;
+    }
+    var done = 0;
+    var older = 1 - _agnostic_ledger_generation;
+    if (load64(_agnostic_ledger_readers + older * 8) == 0) {
+        done = _agnostic_ledger_limbo_old;
+        _agnostic_ledger_limbo_old = _agnostic_ledger_limbo_new;
+        _agnostic_ledger_limbo_new = 0;
+        if (_agnostic_ledger_limbo_old != 0) { _agnostic_ledger_generation = older; }
+    }
+    mutex_unlock(_agnostic_ledger_read_mutex);
+    return done;
+}
+
+# Give every crew on `chain` back. Each entry is in the arena it gives back, so its link is read
+# first. How many went.
+fn _agnostic_ledger_give_back(chain): i64 {
+    var n = 0;
+    while (chain != 0) {
+        var next = load64(chain + AGNOSTIC_LE_LIMBO);
+        n = n + agnostic_crew_release(load64(chain + AGNOSTIC_LE_SPEC), load64(chain + AGNOSTIC_LE_CHANNEL));
+        chain = next;
+    }
+    return n;
+}
+
 # Record a crew Agnostic has just submitted, and return its entry.
 #
 # `crew_id` must be the id the **engine** assigned — Agnostic mints none of its
@@ -384,8 +502,8 @@ fn agnostic_ledger_rings_made(): i64 {
 # the event subscription taken *before* submission, or 0 when progress is not
 # being collected.
 #
-# Global allocator, deliberately: the entry outlives the request that created it,
-# which is the entire premise of polling for it later.
+# On the global heap unless a crew arena is named (`agnostic_ledger_record_in`): the entry
+# outlives the request that created it, which is the entire premise of polling for it later.
 fn agnostic_ledger_record(crew_id: Str, name: Str, sub): i64 {
     return agnostic_ledger_record_owned(crew_id, name, sub, AGNOSTIC_SCOPE_DEFAULT, 0, 0);
 }
@@ -409,8 +527,16 @@ fn agnostic_ledger_record_owned(crew_id: Str, name: Str, sub, scope: Str, idem: 
 # missing from the record of what was tested. It is the request's, and outlives this.
 fn agnostic_ledger_record_crew(crew_id: Str, name: Str, sub, scope: Str, idem: Str, fprint: Str, target: Str,
   unforwarded): i64 {
+    return agnostic_ledger_record_in(default_alloc(), crew_id, name, sub, scope, idem, fprint, target, unforwarded);
+}
+
+# `agnostic_ledger_record_crew` with the entry and all it copies in `al`: the crew's arena, so that
+# the crew leaves nothing behind when it goes (ADR 0034). Evicts first, and gives back what has
+# waited long enough, with no lock held.
+fn agnostic_ledger_record_in(al, crew_id: Str, name: Str, sub, scope: Str, idem: Str, fprint: Str, target: Str,
+  unforwarded): i64 {
     agnostic_ledger_init();
-    var e = alloc(AGNOSTIC_LE_SIZE);
+    var e = alloc_via(al, AGNOSTIC_LE_SIZE);
     if (e == 0) { return 0; }
     # The ring, once, for the crew's whole life — see the header.
     var ring = _agnostic_ledger_ring_take();
@@ -421,6 +547,7 @@ fn agnostic_ledger_record_crew(crew_id: Str, name: Str, sub, scope: Str, idem: S
     store64(e + AGNOSTIC_LE_ERROR, 0);
     store64(e + AGNOSTIC_LE_RESULTS, 0);
     store64(e + AGNOSTIC_LE_SUB, sub);
+    store64(e + AGNOSTIC_LE_CHANNEL, sub);
     store64(e + AGNOSTIC_LE_RING, ring);
     store64(e + AGNOSTIC_LE_LOST, 0);
     store64(e + AGNOSTIC_LE_NEXT_SEQ, 1);
@@ -432,7 +559,7 @@ fn agnostic_ledger_record_crew(crew_id: Str, name: Str, sub, scope: Str, idem: S
     store64(e + AGNOSTIC_LE_MODE, 0);
     var sc = scope;
     if (sc == 0) { sc = AGNOSTIC_SCOPE_DEFAULT; }
-    store64(e + AGNOSTIC_LE_SCOPE, str_clone(sc));
+    store64(e + AGNOSTIC_LE_SCOPE, str_clone_a(al, sc));
     store64(e + AGNOSTIC_LE_IDEM, 0);
     store64(e + AGNOSTIC_LE_FPRINT, 0);
     store64(e + AGNOSTIC_LE_RETIRED, 0);
@@ -440,14 +567,16 @@ fn agnostic_ledger_record_crew(crew_id: Str, name: Str, sub, scope: Str, idem: S
     store64(e + AGNOSTIC_LE_ADMITTED, 0);
     store64(e + AGNOSTIC_LE_TARGET, target);
     store64(e + AGNOSTIC_LE_UNFORWARD, unforwarded);
-    store64(e + AGNOSTIC_LE_CHECKS, 0);
-    if (idem != 0) { store64(e + AGNOSTIC_LE_IDEM, str_clone(idem)); }
-    if (fprint != 0) { store64(e + AGNOSTIC_LE_FPRINT, str_clone(fprint)); }
+    store64(e + AGNOSTIC_LE_LIMBO, 0);
+    if (idem != 0) { store64(e + AGNOSTIC_LE_IDEM, str_clone_a(al, idem)); }
+    if (fprint != 0) { store64(e + AGNOSTIC_LE_FPRINT, str_clone_a(al, fprint)); }
 
+    var key = str_clone_a(al, crew_id);
     mutex_lock(_agnostic_ledger_mutex);
-    _agnostic_ledger_evict_locked();
-    map_set(_agnostic_ledger, str_clone(crew_id), e);
+    var evicted = _agnostic_ledger_evict_locked();
+    map_set(_agnostic_ledger, key, e);
     mutex_unlock(_agnostic_ledger_mutex);
+    if (evicted != 0) { _agnostic_ledger_give_back(_agnostic_ledger_limbo_pass(evicted)); }
     return e;
 }
 
@@ -660,8 +789,8 @@ fn agnostic_ledger_finished_ms(e): i64 {
 
 # Record what was submitted: the engine's crew spec (its tasks and agents, in request
 # order) and the engine mode it was accepted under. Called once, by the submit path,
-# right after `agnostic_ledger_record`. The spec is the engine's, global-allocated and
-# never freed; its task descriptions were copied out of the request when it was decoded.
+# right after `agnostic_ledger_record`. The spec lives in the crew's arena, as the entry does;
+# its task descriptions were copied out of the request when it was decoded.
 fn agnostic_ledger_set_plan(e, spec, mode: Str): i64 {
     if (e == 0) { return 0; }
     mutex_lock(_agnostic_ledger_mutex);
@@ -742,41 +871,41 @@ fn agnostic_ledger_describe_a(a, e, obj): i64 {
     return obj;
 }
 
-# Whether a task answered in the shape its `output_schema` declared.
-enum AgnosticOutputCheck {
-    AGNOSTIC_OUTPUT_VALID   = 1;
-    AGNOSTIC_OUTPUT_INVALID = 2;
+# What `output_valid` says of engine result `r` of a live crew, whose task declared a shape: 1, 0,
+# or -1 for nothing.
+#
+# ## ⚠ The engine's word, read and not worked out again (0.4.2, ADR 0033)
+#
+# Since agnosai 2.2.5 every answer to a task with an `output_schema` is checked. A task that met it
+# is `completed` and one that never did is `failed` with `validation_attempts` in its metadata, so a
+# failure of the gateway is told apart from an answer in the wrong shape.
+fn _agnostic_result_output_valid(r): i64 {
+    var st = agnosai_task_result_status(r);
+    if (st == AGNOSAI_STATUS_COMPLETED) { return 1; }
+    if (st != AGNOSAI_STATUS_FAILED) { return 0 - 1; }
+    var meta = agnosai_task_result_metadata(r);
+    if (meta == 0) { return 0 - 1; }
+    if (map_get(meta, _AGNOSTIC_MK_VALIDATION) == 0) { return 0 - 1; }
+    return 0;
 }
 
-# The map of what entry `e`'s finished tasks answered against the shape each declared, task id to
-# `AGNOSTIC_OUTPUT_*`, or 0: no task declared one, or the crew has no results yet.
+# Each result in the crew document `obj` gains `output_valid` when its task declared a shape.
 #
-# ## ⚠ agnosai says `completed` whether or not the shape was met
+# ⚠ **A placeholder crew has none.** With no gateway the engine echoes the task's description as
+# `completed` and checks nothing, so `true` would be false, and `false` would judge an answer no model
+# gave. `engine_mode` says which this was.
 #
-# A task with an `output_schema` is re-asked twice, and the last answer is never checked, so a model
-# that never meets the shape completes all the same (filed with agnosai). So `output_valid` on a
-# task's result is what says it, and agnostic reads it with the engine's own check.
-#
-# ## ⚠ Once per crew, by the first reader once it has results
-#
-# A poll reads this, so nothing here may keep anything per read: a crew still running leaves before
-# anything is built, and the map, once built, is what later reads answer from. A reader that loses
-# the race does the work once more and drops it. The map is complete before it is published and never
-# changes. The engine's result objects are not marked instead: a poll and the collector read them at
-# once, and writing into their metadata would race both.
-#
-# ⚠ **The pointer is read under the lock it is written under.** Without it, an aarch64 reader can see
-# the pointer before what it points at. x86 cannot show this, and no suite here would.
-fn _agnostic_ledger_output_checks_a(a, e): i64 {
+# Walks the two side by side, as `agnostic_outcome_to_value_a` rendered one from the other in order.
+# The map is in `a`, built only for a crew with a shape, because a crew may hold 1000 tasks and this
+# runs on a poll.
+fn _agnostic_ledger_mark_outputs_a(a, e, obj): i64 {
     mutex_lock(_agnostic_ledger_mutex);
-    var seen = load64(e + AGNOSTIC_LE_CHECKS);
     var results = load64(e + AGNOSTIC_LE_RESULTS);
     var spec = load64(e + AGNOSTIC_LE_SPEC);
+    var mode = load64(e + AGNOSTIC_LE_MODE);
     mutex_unlock(_agnostic_ledger_mutex);
-    if (seen == 0 - 1) { return 0; }
-    if (seen != 0) { return seen; }
-    if (spec == 0) { return 0; }
-    if (_agnostic_results_count(results) == 0) { return 0; }
+    if (spec == 0 || mode == 0 || _agnostic_results_count(results) == 0) { return obj; }
+    if (str_eq_cstr(mode, "live") == 0) { return obj; }
 
     var tasks = agnosai_crew_tasks(spec);
     var shapes = 0;
@@ -785,88 +914,26 @@ fn _agnostic_ledger_output_checks_a(a, e): i64 {
         var t = vec_get(tasks, i);
         if (agnosai_task_output_schema(t) != 0) {
             if (shapes == 0) { shapes = map_new_str_a(a); }
-            map_set_a(a, shapes, agnosai_task_id(t), t);
+            map_set_a(a, shapes, agnosai_task_id(t), 1);
         }
         i = i + 1;
     }
-    if (shapes == 0) {
-        mutex_lock(_agnostic_ledger_mutex);
-        store64(e + AGNOSTIC_LE_CHECKS, 0 - 1);
-        mutex_unlock(_agnostic_ledger_mutex);
-        return 0;
-    }
+    if (shapes == 0) { return obj; }
 
-    var checks = map_new_str();
+    var arr = bayan_json_v_obj_get_by_str(obj, AGNOSTIC_JK_RESULTS);
+    if (bayan_json_v_is_arr(arr) != 1) { return obj; }
+    var n = bayan_json_v_arr_len(arr);
     var r = 0;
-    while (r < vec_len(results)) {
+    while (r < n && r < vec_len(results)) {
         var res = vec_get(results, r);
-        var t2 = map_get(shapes, agnosai_task_result_task_id(res));
-        if (t2 != 0 && agnosai_task_result_status(res) == AGNOSAI_STATUS_COMPLETED) {
-            var met = _agnostic_output_in_shape_a(a, agnosai_task_result_output(res), agnosai_task_output_schema(t2));
-            if (met == 1) { map_set(checks, agnosai_task_result_task_id(res), AGNOSTIC_OUTPUT_VALID); }
-            if (met == 0) { map_set(checks, agnosai_task_result_task_id(res), AGNOSTIC_OUTPUT_INVALID); }
-        }
-        r = r + 1;
-    }
-    mutex_lock(_agnostic_ledger_mutex);
-    store64(e + AGNOSTIC_LE_CHECKS, checks);
-    mutex_unlock(_agnostic_ledger_mutex);
-    return checks;
-}
-
-# Whether `text`, parsed in `a`, passes the engine's check of `schema`: 1 or 0, or -1 when it could
-# not be read.
-#
-# ⚠ **A parse that fails is not a verdict.** bayan answers 0 for text that is not JSON and for an
-# arena that ran out, and an arena that ran out says nothing about what the model answered. So a parse
-# that fails on text the no-allocation scanner calls well-formed is -1, and `output_valid` is left out
-# rather than say `false` of an answer that may be right. The arenas that read this grow (ADR 0021), so
-# it takes a request that cannot get memory.
-fn _agnostic_output_parsed_ok_a(a, text: Str, schema): i64 {
-    var v = bayan_json_v_parse_buf_a(a, str_data(text), str_len(text));
-    if (v == 0) {
-        if (agnostic_json_kind(text) == AGNOSTIC_JSON_MALFORMED) { return 0; }
-        return 0 - 1;
-    }
-    if (agnosai_validate_value(v, schema) == 0) { return 1; }
-    return 0;
-}
-
-# Whether a task's `output` meets `schema`, read as `agnosai_extract_and_validate` reads it: the
-# text as it is, then a fenced block in it.
-#
-# ⚠ **Parsed in `a`, not by that function.** It parses onto the global heap, and a parse tree runs to
-# twenty times its text, for a model's whole answer, for the life of the process. The fence is the
-# engine's own reader: what it copies is no longer than the output the crew keeps anyway.
-#
-# 1 or 0, or -1 when it could not be read.
-fn _agnostic_output_in_shape_a(a, output: Str, schema): i64 {
-    var raw = _agnostic_output_parsed_ok_a(a, output, schema);
-    if (raw == 1) { return 1; }
-    var block = agnosai_extract_json_block(output);
-    if (block == 0) { return raw; }
-    return _agnostic_output_parsed_ok_a(a, block, schema);
-}
-
-# Each result in the crew document `obj` gains `output_valid` when its task declared a shape.
-fn _agnostic_ledger_mark_outputs_a(a, e, obj): i64 {
-    var checks = _agnostic_ledger_output_checks_a(a, e);
-    if (checks == 0) { return obj; }
-    var results = bayan_json_v_obj_get_by_str(obj, AGNOSTIC_JK_RESULTS);
-    if (bayan_json_v_is_arr(results) != 1) { return obj; }
-    var i = 0;
-    while (i < bayan_json_v_arr_len(results)) {
-        var r = bayan_json_v_arr_get(results, i);
-        var id = bayan_json_v_obj_get_by_str(r, AGNOSTIC_JK_TASK_ID);
-        if (bayan_json_v_is_str(id) == 1) {
-            var state = map_get(checks, bayan_json_v_str(id));
-            if (state != 0) {
-                var valid = 0;
-                if (state == AGNOSTIC_OUTPUT_VALID) { valid = 1; }
-                bayan_json_v_obj_set_a(a, r, AGNOSTIC_JK_OUTPUT_VALID, bayan_json_v_bool_new_a(a, valid));
+        if (map_get(shapes, agnosai_task_result_task_id(res)) != 0) {
+            var said = _agnostic_result_output_valid(res);
+            if (said >= 0) {
+                bayan_json_v_obj_set_a(a, bayan_json_v_arr_get(arr, r), AGNOSTIC_JK_OUTPUT_VALID,
+                  bayan_json_v_bool_new_a(a, said));
             }
         }
-        i = i + 1;
+        r = r + 1;
     }
     return obj;
 }
@@ -1293,8 +1360,9 @@ fn agnostic_ledger_is_final_token(ev): i64 {
 
 # `agnostic_ledger_drain`, collecting into `finals` — a vec in `a`, or 0 for none — every
 # event that carries a finished task's output (`agnostic_ledger_is_final_token`), so the
-# caller can keep it once the ledger lock is released (0.1.15, ADR 0019). An event is never
-# freed, so a pointer collected here stays valid after its ring slot is reused.
+# caller can keep it once the ledger lock is released (0.1.15, ADR 0019). An event lives in its
+# crew's arena, so a pointer collected here stays valid after its ring slot is reused, for as long
+# as the caller's bracket is open.
 fn agnostic_ledger_drain_a(a, e, finals): i64 {
     if (e == 0) { return 0; }
     mutex_lock(_agnostic_ledger_mutex);
@@ -1362,9 +1430,9 @@ fn agnostic_ledger_is_live(e): i64 {
 #
 # Walks the map's slots directly rather than through `map_keys`, which builds its vec
 # with the global allocator: the collector calls this five times a second for the life
-# of the process, and every byte that call allocated would be kept forever. Entries are
-# never freed, so a pointer taken here stays valid after the lock is released — even
-# for an entry evicted meanwhile, which the caller then refreshes harmlessly.
+# of the process, and every byte that call allocated would be kept forever. A pointer taken here
+# stays valid for as long as the caller's bracket is open, even for an entry evicted meanwhile, which
+# the caller then refreshes harmlessly (`agnostic_ledger_read_begin`).
 #
 # ⚠ The slot is `{key, value, state}`, 24 bytes, `state == 1` occupied — the layout
 # `map_keys` and `map_iter` in `lib/hashmap.cyr` walk. `tests/ledger.tcyr` holds this to

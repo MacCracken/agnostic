@@ -319,10 +319,10 @@ fn agnostic_agent_def_unforwarded_count(d): i64 {
 # `index >= 0` prefixes every message with `agents[N]: `; pass -1 for the
 # standalone definition surface.
 #
-# ⚠ **Global allocator for everything the record holds.** The definition outlives
-# the request that created it — a crew spec is registered and run on a detached
-# thread, and a stored definition is fetched by a later request. `a` is used only
-# for the rejection record, which does belong to this request.
+# ⚠ **Global allocator for everything the record holds, unless told otherwise.** The
+# definition outlives the request that created it: a stored definition is fetched by a later
+# request. A crew's agents go in the crew's arena (`agnostic_agent_def_decode_in_a`, ADR 0034).
+# `a` is used only for the rejection record, which does belong to this request.
 #
 # The order is `src/http/codec.cyr`'s and it matters: reject a non-object, then
 # refused capabilities, then unknown keys, then required fields, then optional.

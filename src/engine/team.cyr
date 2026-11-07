@@ -1,0 +1,398 @@
+# agnostic/engine/team — a crew described by who it needs (0.4.2, ADR 0037).
+#
+# `"team": {"members": [{"role": "…"}]}` stands where `agents` would, and comes out as `agents`
+# before the crew body is decoded, so a team takes every check a spelled-out crew does and nothing
+# past this file knows a team was asked for. `GET /api/v1/crews/{id}/plan` shows who it became.
+#
+# Each member takes the best of what is known, the caller's own stored definitions first and then
+# the preset library's agents, by `agnosai_assembler_match_score`: the role, then the tools. Failing
+# that, it is written from the role alone. So a role nothing here knows still gets an agent, and what
+# was asked for is never dropped, which agnosai's own `agnosai_assemble_team` would do.
+#
+# ⚠ **A match needs more than one shared tool.** The engine scores 3 for a tool and 5 and up for a
+# role, and calls anything over 0 a match. On that rule a "Game Designer" who asks for one tool a
+# QA engineer also lists comes back a QA engineer. `AGNOSTIC_TEAM_MIN_SCORE` is what a role, or two
+# tools, reach, and one tool does not.
+#
+# ⚠ **`context` and `project_context` reach the model**, in the agent's goal and backstory. So does
+# what a stored definition says, which is why only the caller's own are read.
+
+var AGNOSTIC_TEAM_MAX_MEMBERS = 20;
+var AGNOSTIC_TEAM_ROLE_MAX    = 200;
+var AGNOSTIC_TEAM_CONTEXT_MAX = 1000;
+var AGNOSTIC_TEAM_PROJECT_MAX = 2000;
+var AGNOSTIC_TEAM_KEY_MAX     = 90;     # with room for `-<index>` under `agnostic_key_is_valid`'s 100
+var AGNOSTIC_TEAM_MIN_SCORE   = 5;
+
+var AGNOSTIC_JK_MEMBERS   = str_from("members");
+var AGNOSTIC_JK_LEAD      = str_from("lead");
+var AGNOSTIC_JK_CONTEXT   = str_from("context");
+var AGNOSTIC_JK_PROJECT   = str_from("project_context");
+var AGNOSTIC_JK_AGENT_KEY_DOC = str_from("agent_key");   # what a preset's agent calls its key
+
+# The fields of a `team` object.
+fn agnostic_team_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_req_a(a, f, "members", AGNOSTIC_FK_ARRAY);
+    agnostic_field_a(a, f, "project_context", AGNOSTIC_FK_STRING);
+    return f;
+}
+
+# The fields of one member.
+fn agnostic_team_member_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_req_a(a, f, "role", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "context", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "tools", AGNOSTIC_FK_STRINGS);
+    agnostic_field_a(a, f, "lead", AGNOSTIC_FK_BOOL);
+    return f;
+}
+
+# A candidate: the engine record the scorer reads, and the JSON a member is built from.
+enum AgnosticTeamCandidateOff {
+    AGNOSTIC_TC_AGENT = 0;
+    AGNOSTIC_TC_VALUE = 8;
+    AGNOSTIC_TC_SIZE  = 16;
+}
+
+# The string field `key` of `v`, or 0.
+fn _agnostic_team_str(v, key: Str): Str {
+    var f = bayan_json_v_obj_get_by_str(v, key);
+    if (bayan_json_v_is_str(f) != 1) { return 0; }
+    return bayan_json_v_str(f);
+}
+
+# The strings of array `arr`, as a vec of Str in `a`. An empty vec for anything else.
+fn _agnostic_team_strs_a(a, arr): i64 {
+    var out = vec_new_a(a);
+    if (out == 0 || bayan_json_v_is_arr(arr) != 1) { return out; }
+    var i = 0;
+    while (i < bayan_json_v_arr_len(arr)) {
+        var s = bayan_json_v_arr_get(arr, i);
+        if (bayan_json_v_is_str(s) == 1) { vec_push_a(a, out, bayan_json_v_str(s)); }
+        i = i + 1;
+    }
+    return out;
+}
+
+# Add a preset's agent to `out`. The scorer reads a role, a name, tools and a complexity.
+fn _agnostic_team_add_preset_agent_a(a, out, v): i64 {
+    var key = _agnostic_team_str(v, AGNOSTIC_JK_AGENT_KEY_DOC);
+    var role = _agnostic_team_str(v, AGNOSTIC_JK_ROLE);
+    var goal = _agnostic_team_str(v, AGNOSTIC_JK_GOAL);
+    if (key == 0 || role == 0 || goal == 0) { return 0; }
+    var e = agnosai_agent_new_a(a, key, role, goal);
+    if (e == 0) { return 0; }
+    var name = _agnostic_team_str(v, AGNOSTIC_JK_NAME);
+    if (name != 0) { agnosai_agent_with_name(e, name); }
+    var cx = _agnostic_team_str(v, AGNOSTIC_JK_COMPLEXITY);
+    if (cx != 0) { agnosai_agent_with_complexity(e, cx); }
+    agnosai_agent_with_tools(e, _agnostic_team_strs_a(a, bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_TOOLS)));
+    var c = alloc_via(a, AGNOSTIC_TC_SIZE);
+    if (c == 0) { return 0; }
+    store64(c + AGNOSTIC_TC_AGENT, e);
+    store64(c + AGNOSTIC_TC_VALUE, v);
+    return vec_push_a(a, out, c);
+}
+
+# What a member can be matched with, in `a`: the definitions stored in `scope`, then every preset's
+# agents. Stored ones first, as the first of equals is the one taken. 0 when `a` ran out.
+fn _agnostic_team_candidates_a(a, scope: Str): i64 {
+    var out = vec_new_a(a);
+    if (out == 0) { return 0; }
+    var keys = agnostic_definitions_keys_in_a(a, scope);
+    var i = 0;
+    while (keys != 0 && i < vec_len(keys)) {
+        var d = agnostic_definitions_get_a(a, vec_get(keys, i));
+        if (d != 0) {
+            var c = alloc_via(a, AGNOSTIC_TC_SIZE);
+            if (c == 0) { return 0; }
+            store64(c + AGNOSTIC_TC_AGENT, agnostic_agent_def_engine(d));
+            store64(c + AGNOSTIC_TC_VALUE, agnostic_agent_def_to_value_a(a, d));
+            vec_push_a(a, out, c);
+        }
+        i = i + 1;
+    }
+    var p = 0;
+    while (p < agnostic_presets_count()) {
+        var agents = agnostic_preset_agents(agnostic_preset_at(p));
+        var k = 0;
+        while (agents != 0 && k < bayan_json_v_arr_len(agents)) {
+            _agnostic_team_add_preset_agent_a(a, out, bayan_json_v_arr_get(agents, k));
+            k = k + 1;
+        }
+        p = p + 1;
+    }
+    return out;
+}
+
+# The candidate that fits `role` and `tools` best, or 0 when none reaches `AGNOSTIC_TEAM_MIN_SCORE`.
+#
+# ⚠ **The member record is built here, in `a`.** `agnosai_team_member_new` has no `_a` form, and 24 B
+# on the no-free heap per member would be the only thing a team crew kept for life (ADR 0034).
+fn _agnostic_team_best_a(a, candidates, role: Str, tools): i64 {
+    var m = alloc_via(a, AGN_TMEM_SIZE);
+    if (m == 0) { return 0; }
+    store64(m + AGN_TMEM_ROLE, role);
+    store64(m + AGN_TMEM_TOOLS, tools);
+    store64(m + AGN_TMEM_COMPLEXITY, 0);
+    var best = 0;
+    var best_score = f64_from(AGNOSTIC_TEAM_MIN_SCORE - 1);
+    var i = 0;
+    while (i < vec_len(candidates)) {
+        var c = vec_get(candidates, i);
+        var s = agnosai_assembler_match_score(m, load64(c + AGNOSTIC_TC_AGENT));
+        if (f64_gt(s, best_score) == 1) {
+            best = c;
+            best_score = s;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+# A key for `role`, in `a`: lowercase letters and digits, joined by `-`. `agent` when nothing is left.
+fn _agnostic_team_key_a(a, role: Str): i64 {
+    var buf = alloc_via(a, AGNOSTIC_TEAM_KEY_MAX + 2);
+    if (buf == 0) { return 0; }
+    var d = str_data(role);
+    var gap = 0;
+    var n = 0;
+    var i = 0;
+    while (i < str_len(role) && n < AGNOSTIC_TEAM_KEY_MAX) {
+        var c = load8(d + i) & 255;
+        if (c >= 65 && c <= 90) { c = c + 32; }
+        var ok = 0;
+        if (c >= 97 && c <= 122) { ok = 1; }
+        if (c >= 48 && c <= 57) { ok = 1; }
+        if (ok == 1) {
+            if (gap == 1 && n > 0) {
+                store8(buf + n, 45);
+                n = n + 1;
+            }
+            gap = 0;
+            store8(buf + n, c);
+            n = n + 1;
+        } else {
+            gap = 1;
+        }
+        i = i + 1;
+    }
+    if (n == 0) { return str_from_a(a, "agent"); }
+    return str_new_a(a, buf, n);
+}
+
+# `first`, then `then`, then `tail`, in `a`.
+fn _agnostic_team_join_a(a, first: Str, then, tail: Str): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_a(a, sb, first);
+    str_builder_add_cstr_a(a, sb, then);
+    str_builder_add_a(a, sb, tail);
+    return str_builder_build_a(a, sb);
+}
+
+# `key`, unused among `used`, and now among them: `key-<index>` if it was taken.
+fn _agnostic_team_unique_a(a, used, key: Str, index): i64 {
+    var k = key;
+    if (map_get(used, k) != 0) {
+        var sb = str_builder_new_a(a);
+        if (sb == 0) { return 0; }
+        str_builder_add_a(a, sb, key);
+        str_builder_add_cstr_a(a, sb, "-");
+        str_builder_add_int_a(a, sb, index);
+        k = str_builder_build_a(a, sb);
+    }
+    map_set_a(a, used, k, 1);
+    return k;
+}
+
+# Set `key` of `obj` to string `s`, when there is one.
+fn _agnostic_team_set_a(a, obj, key: Str, s: Str): i64 {
+    if (s != 0) { bayan_json_v_obj_set_a(a, obj, key, bayan_json_v_str_new_a(a, s)); }
+    return obj;
+}
+
+# The strings `tools` as a JSON array in `a`.
+fn _agnostic_team_tools_value_a(a, tools): i64 {
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(tools)) {
+        bayan_json_v_arr_push_a(a, arr, bayan_json_v_str_new_a(a, vec_get(tools, i)));
+        i = i + 1;
+    }
+    return arr;
+}
+
+# The agent member `m` becomes, as the JSON a crew's agent is decoded from. 0 when `a` ran out.
+#
+# Written, not copied, from the match: a preset's agent carries keys no door takes.
+fn _agnostic_team_agent_a(a, m, index, lead, candidates, used, project: Str): i64 {
+    var role = agnostic_req_str(m, AGNOSTIC_JK_ROLE);
+    var context = _agnostic_team_str(m, AGNOSTIC_JK_CONTEXT);
+    if (context != 0 && str_len(context) == 0) { context = 0; }
+    var asked = _agnostic_team_strs_a(a, bayan_json_v_obj_get_by_str(m, AGNOSTIC_JK_TOOLS));
+    var best = _agnostic_team_best_a(a, candidates, role, asked);
+
+    var key = 0;
+    var name = role;
+    var goal = 0;
+    var backstory = 0;
+    var focus = context;
+    var domain = str_from_a(a, "custom");
+    var complexity = str_from_a(a, "medium");
+    if (lead == 1) { complexity = str_from_a(a, "high"); }
+    var tools = asked;
+
+    if (best != 0) {
+        var v = load64(best + AGNOSTIC_TC_VALUE);
+        key = _agnostic_team_str(v, AGNOSTIC_JK_KEY);
+        if (key == 0) { key = _agnostic_team_str(v, AGNOSTIC_JK_AGENT_KEY_DOC); }
+        var known = _agnostic_team_str(v, AGNOSTIC_JK_NAME);
+        if (known != 0) { name = known; }
+        role = _agnostic_team_str(v, AGNOSTIC_JK_ROLE);
+        goal = _agnostic_team_str(v, AGNOSTIC_JK_GOAL);
+        backstory = _agnostic_team_str(v, AGNOSTIC_JK_BACKSTORY);
+        if (focus == 0) { focus = _agnostic_team_str(v, AGNOSTIC_JK_FOCUS); }
+        var dom = _agnostic_team_str(v, AGNOSTIC_JK_DOMAIN);
+        if (dom != 0) { domain = dom; }
+        var cx = _agnostic_team_str(v, AGNOSTIC_JK_COMPLEXITY);
+        if (cx != 0) {
+            if (agnostic_complexity_from_wire(cx) >= 0) { complexity = cx; }
+        }
+        if (vec_len(asked) == 0) { tools = _agnostic_team_strs_a(a,
+              bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_TOOLS)); }
+        if (context != 0) { goal = _agnostic_team_join_a(a, goal, ". Additional focus: ", context); }
+    } else {
+        key = _agnostic_team_key_a(a, role);
+        goal = _agnostic_team_join_a(a, str_from_a(a, "Fulfill the role of"), " ", role);
+        if (context != 0) { goal = _agnostic_team_join_a(a, goal, " with focus on: ", context); }
+        backstory = _agnostic_team_join_a(a, str_from_a(a, "You are an experienced"), " ", role);
+    }
+    if (project != 0) {
+        if (backstory == 0) { backstory = project; }
+        else { backstory = _agnostic_team_join_a(a, backstory, ". Project context: ", project); }
+    }
+
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    _agnostic_team_set_a(a, o, AGNOSTIC_JK_KEY, _agnostic_team_unique_a(a, used, key, index));
+    _agnostic_team_set_a(a, o, AGNOSTIC_JK_NAME, name);
+    _agnostic_team_set_a(a, o, AGNOSTIC_JK_ROLE, role);
+    _agnostic_team_set_a(a, o, AGNOSTIC_JK_GOAL, goal);
+    _agnostic_team_set_a(a, o, AGNOSTIC_JK_BACKSTORY, backstory);
+    _agnostic_team_set_a(a, o, AGNOSTIC_JK_FOCUS, focus);
+    _agnostic_team_set_a(a, o, AGNOSTIC_JK_DOMAIN, domain);
+    _agnostic_team_set_a(a, o, AGNOSTIC_JK_COMPLEXITY, complexity);
+    if (vec_len(tools) > 0) {
+        bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_TOOLS, _agnostic_team_tools_value_a(a, tools));
+    }
+    if (lead == 1) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_DELEGATION, bayan_json_v_bool_new_a(a, 1)); }
+    return o;
+}
+
+# Refuse a team with `msg`, naming where in the body it is.
+fn _agnostic_team_refuse(a, out, status, msg: Str): i64 {
+    return _agnostic_reject(a, out, status, msg);
+}
+
+# `msg` about member `i`, in `a`.
+fn _agnostic_team_member_msg_a(a, i, msg): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_cstr_a(a, sb, "team.members[");
+    str_builder_add_int_a(a, sb, i);
+    str_builder_add_cstr_a(a, sb, "]: ");
+    str_builder_add_cstr_a(a, sb, msg);
+    return str_builder_build_a(a, sb);
+}
+
+# Whether member `m`, the `i`th, is one a crew can take. 1, or 0 with a rejection stored.
+fn _agnostic_team_member_ok_a(a, m, i, out): i64 {
+    if (bayan_json_v_is_obj(m) != 1) {
+        return _agnostic_team_refuse(a, out, HTTP_BAD_REQUEST, _agnostic_team_member_msg_a(a, i, "must be an object"));
+    }
+    var allowed = agnostic_team_member_fields_a(a);
+    var unknown = agnostic_unknown_field(m, allowed);
+    if (unknown != 0) {
+        return _agnostic_reject_field(a, out, AGNOSTIC_HTTP_UNPROCESSABLE, "
+          eam member has unknown field '", unknown, "'");
+    }
+    var bad = agnostic_field_bad(m, allowed);
+    if (bad != 0) { return _agnostic_reject(a, out, agnostic_field_status(bad), agnostic_field_refusal_a(a, bad)); }
+    var role = agnostic_req_str(m, AGNOSTIC_JK_ROLE);
+    if (str_len(role) == 0 || str_len(role) > AGNOSTIC_TEAM_ROLE_MAX) {
+        return _agnostic_team_refuse(a, out, HTTP_BAD_REQUEST,
+          _agnostic_team_member_msg_a(a, i, "'role' must be between 1 and 200 characters"));
+    }
+    var context = _agnostic_team_str(m, AGNOSTIC_JK_CONTEXT);
+    if (context != 0) {
+        if (str_len(context) > AGNOSTIC_TEAM_CONTEXT_MAX) {
+            return _agnostic_team_refuse(a, out, HTTP_BAD_REQUEST,
+              _agnostic_team_member_msg_a(a, i, "'context' is at most 1000 characters"));
+        }
+    }
+    var tools = bayan_json_v_obj_get_by_str(m, AGNOSTIC_JK_TOOLS);
+    if (tools != 0) {
+        if (bayan_json_v_arr_len(tools) > AGNOSTIC_REQ_MAX_TOOLS) {
+            return _agnostic_team_refuse(a, out, HTTP_BAD_REQUEST, _agnostic_team_member_msg_a(a, i, "too many tools"));
+        }
+    }
+    return 1;
+}
+
+# The `agents` the team in crew body `v` becomes, in `a`, or 0 with a rejection stored: what
+# `agnostic_crew_agents_resolve_a` answers for a body with a `team`.
+fn agnostic_crew_team_agents_a(a, team, scope: Str, out): i64 {
+    var allowed = agnostic_team_fields_a(a);
+    var unknown = agnostic_unknown_field(team, allowed);
+    if (unknown != 0) {
+        return _agnostic_reject_field(a, out, AGNOSTIC_HTTP_UNPROCESSABLE, "'team' has unknown field '", unknown, "'");
+    }
+    var bad = agnostic_field_bad(team, allowed);
+    if (bad != 0) { return _agnostic_reject(a, out, agnostic_field_status(bad), agnostic_field_refusal_a(a, bad)); }
+    var members = bayan_json_v_obj_get_by_str(team, AGNOSTIC_JK_MEMBERS);
+    var n = bayan_json_v_arr_len(members);
+    if (n == 0 || n > AGNOSTIC_TEAM_MAX_MEMBERS) {
+        return _agnostic_team_refuse(a, out, HTTP_BAD_REQUEST, str_from_a(a, "a team has 1 to 20 members"));
+    }
+    var project = _agnostic_team_str(team, AGNOSTIC_JK_PROJECT);
+    if (project != 0) {
+        if (str_len(project) > AGNOSTIC_TEAM_PROJECT_MAX) {
+            return _agnostic_team_refuse(a, out, HTTP_BAD_REQUEST,
+              str_from_a(a, "'project_context' is at most 2000 characters"));
+        }
+        if (str_len(project) == 0) { project = 0; }
+    }
+    # Every member before anything is read from the store, which is the costly part.
+    var i = 0;
+    var any_lead = 0;
+    while (i < n) {
+        var m = bayan_json_v_arr_get(members, i);
+        if (_agnostic_team_member_ok_a(a, m, i, out) == 0) { return 0; }
+        if (_agnostic_opt_bool(m, "lead") == 1) { any_lead = 1; }
+        i = i + 1;
+    }
+
+    var candidates = _agnostic_team_candidates_a(a, scope);
+    var used = map_new_str_a(a);
+    var arr = bayan_json_v_arr_new_a(a);
+    if (candidates == 0 || used == 0 || arr == 0) {
+        return _agnostic_team_refuse(a, out, HTTP_INTERNAL, str_from_a(a, "could not assemble the team"));
+    }
+    i = 0;
+    while (i < n) {
+        var mem = bayan_json_v_arr_get(members, i);
+        # With no lead named, the first member leads, as a list of people reads.
+        var lead = 0;
+        if (_agnostic_opt_bool(mem, "lead") == 1) { lead = 1; }
+        if (any_lead == 0 && i == 0) { lead = 1; }
+        var ag = _agnostic_team_agent_a(a, mem, i, lead, candidates, used, project);
+        if (ag == 0 || bayan_json_v_arr_push_a(a, arr, ag) < 0) {
+            return _agnostic_team_refuse(a, out, HTTP_INTERNAL, str_from_a(a, "could not assemble the team"));
+        }
+        i = i + 1;
+    }
+    return arr;
+}

@@ -334,7 +334,7 @@ fn test_the_crew_body_keeps_nothing() {
     var live_path = str_cstr(str_builder_build(ls));
     assert_eq(_t_cost(AGNOSTIC_METHOD_GET, live_path, "", 1, 0), 0, "⭐ a poll of a crew still running keeps nothing");
 
-    # ⭐ What a poll of a finished one costs: the check is read once.
+    # ⭐ What a poll of a finished one costs.
     var spec = agnosai_crew_new(str_from("c"));
     var t = agnosai_task_new(str_from("t"));
     agnosai_task_with_output_schema(t, bayan_json_v_obj_new());
@@ -351,31 +351,6 @@ fn test_the_crew_body_keeps_nothing() {
     str_builder_add_cstr(sb, "/api/v1/crews/");
     str_builder_add_cstr(sb, id);
     var path = str_cstr(str_builder_build(sb));
-
-    # ⭐ An answer is parsed in the reader's arena: on the global heap its tree would be kept for life.
-    var n = 200000;
-    var text = alloc(n * 2 + 3);
-    store8(text, 91);
-    var k = 0;
-    while (k < n) {
-        store8(text + 1 + k * 2, 49);
-        store8(text + 2 + k * 2, 44);
-        k = k + 1;
-    }
-    store8(text + n * 2, 93);
-    var answer = str_new(text, n * 2 + 1);
-    var shape = bayan_json_v_obj_new();
-    var ga = arena_allocator_growable(1048576);
-    assert_eq(_agnostic_output_in_shape_a(ga, answer, shape), 1, "a 400 KB answer is read");
-    # The second read, in the arena the first grew: ADR 0021's high-water mark, then nothing.
-    reset_via(ga);
-    var used = alloc_used();
-    assert_eq(_agnostic_output_in_shape_a(ga, answer, shape), 1, "and again");
-    assert_lt(alloc_used() - used, 2048, "⭐ and keeps its parse tree for no longer than the read");
-    # ⭐ An arena that ran out says nothing of what the model answered.
-    assert_eq(_agnostic_output_in_shape_a(arena_allocator(65536), answer, shape), 0 - 1,
-      "⭐ a well-formed answer that could not be read is not called invalid");
-    assert_eq(_agnostic_output_in_shape_a(ga, str_from("[1,"), shape), 0, "and one that is not JSON is");
 
     _t_cost_once(AGNOSTIC_METHOD_GET, path, "", 1, 0);
     assert_eq(_t_cost(AGNOSTIC_METHOD_GET, path, "", 1, 0), 0,

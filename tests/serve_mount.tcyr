@@ -96,6 +96,79 @@ fn _t_through_handler(req) {
     return str_from_buf(&buf, n);
 }
 
+# The whole answer to a raw request, up to 256 KB, as a Str.
+fn _t_through_handler_whole(req) {
+    var fds: i64[1];
+    store64(&fds, 0);
+    if (sys_socketpair(1, SOCK_STREAM, 0, &fds) != 0) { return str_from(""); }
+    var server_fd = load32(&fds);
+    var client_fd = load32(&fds + 4);
+    agnostic_serve_handler(0, server_fd, req, strlen(req));
+    sys_close(server_fd);
+    var cap = 262144;
+    var buf = alloc(cap);
+    var got = 0;
+    while (got < cap) {
+        var n = sys_read(client_fd, buf + got, cap - got);
+        if (n <= 0) { break; }
+        got = got + n;
+    }
+    sys_close(client_fd);
+    return str_from_buf(buf, got);
+}
+
+# What the first allocation a response's encoding asks for found: how many brackets were open.
+var _t_spy_first = 0 - 1;
+
+fn _t_spy_alloc(state, size): i64 {
+    if (_t_spy_first < 0) { _t_spy_first = agnostic_ledger_readers_open(); }
+    return alloc(size);
+}
+
+fn _t_spy_realloc(state, old, old_size, new_size): i64 {
+    var p = alloc(new_size);
+    var n = old_size;
+    if (new_size < n) { n = new_size; }
+    if (old != 0 && n > 0) { memcpy(p, old, n); }
+    return p;
+}
+
+fn _t_spy_free(state, ptr): i64 { return 0; }
+fn _t_spy_reset(state): i64 { return 0; }
+
+# ⭐ ADR 0034. A response points into a crew's arena until it is encoded, so a request's bracket holds
+# from before its route runs until the bytes exist, and no further.
+fn test_a_request_holds_the_ledger_until_it_is_encoded() {
+    test_group("serve/ledger-bracket");
+    assert_eq(agnostic_ledger_readers_open(), 0, "no request, no bracket");
+    var m = _t_through_handler_whole("GET /api/v1/metrics HTTP/1.1\r\nHost: 127.0.0.1:8000\r\n\r\n");
+    assert_eq(str_starts_with(m, str_from("HTTP/1.1 200")), 1, "a route answers");
+    var line = "\nagnostic_ledger_readers 1\n";
+    var found = 0;
+    var i = 0;
+    while (i + strlen(line) <= str_len(m)) {
+        if (memeq(str_data(m) + i, line, strlen(line)) == 1) { found = 1; }
+        i = i + 1;
+    }
+    assert_eq(found, 1, "⭐ while its route runs, a request holds a bracket");
+    assert_eq(agnostic_ledger_readers_open(), 0, "⭐ and has closed it once it answered");
+
+    # The encode runs in the request's allocator, so one that looks tells which came first.
+    var spy = allocator_new(&_t_spy_alloc, &_t_spy_realloc, &_t_spy_free, &_t_spy_reset, 0);
+    var body = bayan_json_v_obj_new();
+    bayan_json_v_obj_set(body, str_from("k"), bayan_json_v_str_new(str_from("v")));
+    var resp = agnostic_response_json_a(default_alloc(), HTTP_OK, body);
+    var fds: i64[1];
+    store64(&fds, 0);
+    sys_socketpair(1, SOCK_STREAM, 0, &fds);
+    var bracket = agnostic_ledger_read_begin();
+    _agnostic_serve_send(spy, load32(&fds), resp, bracket);
+    sys_close(load32(&fds));
+    sys_close(load32(&fds + 4));
+    assert_eq(_t_spy_first, 1, "⭐ the bracket is still open as the response is encoded");
+    assert_eq(agnostic_ledger_readers_open(), 0, "and it is closed once the send returns");
+}
+
 fn test_the_handler_survives_a_missing_arena() {
     test_group("serve/handler-without-arena");
 
@@ -346,6 +419,7 @@ fn main() {
     test_mount_initialises_crypto_on_the_main_thread();
     test_a_workers_first_hash_keeps_its_tls();
     test_the_handler_survives_a_missing_arena();
+    test_a_request_holds_the_ledger_until_it_is_encoded();
     test_the_transport_rules();
     test_a_405_says_what_is_allowed();
     test_telemetry_export();

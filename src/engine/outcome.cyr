@@ -127,6 +127,7 @@ var _AGNOSTIC_MK_COST       = str_from("cost_micro_usd");
 var _AGNOSTIC_MK_DURATION   = str_from("task_duration_ms");
 var _AGNOSTIC_MK_ERROR      = str_from("error");
 var _AGNOSTIC_MK_AGENT      = str_from("agent");
+var _AGNOSTIC_MK_VALIDATION = str_from("validation_attempts");   # agnosai 2.2.5: answers checked and refused
 
 var AGNOSTIC_JV_PENDING   = str_from("pending");
 var AGNOSTIC_JV_RUNNING   = str_from("running");

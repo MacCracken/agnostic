@@ -74,7 +74,10 @@ Nothing to port.
 | Stored definitions in a crew body (G4) | Done at 0.4.0: `{"definition": "<key>"}` | 0.4.0 |
 | GPU (G10) | Done at 0.4.1: `GET /api/v1/gpu`, one read of this host at mount | 0.4.1 |
 | Fleet (G10) | Waits for a fleet: nothing feeds one, and agnostic is one process on one database | With a fleet |
-| Engine features with no route (G10) | Definition versions and rollback, package export and import, tool upload, the `team` crew spec and `recommend_preset` | 0.4.x |
+| Definition versions and rollback (G10) | Done at 0.4.2, ADR 0035: every write is a version, so no route saves one | 0.4.2 |
+| Package export and import (G10) | Done at 0.4.2, ADR 0036: one JSON document, not a ZIP, and refused whole | 0.4.2 |
+| The `team` crew spec and `recommend_preset` (G10) | Done at 0.4.2, ADR 0037 | 0.4.2 |
+| Tool upload (G10) | Waits for a sandbox | 0.4.x |
 | The AGNOS clients (G13) | Memory, RAG, reasoning, recording, RPC, screen and vector: none here | 0.5.x |
 | Scheduled reports and delivery (G6) | None. The former default jobs raised on construction, so there is nothing to copy | 0.5.x |
 | Health alerts (G8) | None | 0.5.x |
@@ -100,9 +103,9 @@ All four were on the release plan and needed a form only you could pick. All fou
 | `agents/constants.py` | 1 | PORTED | `agnostic_key_is_valid` in `src/engine/agentdef.cyr`, domains in `src/engine/presets.cyr`; `tests/agentdef.tcyr` (`agentdef/valid`), `tests/presets.tcyr` (`presets/domain`) |  |
 | `agents/status.py` | 1 | PORTED | `src/engine/outcome.cyr`; `tests/outcome.tcyr` | Plus `interrupted` (ADR 0013) |
 | `agents/factory.py` | 1 | PORTED | `src/engine/definitions.cyr`, `src/engine/presets.cyr`; `tests/agentdef.tcyr`, `tests/presets.tcyr` | YAML and file loading is DELEGATED* to agnosai `src/definitions/loader.cyr` |
-| `agents/crew_assembler.py` | 1 | DELEGATED\* | agnosai `src/definitions/assembler.cyr`, `tests/definitions_assembler.tcyr` | Nothing here calls it. `recommend_preset` has no owner. G10 |
-| `agents/packaging.py` | 1 | DELEGATED\* | agnosai `src/definitions/packaging.cyr`, `tests/definitions_packaging.tcyr` | Nothing here calls it. G10 |
-| `agents/versioning.py` | 1 | DELEGATED\* | agnosai `src/definitions/versioning.cyr`, `tests/definitions_versioning.tcyr` | In-memory there. agnostic has a revision and ETag (`router/definition-revisions`), no history. G10 |
+| `agents/crew_assembler.py` | 1 | PORTED | `src/engine/team.cyr`, `src/engine/recommend.cyr`; `tests/definition_library.tcyr` | Scored by agnosai's `agnosai_assembler_match_score`. ADR 0037 |
+| `agents/packaging.py` | 1 | REPLACED | `src/routes/packages.cyr`; `tests/definition_library.tcyr` | A JSON document, not a ZIP. ADR 0036 |
+| `agents/versioning.py` | 1 | PORTED | `src/engine/definitions.cyr`; `tests/definition_library.tcyr` | On a table here. ADR 0035 |
 | `agents/tool_registry.py` | 1 | DELEGATED | agnosai `src/tools/registry.cyr`, `src/tools/remote_registry.cyr` | Who registers QA tools is undecided (handoff §8). Upload half: G10 |
 | `agents/tool_sandbox.py` | 1 | DELEGATED | kavach, through agnosai `src/sandbox/kavach_bridge.cyr` | Roadmap M6; `first-party-standards.md:76` |
 | `agents/backend/__init__.py`, `agents/backend/base.py` | 2 | PORTED | `src/engine/outcome.cyr`; `tests/outcome.tcyr` | Design lesson 1 |
@@ -346,11 +349,11 @@ Routes only agnostic has: `GET /api/v1/crews/:id/events`, `GET /api/v1/crews/:id
 | `routes/definitions.py:400` | GET | `/api/v1/presets/{preset_name}` | ported | `GET /api/v1/presets/:name` |  |
 | `routes/definitions.py:432` | POST | `/api/v1/presets` | not ported | G16 |  |
 | `routes/definitions.py:479` | DELETE | `/api/v1/presets/{preset_name}` | not ported | G16 |  |
-| `routes/definitions.py:529` | GET | `/api/v1/definitions/{agent_key}/versions` | not ported | G10 |  |
-| `routes/definitions.py:543` | POST | `/api/v1/definitions/{agent_key}/versions` | not ported | G10 |  |
-| `routes/definitions.py:561` | POST | `/api/v1/definitions/{agent_key}/rollback` | not ported | G10 |  |
-| `routes/definitions.py:595` | POST | `/api/v1/packages/export` | not ported | G10 |  |
-| `routes/definitions.py:627` | POST | `/api/v1/packages/import` | not ported | G10 |  |
+| `routes/definitions.py:529` | GET | `/api/v1/definitions/{agent_key}/versions` | renamed | `GET /api/v1/agents/definitions/:key/versions` |  |
+| `routes/definitions.py:543` | POST | `/api/v1/definitions/{agent_key}/versions` | replaced | Every write is a version, so nothing saves one (ADR 0035) |  |
+| `routes/definitions.py:561` | POST | `/api/v1/definitions/{agent_key}/rollback` | renamed | `POST /api/v1/agents/definitions/:key/rollback` | With `If-Match` |
+| `routes/definitions.py:595` | POST | `/api/v1/packages/export` | ported | `POST /api/v1/packages/export` | JSON, not a ZIP (ADR 0036) |
+| `routes/definitions.py:627` | POST | `/api/v1/packages/import` | ported | `POST /api/v1/packages/import` | The body is the document, not a multipart upload |
 | `routes/definitions.py:682` | POST | `/api/v1/tools/upload` | not ported | G10 |  |
 | `routes/definitions.py:716` | GET | `/api/v1/tools` | ported | `GET /api/v1/tools` | The 38 preset names, what resolves, and that no crew calls a tool yet |
 | `routes/fleet.py:28` | GET | `/api/v1/fleet/nodes` | scheduled | Roadmap, Settled 2026-11-06 | Waits for a fleet |
@@ -464,7 +467,8 @@ Result: 22 renamed, 88 replaced, 10 scheduled, 72 not ported. Nothing keeps its 
 | `METRICS_AUTH_TOKEN` | not ported | G7 |  |
 | `ALERTS_ENABLED`, `ALERT_COOLDOWN_SECONDS`, `ALERT_DELIVERY_MAX_RETRIES`, `ALERT_EMAIL_RECIPIENTS`, `ALERT_POLL_INTERVAL_SECONDS`, `ALERT_SLACK_WEBHOOK_URL`, `ALERT_WEBHOOK_SECRET`, `ALERT_WEBHOOK_URL` | not ported | G8 |  |
 | `AGENT_MONITOR_CACHE_MAX_ENTRIES`, `AGENT_STALE_THRESHOLD_SECONDS` | not ported | G9 |  |
-| `AGNOSTIC_MAX_VERSIONS`, `AGNOS_FLEET_ENABLED`, `AGNOS_FLEET_EXTERNAL_URL`, `AGNOS_FLEET_GROUP`, `AGNOS_FLEET_HEARTBEAT_INTERVAL`, `AGNOS_FLEET_HEARTBEAT_TTL`, `AGNOS_FLEET_NODE_ID` | not ported | G10 |  |
+| `AGNOSTIC_MAX_VERSIONS` | ported | `AGNOSTIC_MAX_VERSIONS` | ADR 0035 |
+| `AGNOS_FLEET_ENABLED`, `AGNOS_FLEET_EXTERNAL_URL`, `AGNOS_FLEET_GROUP`, `AGNOS_FLEET_HEARTBEAT_INTERVAL`, `AGNOS_FLEET_HEARTBEAT_TTL`, `AGNOS_FLEET_NODE_ID` | not ported | G10 |  |
 | `TENANT_DEFAULT_RATE_LIMIT` | not ported | G11 |  |
 | `AGNOS_AUDIT_API_KEY`, `AGNOS_AUDIT_BATCH_SIZE`, `AGNOS_AUDIT_ENABLED`, `AGNOS_AUDIT_FLUSH_INTERVAL`, `AGNOS_AUDIT_URL`, `AGNOS_DASHBOARD_API_KEY`, `AGNOS_DASHBOARD_BRIDGE_ENABLED`, `AGNOS_DASHBOARD_PUSH_INTERVAL`, `AGNOS_DASHBOARD_URL`, `AGNOS_MEMORY_API_KEY`, `AGNOS_MEMORY_ENABLED`, `AGNOS_MEMORY_URL`, `AGNOS_PATH_PREFIX`, `AGNOS_PROFILE`, `AGNOS_PROFILE_API_KEY`, `AGNOS_PROFILE_URL`, `AGNOS_RAG_ENABLED`, `AGNOS_REASONING_API_KEY`, `AGNOS_REASONING_ENABLED`, `AGNOS_REASONING_URL`, `AGNOS_RPC_ENABLED`, `AGNOS_SCREEN_ENABLED`, `AGNOS_VECTOR_API_KEY`, `AGNOS_VECTOR_COLLECTION`, `AGNOS_VECTOR_ENABLED`, `AGNOS_VECTOR_URL` | not ported | G13 |  |
 

@@ -56,7 +56,8 @@ enum AgnosticConfigOff {
     AGNOSTIC_CFG_METRICS_TOKEN = 208; # the scraper's bearer token, a Str, 0 unset, -1 refused (0.3.1)
     AGNOSTIC_CFG_TARGET_HOSTS = 216; # the hosts a target may name, a vec, 0 for none, -1 refused (0.4.0)
     AGNOSTIC_CFG_GPU_TOOLS = 224;   # 1 to run vendor tools at mount, 0 not, -1 refused (0.4.1)
-    AGNOSTIC_CFG_SIZE      = 232;
+    AGNOSTIC_CFG_MAX_VERSIONS = 232; # versions kept per definition, 1 to 1000, -1 refused (0.4.2)
+    AGNOSTIC_CFG_SIZE      = 240;
 }
 
 # The service name agnostic's spans are exported under when `OTEL_SERVICE_NAME` is unset or
@@ -462,6 +463,14 @@ fn agnostic_config_parse_gpu_tools(v: Str): i64 {
     return 0 - 1;
 }
 
+# `AGNOSTIC_MAX_VERSIONS`: how many versions of each definition are kept, 1 to 1000. -1 for anything
+# else, which refuses to start: a typo here is history silently kept short.
+fn agnostic_config_parse_max_versions(v: Str): i64 {
+    var n = agnostic_config_parse_bounded(v, 1000);
+    if (n < 1) { return 0 - 1; }
+    return n;
+}
+
 # The shortest `AGNOSTIC_JWT_SECRET`. This module is included on its own by `tests/config.tcyr`, so
 # it cannot read `AGNOSTIC_JWT_SECRET_MIN`; `tests/authn.tcyr` holds the two equal.
 var AGNOSTIC_CONFIG_JWT_SECRET_MIN = 32;
@@ -711,6 +720,12 @@ fn agnostic_config_from_env(): i64 {
     if (raw_gt != 0) { gpu_tools = agnostic_config_parse_gpu_tools(str_from(raw_gt)); }
     store64(c + AGNOSTIC_CFG_GPU_TOOLS, gpu_tools);
 
+    # How much of a definition's past is kept: `src/engine/definitions.cyr`.
+    var max_versions = 50;
+    var raw_mv = getenv("AGNOSTIC_MAX_VERSIONS");
+    if (raw_mv != 0) { max_versions = agnostic_config_parse_max_versions(str_from(raw_mv)); }
+    store64(c + AGNOSTIC_CFG_MAX_VERSIONS, max_versions);
+
     # A tenant's limits, when its row sets none: `src/auth/tenantlimit.cyr`. 0 is no limit.
     store64(c + AGNOSTIC_CFG_TENANT_RATE, _agnostic_config_int_env("AGNOSTIC_TENANT_RATE_LIMIT", 0, 1000000));
     store64(c + AGNOSTIC_CFG_TENANT_CREWS, _agnostic_config_int_env("AGNOSTIC_TENANT_MAX_CREWS", 0, 1000000));
@@ -821,6 +836,13 @@ fn agnostic_config_metrics_token(c): i64 {
 }
 
 # Whether vendor tools run at mount. 1 or 0.
+# How many versions of each definition are kept.
+fn agnostic_config_max_versions(c): i64 {
+    if (c == 0) { return 50; }
+    return load64(c + AGNOSTIC_CFG_MAX_VERSIONS);
+}
+
+# Whether vendor tools run at mount.
 fn agnostic_config_gpu_tools(c): i64 {
     if (c == 0) { return 0; }
     return load64(c + AGNOSTIC_CFG_GPU_TOOLS);
@@ -955,6 +977,7 @@ fn agnostic_config_invalid(c): i64 {
     if (load64(c + AGNOSTIC_CFG_METRICS_TOKEN) == 0 - 1) { return 1; }
     if (load64(c + AGNOSTIC_CFG_TARGET_HOSTS) == 0 - 1) { return 1; }
     if (load64(c + AGNOSTIC_CFG_GPU_TOOLS) < 0) { return 1; }
+    if (load64(c + AGNOSTIC_CFG_MAX_VERSIONS) < 0) { return 1; }
     if (load64(c + AGNOSTIC_CFG_TENANT_RATE) < 0) { return 1; }
     if (load64(c + AGNOSTIC_CFG_TENANT_CREWS) < 0) { return 1; }
     if (load64(c + AGNOSTIC_CFG_ADDR) == 0 - 1) { return 1; }

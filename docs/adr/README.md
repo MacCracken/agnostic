@@ -53,3 +53,8 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0030](0030-a-crew-names-a-stored-definition-and-copies-it.md) | A crew can name a stored definition, and copies it when it is accepted |
 | [0031](0031-output-schema-takes-what-the-engine-checks.md) | `output_schema` takes what the engine checks, and a result says whether it was met |
 | [0032](0032-the-gpu-route-reads-the-host-once-and-binds-no-crew.md) | The GPU route reads the host once, and binds no crew |
+| [0033](0033-output-valid-is-the-engines-word.md) | `output_valid` is the engine's word, and a placeholder has none |
+| [0034](0034-a-crew-lives-in-an-arena-and-readers-are-waited-for.md) | A crew lives in an arena, and goes back when no reader can hold it |
+| [0035](0035-every-write-of-a-definition-is-a-version.md) | Every write of a definition is a version, and a delete keeps them |
+| [0036](0036-a-package-is-json-and-all-of-itself.md) | A package is JSON, and all of itself or none |
+| [0037](0037-a-team-becomes-agents-and-a-recommendation-is-words.md) | A team becomes agents at the door, and a recommendation is a table of words |

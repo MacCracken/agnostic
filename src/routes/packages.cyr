@@ -1,0 +1,342 @@
+# agnostic/routes/packages — a tenant's definitions as one document, out and back in (0.4.2, ADR 0036).
+#
+# | Route | Codes |
+# |---|---|
+# | `POST /api/v1/packages/export` | 200 · 400 · 422 |
+# | `POST /api/v1/packages/import` | 200 · 400 · **409** · 422 |
+#
+# ## ⚠ A package is JSON, not a ZIP
+#
+# The former `.agpkg` is a ZIP of JSON files, and agnosai can read and write that form. It is not
+# used here, for three reasons found in agnosai's code. Its package holds engine agents, which have no
+# slot for `focus` or `allow_delegation`, so a definition would lose them on the way through. It
+# allocates on the global heap with nothing to give back, on a route anyone with write access can
+# call. And the ZIP adds a compressor and an archive reader to the attack surface of a server whose
+# body cap already bounds the document. A package here is the same JSON a definition already is, so it
+# takes the same door, and `format` says which form it is, should another ever be wanted.
+#
+# ## ⚠ All of a package or none
+#
+# Every definition is checked, and every conflict found, before anything is written. A package is
+# one thing, and half of one in a store is worse than a refusal. Only a failed write can leave part
+# of it, as there is no transaction to run it in (ADR 0034's reasons), and the answer then names
+# what went in.
+#
+# A preset does not travel: the library is compiled in. A definition's versions do not either, and
+# what is imported joins the history of its key here, as any write does (ADR 0035).
+
+var AGNOSTIC_PACKAGE_FORMAT = "agnostic-package/1";
+
+# The most definitions one package carries. A package must fit a request body in any case.
+var AGNOSTIC_PACKAGE_MAX_DEFINITIONS = 256;
+var AGNOSTIC_PACKAGE_NAME_MAX    = 100;
+var AGNOSTIC_PACKAGE_VERSION_MAX = 20;
+var AGNOSTIC_PACKAGE_DESC_MAX    = 500;
+
+var AGNOSTIC_JK_FORMAT      = str_from("format");
+var AGNOSTIC_JK_EXPORTED_AT = str_from("exported_at");
+var AGNOSTIC_JK_CONFLICTS   = str_from("conflicts");
+var AGNOSTIC_JK_REPLACED    = str_from("replaced");
+
+# The fields of an export's body.
+fn agnostic_package_export_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_req_a(a, f, "name", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "version", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "description", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "definitions", AGNOSTIC_FK_STRINGS);
+    return f;
+}
+
+# The fields of a package.
+fn agnostic_package_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_req_a(a, f, "format", AGNOSTIC_FK_STRING);
+    agnostic_field_req_a(a, f, "name", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "version", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "description", AGNOSTIC_FK_STRING);
+    agnostic_field_a(a, f, "exported_at", AGNOSTIC_FK_INT);
+    agnostic_field_req_a(a, f, "definitions", AGNOSTIC_FK_ARRAY);
+    agnostic_field_a(a, f, "total", AGNOSTIC_FK_INT);
+    return f;
+}
+
+# `name`, `version` and `description` of `v`, or the refusal for one that is out of bounds. 0 when
+# they are in bounds.
+fn _agnostic_package_labels_refusal_a(a, v): i64 {
+    var name = agnostic_req_str(v, AGNOSTIC_JK_NAME);
+    if (str_len(name) == 0 || str_len(name) > AGNOSTIC_PACKAGE_NAME_MAX) {
+        return agnostic_response_error_a(a, HTTP_BAD_REQUEST,
+          str_from_a(a, "'name' must be between 1 and 100 characters"));
+    }
+    var version = agnostic_opt_str(v, AGNOSTIC_JK_VERSION, 0 - 1);
+    if (version != 0 - 1) {
+        if (str_len(version) > AGNOSTIC_PACKAGE_VERSION_MAX) {
+            return agnostic_response_error_a(a, HTTP_BAD_REQUEST, str_from_a(a, "'version' is at most 20 characters"));
+        }
+    }
+    var desc = agnostic_opt_str(v, AGNOSTIC_JK_DESCRIPTION, 0 - 1);
+    if (desc != 0 - 1) {
+        if (str_len(desc) > AGNOSTIC_PACKAGE_DESC_MAX) {
+            return agnostic_response_error_a(a, HTTP_BAD_REQUEST,
+              str_from_a(a, "'description' is at most 500 characters"));
+        }
+    }
+    return 0;
+}
+
+# The body `body` as an object that passes `allowed`, or 0 with the refusal through `out_resp`.
+fn _agnostic_package_body_a(a, body: Str, allowed, out_resp): i64 {
+    var v = agnostic_decode_a(a, body);
+    if (v == 0 || bayan_json_v_is_obj(v) != 1) {
+        store64(out_resp, agnostic_response_error_a(a, HTTP_BAD_REQUEST,
+            str_from_a(a, "the body must be a JSON object")));
+        return 0;
+    }
+    var unknown = agnostic_unknown_field(v, allowed);
+    if (unknown != 0) {
+        var sb = str_builder_new_a(a);
+        if (sb == 0) { return 0; }
+        str_builder_add_cstr_a(a, sb, "unknown field '");
+        str_builder_add_a(a, sb, unknown);
+        str_builder_add_cstr_a(a, sb, "'");
+        store64(out_resp, agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sb)));
+        return 0;
+    }
+    var bad = agnostic_field_bad(v, allowed);
+    if (bad != 0) {
+        store64(out_resp, agnostic_response_error_a(a, agnostic_field_status(bad), agnostic_field_refusal_a(a, bad)));
+        return 0;
+    }
+    return v;
+}
+
+# `POST /api/v1/packages/export` — `{name, version?, description?, definitions?}`: the definitions
+# named, or all of this tenant's, as one document. READ: it says nothing a `GET` would not.
+fn agnostic_route_package_export_a(a, body: Str, ctx): i64 {
+    var resp: i64[1];
+    store64(&resp, 0);
+    var v = _agnostic_package_body_a(a, body, agnostic_package_export_fields_a(a), &resp);
+    if (v == 0) { return load64(&resp); }
+    var labels = _agnostic_package_labels_refusal_a(a, v);
+    if (labels != 0) { return labels; }
+
+    var scope = agnostic_reqctx_scope(ctx);
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0) { return 0; }
+    var asked = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_DEFINITIONS);
+    var n = 0;
+    if (asked != 0) {
+        var count = bayan_json_v_arr_len(asked);
+        if (count > AGNOSTIC_PACKAGE_MAX_DEFINITIONS) {
+            return agnostic_response_error_a(a, HTTP_BAD_REQUEST,
+              str_from_a(a, "a package holds at most 256 definitions"));
+        }
+        var i = 0;
+        while (i < count) {
+            var key = bayan_json_v_str(bayan_json_v_arr_get(asked, i));
+            var dkey = 0;
+            if (agnostic_key_is_valid(key) == 1) { dkey = agnostic_definition_dkey_a(a, scope, key); }
+            var d = 0;
+            if (dkey != 0) { d = agnostic_definitions_get_a(a, dkey); }
+            if (d == 0) {
+                var sb = str_builder_new_a(a);
+                if (sb == 0) { return 0; }
+                str_builder_add_cstr_a(a, sb, "no agent definition is stored as '");
+                str_builder_add_a(a, sb, key);
+                str_builder_add_cstr_a(a, sb, "'");
+                return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sb));
+            }
+            bayan_json_v_arr_push_a(a, arr, agnostic_agent_def_to_value_a(a, d));
+            n = n + 1;
+            i = i + 1;
+        }
+    } else {
+        var keys = agnostic_definitions_keys_in_a(a, scope);
+        if (keys == 0) { return 0; }
+        if (vec_len(keys) > AGNOSTIC_PACKAGE_MAX_DEFINITIONS) {
+            return agnostic_response_error_a(a, HTTP_BAD_REQUEST,
+              str_from_a(a, "this tenant has more than 256 definitions; name the ones to export"));
+        }
+        var k = 0;
+        while (k < vec_len(keys)) {
+            var kd = agnostic_definitions_get_a(a, vec_get(keys, k));
+            if (kd != 0) {
+                bayan_json_v_arr_push_a(a, arr, agnostic_agent_def_to_value_a(a, kd));
+                n = n + 1;
+            }
+            k = k + 1;
+        }
+    }
+
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_FORMAT,
+      bayan_json_v_str_new_a(a, str_from_a(a, AGNOSTIC_PACKAGE_FORMAT)));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_NAME, bayan_json_v_str_new_a(a, agnostic_req_str(v, AGNOSTIC_JK_NAME)));
+    var version = agnostic_opt_str(v, AGNOSTIC_JK_VERSION, 0 - 1);
+    if (version == 0 - 1) { version = str_from_a(a, "1.0.0"); }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_VERSION, bayan_json_v_str_new_a(a, version));
+    var desc = agnostic_opt_str(v, AGNOSTIC_JK_DESCRIPTION, 0 - 1);
+    if (desc != 0 - 1) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_DESCRIPTION, bayan_json_v_str_new_a(a, desc)); }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_EXPORTED_AT, bayan_json_v_int_new_a(a, agnostic_epoch_ms()));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_DEFINITIONS, arr);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOTAL, bayan_json_v_int_new_a(a, n));
+    return agnostic_response_json_a(a, HTTP_OK, obj);
+}
+
+# The refusal for package definition `i`, carrying what the door said.
+fn _agnostic_package_element_refusal_a(a, i, rj): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_cstr_a(a, sb, "definitions[");
+    str_builder_add_int_a(a, sb, i);
+    str_builder_add_cstr_a(a, sb, "]: ");
+    str_builder_add_a(a, sb, agnostic_reject_message(rj));
+    return agnostic_response_error_a(a, agnostic_reject_status(rj), str_builder_build_a(a, sb));
+}
+
+# `POST /api/v1/packages/import[?overwrite=true]` — a package from `export`. Refused whole: see the
+# module header. A key already stored is a 409 naming all of them, unless `overwrite=true`.
+fn agnostic_route_package_import_a(a, path: Str, body: Str, ctx): i64 {
+    var ow = agnostic_query_get_a(a, path, "overwrite");
+    var overwrite = 0;
+    if (ow != 0) {
+        if (str_eq_cstr(ow, "true") == 1) { overwrite = 1; }
+        elif (str_eq_cstr(ow, "false") == 0) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+              str_from_a(a, "'overwrite' is true or false"));
+        }
+    }
+    var resp: i64[1];
+    store64(&resp, 0);
+    var v = _agnostic_package_body_a(a, body, agnostic_package_fields_a(a), &resp);
+    if (v == 0) { return load64(&resp); }
+    if (str_eq_cstr(agnostic_req_str(v, AGNOSTIC_JK_FORMAT), AGNOSTIC_PACKAGE_FORMAT) == 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "'format' is not one this server reads"));
+    }
+    var labels = _agnostic_package_labels_refusal_a(a, v);
+    if (labels != 0) { return labels; }
+
+    var defs = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_DEFINITIONS);
+    var n = bayan_json_v_arr_len(defs);
+    if (n == 0 || n > AGNOSTIC_PACKAGE_MAX_DEFINITIONS) {
+        return agnostic_response_error_a(a, HTTP_BAD_REQUEST, str_from_a(a, "a package holds 1 to 256 definitions"));
+    }
+
+    # Every check first.
+    var scope = agnostic_reqctx_scope(ctx);
+    var seen = map_new_str_a(a);
+    var conflicts = bayan_json_v_arr_new_a(a);
+    var clashes = 0;
+    var reject: i64[1];
+    var i = 0;
+    while (i < n) {
+        var el = bayan_json_v_arr_get(defs, i);
+        store64(&reject, 0);
+        if (agnostic_agent_def_check_a(a, el, 0 - 1, &reject) == 0) {
+            return _agnostic_package_element_refusal_a(a, i, load64(&reject));
+        }
+        var key = agnostic_req_str(el, AGNOSTIC_JK_KEY);
+        if (map_get(seen, key) != 0) {
+            return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+              str_from_a(a, "a key appears twice in this package"));
+        }
+        map_set_a(a, seen, key, 1);
+        var dkey = agnostic_definition_dkey_a(a, scope, key);
+        if (dkey == 0) {
+            return agnostic_response_error_a(a, HTTP_FORBIDDEN,
+              str_from_a(a, "this account's tenant cannot hold a definition"));
+        }
+        if (overwrite == 0 && agnostic_definitions_get_a(a, dkey) != 0) {
+            bayan_json_v_arr_push_a(a, conflicts, bayan_json_v_str_new_a(a, key));
+            clashes = clashes + 1;
+        }
+        i = i + 1;
+    }
+    if (clashes > 0) {
+        var c = bayan_json_v_obj_new_a(a);
+        if (c == 0) { return 0; }
+        bayan_json_v_obj_set_a(a, c, AGNOSTIC_JK_ERROR, bayan_json_v_str_new_a(a,
+            str_from_a(a, "these keys are already stored; nothing was imported. Send overwrite=true to replace them")));
+        bayan_json_v_obj_set_a(a, c, AGNOSTIC_JK_CONFLICTS, conflicts);
+        return agnostic_response_json_a(a, AGNOSTIC_HTTP_CONFLICT, c);
+    }
+
+    var created = bayan_json_v_arr_new_a(a);
+    var replaced = bayan_json_v_arr_new_a(a);
+    if (created == 0 || replaced == 0) { return 0; }
+    var failed = 0;
+    i = 0;
+    while (i < n && failed == 0) {
+        var def = bayan_json_v_arr_get(defs, i);
+        var k = agnostic_req_str(def, AGNOSTIC_JK_KEY);
+        var dk = agnostic_definition_dkey_a(a, scope, k);
+        store64(&reject, 0);
+        # On the global heap, where the definition cache keeps what it is given.
+        var d = agnostic_agent_def_decode_a(a, def, 0 - 1, &reject);
+        if (d == 0) { failed = 1; }
+        else {
+            var rc = agnostic_definitions_create_a(a, dk, d);
+            if (rc == AGNOSTIC_DEF_OK) {
+                bayan_json_v_arr_push_a(a, created, bayan_json_v_str_new_a(a, k));
+            } elif (rc == AGNOSTIC_DEF_EXISTS) {
+                # `overwrite`, or a create that landed since the check. It is replaced only if asked.
+                if (overwrite == 1 && agnostic_definitions_replace_if_a(a, dk, d, 0) == AGNOSTIC_DEF_OK) {
+                    bayan_json_v_arr_push_a(a, replaced, bayan_json_v_str_new_a(a, k));
+                } else {
+                    failed = 1;
+                }
+            } else {
+                failed = 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    var total = bayan_json_v_arr_len(created) + bayan_json_v_arr_len(replaced);
+    var ab = str_builder_new_a(a);
+    if (ab == 0) { return 0; }
+    str_builder_add_cstr_a(a, ab, "name=");
+    str_builder_add_a(a, ab, agnostic_req_str(v, AGNOSTIC_JK_NAME));
+    str_builder_add_cstr_a(a, ab, " definitions=");
+    str_builder_add_int_a(a, ab, total);
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from_a(a, "package.import"), str_builder_build_a(a, ab));
+
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_NAME, bayan_json_v_str_new_a(a, agnostic_req_str(v, AGNOSTIC_JK_NAME)));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_CREATED, created);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_REPLACED, replaced);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOTAL, bayan_json_v_int_new_a(a, total));
+    if (failed == 1) {
+        bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_ERROR, bayan_json_v_str_new_a(a,
+            str_from_a(a, "a write failed part-way; the keys listed went in and the rest did not")));
+        return agnostic_response_json_a(a, HTTP_INTERNAL, obj);
+    }
+    return agnostic_response_json_a(a, HTTP_OK, _agnostic_def_stamp(a, obj));
+}
+
+# The fields of a recommendation's body.
+fn agnostic_preset_recommendation_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_req_a(a, f, "description", AGNOSTIC_FK_STRING);
+    return f;
+}
+
+# `POST /api/v1/preset-recommendations` — `{description}`: which preset fits. Nothing is stored.
+fn agnostic_route_preset_recommend_a(a, body: Str): i64 {
+    var resp: i64[1];
+    store64(&resp, 0);
+    var v = _agnostic_package_body_a(a, body, agnostic_preset_recommendation_fields_a(a), &resp);
+    if (v == 0) { return load64(&resp); }
+    var d = agnostic_req_str(v, AGNOSTIC_JK_DESCRIPTION);
+    if (str_len(d) == 0 || _agnostic_str_field_ok(d) < 0) {
+        return agnostic_response_error_a(a, HTTP_BAD_REQUEST,
+          str_from_a(a, "'description' must be between 1 and 10000 characters"));
+    }
+    var out = agnostic_recommend_a(a, d);
+    if (out == 0) { return 0; }
+    return agnostic_response_json_a(a, HTTP_OK, out);
+}

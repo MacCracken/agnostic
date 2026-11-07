@@ -62,6 +62,8 @@ enum AgnosticDefResult {
     AGNOSTIC_DEF_MISSING      = 2;
     AGNOSTIC_DEF_FULL         = 3;
     AGNOSTIC_DEF_PRECONDITION = 4;  # If-Match named another revision (0.1.15)
+    AGNOSTIC_DEF_NO_VERSION   = 5;  # no such version: never saved, or past the cap (0.4.2)
+    AGNOSTIC_DEF_UNFIT        = 6;  # a version the door would refuse today (0.4.2)
 }
 
 # How many decoded definitions the cache holds before it stops caching.
@@ -93,6 +95,11 @@ var _agnostic_def_cache = 0;
 var AGNOSTIC_DEF_TABLE_SQL = "CREATE TABLE agnostic_definitions (dkey STR, doc TEXT)";
 var AGNOSTIC_DEF_INDEX_SQL = "CREATE INDEX ON agnostic_definitions (dkey)";
 
+# Every document a definition has held (0.4.2, ADR 0035).
+var AGNOSTIC_DEF_VER_TABLE_SQL =
+"CREATE TABLE agnostic_definition_versions (dkey STR, version INT, saved_at INT, doc TEXT)";
+var AGNOSTIC_DEF_VER_INDEX_SQL = "CREATE INDEX ON agnostic_definition_versions (dkey)";
+
 # Open the database and ensure the schema. Mount time only, before any worker.
 #
 # Returns 1 on success, 0 when the database cannot be opened or the schema
@@ -111,6 +118,8 @@ fn agnostic_definitions_open(path: Str): i64 {
     # in the schema page — so this is the one, and it is on the column every
     # lookup uses. A second `CREATE INDEX` would silently replace it.
     if (agnostic_store_ensure(AGNOSTIC_DEF_INDEX_SQL) == 0) { return 0; }
+    if (agnostic_store_ensure(AGNOSTIC_DEF_VER_TABLE_SQL) == 0) { return 0; }
+    if (agnostic_store_ensure(AGNOSTIC_DEF_VER_INDEX_SQL) == 0) { return 0; }
 
     agnostic_store_lock();
     _agnostic_def_cache = map_new_str();
@@ -136,7 +145,10 @@ fn agnostic_definitions_reset(): i64 {
     agnostic_store_lock();
     _agnostic_def_cache = map_new_str();
     var db = agnostic_store_db();
-    if (db != 0) { patra_exec(db, "DELETE FROM agnostic_definitions"); }
+    if (db != 0) {
+        patra_exec(db, "DELETE FROM agnostic_definitions");
+        patra_exec(db, "DELETE FROM agnostic_definition_versions");
+    }
     agnostic_store_unlock();
     return 0;
 }
@@ -206,16 +218,238 @@ fn _agnostic_definition_in_scope_a(a, dkey: Str, scope: Str): i64 {
     return 0;
 }
 
-# Render a definition to the JSON document that is stored.
-#
-# Global allocator: the bytes are handed to patra and copied into a page, so the
-# buffer is short-lived — but there is no arena at mount time and `create` can
-# be called from one. Bounded by writes, not by reads, which is the trade this
-# module can afford.
-fn _agnostic_def_document(d): i64 {
-    var v = agnostic_agent_def_to_value_a(default_alloc(), d);
+# Render a definition to the JSON document that is stored, in `a`: the bytes are handed to patra
+# and copied into a page, so the buffer lasts no longer than the write.
+fn _agnostic_def_document_a(a, d): i64 {
+    var v = agnostic_agent_def_to_value_a(a, d);
     if (v == 0) { return 0; }
-    return bayan_json_v_build(v);
+    return bayan_json_v_build_a(a, v);
+}
+
+# ## Versions (0.4.2, ADR 0035)
+#
+# Every document a definition takes is a row here, numbered from 1 per key and never reused. Nobody
+# has to remember to save one: the former code had a route for it, and history held only what
+# someone had thought to keep before they needed it.
+#
+# ⚠ **A rollback is a write, so it is a new version.** History only grows at the end, and a
+# rollback can itself be undone.
+#
+# ⚠ **The version goes first, then the definition.** A stop between the two leaves a version that
+# was never current, which a list shows and nothing else minds. The other order would leave a
+# definition no version holds, which is the one thing this table exists to prevent. Not a
+# transaction, as a crew's writes are not: one costs three times the separate writes, on a path
+# that loses nothing without it.
+#
+# ⚠ **A definition from before 0.4.2 has no versions.** The first replace saves what the row held as
+# version 1, with no `saved_at`, as nobody knows when it was written. So what is overwritten first
+# can be got back.
+#
+# ⚠ **Deleting a definition keeps its versions**, so that a rollback can bring it back: that is the
+# accident this exists for. It also means a delete does not erase what a definition said. To a
+# tenant deleted and made again they read as stored objects do (`agnostic_tenant_delete_empty_a`).
+#
+# A write that changes nothing adds nothing: a client that PUTs what it read does not push a real
+# version off the end. `AGNOSTIC_MAX_VERSIONS` keeps the newest of each key, 50 by default.
+
+# The newest versions kept per definition. Mount time only.
+var AGNOSTIC_DEF_VERSIONS_DEFAULT = 50;
+var _agnostic_def_versions_max = 50;
+
+# Set how many versions are kept per definition. Mount time only.
+fn agnostic_definitions_set_versions_max(n): i64 {
+    _agnostic_def_versions_max = n;
+    return 0;
+}
+
+# Column `col` of row `row`, a TEXT, copied into `a`. 0 for an empty one, or when `a` ran out.
+fn _agnostic_def_text_a(a, db, rs, row, col): i64 {
+    var len = patra_result_get_text_len(rs, row, col);
+    if (len <= 0) { return 0; }
+    var buf = alloc_via(a, len);
+    if (buf == 0) { return 0; }
+    if (patra_result_read_text(db, rs, row, col, buf) != PATRA_OK) { return 0; }
+    return str_new_a(a, buf, len);
+}
+
+# The stored document under `key`, in `a`, or 0. The caller holds the store lock.
+fn _agnostic_def_row_doc_locked_a(a, key: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db, "SELECT doc FROM agnostic_definitions WHERE dkey = ?");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(key), str_len(key));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var doc = 0;
+    if (patra_result_count(rs) > 0) { doc = _agnostic_def_text_a(a, db, rs, 0, 0); }
+    patra_result_free(rs);
+    return doc;
+}
+
+# The newest version of `dkey`, or 0 for none. The caller holds the store lock.
+fn _agnostic_def_version_newest_locked(dkey: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db,
+      "SELECT version FROM agnostic_definition_versions WHERE dkey = ? ORDER BY version DESC LIMIT 1");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(dkey), str_len(dkey));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var v = 0;
+    if (patra_result_count(rs) > 0) { v = patra_result_get_int(rs, 0, 0); }
+    patra_result_free(rs);
+    return v;
+}
+
+# Version `version` of `dkey`: its document, in `a`, or 0, and when it was saved through `out_at`
+# when that is not 0. The caller holds the store lock.
+fn _agnostic_def_version_doc_locked_a(a, dkey: Str, version, out_at): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db,
+      "SELECT doc, saved_at FROM agnostic_definition_versions WHERE dkey = ? AND version = ?");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(dkey), str_len(dkey));
+    patra_bind_int(st, 1, version);
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return 0; }
+    var doc = 0;
+    if (patra_result_count(rs) > 0) {
+        doc = _agnostic_def_text_a(a, db, rs, 0, 0);
+        if (out_at != 0) { store64(out_at, patra_result_get_int(rs, 0, 1)); }
+    }
+    patra_result_free(rs);
+    return doc;
+}
+
+# Write one version row. 1, or 0 when it was not written. The caller holds the store lock.
+fn _agnostic_def_version_insert_locked(dkey: Str, version, at, doc: Str): i64 {
+    var db = agnostic_store_db();
+    if (db == 0) { return 0; }
+    var st = patra_prepare(db,
+      "INSERT INTO agnostic_definition_versions (dkey, version, saved_at, doc) VALUES (?, ?, ?, ?)");
+    if (st == 0) { return 0; }
+    patra_bind_text(st, 0, str_data(dkey), str_len(dkey));
+    patra_bind_int(st, 1, version);
+    patra_bind_int(st, 2, at);
+    patra_bind_text(st, 3, str_data(doc), str_len(doc));
+    var rc = patra_exec_prepared(db, st);
+    patra_finalize(st);
+    if (rc != PATRA_OK) { return 0; }
+    return 1;
+}
+
+# Keep `doc` as `dkey`'s newest version, unless it already is, and let the oldest go past the cap.
+# 1, or 0 when it could not be kept, which refuses the write it was for. The caller holds the store
+# lock.
+fn _agnostic_def_version_keep_locked_a(a, dkey: Str, doc: Str): i64 {
+    var newest = _agnostic_def_version_newest_locked(dkey);
+    if (newest > 0) {
+        var last = _agnostic_def_version_doc_locked_a(a, dkey, newest, 0);
+        if (last != 0) {
+            if (str_eq(last, doc) == 1) { return 1; }
+        }
+    }
+    var next = newest + 1;
+    if (_agnostic_def_version_insert_locked(dkey, next, agnostic_epoch_ms(), doc) == 0) { return 0; }
+    var gone = next - _agnostic_def_versions_max;
+    if (gone < 1) { return 1; }
+    # A cap lowered between starts takes every version below it, so this is `<=` and not `=`.
+    var db = agnostic_store_db();
+    var st = patra_prepare(db, "DELETE FROM agnostic_definition_versions WHERE dkey = ? AND version <= ?");
+    if (st == 0) { return 1; }
+    patra_bind_text(st, 0, str_data(dkey), str_len(dkey));
+    patra_bind_int(st, 1, gone);
+    patra_exec_prepared(db, st);
+    patra_finalize(st);
+    return 1;
+}
+
+# What the row holds, as version 1, when `dkey` has no versions: a definition from before 0.4.2,
+# about to be overwritten. 1, or 0 when it could not be kept. The caller holds the store lock.
+fn _agnostic_def_version_seed_locked_a(a, dkey: Str): i64 {
+    if (_agnostic_def_version_newest_locked(dkey) > 0) { return 1; }
+    var doc = _agnostic_def_row_doc_locked_a(a, dkey);
+    if (doc == 0) { return 1; }
+    return _agnostic_def_version_insert_locked(dkey, 1, 0, doc);
+}
+
+# One row of `agnostic_definitions_versions_a`.
+enum AgnosticDefVersionOff {
+    AGNOSTIC_DV_VERSION = 0;
+    AGNOSTIC_DV_AT      = 8;
+    AGNOSTIC_DV_DOC     = 16;
+    AGNOSTIC_DV_SIZE    = 24;
+}
+
+# The versions of `dkey`, newest first, as a vec of `AgnosticDefVersionOff` records in `a`. 0 when
+# `a` ran out.
+fn agnostic_definitions_versions_a(a, dkey: Str): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_definitions_versions_locked_a(a, dkey);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_definitions_versions_a`'s body. The caller holds the store lock.
+fn _agnostic_definitions_versions_locked_a(a, dkey: Str): i64 {
+    var out = vec_new_a(a);
+    if (out == 0) { return 0; }
+    var db = agnostic_store_db();
+    if (db == 0) { return out; }
+    var st = patra_prepare(db,
+      "SELECT version, saved_at, doc FROM agnostic_definition_versions WHERE dkey = ? ORDER BY version DESC");
+    if (st == 0) { return out; }
+    patra_bind_text(st, 0, str_data(dkey), str_len(dkey));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
+    if (rs == 0) { return out; }
+    var n = patra_result_count(rs);
+    var i = 0;
+    while (i < n) {
+        var r = alloc_via(a, AGNOSTIC_DV_SIZE);
+        if (r == 0) { patra_result_free(rs); return 0; }
+        store64(r + AGNOSTIC_DV_VERSION, patra_result_get_int(rs, i, 0));
+        store64(r + AGNOSTIC_DV_AT, patra_result_get_int(rs, i, 1));
+        store64(r + AGNOSTIC_DV_DOC, _agnostic_def_text_a(a, db, rs, i, 2));
+        vec_push_a(a, out, r);
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return out;
+}
+
+# A row's version number.
+fn agnostic_def_version_no(r): i64 { return load64(r + AGNOSTIC_DV_VERSION); }
+
+# When a row was saved, in epoch ms, or 0 when nobody knows.
+fn agnostic_def_version_at(r): i64 { return load64(r + AGNOSTIC_DV_AT); }
+
+# A row's document.
+fn agnostic_def_version_doc(r): i64 { return load64(r + AGNOSTIC_DV_DOC); }
+
+# Version `version` of `dkey`: its document, in `a`, or 0. `out_at` as
+# `_agnostic_def_version_doc_locked_a` has it.
+fn agnostic_definitions_version_a(a, dkey: Str, version, out_at): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_def_version_doc_locked_a(a, dkey, version, out_at);
+    agnostic_store_unlock();
+    return r;
+}
+
+# Stored document `doc` as a definition for a reader, in `a`, or 0 when it no longer decodes.
+fn agnostic_definition_from_doc_a(a, doc: Str): i64 {
+    if (doc == 0) { return 0; }
+    var v = bayan_json_v_parse_buf_a(a, str_data(doc), str_len(doc));
+    if (v == 0) { return 0; }
+    var reject: i64[1];
+    store64(&reject, 0);
+    return agnostic_agent_def_decode_in_a(a, a, v, 0 - 1, &reject);
 }
 
 # Put a definition in the cache, if there is room. Never fails a caller.
@@ -233,8 +467,13 @@ fn _agnostic_def_cache_put(key: Str, d): i64 {
 # ⚠ **Never an upsert.** `POST` to an existing key is a 409, because an upsert
 # turns a typo'd key into a second silently-created definition.
 fn agnostic_definitions_create(key: Str, def): i64 {
+    return agnostic_definitions_create_a(default_alloc(), key, def);
+}
+
+# `agnostic_definitions_create`, with what the write builds in `a`.
+fn agnostic_definitions_create_a(a, key: Str, def): i64 {
     agnostic_store_lock();
-    var r = _agnostic_definitions_create_locked(key, def);
+    var r = _agnostic_definitions_create_locked_a(a, key, def);
     agnostic_store_unlock();
     return r;
 }
@@ -242,14 +481,15 @@ fn agnostic_definitions_create(key: Str, def): i64 {
 # `agnostic_definitions_create`'s body. The caller holds the store lock, so the
 # existence check and the insert are one step: of two racing creates of one key,
 # exactly one inserts and the other is told EXISTS.
-fn _agnostic_definitions_create_locked(key: Str, def): i64 {
+fn _agnostic_definitions_create_locked_a(a, key: Str, def): i64 {
     if (key == 0 || def == 0) { return AGNOSTIC_DEF_MISSING; }
     var db = agnostic_store_db();
     if (db == 0) { return AGNOSTIC_DEF_MISSING; }
     if (_agnostic_def_row_exists_locked(key) == 1) { return AGNOSTIC_DEF_EXISTS; }
 
-    var doc = _agnostic_def_document(def);
+    var doc = _agnostic_def_document_a(a, def);
     if (doc == 0) { return AGNOSTIC_DEF_MISSING; }
+    if (_agnostic_def_version_keep_locked_a(a, key, doc) == 0) { return AGNOSTIC_DEF_MISSING; }
 
     var st = patra_prepare(db,
       "INSERT INTO agnostic_definitions (dkey, doc) VALUES (?, ?)");
@@ -272,20 +512,23 @@ fn _agnostic_definitions_create_locked(key: Str, def): i64 {
 # Replace the definition under an existing key. Never creates.
 fn agnostic_definitions_replace(key: Str, def): i64 {
     agnostic_store_lock();
-    var r = _agnostic_definitions_replace_locked(key, def);
+    var r = _agnostic_definitions_replace_locked_a(default_alloc(), key, def);
     agnostic_store_unlock();
     return r;
 }
 
-# `agnostic_definitions_replace`'s body. The caller holds the store lock.
-fn _agnostic_definitions_replace_locked(key: Str, def): i64 {
+# `agnostic_definitions_replace`'s body, with what the write builds in `a`. The caller holds the
+# store lock.
+fn _agnostic_definitions_replace_locked_a(a, key: Str, def): i64 {
     if (key == 0 || def == 0) { return AGNOSTIC_DEF_MISSING; }
     var db = agnostic_store_db();
     if (db == 0) { return AGNOSTIC_DEF_MISSING; }
     if (_agnostic_def_row_exists_locked(key) == 0) { return AGNOSTIC_DEF_MISSING; }
 
-    var doc = _agnostic_def_document(def);
+    var doc = _agnostic_def_document_a(a, def);
     if (doc == 0) { return AGNOSTIC_DEF_MISSING; }
+    if (_agnostic_def_version_seed_locked_a(a, key) == 0) { return AGNOSTIC_DEF_MISSING; }
+    if (_agnostic_def_version_keep_locked_a(a, key, doc) == 0) { return AGNOSTIC_DEF_MISSING; }
 
     var st = patra_prepare(db,
       "UPDATE agnostic_definitions SET doc = ? WHERE dkey = ?");
@@ -426,7 +669,45 @@ fn _agnostic_definitions_replace_if_locked_a(a, key: Str, def, if_match: Str): i
         if (cur == 0) { return AGNOSTIC_DEF_MISSING; }
         if (agnostic_definition_precondition_a(a, cur, if_match) == 0) { return AGNOSTIC_DEF_PRECONDITION; }
     }
-    return _agnostic_definitions_replace_locked(key, def);
+    return _agnostic_definitions_replace_locked_a(a, key, def);
+}
+
+# Make version `version` of `dkey` current again, as a new version: `AGNOSTIC_DEF_*`, with the
+# definition it wrote through `out_def`. With `if_match`, only if the definition is still that
+# revision. A definition that was deleted comes back. Check, read and write are one critical section.
+fn agnostic_definitions_rollback_a(a, dkey: Str, version, if_match: Str, out_def): i64 {
+    agnostic_store_lock();
+    var r = _agnostic_definitions_rollback_locked_a(a, dkey, version, if_match, out_def);
+    agnostic_store_unlock();
+    return r;
+}
+
+# `agnostic_definitions_rollback_a`'s body. The caller holds the store lock.
+#
+# ⚠ **The door's check is made again.** A version was accepted under the rules of its day, and it
+# is about to run crews under today's, as a definition saved before 0.1.15 with another `complexity`
+# would. It answers UNFIT, and nothing changes.
+fn _agnostic_definitions_rollback_locked_a(a, dkey: Str, version, if_match: Str, out_def): i64 {
+    var cur = _agnostic_definitions_get_locked_a(a, dkey);
+    if (if_match != 0 && cur != 0) {
+        if (agnostic_definition_precondition_a(a, cur, if_match) == 0) { return AGNOSTIC_DEF_PRECONDITION; }
+    }
+    if (if_match != 0 && cur == 0) { return AGNOSTIC_DEF_PRECONDITION; }
+    var doc = _agnostic_def_version_doc_locked_a(a, dkey, version, 0);
+    if (doc == 0) { return AGNOSTIC_DEF_NO_VERSION; }
+    var v = bayan_json_v_parse_buf_a(a, str_data(doc), str_len(doc));
+    if (v == 0) { return AGNOSTIC_DEF_UNFIT; }
+    var reject: i64[1];
+    store64(&reject, 0);
+    if (agnostic_agent_def_check_a(a, v, 0 - 1, &reject) == 0) { return AGNOSTIC_DEF_UNFIT; }
+    # On the global heap, where the definition cache keeps what it is given.
+    var d = agnostic_agent_def_decode_a(a, v, 0 - 1, &reject);
+    if (d == 0) { return AGNOSTIC_DEF_MISSING; }
+    var rc = 0;
+    if (cur != 0) { rc = _agnostic_definitions_replace_locked_a(a, dkey, d); }
+    else { rc = _agnostic_definitions_create_locked_a(a, dkey, d); }
+    if (rc == AGNOSTIC_DEF_OK && out_def != 0) { store64(out_def, d); }
+    return rc;
 }
 
 # `agnostic_definitions_remove`, only if `if_match` holds (0.1.15): MISSING, PRECONDITION or OK.
@@ -606,9 +887,14 @@ fn _agnostic_crew_agent_is_ref(ag): i64 {
 # body, as it does when `agents` is not an array it would accept: an array past the cap is the
 # decoder's to refuse, and must not cost a read of the store per element first. 0 with a rejection
 # stored when a reference is refused.
+#
+# A body with a `team` (0.4.2) answers what the team becomes.
 fn agnostic_crew_agents_resolve_a(a, v, scope: Str, out): i64 {
     if (bayan_json_v_is_obj(v) != 1) { return 0; }
     var given = bayan_json_v_obj_get_by_cstr(v, "agents");
+    var team = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_TEAM);
+    # Both, or a `team` that is not an object, are the decoder's to refuse, after its rows.
+    if (given == 0 && bayan_json_v_is_obj(team) == 1) { return agnostic_crew_team_agents_a(a, team, scope, out); }
     if (given == 0 || bayan_json_v_is_arr(given) != 1) { return 0; }
     var n = bayan_json_v_arr_len(given);
     if (n > AGNOSTIC_REQ_MAX_AGENTS) { return 0; }

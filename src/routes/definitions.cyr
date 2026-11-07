@@ -9,6 +9,9 @@
 # | `GET /api/v1/agents/definitions/{key}` | 200 · 404 · 422 |
 # | `PUT /api/v1/agents/definitions/{key}` | 200 · 400 · 404 · **412** (0.1.15) · 422 |
 # | `DELETE /api/v1/agents/definitions/{key}` | 200 · 404 · **412** (0.1.15) · 422 |
+# | `GET /api/v1/agents/definitions/{key}/versions` | 200 · 404 · 422 (0.4.2) |
+# | `GET /api/v1/agents/definitions/{key}/versions/{n}` | 200 · 404 · 422 (0.4.2) |
+# | `POST /api/v1/agents/definitions/{key}/rollback` | 200 · 400 · 404 · **409** · **412** · 422 (0.4.2) |
 #
 # A single definition answers with its revision — `etag` in the body and an `ETag` header —
 # and `If-Match` on `PUT` or `DELETE` makes the write conditional (0.1.15; see
@@ -240,7 +243,7 @@ fn agnostic_route_definition_create_a(a, body: Str, ctx): i64 {
     var d = _agnostic_def_build_a(a, v, &resp);
     if (d == 0) { return load64(&resp); }
 
-    var rc = agnostic_definitions_create(dkey, d);
+    var rc = agnostic_definitions_create_a(a, dkey, d);
 
     if (rc == AGNOSTIC_DEF_EXISTS) { return _agnostic_def_exists_a(a); }
     if (rc == AGNOSTIC_DEF_FULL) {
@@ -342,6 +345,185 @@ fn agnostic_route_definition_delete_a(a, key: Str, ctx): i64 {
     bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_STATUS,
       bayan_json_v_str_new_a(a, AGNOSTIC_JV_DELETED));
     return agnostic_response_json_a(a, HTTP_OK, _agnostic_def_stamp(a, obj));
+}
+
+# --- versions (0.4.2, ADR 0035) -----------------------------------------------------------------
+
+var AGNOSTIC_JK_VERSIONS  = str_from("versions");
+var AGNOSTIC_JK_SAVED_AT  = str_from("saved_at");
+var AGNOSTIC_JK_CURRENT   = str_from("current");
+var AGNOSTIC_JK_ROLLED    = str_from("rolled_back_to");
+
+# The fields of a rollback's body.
+fn agnostic_definition_rollback_fields_a(a): i64 {
+    var f = agnostic_fields_a(a);
+    agnostic_field_req_a(a, f, "version", AGNOSTIC_FK_INT);
+    return f;
+}
+
+# The 404 for a version that is not there: never saved, or past the cap.
+fn _agnostic_def_no_version_a(a): i64 {
+    return agnostic_response_error_a(a, HTTP_NOT_FOUND, str_from_a(a, "no such version of this definition"));
+}
+
+# The version number `s` says, in the digits of a path, or -1.
+fn _agnostic_def_version_no_of(s: Str): i64 {
+    var n = str_len(s);
+    if (n < 1 || n > 9) { return 0 - 1; }
+    var d = str_data(s);
+    var v = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 255;
+        if (c < 48 || c > 57) { return 0 - 1; }
+        v = v * 10 + (c - 48);
+        i = i + 1;
+    }
+    if (v < 1) { return 0 - 1; }
+    return v;
+}
+
+# `GET /api/v1/agents/definitions/{key}/versions` — what the definition has been, newest first.
+#
+# A definition deleted since still answers, because a rollback can bring it back, and then no
+# version is `current`. A definition from before 0.4.2 that nothing has replaced has none yet.
+fn agnostic_route_definition_versions_a(a, key: Str, ctx): i64 {
+    if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
+    var dkey = _agnostic_def_dkey_a(a, key, ctx);
+    if (dkey == 0) { return _agnostic_def_not_found_a(a); }
+    var rows = agnostic_definitions_versions_a(a, dkey);
+    if (rows == 0) { return 0; }
+    var cur = agnostic_definitions_get_a(a, dkey);
+    if (cur == 0 && vec_len(rows) == 0) { return _agnostic_def_not_found_a(a); }
+    var cur_tag = 0;
+    if (cur != 0) { cur_tag = agnostic_definition_etag_a(a, cur); }
+
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(rows)) {
+        var r = vec_get(rows, i);
+        var o = bayan_json_v_obj_new_a(a);
+        if (o == 0) { return 0; }
+        bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_VERSION, bayan_json_v_int_new_a(a, agnostic_def_version_no(r)));
+        var at = agnostic_def_version_at(r);
+        if (at > 0) { bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_SAVED_AT, bayan_json_v_int_new_a(a, at)); }
+        # A document that no longer decodes is still a version, and says only that.
+        var d = agnostic_definition_from_doc_a(a, agnostic_def_version_doc(r));
+        if (d != 0) {
+            var tag = agnostic_definition_etag_a(a, d);
+            bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_ETAG, bayan_json_v_str_new_a(a, tag));
+            bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_DEFINITION, agnostic_agent_def_summary_a(a, d));
+            var now = 0;
+            if (cur_tag != 0 && tag != 0) { now = str_eq(cur_tag, tag); }
+            bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_CURRENT, bayan_json_v_bool_new_a(a, now));
+        }
+        bayan_json_v_arr_push_a(a, arr, o);
+        i = i + 1;
+    }
+    var obj = bayan_json_v_obj_new_a(a);
+    if (obj == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_KEY, bayan_json_v_str_new_a(a, key));
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_VERSIONS, arr);
+    bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOTAL, bayan_json_v_int_new_a(a, vec_len(rows)));
+    return agnostic_response_json_a(a, HTTP_OK, _agnostic_def_stamp(a, obj));
+}
+
+# `GET /api/v1/agents/definitions/{key}/versions/{n}` — what one version said, whole, to read
+# before rolling back to it. Its `etag` is its own, and no `ETag` header goes with it: this is not
+# the definition, and a client must not `If-Match` with it.
+fn agnostic_route_definition_version_a(a, key: Str, n: Str, ctx): i64 {
+    if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
+    var no = _agnostic_def_version_no_of(n);
+    if (no < 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE,
+          str_from_a(a, "a version is a whole number from 1"));
+    }
+    var dkey = _agnostic_def_dkey_a(a, key, ctx);
+    if (dkey == 0) { return _agnostic_def_not_found_a(a); }
+    var at: i64[1];
+    store64(&at, 0);
+    var doc = agnostic_definitions_version_a(a, dkey, no, &at);
+    if (doc == 0) { return _agnostic_def_no_version_a(a); }
+    var d = agnostic_definition_from_doc_a(a, doc);
+    if (d == 0) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
+          str_from_a(a, "this version no longer reads as a definition"));
+    }
+    var body = _agnostic_def_body_a(a, d);
+    if (body == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, body, AGNOSTIC_JK_VERSION, bayan_json_v_int_new_a(a, no));
+    if (load64(&at) > 0) {
+        bayan_json_v_obj_set_a(a, body, AGNOSTIC_JK_SAVED_AT, bayan_json_v_int_new_a(a, load64(&at)));
+    }
+    return agnostic_response_json_a(a, HTTP_OK, body);
+}
+
+# `POST /api/v1/agents/definitions/{key}/rollback` — `{"version": N}`: make what it said current,
+# as a new version, so that this can be undone too. `If-Match` as a `PUT` takes it. A deleted
+# definition comes back.
+fn agnostic_route_definition_rollback_a(a, key: Str, body: Str, ctx): i64 {
+    if (agnostic_key_is_valid(key) == 0) { return _agnostic_def_bad_key_a(a); }
+    var dkey = _agnostic_def_dkey_a(a, key, ctx);
+    if (dkey == 0) { return _agnostic_def_not_found_a(a); }
+    # Before the body is read, as a `PUT` has it, and again under the store lock with the write.
+    var if_match = agnostic_reqctx_if_match(ctx);
+    if (if_match != 0) {
+        if (agnostic_definition_precondition_a(a, agnostic_definitions_get_a(a, dkey), if_match) == 0) {
+            return _agnostic_def_stale_a(a);
+        }
+    }
+    var v = agnostic_decode_a(a, body);
+    if (bayan_json_v_is_obj(v) != 1) {
+        return agnostic_response_error_a(a, HTTP_BAD_REQUEST, str_from_a(a, "the body must be a JSON object"));
+    }
+    var allowed = agnostic_definition_rollback_fields_a(a);
+    var unknown = agnostic_unknown_field(v, allowed);
+    if (unknown != 0) {
+        var sb = str_builder_new_a(a);
+        if (sb == 0) { return 0; }
+        str_builder_add_cstr_a(a, sb, "unknown field '");
+        str_builder_add_a(a, sb, unknown);
+        str_builder_add_cstr_a(a, sb, "'");
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_UNPROCESSABLE, str_builder_build_a(a, sb));
+    }
+    var bad = agnostic_field_bad(v, allowed);
+    if (bad != 0) {
+        return agnostic_response_error_a(a, agnostic_field_status(bad), agnostic_field_refusal_a(a, bad));
+    }
+    var no = _agnostic_opt_int(v, "version");
+    if (no < 1) {
+        return agnostic_response_error_a(a, HTTP_BAD_REQUEST, str_from_a(a, "'version' is a whole number from 1"));
+    }
+
+    var d: i64[1];
+    store64(&d, 0);
+    var rc = agnostic_definitions_rollback_a(a, dkey, no, if_match, &d);
+    if (rc == AGNOSTIC_DEF_NO_VERSION) { return _agnostic_def_no_version_a(a); }
+    if (rc == AGNOSTIC_DEF_PRECONDITION) { return _agnostic_def_stale_a(a); }
+    if (rc == AGNOSTIC_DEF_UNFIT) {
+        return agnostic_response_error_a(a, AGNOSTIC_HTTP_CONFLICT,
+          str_from_a(a, "this version would be refused as a definition today; PUT a corrected one instead"));
+    }
+    if (rc != AGNOSTIC_DEF_OK) {
+        return agnostic_response_error_a(a, HTTP_INTERNAL, str_from_a(a, "could not store the agent definition"));
+    }
+
+    var sb2 = str_builder_new_a(a);
+    if (sb2 == 0) { return 0; }
+    str_builder_add_cstr_a(a, sb2, "key=");
+    str_builder_add_a(a, sb2, dkey);
+    str_builder_add_cstr_a(a, sb2, " version=");
+    str_builder_add_int_a(a, sb2, no);
+    # WARNING, as a deletion is: it undoes someone's work.
+    agnostic_audit_record(SEV_WARNING, AGNOSTIC_AUDIT_SRC, str_from_a(a, "definition.rollback"),
+      str_builder_build_a(a, sb2));
+
+    var r = _agnostic_def_answer_a(a, HTTP_OK, load64(&d));
+    if (r != 0) {
+        bayan_json_v_obj_set_a(a, agnostic_response_body(r), AGNOSTIC_JK_ROLLED, bayan_json_v_int_new_a(a, no));
+    }
+    return r;
 }
 
 # `GET /api/v1/audit` — the state of the tamper-evident trail.

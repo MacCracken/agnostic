@@ -171,6 +171,10 @@ fn agnostic_route_metrics_a(a): i64 {
     _agnostic_m_labelled_a(a, sb, ref, "reason", "tenant_crews", agnostic_refusal_count(AGNOSTIC_REFUSAL_TENANT_CREWS));
 
     _agnostic_m_one_a(a, sb, "agnostic_ledger_crews", "Crews the ledger remembers.", "gauge", agnostic_ledger_count());
+    _agnostic_m_one_a(a, sb, "agnostic_ledger_readers", "Requests and sweeps able to hold a crew.", "gauge",
+      agnostic_ledger_readers_open());
+    _agnostic_m_one_a(a, sb, "agnostic_crew_arenas", "Crew arenas made since the start.", "gauge",
+      agnostic_crew_arenas_made());
     _agnostic_m_one_a(a, sb, "agnostic_engine_crews", "Crews in the engine's registry.", "gauge",
       agnostic_engine_crew_count());
     _agnostic_m_one_a(a, sb, "agnostic_audit_entries", "Entries in the audit trail.", "gauge", agnostic_audit_count());

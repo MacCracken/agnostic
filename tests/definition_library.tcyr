@@ -1,0 +1,631 @@
+# agnostic/engine — what a tenant's agents have been, where they can go, and how a crew finds them.
+#
+# What this suite holds:
+#
+#   1. Every write of a definition is a version, nobody saves one, and a write that changes nothing
+#      adds none (ADR 0035).
+#   2. A rollback is a new version, a deleted definition comes back, and a version today's door would
+#      refuse does not.
+#   3. A package is all of itself or none, keeps what the engine has no slot for, and stays in its
+#      tenant (ADR 0036).
+#   4. A team becomes agents before the crew body is decoded, from what is known or from its role, and
+#      never reads another tenant's (ADR 0037).
+#   5. A recommendation names only what the library holds, for words and not for parts of words.
+include "src/app.cyr"
+include "tests/support/tmp.cyr"
+
+var _T_DB = _tt_tmp_path("definition-library-suite");
+var _T_MAXB = 1048576;
+var _T_DEFS = "/api/v1/agents/definitions";
+
+fn _t_open() {
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    patra_init();
+    agnostic_definitions_open(str_from(_T_DB));
+    agnostic_definitions_reset();
+    agnostic_auth_ensure();
+    agnostic_tenants_ensure();
+    agnostic_crews_ensure();
+    agnostic_refusal_reset();
+    agnostic_engine_reset();
+    agnostic_ledger_reset();
+    agnostic_engine_init(agnostic_config_from_env());
+    agnostic_presets_init();
+    agnostic_definitions_set_versions_max(50);
+    return 0;
+}
+
+fn _t_req(a, method, path, body, ctx) {
+    return agnostic_route_dispatch_a(a, method, str_from_a(a, path), str_from_a(a, body), _T_MAXB, ctx);
+}
+
+fn _t_st(r) { return agnostic_response_status(r); }
+fn _t_b(r) { return agnostic_response_body(r); }
+
+fn _t_msg(r) {
+    var v = bayan_json_v_obj_get_by_str(_t_b(r), AGNOSTIC_JK_ERROR);
+    if (v == 0) { return str_from(""); }
+    return bayan_json_v_str(v);
+}
+
+# 1 when `s` contains the C string `needle`.
+fn _t_has(s: Str, needle): i64 {
+    var n = str_len(s);
+    var d = str_data(s);
+    var m = strlen(needle);
+    if (m > n) { return 0; }
+    var i = 0;
+    while (i <= n - m) {
+        if (memeq(d + i, needle, m) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# `<path><tail>`, as a C string.
+fn _t_at(path, tail) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, path);
+    str_builder_add_cstr(sb, tail);
+    return str_cstr(str_builder_build(sb));
+}
+
+# The definition `key`, whose goal is `goal`, as a body.
+fn _t_def(key, goal) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"key\":\"");
+    str_builder_add_cstr(sb, key);
+    str_builder_add_cstr(sb, "\",\"role\":\"tester\",\"goal\":\"");
+    str_builder_add_cstr(sb, goal);
+    str_builder_add_cstr(sb, "\",\"focus\":\"edges\",\"allow_delegation\":true}");
+    return str_cstr(str_builder_build(sb));
+}
+
+fn _t_create(a, key, goal, ctx) {
+    return _t_req(a, AGNOSTIC_METHOD_POST, _T_DEFS, _t_def(key, goal), ctx);
+}
+
+fn _t_put(a, key, goal, ctx) {
+    return _t_req(a, AGNOSTIC_METHOD_PUT, _t_at(_T_DEFS, _t_at("/", key)), _t_def(key, goal), ctx);
+}
+
+fn _t_versions(a, key, ctx) {
+    return _t_req(a, AGNOSTIC_METHOD_GET, _t_at(_T_DEFS, _t_at("/", _t_at(key, "/versions"))), "", ctx);
+}
+
+fn _t_version_count(a, key, ctx) {
+    var r = _t_versions(a, key, ctx);
+    if (_t_st(r) != HTTP_OK) { return 0 - 1; }
+    return bayan_json_v_int(bayan_json_v_obj_get_by_str(_t_b(r), AGNOSTIC_JK_TOTAL));
+}
+
+# Version `n` of `key`'s goal, or 0.
+fn _t_version_goal(a, key, n, ctx) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, _T_DEFS);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, key);
+    str_builder_add_cstr(sb, "/versions/");
+    str_builder_add_int(sb, n);
+    var r = _t_req(a, AGNOSTIC_METHOD_GET, str_cstr(str_builder_build(sb)), "", ctx);
+    if (_t_st(r) != HTTP_OK) { return 0; }
+    return agnostic_req_str(bayan_json_v_obj_get_by_str(_t_b(r), AGNOSTIC_JK_DEFINITION), AGNOSTIC_JK_GOAL);
+}
+
+fn _t_rollback(a, key, n, ctx) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"version\":");
+    str_builder_add_int(sb, n);
+    str_builder_add_cstr(sb, "}");
+    return _t_req(a, AGNOSTIC_METHOD_POST, _t_at(_T_DEFS, _t_at("/", _t_at(key, "/rollback"))),
+      str_cstr(str_builder_build(sb)), ctx);
+}
+
+fn _t_goal(a, key, ctx) {
+    var r = _t_req(a, AGNOSTIC_METHOD_GET, _t_at(_T_DEFS, _t_at("/", key)), "", ctx);
+    if (_t_st(r) != HTTP_OK) { return 0; }
+    return agnostic_req_str(bayan_json_v_obj_get_by_str(_t_b(r), AGNOSTIC_JK_DEFINITION), AGNOSTIC_JK_GOAL);
+}
+
+# A context for an operator of `tenant`.
+fn _t_tenant_ctx(a, tenant) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "op@");
+    str_builder_add_cstr(sb, tenant);
+    str_builder_add_cstr(sb, ".example");
+    var email = str_builder_build(sb);
+    var u = agnostic_users_create_a(a, email, str_from("pw"), AGNOSTIC_ROLE_OPERATOR, str_from(tenant));
+    var t = agnostic_jwt_issue_a(a, u, AGNOSTIC_ROLE_OPERATOR, str_from(tenant), 600);
+    var h = alloc_via(a, 7 + str_len(t));
+    memcpy(h, "Bearer ", 7);
+    memcpy(h + 7, str_data(t), str_len(t));
+    return agnostic_reqctx_new_a(a, str_new_a(a, h, 7 + str_len(t)), 0);
+}
+
+fn _t_auth_on() {
+    agnostic_argon_pool_init();
+    var k = alloc(32);
+    var i = 0;
+    while (i < 32) { store8(k + i, 70 + i); i = i + 1; }
+    agnostic_jwt_set_secret(k, 32);
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_REQUIRED);
+    return 0;
+}
+
+fn test_every_write_is_a_version() {
+    test_group("versions/every-write");
+    _t_open();
+    var a = arena_allocator(8388608);
+    assert_eq(_t_st(_t_versions(a, "nobody", 0)), HTTP_NOT_FOUND, "a key never written has none");
+    assert_eq(_t_st(_t_versions(a, "NOT%20A%20KEY", 0)), AGNOSTIC_HTTP_UNPROCESSABLE, "a bad key is refused");
+
+    assert_eq(_t_st(_t_create(a, "qa", "one", 0)), AGNOSTIC_HTTP_CREATED, "created");
+    assert_eq(_t_version_count(a, "qa", 0), 1, "⭐ a create is version 1, and nobody saved it");
+    _t_put(a, "qa", "two", 0);
+    _t_put(a, "qa", "three", 0);
+    assert_eq(_t_version_count(a, "qa", 0), 3, "⭐ each replace is another");
+    _t_put(a, "qa", "three", 0);
+    assert_eq(_t_version_count(a, "qa", 0), 3, "⭐ a write that changes nothing adds nothing");
+
+    var b = _t_b(_t_versions(a, "qa", 0));
+    var vs = bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_VERSIONS);
+    var newest = bayan_json_v_arr_get(vs, 0);
+    var oldest = bayan_json_v_arr_get(vs, 2);
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(newest, AGNOSTIC_JK_VERSION)), 3, "newest first");
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(newest, AGNOSTIC_JK_CURRENT)), 1, "⭐ and it is current");
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(oldest, AGNOSTIC_JK_CURRENT)), 0, "and the oldest is not");
+    assert_lt(0, bayan_json_v_int(bayan_json_v_obj_get_by_str(newest, AGNOSTIC_JK_SAVED_AT)), "a version says when");
+    assert_neq(bayan_json_v_obj_get_by_str(newest, AGNOSTIC_JK_ETAG), 0, "and its revision");
+    assert_eq(str_eq_cstr(_t_version_goal(a, "qa", 1, 0), "one"), 1, "⭐ version 1 still says what it said");
+    assert_eq(str_eq_cstr(_t_version_goal(a, "qa", 3, 0), "three"), 1, "and version 3 what it says");
+    assert_eq(_t_version_goal(a, "qa", 4, 0), 0, "a version that never was is not there");
+    var bad = _t_req(a, AGNOSTIC_METHOD_GET, _t_at(_T_DEFS, "/qa/versions/x"), "", 0);
+    assert_eq(_t_st(bad), AGNOSTIC_HTTP_UNPROCESSABLE, "a version is a number");
+    var zero = _t_req(a, AGNOSTIC_METHOD_GET, _t_at(_T_DEFS, "/qa/versions/0"), "", 0);
+    assert_eq(_t_st(zero), AGNOSTIC_HTTP_UNPROCESSABLE, "from 1");
+}
+
+fn test_the_cap_keeps_the_newest() {
+    test_group("versions/cap");
+    _t_open();
+    agnostic_definitions_set_versions_max(3);
+    var a = arena_allocator(8388608);
+    _t_create(a, "qa", "g0", 0);
+    _t_put(a, "qa", "g1", 0);
+    _t_put(a, "qa", "g2", 0);
+    _t_put(a, "qa", "g3", 0);
+    _t_put(a, "qa", "g4", 0);
+    assert_eq(_t_version_count(a, "qa", 0), 3, "⭐ three kept");
+    assert_eq(_t_version_goal(a, "qa", 1, 0), 0, "the oldest went");
+    assert_eq(_t_version_goal(a, "qa", 2, 0), 0, "and the next");
+    assert_eq(str_eq_cstr(_t_version_goal(a, "qa", 3, 0), "g2"), 1, "⭐ numbers do not move");
+    assert_eq(_t_st(_t_rollback(a, "qa", 1, 0)), HTTP_NOT_FOUND, "⭐ one past the cap cannot be reached");
+    # A cap lowered between starts takes every version below it, not one a write.
+    agnostic_definitions_set_versions_max(1);
+    _t_put(a, "qa", "g5", 0);
+    assert_eq(_t_version_count(a, "qa", 0), 1, "⭐ a lowered cap holds at the next write");
+}
+
+fn test_rollback_is_a_new_version() {
+    test_group("versions/rollback");
+    _t_open();
+    var a = arena_allocator(8388608);
+    _t_create(a, "qa", "one", 0);
+    _t_put(a, "qa", "two", 0);
+    var r = _t_rollback(a, "qa", 1, 0);
+    assert_eq(_t_st(r), HTTP_OK, "rolled back");
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(_t_b(r), AGNOSTIC_JK_ROLLED)), 1, "it says to what");
+    assert_eq(str_eq_cstr(_t_goal(a, "qa", 0), "one"), 1, "⭐ the definition says what it said");
+    assert_eq(_t_version_count(a, "qa", 0), 3, "⭐ as a new version: history only grows at the end");
+    assert_eq(str_eq_cstr(_t_version_goal(a, "qa", 2, 0), "two"), 1, "so what it replaced can be got back");
+    assert_eq(_t_st(_t_rollback(a, "qa", 2, 0)), HTTP_OK, "⭐ and a rollback can be undone");
+    assert_eq(str_eq_cstr(_t_goal(a, "qa", 0), "two"), 1, "by another");
+
+    assert_eq(_t_st(_t_rollback(a, "qa", 99, 0)), HTTP_NOT_FOUND, "a version that is not there");
+    assert_eq(_t_st(_t_rollback(a, "nobody", 1, 0)), HTTP_NOT_FOUND, "a key that is not there");
+    var extra = _t_req(a, AGNOSTIC_METHOD_POST, _t_at(_T_DEFS, "/qa/rollback"), "{\"version\":1,\"why\":\"x\"}", 0);
+    assert_eq(_t_st(extra), AGNOSTIC_HTTP_UNPROCESSABLE, "an unknown field");
+    var none = _t_req(a, AGNOSTIC_METHOD_POST, _t_at(_T_DEFS, "/qa/rollback"), "{}", 0);
+    assert_neq(_t_st(none), HTTP_OK, "no version");
+    var text = _t_req(a, AGNOSTIC_METHOD_POST, _t_at(_T_DEFS, "/qa/rollback"), "{\"version\":\"1\"}", 0);
+    assert_neq(_t_st(text), HTTP_OK, "a version in words");
+    var neg = _t_req(a, AGNOSTIC_METHOD_POST, _t_at(_T_DEFS, "/qa/rollback"), "{\"version\":0}", 0);
+    assert_eq(_t_st(neg), HTTP_BAD_REQUEST, "version 0");
+    var bad = _t_req(a, AGNOSTIC_METHOD_POST, _t_at(_T_DEFS, "/qa/rollback"), "nope", 0);
+    assert_eq(_t_st(bad), HTTP_BAD_REQUEST, "a body that is not JSON");
+}
+
+fn test_a_deleted_definition_comes_back() {
+    test_group("versions/deleted");
+    _t_open();
+    var a = arena_allocator(8388608);
+    _t_create(a, "qa", "one", 0);
+    _t_put(a, "qa", "two", 0);
+    assert_eq(_t_st(_t_req(a, AGNOSTIC_METHOD_DELETE, _t_at(_T_DEFS, "/qa"), "", 0)), HTTP_OK, "deleted");
+    assert_eq(_t_goal(a, "qa", 0), 0, "it is gone");
+    assert_eq(_t_version_count(a, "qa", 0), 2, "⭐ its past is not");
+    var vs = bayan_json_v_obj_get_by_str(_t_b(_t_versions(a, "qa", 0)), AGNOSTIC_JK_VERSIONS);
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(bayan_json_v_arr_get(vs, 0), AGNOSTIC_JK_CURRENT)), 0,
+      "and nothing is current");
+    assert_eq(_t_st(_t_rollback(a, "qa", 2, 0)), HTTP_OK, "⭐ a rollback brings it back");
+    assert_eq(str_eq_cstr(_t_goal(a, "qa", 0), "two"), 1, "as it was");
+
+    # A key taken again goes on from the old numbers, so no number means two things.
+    _t_req(a, AGNOSTIC_METHOD_DELETE, _t_at(_T_DEFS, "/qa"), "", 0);
+    _t_create(a, "qa", "three", 0);
+    assert_eq(str_eq_cstr(_t_version_goal(a, "qa", 3, 0), "three"), 1, "⭐ a number is never used twice");
+}
+
+# A definition's revision, as a Str.
+fn _t_etag(a, key, ctx) {
+    var r = _t_req(a, AGNOSTIC_METHOD_GET, _t_at(_T_DEFS, _t_at("/", key)), "", ctx);
+    return agnostic_req_str(_t_b(r), AGNOSTIC_JK_ETAG);
+}
+
+fn test_rollback_takes_if_match() {
+    test_group("versions/if-match");
+    _t_open();
+    var a = arena_allocator(8388608);
+    _t_create(a, "qa", "one", 0);
+    _t_put(a, "qa", "two", 0);
+    var ctx = agnostic_reqctx_new_a(a, 0, 0);
+    agnostic_reqctx_set_headers(ctx, 0, 0, str_from("\"0000000000000000\""), 0);
+    assert_eq(_t_st(_t_rollback(a, "qa", 1, ctx)), AGNOSTIC_HTTP_PRECONDITION_FAILED, "⭐ a stale revision is refused");
+    assert_eq(str_eq_cstr(_t_goal(a, "qa", 0), "two"), 1, "and nothing changed");
+    assert_eq(_t_version_count(a, "qa", 0), 2, "not even a version");
+    var good = agnostic_reqctx_new_a(a, 0, 0);
+    agnostic_reqctx_set_headers(good, 0, 0, _t_etag(a, "qa", 0), 0);
+    # ⭐ The store checks again under its lock: what lands after the route's look is not overwritten.
+    var d0: i64[1];
+    store64(&d0, 0);
+    assert_eq(agnostic_definitions_rollback_a(a, str_from("qa"), 1, str_from("\"0000000000000000\""), &d0),
+      AGNOSTIC_DEF_PRECONDITION, "⭐ with the write, too");
+    assert_eq(_t_st(_t_rollback(a, "qa", 1, good)), HTTP_OK, "the right one goes through");
+    _t_req(a, AGNOSTIC_METHOD_DELETE, _t_at(_T_DEFS, "/qa"), "", 0);
+    assert_eq(_t_st(_t_rollback(a, "qa", 1, good)), AGNOSTIC_HTTP_PRECONDITION_FAILED,
+      "⭐ a revision of a definition that is gone holds for nothing");
+}
+
+# ⚠ A version was accepted under the rules of its day, and rolling back runs it under today's.
+fn test_rollback_takes_the_door() {
+    test_group("versions/door");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var v = agnostic_decode_a(default_alloc(), str_from("{\"key\":\"old\",\"role\":\"r\",\"goal\":\"g\",\"complexity\":\"extreme\"}")); #skip-lint
+    var rj: i64[1];
+    store64(&rj, 0);
+    var d = agnostic_agent_def_decode_a(default_alloc(), v, 0 - 1, &rj);
+    assert_eq(agnostic_definitions_create(str_from("old"), d), AGNOSTIC_DEF_OK, "a definition from before the rule");
+    _t_put(a, "old", "fixed", 0);
+    assert_eq(_t_st(_t_rollback(a, "old", 1, 0)), AGNOSTIC_HTTP_CONFLICT, "⭐ what the door would refuse today is refused"); #skip-lint
+    assert_eq(str_eq_cstr(_t_goal(a, "old", 0), "fixed"), 1, "and nothing changed");
+}
+
+# ⚠ A definition stored before 0.4.2 has no versions, and its first replace must not lose it.
+fn test_the_row_before_versions_is_kept() {
+    test_group("versions/seed");
+    _t_open();
+    var a = arena_allocator(8388608);
+    _t_create(a, "qa", "old", 0);
+    agnostic_store_lock();
+    patra_exec(agnostic_store_db(), "DELETE FROM agnostic_definition_versions");
+    agnostic_store_unlock();
+    assert_eq(_t_version_count(a, "qa", 0), 0, "a definition from before 0.4.2");
+    _t_put(a, "qa", "new", 0);
+    assert_eq(_t_version_count(a, "qa", 0), 2, "⭐ its first replace saves what it held");
+    assert_eq(str_eq_cstr(_t_version_goal(a, "qa", 1, 0), "old"), 1, "⭐ as version 1");
+    var vs = bayan_json_v_obj_get_by_str(_t_b(_t_versions(a, "qa", 0)), AGNOSTIC_JK_VERSIONS);
+    assert_eq(bayan_json_v_obj_get_by_str(bayan_json_v_arr_get(vs, 1), AGNOSTIC_JK_SAVED_AT), 0,
+      "which does not say when, as nobody knows");
+}
+
+fn test_versions_stay_in_their_tenant() {
+    test_group("versions/tenant");
+    _t_open();
+    _t_auth_on();
+    var a = arena_allocator(8388608);
+    var acme = _t_tenant_ctx(a, "acme");
+    var glob = _t_tenant_ctx(a, "globex");
+    assert_eq(_t_st(_t_create(a, "qa", "acme-1", acme)), AGNOSTIC_HTTP_CREATED, "acme's");
+    _t_put(a, "qa", "acme-2", acme);
+    assert_eq(_t_st(_t_versions(a, "qa", glob)), HTTP_NOT_FOUND, "⭐ another tenant sees none");
+    assert_eq(_t_version_goal(a, "qa", 1, glob), 0, "⭐ nor one of them");
+    assert_eq(_t_st(_t_rollback(a, "qa", 1, glob)), HTTP_NOT_FOUND, "⭐ nor rolls it back");
+    assert_eq(str_eq_cstr(_t_goal(a, "qa", acme), "acme-2"), 1, "and it stands");
+    assert_eq(_t_st(_t_create(a, "qa", "globex-1", glob)), AGNOSTIC_HTTP_CREATED, "the same key in another tenant");
+    assert_eq(_t_version_count(a, "qa", glob), 1, "⭐ has a history of its own");
+    assert_eq(_t_version_count(a, "qa", acme), 2, "and acme's is untouched");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
+fn _t_export(a, body, ctx) { return _t_req(a, AGNOSTIC_METHOD_POST, "/api/v1/packages/export", body, ctx); }
+fn _t_import(a, path, body, ctx) { return _t_req(a, AGNOSTIC_METHOD_POST, path, body, ctx); }
+
+# The document `r`'s body as text, on the global heap, to send somewhere else.
+fn _t_doc(r) { return str_cstr(bayan_json_v_build(_t_b(r))); }
+
+fn test_a_package_goes_out_and_back() {
+    test_group("package/round-trip");
+    _t_open();
+    var a = arena_allocator(8388608);
+    _t_create(a, "one", "g1", 0);
+    _t_create(a, "two", "g2", 0);
+    _t_create(a, "three", "g3", 0);
+
+    var all = _t_export(a, "{\"name\":\"kit\"}", 0);
+    assert_eq(_t_st(all), HTTP_OK, "exported");
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(_t_b(all), AGNOSTIC_JK_TOTAL)), 3, "⭐ with no list, all of them"); #skip-lint
+    assert_eq(str_eq_cstr(agnostic_req_str(_t_b(all), AGNOSTIC_JK_VERSION), "1.0.0"), 1, "a version by default");
+    var some = _t_export(a, "{\"name\":\"kit\",\"version\":\"2.0\",\"description\":\"d\",\"definitions\":[\"two\"]}", 0); #skip-lint
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(_t_b(some), AGNOSTIC_JK_TOTAL)), 1, "⭐ or the ones named");
+    assert_eq(_t_st(_t_export(a, "{\"name\":\"kit\",\"definitions\":[\"nope\"]}", 0)), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "⭐ a key that is not stored is said");
+    assert_eq(_t_st(_t_export(a, "{}", 0)), HTTP_BAD_REQUEST, "a package has a name");
+
+    var doc = _t_doc(all);
+    agnostic_definitions_reset();
+    var back = _t_import(a, "/api/v1/packages/import", doc, 0);
+    assert_eq(_t_st(back), HTTP_OK, "imported");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(_t_b(back), AGNOSTIC_JK_CREATED)), 3, "⭐ all three");
+    assert_eq(str_eq_cstr(_t_goal(a, "two", 0), "g2"), 1, "as they were");
+    var d = agnostic_definitions_get_a(a, str_from("two"));
+    assert_eq(str_eq_cstr(agnostic_agent_def_focus(d), "edges"), 1, "⭐ with what the engine has no slot for");
+    assert_eq(agnostic_agent_def_delegation(d), 1, "⭐ both of them");
+    assert_eq(_t_version_count(a, "two", 0), 1, "⭐ and an import is a version");
+}
+
+fn test_a_package_is_all_or_none() {
+    test_group("package/whole");
+    _t_open();
+    var a = arena_allocator(8388608);
+    _t_create(a, "one", "stored", 0);
+    var path = "/api/v1/packages/import";
+    var fresh = "{\"format\":\"agnostic-package/1\",\"name\":\"k\",\"definitions\":[{\"key\":\"new\",\"role\":\"r\",\"goal\":\"g\"},{\"key\":\"one\",\"role\":\"r\",\"goal\":\"imported\"}]}"; #skip-lint
+    var clash = _t_import(a, path, fresh, 0);
+    assert_eq(_t_st(clash), AGNOSTIC_HTTP_CONFLICT, "⭐ a key already stored refuses the whole package");
+    var cs = bayan_json_v_obj_get_by_str(_t_b(clash), AGNOSTIC_JK_CONFLICTS);
+    assert_eq(bayan_json_v_arr_len(cs), 1, "and it says which");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_arr_get(cs, 0)), "one"), 1, "by name");
+    assert_eq(_t_goal(a, "new", 0), 0, "⭐ nothing went in");
+    assert_eq(str_eq_cstr(_t_goal(a, "one", 0), "stored"), 1, "and nothing changed");
+
+    var broken = "{\"format\":\"agnostic-package/1\",\"name\":\"k\",\"definitions\":[{\"key\":\"new\",\"role\":\"r\",\"goal\":\"g\"},{\"key\":\"bad key\",\"role\":\"r\",\"goal\":\"g\"}]}"; #skip-lint
+    var br = _t_import(a, _t_at(path, "?overwrite=true"), broken, 0);
+    assert_eq(_t_st(br), HTTP_BAD_REQUEST, "⭐ one bad definition refuses it");
+    assert_eq(_t_has(_t_msg(br), "definitions[1]"), 1, "⭐ and says which");
+    assert_eq(_t_goal(a, "new", 0), 0, "⭐ before anything went in");
+
+    var twice = "{\"format\":\"agnostic-package/1\",\"name\":\"k\",\"definitions\":[{\"key\":\"new\",\"role\":\"r\",\"goal\":\"g\"},{\"key\":\"new\",\"role\":\"r\",\"goal\":\"h\"}]}"; #skip-lint
+    assert_eq(_t_st(_t_import(a, path, twice, 0)), AGNOSTIC_HTTP_UNPROCESSABLE, "⭐ a key twice in one package");
+
+    var ok = _t_import(a, _t_at(path, "?overwrite=true"), fresh, 0);
+    assert_eq(_t_st(ok), HTTP_OK, "overwrite says so");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(_t_b(ok), AGNOSTIC_JK_REPLACED)), 1, "one replaced");
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(_t_b(ok), AGNOSTIC_JK_CREATED)), 1, "one created");
+    assert_eq(str_eq_cstr(_t_goal(a, "one", 0), "imported"), 1, "⭐ what it replaced");
+    assert_eq(str_eq_cstr(_t_version_goal(a, "one", 1, 0), "stored"), 1, "⭐ and that can be got back");
+
+    assert_eq(_t_st(_t_import(a, _t_at(path, "?overwrite=maybe"), fresh, 0)), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "overwrite is true or false");
+    var other = "{\"format\":\"agnostic-package/2\",\"name\":\"k\",\"definitions\":[{\"key\":\"x\",\"role\":\"r\",\"goal\":\"g\"}]}"; #skip-lint
+    assert_eq(_t_st(_t_import(a, path, other, 0)), AGNOSTIC_HTTP_UNPROCESSABLE, "⭐ a format this server does not read");
+    var empty = "{\"format\":\"agnostic-package/1\",\"name\":\"k\",\"definitions\":[]}";
+    assert_eq(_t_st(_t_import(a, path, empty, 0)), HTTP_BAD_REQUEST, "an empty package");
+    var extra = "{\"format\":\"agnostic-package/1\",\"name\":\"k\",\"definitions\":[],\"presets\":[]}";
+    assert_eq(_t_st(_t_import(a, path, extra, 0)), AGNOSTIC_HTTP_UNPROCESSABLE, "⭐ a field this form does not have");
+    assert_eq(_t_st(_t_import(a, path, "nope", 0)), HTTP_BAD_REQUEST, "a body that is not JSON");
+}
+
+fn test_a_package_stays_in_its_tenant() {
+    test_group("package/tenant");
+    _t_open();
+    _t_auth_on();
+    var a = arena_allocator(8388608);
+    var acme = _t_tenant_ctx(a, "acme");
+    var glob = _t_tenant_ctx(a, "globex");
+    _t_create(a, "qa", "acme", acme);
+    var mine = _t_export(a, "{\"name\":\"k\"}", glob);
+    assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(_t_b(mine), AGNOSTIC_JK_TOTAL)), 0, "⭐ an export holds only your own"); #skip-lint
+    assert_eq(_t_st(_t_export(a, "{\"name\":\"k\",\"definitions\":[\"qa\"]}", glob)), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "⭐ and naming another's finds nothing");
+    assert_eq(_t_st(_t_export(a, "{\"name\":\"k\",\"definitions\":[\"acme:qa\"]}", glob)), AGNOSTIC_HTTP_UNPROCESSABLE,
+      "⭐ nor does naming its row");
+    var doc = _t_doc(_t_export(a, "{\"name\":\"k\"}", acme));
+    assert_eq(_t_st(_t_import(a, "/api/v1/packages/import", doc, glob)), HTTP_OK, "⭐ an import lands in the importer's"); #skip-lint
+    assert_eq(str_eq_cstr(_t_goal(a, "qa", glob), "acme"), 1, "under its key there");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
+# `{"name":"t","team":<team>,"tasks":[…]}`, as a C string.
+fn _t_team_body(team) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"t\",\"team\":");
+    str_builder_add_cstr(sb, team);
+    str_builder_add_cstr(sb, ",\"tasks\":[{\"description\":\"look\"}]}");
+    return str_cstr(str_builder_build(sb));
+}
+
+# The agents a team became, as the plan shows them.
+fn _t_team_agents(a, team, ctx) {
+    var r = _t_req(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", _t_team_body(team), ctx);
+    if (_t_st(r) != AGNOSTIC_HTTP_ACCEPTED) { return 0; }
+    var e = agnostic_ledger_entry(agnostic_req_str(_t_b(r), AGNOSTIC_JK_CREW_ID));
+    return agnosai_crew_agents(agnostic_ledger_spec(e));
+}
+
+fn _t_post_team(a, team, ctx) {
+    return _t_req(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", _t_team_body(team), ctx);
+}
+
+fn test_a_team_becomes_agents() {
+    test_group("team/agents");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var ag = _t_team_agents(a, "{\"members\":[{\"role\":\"QA Manager & Test Orchestrator\"}]}", 0);
+    assert_neq(ag, 0, "accepted");
+    var e = vec_get(ag, 0);
+    assert_eq(str_eq_cstr(agnosai_agent_key(e), "qa-manager"), 1, "⭐ a role the library knows takes its agent");
+    assert_eq(_t_has(agnosai_agent_backstory(e), "15+ years"), 1, "with what it says");
+    assert_lt(0, vec_len(agnosai_agent_tools(e)), "and its tools");
+    assert_eq(str_eq_cstr(agnosai_agent_complexity(e), "high"), 1, "as the library has it");
+
+    var lone = _t_team_agents(a, "{\"members\":[{\"role\":\"Zeppelin Pilot\",\"context\":\"mooring\"}],\"project_context\":\"airship trials\"}", 0); #skip-lint
+    var z = vec_get(lone, 0);
+    assert_eq(str_eq_cstr(agnosai_agent_key(z), "zeppelin-pilot"), 1, "⭐ a role nothing knows is written from the role"); #skip-lint
+    assert_eq(str_eq_cstr(agnosai_agent_role(z), "Zeppelin Pilot"), 1, "and keeps it");
+    assert_eq(_t_has(agnosai_agent_goal(z), "mooring"), 1, "⭐ with its context");
+    assert_eq(_t_has(agnosai_agent_backstory(z), "airship trials"), 1, "⭐ and the project's");
+
+    # With no lead named, the first leads; named, only that one.
+    assert_eq(str_eq_cstr(agnosai_agent_complexity(z), "high"), 1, "the first member leads");
+    var two = _t_team_agents(a, "{\"members\":[{\"role\":\"Alpha Scout\"},{\"role\":\"Beta Scout\",\"lead\":true}]}", 0); #skip-lint
+    assert_eq(str_eq_cstr(agnosai_agent_complexity(vec_get(two, 0)), "medium"), 1, "⭐ a member who does not lead");
+    assert_eq(str_eq_cstr(agnosai_agent_complexity(vec_get(two, 1)), "high"), 1, "⭐ and the one who was named");
+
+    # Two members who become one agent are two agents, as a crew's keys must differ.
+    var dup = _t_team_agents(a, "{\"members\":[{\"role\":\"Alpha Scout\"},{\"role\":\"Alpha Scout\"}]}", 0);
+    assert_eq(vec_len(dup), 2, "⭐ two members, two agents");
+    assert_eq(str_eq_cstr(agnosai_agent_key(vec_get(dup, 1)), "alpha-scout-1"), 1, "⭐ under keys that differ");
+
+    # A tool alone is not a role.
+    var tool = _t_team_agents(a, "{\"members\":[{\"role\":\"Zeppelin Pilot\",\"tools\":[\"FuzzyVerificationTool\"]}]}", 0); #skip-lint
+    assert_eq(str_eq_cstr(agnosai_agent_key(vec_get(tool, 0)), "zeppelin-pilot"), 1, "⭐ one shared tool does not make a match"); #skip-lint
+    assert_eq(vec_len(agnosai_agent_tools(vec_get(tool, 0))), 1, "and the member keeps the tool it asked for");
+}
+
+fn test_a_team_prefers_what_you_stored() {
+    test_group("team/stored");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var body = "{\"key\":\"my-manager\",\"role\":\"QA Manager & Test Orchestrator\",\"goal\":\"mine\"}";
+    assert_eq(_t_st(_t_req(a, AGNOSTIC_METHOD_POST, _T_DEFS, body, 0)), AGNOSTIC_HTTP_CREATED, "stored");
+    var ag = _t_team_agents(a, "{\"members\":[{\"role\":\"QA Manager & Test Orchestrator\"}]}", 0);
+    assert_eq(str_eq_cstr(agnosai_agent_key(vec_get(ag, 0)), "my-manager"), 1, "⭐ a stored definition comes before a preset's"); #skip-lint
+}
+
+fn test_a_team_does_not_read_another_tenant() {
+    test_group("team/tenant");
+    _t_open();
+    _t_auth_on();
+    var a = arena_allocator(8388608);
+    var acme = _t_tenant_ctx(a, "acme");
+    var glob = _t_tenant_ctx(a, "globex");
+    var body = "{\"key\":\"secret-pilot\",\"role\":\"Zeppelin Pilot\",\"goal\":\"acme's secret goal\"}";
+    assert_eq(_t_st(_t_req(a, AGNOSTIC_METHOD_POST, _T_DEFS, body, acme)), AGNOSTIC_HTTP_CREATED, "acme's");
+    var mine = _t_team_agents(a, "{\"members\":[{\"role\":\"Zeppelin Pilot\"}]}", acme);
+    assert_eq(str_eq_cstr(agnosai_agent_key(vec_get(mine, 0)), "secret-pilot"), 1, "acme's team finds it");
+    var theirs = _t_team_agents(a, "{\"members\":[{\"role\":\"Zeppelin Pilot\"}]}", glob);
+    assert_eq(str_eq_cstr(agnosai_agent_key(vec_get(theirs, 0)), "zeppelin-pilot"), 1, "⭐ another tenant's does not");
+    assert_eq(_t_has(agnosai_agent_goal(vec_get(theirs, 0)), "secret"), 0, "⭐ and reads nothing of it");
+    agnostic_authn_set_mode(AGNOSTIC_AUTH_OFF);
+}
+
+fn test_a_team_is_checked() {
+    test_group("team/refused");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var both = "{\"name\":\"t\",\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\"}],\"team\":{\"members\":[{\"role\":\"x\"}]},\"tasks\":[{\"description\":\"d\"}]}"; #skip-lint
+    assert_eq(_t_st(_t_req(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", both, 0)), HTTP_BAD_REQUEST, "⭐ agents or a team, not both"); #skip-lint
+    var neither = "{\"name\":\"t\",\"tasks\":[{\"description\":\"d\"}]}";
+    assert_eq(_t_st(_t_req(a, AGNOSTIC_METHOD_POST, "/api/v1/crews", neither, 0)), HTTP_BAD_REQUEST, "⭐ and not neither"); #skip-lint
+    assert_eq(_t_st(_t_post_team(a, "{\"members\":[]}", 0)), HTTP_BAD_REQUEST, "no members");
+    assert_eq(_t_st(_t_post_team(a, "{}", 0)), HTTP_BAD_REQUEST, "no list of them");
+    assert_eq(_t_st(_t_post_team(a, "{\"members\":[{\"role\":\"\"}]}", 0)), HTTP_BAD_REQUEST, "an empty role");
+    assert_eq(_t_st(_t_post_team(a, "{\"members\":[{}]}", 0)), HTTP_BAD_REQUEST, "no role");
+    assert_eq(_t_st(_t_post_team(a, "{\"members\":[\"x\"]}", 0)), HTTP_BAD_REQUEST, "a member that is not an object");
+    assert_eq(_t_st(_t_post_team(a, "{\"members\":[{\"role\":\"x\",\"age\":1}]}", 0)), AGNOSTIC_HTTP_UNPROCESSABLE, "⭐ an unknown field on a member"); #skip-lint
+    assert_eq(_t_st(_t_post_team(a, "{\"members\":[{\"role\":\"x\"}],\"size\":1}", 0)), AGNOSTIC_HTTP_UNPROCESSABLE, "⭐ and on a team"); #skip-lint
+    assert_neq(_t_st(_t_post_team(a, "\"everyone\"", 0)), AGNOSTIC_HTTP_ACCEPTED, "a team that is not an object");
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"members\":[");
+    var i = 0;
+    while (i <= AGNOSTIC_TEAM_MAX_MEMBERS) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "{\"role\":\"x\"}");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "]}");
+    assert_eq(_t_st(_t_post_team(a, str_cstr(str_builder_build(sb)), 0)), HTTP_BAD_REQUEST, "too many");
+}
+
+fn _t_recommend(a, words) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"description\":\"");
+    str_builder_add_cstr(sb, words);
+    str_builder_add_cstr(sb, "\"}");
+    return _t_req(a, AGNOSTIC_METHOD_POST, "/api/v1/preset-recommendations", str_cstr(str_builder_build(sb)), 0);
+}
+
+fn _t_picked(a, words) { return agnostic_req_str(_t_b(_t_recommend(a, words)), AGNOSTIC_JK_PRESET); }
+
+fn test_a_recommendation() {
+    test_group("recommend/picks");
+    _t_open();
+    var a = arena_allocator(8388608);
+    assert_eq(str_eq_cstr(_t_picked(a, "regression tests for a bug"), "quality-standard"), 1, "⭐ testing");
+    assert_eq(str_eq_cstr(_t_picked(a, "refactor the backend api"), "software-engineering-standard"), 1, "development");
+    assert_eq(str_eq_cstr(_t_picked(a, "wireframe the ux"), "design-standard"), 1, "design");
+    assert_eq(str_eq_cstr(_t_picked(a, "an etl pipeline into the warehouse"), "data-engineering-standard"), 1, "data");
+    assert_eq(str_eq_cstr(_t_picked(a, "deploy to kubernetes with terraform"), "devops-standard"), 1, "operations");
+    assert_eq(str_eq_cstr(_t_picked(a, "a quick bug hunt"), "quality-lean"), 1, "⭐ a small job");
+    assert_eq(str_eq_cstr(_t_picked(a, "a thorough audit"), "quality-large"), 1, "⭐ a large one");
+    assert_eq(str_eq_cstr(_t_picked(a, "tea and biscuits"), "complete-lean"), 1, "⭐ nothing to go on");
+    assert_eq(_t_has(agnostic_req_str(_t_b(_t_recommend(a, "tea and biscuits")), AGNOSTIC_JK_REASON), "no word"), 1, "and it says so"); #skip-lint
+
+    # ⚠ At the start of a word: these are the former code's false hits.
+    assert_eq(str_eq_cstr(_t_picked(a, "a guide to the contest in the flake"), "complete-lean"), 1,
+      "⭐ 'ui' is not in 'guide', 'test' not in 'contest', 'lake' not in 'flake'");
+    assert_eq(str_eq_cstr(_t_picked(a, "TESTING"), "quality-standard"), 1, "⭐ whatever its case, and however it ends");
+
+    var r = _t_b(_t_recommend(a, "a thorough audit of the api"));
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(r, AGNOSTIC_JK_MATCHED)), 1, "⭐ it shows what it went on"); #skip-lint
+    assert_lt(0, bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(r, AGNOSTIC_JK_ALTERNATIVES)), "and what else fits");
+
+    assert_eq(_t_st(_t_req(a, AGNOSTIC_METHOD_POST, "/api/v1/preset-recommendations", "{}", 0)), HTTP_BAD_REQUEST, "no description"); #skip-lint
+    assert_eq(_t_st(_t_recommend(a, "")), HTTP_BAD_REQUEST, "an empty one");
+}
+
+# ⭐ The tables are hand-kept and the library compiled in, so nothing else holds them together.
+fn test_every_recommendation_is_in_the_library() {
+    test_group("recommend/library");
+    _t_open();
+    var a = arena_allocator(8388608);
+    var i = 0;
+    while (i < AGNOSTIC_RECOMMEND_DOMAINS) {
+        var d = _agnostic_recommend_domain(i);
+        assert_neq(agnostic_preset_find(_agnostic_recommend_name_a(a, d, "lean")), 0, "the lean team");
+        assert_neq(agnostic_preset_find(_agnostic_recommend_name_a(a, d, "standard")), 0, "the middle one");
+        assert_neq(agnostic_preset_find(_agnostic_recommend_name_a(a, d, "large")), 0, "the large one");
+        i = i + 1;
+    }
+    assert_neq(agnostic_preset_find(str_from("complete-lean")), 0, "and the one with nothing to go on");
+    assert_eq(_agnostic_recommend_domain(AGNOSTIC_RECOMMEND_DOMAINS), 0, "the table ends where it says");
+}
+
+fn main() {
+    alloc_init();
+    test_every_write_is_a_version();
+    test_the_cap_keeps_the_newest();
+    test_rollback_is_a_new_version();
+    test_a_deleted_definition_comes_back();
+    test_rollback_takes_if_match();
+    test_rollback_takes_the_door();
+    test_the_row_before_versions_is_kept();
+    test_versions_stay_in_their_tenant();
+    test_a_package_goes_out_and_back();
+    test_a_package_is_all_or_none();
+    test_a_package_stays_in_its_tenant();
+    test_a_team_becomes_agents();
+    test_a_team_prefers_what_you_stored();
+    test_a_team_does_not_read_another_tenant();
+    test_a_team_is_checked();
+    test_a_recommendation();
+    test_every_recommendation_is_in_the_library();
+    agnostic_store_close();
+    _tt_unlink_store(_T_DB);
+    return assert_summary();
+}
+
+var _agnostic_definition_library_test_exit = main();
+sys_exit_group(_agnostic_definition_library_test_exit);

@@ -1,0 +1,208 @@
+# agnostic/engine/recommend — which preset fits a description (0.4.2, ADR 0037).
+#
+# `recommend_preset` had no owner: agnostic's preset library is the canonical one, so the answer is
+# agnostic's to give. A table of words, and no model: the same words give the same answer, it costs
+# nothing, and a caller can see why (`matched`). It reads a description, not a mind, and `reason` says
+# what it went on.
+#
+# ⚠ **A word matches at the start of a word.** The former code looked for each anywhere in the text,
+# so "ui" found "build" and "guide", and "lake" found "flake". Here "test" finds "tests" and "testing"
+# and not "contest", and "ui" finds neither of those.
+#
+# ⚠ **It recommends only what the library holds.** The two tables below are hand-kept and the library
+# is compiled in, so `tests/recommend.tcyr` walks every domain and size, and a name that does not
+# resolve is never offered.
+
+# The domains, in the order a tie goes.
+var AGNOSTIC_RECOMMEND_DOMAINS = 5;
+
+# Words for domain `i`, space-free phrases joined by `|`, or 0.
+fn _agnostic_recommend_words(i): i64 {
+    if (i == 0) { return "test|qa|quality|bug|regression|security scan|performance|load test|compliance|audit"; }
+    if (i == 1) {
+        return "code|implement|build|develop|refactor|api|backend|frontend|engineer|architect|pull request|technical debt|migration"; #skip-lint
+    }
+    if (i == 2) { return "design|ux|ui|wireframe|mockup|prototype|accessibility|wcag|usability|figma|sketch|user research|a11y"; } #skip-lint
+    if (i == 3) { return "data|pipeline|etl|elt|warehouse|lake|spark|kafka|airflow|dbt|schema|analytics"; }
+    if (i == 4) { return "deploy|ci/cd|infrastructure|kubernetes|docker|monitoring|incident|sre|terraform|helm"; }
+    return 0;
+}
+
+# Domain `i`'s name.
+fn _agnostic_recommend_domain(i): i64 {
+    if (i == 0) { return "quality"; }
+    if (i == 1) { return "software-engineering"; }
+    if (i == 2) { return "design"; }
+    if (i == 3) { return "data-engineering"; }
+    if (i == 4) { return "devops"; }
+    return 0;
+}
+
+var AGNOSTIC_RECOMMEND_LARGE = "enterprise|comprehensive|full|thorough|extensive|large";
+var AGNOSTIC_RECOMMEND_LEAN  = "quick|small|simple|mvp|prototype|lean|minimal";
+
+# Whether byte `c` is part of a word.
+fn _agnostic_recommend_is_word(c): i64 {
+    if (c >= 97 && c <= 122) { return 1; }
+    if (c >= 65 && c <= 90) { return 1; }
+    if (c >= 48 && c <= 57) { return 1; }
+    return 0;
+}
+
+# Whether the `m` lowercase bytes at `w` start a word of the `n` bytes at `text`.
+fn _agnostic_recommend_found(text, n, w, m): i64 {
+    var i = 0;
+    while (i + m <= n) {
+        var starts = 1;
+        if (i > 0) {
+            if (_agnostic_recommend_is_word(load8(text + i - 1) & 255) == 1) { starts = 0; }
+        }
+        if (starts == 1) {
+            var k = 0;
+            while (k < m) {
+                var c = load8(text + i + k) & 255;
+                if (c >= 65 && c <= 90) { c = c + 32; }
+                if (c != (load8(w + k) & 255)) { break; }
+                k = k + 1;
+            }
+            if (k == m) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# How many words of the `|`-joined list `words` start a word of `description`. Each one found goes
+# on `hits`, a vec of Str in `a`, when that is not 0.
+fn _agnostic_recommend_count_a(a, description: Str, words, hits): i64 {
+    var d = str_data(description);
+    var n = str_len(description);
+    var count = 0;
+    var at = 0;
+    var len = strlen(words);
+    while (at < len) {
+        var end = at;
+        while (end < len && (load8(words + end) & 255) != 124) { end = end + 1; }
+        if (_agnostic_recommend_found(d, n, words + at, end - at) == 1) {
+            count = count + 1;
+            if (hits != 0) { vec_push_a(a, hits, str_new_a(a, words + at, end - at)); }
+        }
+        at = end + 1;
+    }
+    return count;
+}
+
+# `<domain>-<size>`, in `a`.
+fn _agnostic_recommend_name_a(a, domain, size): i64 {
+    var sb = str_builder_new_a(a);
+    if (sb == 0) { return 0; }
+    str_builder_add_cstr_a(a, sb, domain);
+    str_builder_add_cstr_a(a, sb, "-");
+    str_builder_add_cstr_a(a, sb, size);
+    return str_builder_build_a(a, sb);
+}
+
+# `{preset, reason}`, pushed on `arr` when the library holds `name`. 1 when it did.
+fn _agnostic_recommend_offer_a(a, arr, name: Str, reason: Str): i64 {
+    if (agnostic_preset_find(name) == 0) { return 0; }
+    var o = bayan_json_v_obj_new_a(a);
+    if (o == 0) { return 0; }
+    bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_PRESET, bayan_json_v_str_new_a(a, name));
+    bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_REASON, bayan_json_v_str_new_a(a, reason));
+    bayan_json_v_arr_push_a(a, arr, o);
+    return 1;
+}
+
+# The size a description reads as.
+fn _agnostic_recommend_size_a(a, description: Str): i64 {
+    if (_agnostic_recommend_count_a(a, description, AGNOSTIC_RECOMMEND_LARGE, 0) > 0) { return "large"; }
+    if (_agnostic_recommend_count_a(a, description, AGNOSTIC_RECOMMEND_LEAN, 0) > 0) { return "lean"; }
+    return "standard";
+}
+
+# What the library recommends for `description`, as JSON in `a`:
+# `{preset, domain, size, reason, matched, alternatives}`. 0 when `a` ran out.
+fn agnostic_recommend_a(a, description: Str): i64 {
+    var scores: i64[8];
+    var best = 0 - 1;
+    var best_score = 0;
+    var best_hits = 0;
+    var i = 0;
+    while (i < AGNOSTIC_RECOMMEND_DOMAINS) {
+        var hits = vec_new_a(a);
+        if (hits == 0) { return 0; }
+        var s = _agnostic_recommend_count_a(a, description, _agnostic_recommend_words(i), hits);
+        store64(&scores + i * 8, s);
+        if (s > best_score) {
+            best = i;
+            best_score = s;
+            best_hits = hits;
+        }
+        i = i + 1;
+    }
+
+    var out = bayan_json_v_obj_new_a(a);
+    var alts = bayan_json_v_arr_new_a(a);
+    var matched = bayan_json_v_arr_new_a(a);
+    if (out == 0 || alts == 0 || matched == 0) { return 0; }
+
+    if (best < 0) {
+        # Nothing to go on, and saying so: the smallest cross-functional team, and two that are not.
+        bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_PRESET, bayan_json_v_str_new_a(a, str_from_a(a, "complete-lean")));
+        bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_DOMAIN, bayan_json_v_str_new_a(a, str_from_a(a, "complete")));
+        bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_SIZE, bayan_json_v_str_new_a(a, str_from_a(a, "lean")));
+        bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_REASON, bayan_json_v_str_new_a(a,
+            str_from_a(a, "no word in the description points to a domain, so a small cross-functional team")));
+        _agnostic_recommend_offer_a(a, alts, str_from_a(a, "quality-standard"), str_from_a(a, "if this is testing"));
+        _agnostic_recommend_offer_a(a, alts, str_from_a(a, "software-engineering-standard"),
+          str_from_a(a, "if this is development"));
+        bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_MATCHED, matched);
+        bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_ALTERNATIVES, alts);
+        return out;
+    }
+
+    var size = _agnostic_recommend_size_a(a, description);
+    var domain = _agnostic_recommend_domain(best);
+    var name = _agnostic_recommend_name_a(a, domain, size);
+    bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_PRESET, bayan_json_v_str_new_a(a, name));
+    bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_DOMAIN, bayan_json_v_str_new_a(a, str_from_a(a, domain)));
+    bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_SIZE, bayan_json_v_str_new_a(a, str_from_a(a, size)));
+    var why = str_builder_new_a(a);
+    if (why == 0) { return 0; }
+    str_builder_add_cstr_a(a, why, "the description reads as ");
+    str_builder_add_cstr_a(a, why, domain);
+    str_builder_add_cstr_a(a, why, " work: ");
+    str_builder_add_int_a(a, why, best_score);
+    if (best_score == 1) { str_builder_add_cstr_a(a, why, " word matched"); }
+    else { str_builder_add_cstr_a(a, why, " words matched"); }
+    bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_REASON, bayan_json_v_str_new_a(a, str_builder_build_a(a, why)));
+
+    i = 0;
+    while (i < vec_len(best_hits)) {
+        bayan_json_v_arr_push_a(a, matched, bayan_json_v_str_new_a(a, vec_get(best_hits, i)));
+        i = i + 1;
+    }
+
+    # The same team at the middle size, then the other domains it also reads as, at most three.
+    var offered = 0;
+    if (str_eq_cstr(str_from_a(a, size), "standard") == 0) {
+        offered = offered + _agnostic_recommend_offer_a(a, alts, _agnostic_recommend_name_a(a, domain, "standard"),
+          str_from_a(a, "the middle size of the same team"));
+    }
+    i = 0;
+    while (i < AGNOSTIC_RECOMMEND_DOMAINS && offered < 3) {
+        if (i != best && load64(&scores + i * 8) > 0) {
+            var also = _agnostic_recommend_domain(i);
+            var rs = str_builder_new_a(a);
+            if (rs == 0) { return 0; }
+            str_builder_add_cstr_a(a, rs, "the description also reads as ");
+            str_builder_add_cstr_a(a, rs, also);
+            offered = offered + _agnostic_recommend_offer_a(a, alts, _agnostic_recommend_name_a(a, also, size),
+              str_builder_build_a(a, rs));
+        }
+        i = i + 1;
+    }
+    bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_MATCHED, matched);
+    bayan_json_v_obj_set_a(a, out, AGNOSTIC_JK_ALTERNATIVES, alts);
+    return out;
+}

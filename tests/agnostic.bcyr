@@ -772,6 +772,28 @@ fn _agnostic_bench_operations(): i64 {
     bench_batch_stop(bg, 200000);
     bench_report(bg);
 
+    # A crew's way out (0.4.2, ADR 0034): the bracket every request now takes.
+    var bb = bench_new("ledger_bracket");
+    bench_batch_start(bb);
+    i = 0;
+    while (i < 2000000) {
+        agnostic_ledger_read_end(agnostic_ledger_read_begin());
+        i = i + 1;
+    }
+    bench_batch_stop(bb, 2000000);
+    bench_report(bb);
+
+    var bre = bench_new("recommend_route");
+    bench_batch_start(bre);
+    i = 0;
+    while (i < 20000) {
+        if (agnostic_route_preset_recommend_a(a, str_from_a(a, "{\"description\":\"a thorough regression audit of the api\"}")) != 0) { n = n + 1; } #skip-lint
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(bre, 20000);
+    bench_report(bre);
+
     var bl = bench_new("tools_route");
     bench_batch_start(bl);
     i = 0;
@@ -782,6 +804,22 @@ fn _agnostic_bench_operations(): i64 {
     }
     bench_batch_stop(bl, 20000);
     bench_report(bl);
+
+    # Every preset's agents are candidates, which is the whole cost of a team.
+    agnostic_presets_init();
+    var bte = bench_new("team_assemble");
+    var team_body = "{\"members\":[{\"role\":\"QA Manager\"},{\"role\":\"Zeppelin Pilot\"},{\"role\":\"Senior QA Engineer\"}]}"; #skip-lint
+    var team_rej: i64[1];
+    bench_batch_start(bte);
+    i = 0;
+    while (i < 500) {
+        store64(&team_rej, 0);
+        if (agnostic_crew_team_agents_a(a, agnostic_decode_a(a, str_from_a(a, team_body)), str_from_a(a, "_"), &team_rej) != 0) { n = n + 1; } #skip-lint
+        reset_via(a);
+        i = i + 1;
+    }
+    bench_batch_stop(bte, 500);
+    bench_report(bte);
     return n;
 }
 

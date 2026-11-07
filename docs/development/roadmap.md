@@ -48,19 +48,13 @@ The tools wait on agnosai 2.3.x: F1, and B33. M6 says "preset-declared intent", 
 only a class name and a `focus`, so each tool is designed for agnostic as it is written.
 
 - [ ] **M6**: every one of the 38 names resolved, written or struck, with a miss an error.
-- [ ] **Hold a tool to the crew's target.** agnosai 2.2.4 has the gate (its ADR 025): a consumer's
+- [ ] **Hold a tool to the crew's target.** agnosai has the gate since 2.2.4 (its ADR 025): a consumer's
   `agnosai_tool_gate_new`, asked of every call and every redirect hop, can narrow what a tool reaches and
   admit a declared private host, and `agnosai_task_result_record_tool_call` keeps what a tool measured on
   its task. Nothing here sets a gate yet.
 - [ ] **The tool-registry seam** (`handoff.md` §8), decided with F1.
 - [ ] **The reviewer preset**, once F9 hands a dependent task its dependencies' outputs (agnosai 2.4.x).
-- [ ] **The engine features with no route** (G10), none of which waits on agnosai:
-  - definition versions and rollback, on a history table here, since agnosai's store is in memory;
-  - package export and import;
-  - the `team` crew spec;
-  - `recommend_preset`. Its owner is agnostic, whose preset library is canonical (Settled decisions,
-    2026-08-20).
-  - **Fleet routes wait for a fleet** (Settled decisions, 2026-11-06).
+- [ ] **Fleet routes wait for a fleet** (Settled decisions, 2026-11-06).
 - [ ] **Tool upload** (G10), once it has a sandbox.
 - [ ] **The model picker** (M9), on B33.
 
@@ -323,6 +317,10 @@ owed for 1.0.0:
   (ADR 0009), but it is still a one-second poll. Needs a transport that does not hold a pooled
   worker per watcher.
 - [ ] M8's reports, once they exist, as views or downloads from the shell.
+- [ ] **A definition's versions in the Library:** read one, compare it with what is current, and roll
+  back, with the ETag as `If-Match`. The routes are there since 0.4.2 and nothing in the shell calls them.
+- [ ] **Assemble a team in Crews, and ask which preset fits.** The same: a body field and a route since
+  0.4.2, with no view.
 - [ ] **"Which crew needs me?"** Once agnosai F3 ships, show `awaiting_approval` as a crew
   status and in its events. Roll it up as a badge from task to crew to tenant in Crews and
   Swarm Command, with an approve/reject action behind a permission. This is the HITL surface
@@ -507,15 +505,8 @@ Each is fixed at its source and reaches agnostic by a re-pin. Filings are in eac
   one page since 0.2.3 and patra still scans and sorts the tenant's history first: 55 ms a request at
   10,000 crews, under the store lock, and it grows with the history. A second index on a table, or a
   composite one on (`scope`, `submitted`), ends it. Filed with patra.
-- [ ] → **agnosai**: a task with an `output_schema` is not held to it. Its last answer is never checked,
-  so a task that never meets the shape completes, and the model first sees the schema after it has
-  failed. agnostic reports `output_valid` meanwhile, and its documentation says to describe the shape in
-  `expected_output`. Filed with agnosai (`2026-11-06-agnostic-output-schema-is-not-held-to.md`).
-- [ ] → **agnosai**: what a crew keeps after it is forgotten (audit P2). 11,080 B a crew for life, about 11 GB
-  per million crews, plus 1.6× its output. Needs a crew-scoped arena, and a release call beside
-  `forget_crew`, because agnostic reads a crew's spec and results after forgetting it. agnostic gave back
-  its own part, the event ring, at 0.3.1. Filed with agnosai
-  (`2026-11-06-agnostic-a-forgotten-crew-keeps-its-memory.md`).
+- [ ] → **agnosai**: an `_a` form of `agnosai_team_member_new`. Without one, `src/engine/team.cyr` builds
+  the record from its enum offsets, so that a team crew keeps nothing on the global heap (ADR 0037).
 - [ ] → **bote**, through agnosai's tool registry (F1): the client half of MCP, so a crew's agents
   can call tools on external MCP servers. bote is the ecosystem's MCP layer (Settled decisions,
   2026-10-07). At 3.3.16 it is the server half — dispatch, six transports, sessions — plus a

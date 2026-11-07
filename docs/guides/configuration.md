@@ -31,6 +31,7 @@ for about 70 KB/s.
 | `AGNOSTIC_JWT_SECRET` | random per process | At least 32 bytes, or the server refuses to start. It is read and never logged. Unset, a restart ends every session. Set it, and tokens survive a restart. Anyone who holds it can forge a token for any user. Changing it ends every session. |
 | `AGNOSTIC_TRUSTED_PROXIES` | none | Who may say who the client is: IPv4 addresses and networks, comma-separated, up to 32. Unset, `X-Forwarded-For` is ignored. `/0` and host bits under a mask are refused. See [below](#behind-a-reverse-proxy). |
 | `AGNOSTIC_TARGET_HOSTS` | none | The hosts a crew's `target` may name, comma-separated, up to 64. Unset, every target is refused, and a crew with no target is unaffected. See [below](#what-crews-may-test). |
+| `AGNOSTIC_MAX_VERSIONS` | `50` | How many versions of each agent definition are kept, 1 to 1000. Anything else refuses to start. Lowering it takes the older ones at each definition's next write. |
 | `AGNOSTIC_GPU_TOOLS` | `off` | `off` or `on`. `on` runs vendor tools such as `nvidia-smi` once at start, and is how an NVIDIA GPU is seen. Off, nothing is spawned. See [below](#what-the-gpu-route-says). |
 | `AGNOSTIC_METRICS_TOKEN` | none | A scraper's bearer token, at least 32 bytes. It opens `GET /api/v1/metrics` and nothing else. Unset, only a super administrator can read it. It is read and never logged. |
 | `AGNOSTIC_TENANT_RATE_LIMIT` | `0` | Crews one tenant may submit in a minute, unless its own limit says otherwise. 0 is no limit. |

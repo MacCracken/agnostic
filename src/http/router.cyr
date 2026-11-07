@@ -92,6 +92,12 @@ enum AgnosticRouteId {
     AGNOSTIC_ROUTE_METRICS       = 45;   # 0.3.1
     AGNOSTIC_ROUTE_TOOLS         = 46;   # 0.4.0
     AGNOSTIC_ROUTE_GPU           = 47;   # 0.4.1
+    AGNOSTIC_ROUTE_DEF_VERSIONS  = 48;   # 0.4.2
+    AGNOSTIC_ROUTE_DEF_VERSION   = 49;   # 0.4.2
+    AGNOSTIC_ROUTE_DEF_ROLLBACK  = 50;   # 0.4.2
+    AGNOSTIC_ROUTE_PKG_EXPORT    = 51;   # 0.4.2
+    AGNOSTIC_ROUTE_PKG_IMPORT    = 52;   # 0.4.2
+    AGNOSTIC_ROUTE_PRESET_RECOMMEND = 53; # 0.4.2
 }
 
 var AGNOSTIC_METHOD_NONE   = 0;
@@ -327,7 +333,7 @@ enum AgnosticRouteRowOff {
     AGNOSTIC_RR_PUT         = 24;
     AGNOSTIC_RR_DELETE      = 32;
     AGNOSTIC_RR_SIZE        = 40;
-    AGNOSTIC_RR_TABLE_BYTES = 1920; # the table's storage: 48 rows, 33 used
+    AGNOSTIC_RR_TABLE_BYTES = 1920; # the table's storage: 48 rows, 42 used
 }
 
 # The rows, AGNOSTIC_RR_SIZE bytes each, in resolution order.
@@ -396,6 +402,8 @@ fn _agnostic_route_table_build(): i64 {
     # not. Creating a preset is a durable object, which is M4's.
     n = _agnostic_route_add(n, "/api/v1/presets", AGNOSTIC_ROUTE_PRESET_LIST, none, none, none);
     n = _agnostic_route_add(n, "/api/v1/presets/:name", AGNOSTIC_ROUTE_PRESET_GET, none, none, none);
+    # A POST with nothing to create: a description can run to 10,000 characters, and a query cannot.
+    n = _agnostic_route_add(n, "/api/v1/preset-recommendations", none, AGNOSTIC_ROUTE_PRESET_RECOMMEND, none, none);
     n = _agnostic_route_add(n, "/api/v1/tools", AGNOSTIC_ROUTE_TOOLS, none, none, none);
     n = _agnostic_route_add(n, "/api/v1/gpu", AGNOSTIC_ROUTE_GPU, none, none, none);
 
@@ -405,6 +413,16 @@ fn _agnostic_route_table_build(): i64 {
       AGNOSTIC_ROUTE_DEF_LIST, AGNOSTIC_ROUTE_DEF_CREATE, none, none);
     n = _agnostic_route_add(n, "/api/v1/agents/definitions/:key",
       AGNOSTIC_ROUTE_DEF_GET, none, AGNOSTIC_ROUTE_DEF_REPLACE, AGNOSTIC_ROUTE_DEF_DELETE);
+    # What a definition has been (0.4.2). Every write is a version, so nothing here saves one.
+    n = _agnostic_route_add(n,
+      "/api/v1/agents/definitions/:key/versions", AGNOSTIC_ROUTE_DEF_VERSIONS, none, none, none);
+    n = _agnostic_route_add(n,
+      "/api/v1/agents/definitions/:key/versions/:n", AGNOSTIC_ROUTE_DEF_VERSION, none, none, none);
+    n = _agnostic_route_add(n,
+      "/api/v1/agents/definitions/:key/rollback", none, AGNOSTIC_ROUTE_DEF_ROLLBACK, none, none);
+    # A tenant's definitions as one document (0.4.2). Export is a POST for its list of keys.
+    n = _agnostic_route_add(n, "/api/v1/packages/export", none, AGNOSTIC_ROUTE_PKG_EXPORT, none, none);
+    n = _agnostic_route_add(n, "/api/v1/packages/import", none, AGNOSTIC_ROUTE_PKG_IMPORT, none, none);
 
     # The audit trail (M4), read-only. Nothing writes it over HTTP — entries come
     # from the operations they record, never from a client. Its newest entries
@@ -736,6 +754,19 @@ fn agnostic_route_dispatch_a(a, method, path: Str, body: Str, max_body, ctx): i6
     if (id == AGNOSTIC_ROUTE_DEF_DELETE) {
         return agnostic_route_definition_delete_a(a, agnostic_route_match_param(m), ctx);
     }
+    if (id == AGNOSTIC_ROUTE_DEF_VERSIONS) {
+        return agnostic_route_definition_versions_a(a, agnostic_route_match_param(m), ctx);
+    }
+    if (id == AGNOSTIC_ROUTE_DEF_VERSION) {
+        return agnostic_route_definition_version_a(a, agnostic_route_match_param(m),
+          agnostic_route_match_param2(m), ctx);
+    }
+    if (id == AGNOSTIC_ROUTE_DEF_ROLLBACK) {
+        return agnostic_route_definition_rollback_a(a, agnostic_route_match_param(m), body, ctx);
+    }
+    if (id == AGNOSTIC_ROUTE_PKG_EXPORT) { return agnostic_route_package_export_a(a, body, ctx); }
+    if (id == AGNOSTIC_ROUTE_PKG_IMPORT) { return agnostic_route_package_import_a(a, path, body, ctx); }
+    if (id == AGNOSTIC_ROUTE_PRESET_RECOMMEND) { return agnostic_route_preset_recommend_a(a, body); }
 
     if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return agnostic_route_login_a(a, body, ctx); }
 

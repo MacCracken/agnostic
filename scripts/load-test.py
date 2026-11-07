@@ -5,7 +5,7 @@ WHAT IT GUARDS. A suite runs one thread with no store contention, so it cannot s
 does at 200 crews a second. The first version of ADR 0022's fix passed every suite and lost most of
 its crews under this load, and only a real server with concurrent clients showed it.
 
-Seven steps, the first four of which have lost crews before:
+Eight steps, the first four of which have lost crews before:
 
   1. a burst from `--clients` clients, past the engine's registry of 1,000, none of it polled;
   2. every crew read back, while the outcome writes are still behind;
@@ -17,8 +17,12 @@ Seven steps, the first four of which have lost crews before:
   6. the same clients against a tenant cap, where a crew can end before its submit returns. A place
      not given back shows up as a tenant refused for crews it no longer has.
   7. crews with a target of their own, a stored agent and a shape, polled as they end and read back
-     after a restart: each must say its own target and its `output_valid`, whichever thread read the
-     shape first, and a placeholder crew ending under a millisecond must not lose its target.
+     after a restart: each must say its own target and that a placeholder has no `output_valid`, and a
+     placeholder crew ending under a millisecond must not lose its target;
+  8. readers aimed at the crews about to be evicted, while writers push through the ledger's cap, so
+     that crews are given back and their arenas reused under the reads (ADR 0034). A crew must say
+     only its own words: a read of a released arena is another crew's output, or a crash. The memory
+     the process holds must stop growing, which is audit P2's measurement from outside.
 
 The second burst is there because reading the first takes long enough for the writes to catch up,
 and a stop with nothing outstanding proves nothing. A crew that reads `interrupted` after the
@@ -311,7 +315,7 @@ def step_six(args, work, bad):
 
 
 def aimed_crew(n):
-    """Step 7's crew: a target only it has, a stored agent, and a shape a placeholder answer fails."""
+    """Step 7's crew: a target only it has, a stored agent, and a shape a placeholder is not held to."""
     return json.dumps({
         "name": f"aimed-{n}",
         "target": {"url": f"https://sut.example/crew-{n}"},
@@ -328,8 +332,8 @@ def aimed_fault(crew, n, text):
     if doc.get("target", {}).get("url") != f"https://sut.example/crew-{n}":
         return f"{crew} says it ran against {doc.get('target')}"
     results = doc.get("results", [])
-    if len(results) != 1 or results[0].get("output_valid") is not False:
-        return f"{crew} results say {[r.get('output_valid') for r in results]}"
+    if len(results) != 1 or "output_valid" in results[0]:
+        return f"{crew} judged a placeholder: {[r.get('output_valid') for r in results]}"
     return None
 
 
@@ -399,6 +403,137 @@ def read_aimed(port, known, settle_s):
     return faults
 
 
+def wordy_crew(n, tasks=12):
+    """Step 8's crew. Its words are its own, so a read of anything else's memory cannot pass."""
+    return json.dumps({
+        "name": f"wordy-{n}",
+        "agents": [{"key": "a", "role": "r", "goal": "g"}],
+        "tasks": [{"description": f"wordy-{n}-task-{i}"} for i in range(tasks)],
+    })
+
+
+def wordy_fault(n, path, text):
+    """What is wrong with the answer `text` to reading crew `n` at `path`, or None."""
+    doc = json.loads(text)
+    mine = f"wordy-{n}"
+    if path == "plan":
+        said = [t.get("description") for t in doc.get("tasks", [])]
+        if said and said != [f"{mine}-task-{i}" for i in range(len(said))]:
+            return f"{mine}'s plan says {said[:2]}"
+    elif path == "events":
+        for event in doc.get("events", []):
+            if event["type"] == "crew_started" and event["data"]["name"] != mine:
+                return f"{mine}'s events name {event['data']['name']}"
+    else:
+        if doc.get("name") != mine:
+            return f"{mine} is called {doc.get('name')}"
+        for result in doc.get("results", []):
+            if not result.get("output", "").startswith(mine + "-"):
+                return f"{mine} answered {result.get('output')!r}"
+    return None
+
+
+def resident_kb(pid):
+    with open(f"/proc/{pid}/status", encoding="ascii") as status:
+        return int(re.search(r"VmRSS:\s+(\d+)", status.read()).group(1))
+
+
+def release_race(port, total, clients, pid):
+    """Step 8. The reads, every fault, and the resident memory as the burst went on: (crews, KiB)."""
+    known, lock, taken, done = [], threading.Lock(), [0], threading.Event()
+    reads, faults, resident, pause = [0], [], [], [0.0]
+
+    def pacer():
+        """Hold the writers to the store. A backlog of outcomes keeps crews in the ledger, whose
+        arenas are in use and not a leak, and would hide the one thing this step measures. Writers
+        slow and never stop, because only a submit evicts."""
+        while not done.is_set():
+            held = metric(port, "agnostic_ledger_crews") or 0
+            pause[0] = max(0, held - 1200) * 0.002
+            time.sleep(0.1)
+
+    def writer():
+        while True:
+            with lock:
+                if taken[0] >= total:
+                    return
+                taken[0] += 1
+                n = taken[0]
+            time.sleep(pause[0])
+            status, text = request(port, "POST", "/api/v1/crews", wordy_crew(n))
+            if status == 202:
+                with lock:
+                    known.append((json.loads(text)["crew_id"], n))
+                    if len(known) % 500 == 0:
+                        resident.append((len(known), resident_kb(pid)))
+            elif status != 429:
+                with lock:
+                    faults.append(f"a submit answered {status}")
+
+    def reader():
+        rng = random.Random()
+        while not done.is_set():
+            with lock:
+                held = len(known)
+                if held < 1024:
+                    continue
+                # The ledger keeps 768 to 1,024 crews, so these are the ones about to go.
+                crew, n = known[held - rng.randrange(700, 1100)]
+            path = rng.choice(["", "events", "plan"])
+            status, text = request(port, "GET", f"/api/v1/crews/{crew}" + (f"/{path}" if path else ""))
+            if status not in (200, 404):
+                with lock:
+                    faults.append(f"reading {crew}/{path} answered {status}")
+                continue
+            fault = wordy_fault(n, path, text) if status == 200 else None
+            with lock:
+                reads[0] += 1 if status == 200 else 0
+                if fault:
+                    faults.append(fault)
+
+    writers = [threading.Thread(target=writer) for _ in range(clients)]
+    others = [threading.Thread(target=reader) for _ in range(clients)] + [threading.Thread(target=pacer)]
+    for t in writers + others:
+        t.start()
+    for t in writers:
+        t.join()
+    done.set()
+    for t in others:
+        t.join()
+    return reads[0], faults, resident
+
+
+def step_eight(args, work, bad):
+    server = start(args.binary, work, args.port, "release.log", db="release")
+    try:
+        # Long enough for the pool to settle: a Raspberry Pi 4 still reads 2.8 KB a crew at 5,000.
+        total = max(args.crews, 9000)
+        reads, faults, resident = release_race(args.port, total, args.clients, server.pid)
+        print(f"{reads} reads of crews about to go, beside {total} crews and their arenas: {len(faults)} faults")
+        if faults:
+            bad.append(f"crews being given back: {faults[:3]}")
+        if reads == 0:
+            bad.append("no read reached a crew about to go")
+        # Past the ledger, its limbo and the first arenas. What is left grows only with the audit
+        # trail and the store's cache, so a crew kept for life shows at once: it was 11 KB and more.
+        settled = [r for r in resident if r[0] >= max(3000, total // 2)]
+        if len(settled) >= 2:
+            crews = settled[-1][0] - settled[0][0]
+            per = (settled[-1][1] - settled[0][1]) * 1024 // crews
+            print(f"resident {settled[0][1]} KiB at {settled[0][0]} crews, {settled[-1][1]} KiB at "
+                  f"{settled[-1][0]}: {per} B a crew")
+            print("  by crews: " + " ".join(f"{n}:{kib // 1024}M" for n, kib in resident[::2]))
+            if per > 2048:
+                bad.append(f"{per} B a crew stays resident")
+        server.terminate()
+        code = server.wait(300)
+        if code != 0:
+            bad.append(f"exit {code} after the release race")
+    finally:
+        if server.poll() is None:
+            server.kill()
+
+
 def step_seven(args, work, bad):
     hosts = {"AGNOSTIC_TARGET_HOSTS": "sut.example"}
     server = start(args.binary, work, args.port, "aimed.log", db="aimed", **hosts)
@@ -443,7 +578,7 @@ def main():
     parser.add_argument("--crews", type=int, default=6000)
     parser.add_argument("--clients", type=int, default=16)
     parser.add_argument("--port", type=int, default=18732)
-    parser.add_argument("--steps", default="1-7")
+    parser.add_argument("--steps", default="1-8")
     args = parser.parse_args()
     steps = wanted(args.steps)
 
@@ -458,6 +593,8 @@ def main():
             step_six(args, work, bad)
         if 7 in steps:
             step_seven(args, work, bad)
+        if 8 in steps:
+            step_eight(args, work, bad)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

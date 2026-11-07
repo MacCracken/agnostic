@@ -13,7 +13,7 @@ file (`AGNOSTIC_AUDIT_PATH`). Everything else is in memory and is gone.
 
 | State | Where it lives | After a restart |
 |---|---|---|
-| Agent definitions, users, API keys, tenants, settings and plugin switches, plugin documents | patra | Survive. |
+| Agent definitions and their versions, users, API keys, tenants, settings and plugin switches, plugin documents | patra | Survive. |
 | JWT signing secret | Memory, random at mount (`agnostic_serve_mount`) | Gone. Every token must be issued again, while API keys keep working. |
 | Login rate buckets | Memory (`src/auth/ratelimit.cyr`) | Gone. Every bucket starts empty. |
 | A tenant's crews-a-minute bucket and its places | Memory (`src/auth/tenantlimit.cyr`, 0.3.1) | Gone. Buckets start full, and places at 0, which is right: the crews that held them read `interrupted`. |

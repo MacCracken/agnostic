@@ -313,11 +313,11 @@ test('a crew\'s target is shown, a task\'s own beside it, and so is an answer ou
 
   Object.assign(fake.docs.get(id), { status: 'completed', results: [
     { task_id: 't-a', status: 'completed', output: '{}', output_valid: true },
-    { task_id: 't-b', status: 'completed', output: 'prose', output_valid: false }] });
+    { task_id: 't-b', status: 'failed', output: 'prose', output_valid: false }] });
   fake.status.set(id, 'completed');
   await tick(30);
   assert.equal(d.tasks[0].outputValid, true);
-  assert.equal(d.tasks[1].outputValid, false, 'completed, and not in the shape it declared');
+  assert.equal(d.tasks[1].outputValid, false, 'failed, because it never met the shape it declared');
   assert.equal(d.tasks[0].status, 'completed');
 
   const none = fake.addCrew(2, 'completed');

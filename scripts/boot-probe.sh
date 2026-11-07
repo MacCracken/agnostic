@@ -16,8 +16,11 @@ WORK="$(mktemp -d)"
 BASE="http://127.0.0.1:${PORT}"
 PID=""
 
+GATEWAY=""
+
 cleanup() {
   [ -n "$PID" ] && kill -KILL "$PID" 2>/dev/null
+  [ -n "$GATEWAY" ] && kill -KILL "$GATEWAY" 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -126,6 +129,59 @@ grep -q "$CREW" "$WORK/body" || fail "the listing does not hold the stored crew"
 expect 200 "GET /api/v1/audit" "$BASE/api/v1/audit"
 grep -q '"intact"' "$WORK/body" || fail "the audit chain is not intact: $(head -c 200 "$WORK/body")"
 stop
+
+# ⭐ A live crew. Nothing else here runs one: with no gateway the engine takes its placeholder path,
+# and checks nothing (ADR 0033).
+GATEWAY_PORT=$((PORT + 1))
+python3 "$(dirname "$0")/fake-gateway.py" "$GATEWAY_PORT" & GATEWAY=$!
+AGNOSTIC_LLM_URL="http://127.0.0.1:$GATEWAY_PORT" start live live
+wait_up
+
+# live_crew <what the task says> <rest of the crew>: its document, in $WORK/body, once it has ended.
+live_crew() {
+  local shape='"output_schema":{"type":"object","required":["verdict"]}'
+  local body="{\"name\":\"live\",\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\"}],$2}"
+  body="${body//SHAPE/$shape}"
+  body="${body//SAY/$1}"
+  expect 202 "a live crew: $1" -X POST -H 'Content-Type: application/json' -d "$body" "$BASE/api/v1/crews" > /dev/null
+  local id
+  id="$(sed -E 's/.*"crew_id":"([0-9a-f-]+)".*/\1/' "$WORK/body")"
+  local i=0
+  while :; do
+    expect 200 "the live crew" "$BASE/api/v1/crews/$id" > /dev/null
+    grep -qE '"status":"(pending|running)","task_count"' "$WORK/body" || break
+    [ "$i" -lt 100 ] || fail "a live crew did not end within 10 s"
+    sleep 0.1
+    i=$((i + 1))
+  done
+}
+
+ONE='"tasks":[{"description":"SAY",SHAPE}]'
+live_crew say-prose "$ONE"
+grep -q '"status":"failed","task_count"' "$WORK/body" || fail "a task that never met its shape did not fail: $(head -c 300 "$WORK/body")"
+grep -q '"output_valid":false' "$WORK/body" || fail "and does not say so: $(head -c 300 "$WORK/body")"
+grep -q 'output failed validation' "$WORK/body" || fail "and does not say why: $(head -c 300 "$WORK/body")"
+grep -q '"total_tokens":45' "$WORK/body" || fail "all three calls were not billed: $(head -c 400 "$WORK/body")"
+echo "  ok: a task that never met its shape failed, says so, and billed all three calls"
+
+live_crew say-fenced "$ONE"
+grep -q '"status":"completed","task_count"' "$WORK/body" || fail "a fenced answer did not pass: $(head -c 300 "$WORK/body")"
+grep -q '"output_valid":true' "$WORK/body" || fail "and does not say so: $(head -c 300 "$WORK/body")"
+grep -q '```' "$WORK/body" && fail "the fence reached the output: $(head -c 300 "$WORK/body")"
+echo "  ok: a fenced answer passed, and its output is the block alone"
+
+live_crew say-late "$ONE"
+grep -q '"output_valid":true' "$WORK/body" || fail "an answer that came right was not taken: $(head -c 300 "$WORK/body")"
+grep -q '"total_tokens":30' "$WORK/body" || fail "the retry was not billed: $(head -c 400 "$WORK/body")"
+echo "  ok: an answer that came right on the retry passed, and billed both calls"
+
+live_crew say-prose '"process":"dag","tasks":[{"description":"SAY",SHAPE},{"description":"after","dependencies":[0]}]'
+grep -q '"status":"failed","task_count"' "$WORK/body" || fail "a DAG went on past a shape: $(head -c 300 "$WORK/body")"
+grep -q '"output":"after"' "$WORK/body" && fail "a dependent task ran on an answer that failed"
+echo "  ok: a task that depends on one that failed its shape does not run"
+stop
+kill "$GATEWAY" 2>/dev/null
+wait "$GATEWAY" 2>/dev/null
 
 # Authentication on: what a signing secret does across a restart, which no suite can see.
 SECRET_A=0123456789abcdef0123456789abcdef
@@ -396,8 +452,8 @@ until [ "$(status_of -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/crews/$AIME
   read -r -t 0.1 _ < <(tail -f /dev/null) || true
 done
 grep -q '"target":{"url":"https://sut.example/app"}' "$WORK/body" || fail "the outcome does not say what the crew ran against"
-grep -q '"output_valid":false' "$WORK/body" || fail "a placeholder answer was not reported out of shape"
-echo "  ok: the outcome says what it ran against, and that the answer is out of shape"
+grep -q '"output_valid"' "$WORK/body" && fail "a placeholder answer was judged: no model gave it"
+echo "  ok: the outcome says what it ran against, and judges no placeholder"
 expect 200 "the tools" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/tools"
 grep -q '"unresolved":36' "$WORK/body" || fail "the gate's number is not on the wire"
 grep -q '"crews_call_tools":false' "$WORK/body" || fail "the tools route does not say no crew calls them"

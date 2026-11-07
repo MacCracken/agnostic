@@ -11,7 +11,7 @@
 #   4. A crew can name a stored definition, in its tenant only, and runs what it said when the crew
 #      was accepted (ADR 0030).
 #   5. `output_schema` takes what agnosai checks and nothing it would ignore, and `output_valid` says
-#      what agnosai's `completed` does not (ADR 0031).
+#      what agnosai found (ADRs 0031 and 0033).
 #   6. `GET /api/v1/tools` says what resolves, and that no crew calls any of it yet.
 include "src/app.cyr"
 include "tests/support/tmp.cyr"
@@ -613,17 +613,19 @@ fn test_output_schema_door() {
     assert_eq(agnosai_task_output_schema(vec_get(agnosai_crew_tasks(agnostic_ledger_spec(
               agnostic_ledger_entry(_t_id(off)))), 0)), 0, "a task that declares none has none");
 
-    # A placeholder run answers with the task's own words, which are not JSON.
+    # A placeholder run echoes the task's own words, and the engine checks nothing.
     var done = _t_end(a, id, 0);
     var res = bayan_json_v_arr_get(bayan_json_v_obj_get_by_str(done, AGNOSTIC_JK_RESULTS), 0);
-    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(res, AGNOSTIC_JK_OUTPUT_VALID)), 0,
-      "⭐ a task that did not meet its shape says so, though the crew reads `completed`");
+    assert_eq(bayan_json_v_obj_get_by_str(res, AGNOSTIC_JK_OUTPUT_VALID), 0,
+      "⭐ a placeholder run is not judged: no model answered, and nothing was checked");
     assert_eq(str_eq_cstr(agnostic_req_str(done, AGNOSTIC_JK_STATUS), "completed"), 1,
-      "as it does: that is agnosai's word");
+      "and it completes, as a placeholder does");
 }
 
-# A crew entry with one task of each sort, holding `results`, and the JSON its document renders.
-fn _t_checked(a, id, output, status, schema_json) {
+# A finished crew entry that ran under `mode`, whose one task declared `schema_json` (0 for none) and
+# ended `status`. `attempts` is how many answers the engine checked and refused, 0 for none. Returns
+# the document it renders.
+fn _t_checked(a, id, mode, status, attempts, schema_json) {
     var spec = agnosai_crew_new(str_from("c"));
     var t = agnosai_task_new(str_from("t"));
     if (schema_json != 0) {
@@ -632,10 +634,15 @@ fn _t_checked(a, id, output, status, schema_json) {
     var tasks = vec_new();
     vec_push(tasks, t);
     agnosai_crew_with_tasks(spec, tasks);
+    var r = agnosai_task_result_new(agnosai_task_id(t), str_from("{\"other\":1}"), status);
+    if (attempts > 0) {
+        agnosai_task_result_with_metadata_a(default_alloc(), r, str_from("validation_attempts"),
+          bayan_json_v_int_new(attempts));
+    }
     var results = vec_new();
-    vec_push(results, agnosai_task_result_new(agnosai_task_id(t), str_from(output), status));
+    vec_push(results, r);
     var e = agnostic_ledger_record(str_from(id), str_from("c"), 0);
-    agnostic_ledger_set_plan(e, spec, str_from("live"));
+    agnostic_ledger_set_plan(e, spec, str_from(mode));
     agnostic_ledger_latch(e, AGNOSTIC_CREW_COMPLETED, 0, results);
     var o = agnostic_ledger_outcome_a(a, e);
     var v = agnostic_outcome_to_value_a(a, o);
@@ -655,72 +662,63 @@ fn test_output_valid() {
     test_group("output-schema/valid");
     _t_open();
     var a = arena_allocator(4194304);
-    var verdict = "{\"type\":\"object\",\"required\":[\"verdict\"]}";
+    var shape = "{\"type\":\"object\",\"required\":[\"verdict\"]}";
     var ok = AGNOSAI_STATUS_COMPLETED;
-    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000001", "{\"verdict\":\"pass\"}", ok, verdict)), 1,
-      "⭐ an answer in the shape is valid");
-    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000002", "```json\n{\"verdict\":\"pass\"}\n```", ok, verdict)), 1, #skip-lint
-      "⭐ a fenced one too: agnosai's check reads the fence, and this is that check");
-    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000003", "{\"other\":1}", ok, verdict)), 0,
-      "⭐ a required key missing is not");
-    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000004", "[1]", ok, verdict)), 0,
-      "nor the wrong type");
-    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000005", "all passed", ok, verdict)), 0,
-      "nor prose");
-    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000009", "```json\n{\"other\":1}\n```", ok, verdict)), 0, #skip-lint
-      "nor a fenced answer missing the key");
-    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-00000000000a", "```json\nnot json\n```", ok, verdict)), 0, #skip-lint
-      "nor a fence around something that is not JSON");
-    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-00000000000b", "```json\n{\"verdict\":1", ok, verdict)), 0, #skip-lint
-      "nor one never closed");
-    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000006", "{\"verdict\":\"pass\"}", ok, 0)), 0 - 1,
+    var bad = AGNOSAI_STATUS_FAILED;
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000001", "live", ok, 0, shape)), 1,
+      "⭐ a live task that completed met its shape: the engine does not let it complete otherwise");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000002", "live", bad, 3, shape)), 0,
+      "⭐ one the engine failed for its answers says so");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000003", "live", bad, 0, shape)), 0 - 1,
+      "⭐ and one that failed for any other reason has no answer to judge");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000004", "live", ok, 0, 0)), 0 - 1,
       "a task that declared no shape says nothing");
-    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000007", "boom", AGNOSAI_STATUS_FAILED, verdict)), 0 - 1, #skip-lint
-      "and neither does one that failed: it has no answer to judge");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000005", "placeholder", ok, 0, shape)), 0 - 1,
+      "⭐ a placeholder says nothing: the engine checked nothing");
+    assert_eq(_t_valid(_t_checked(a, "a0000000-0000-4000-8000-000000000006", "placeholder", bad, 3, shape)), 0 - 1,
+      "whatever its result reads");
 
-    # ⭐ What cannot be read is not judged: `output_valid` is left out.
-    var spec0 = agnosai_crew_new(str_from("c"));
-    var t0 = agnosai_task_new(str_from("t"));
-    agnosai_task_with_output_schema(t0, agnostic_decode_a(default_alloc(), str_from(verdict)));
-    var ts0 = vec_new();
-    vec_push(ts0, t0);
-    agnosai_crew_with_tasks(spec0, ts0);
-    var long = alloc(100003);
-    store8(long, 91);
-    memset(long + 1, 49, 100000);
-    store8(long + 100001, 93);
-    store8(long + 100002, 0);
-    var res0 = vec_new();
-    vec_push(res0, agnosai_task_result_new(agnosai_task_id(t0), str_new(long, 100002), ok));
-    var e0 = agnostic_ledger_record(str_from("a0000000-0000-4000-8000-00000000000c"), str_from("c"), 0);
-    agnostic_ledger_set_plan(e0, spec0, str_from("live"));
-    agnostic_ledger_latch_unwritten(e0, AGNOSTIC_CREW_COMPLETED, 0, res0);
-    var tiny = arena_allocator(512);
-    var marks = _agnostic_ledger_output_checks_a(tiny, e0);
-    assert_neq(marks, 0, "the map is built");
-    assert_eq(map_get(marks, agnosai_task_id(t0)), 0, "⭐ an answer it could not read has no verdict");
+    # One task of two declared a shape: the other says nothing, though its crew has one.
+    var mixed = agnosai_crew_new(str_from("c"));
+    var with = agnosai_task_new(str_from("t"));
+    agnosai_task_with_output_schema(with, agnostic_decode_a(default_alloc(), str_from(shape)));
+    var without = agnosai_task_new(str_from("u"));
+    var both = vec_new();
+    vec_push(both, with);
+    vec_push(both, without);
+    agnosai_crew_with_tasks(mixed, both);
+    var rs = vec_new();
+    vec_push(rs, agnosai_task_result_new(agnosai_task_id(without), str_from("words"), ok));
+    vec_push(rs, agnosai_task_result_new(agnosai_task_id(with), str_from("{\"verdict\":1}"), ok));
+    var me = agnostic_ledger_record(str_from("a0000000-0000-4000-8000-000000000008"), str_from("c"), 0);
+    agnostic_ledger_set_plan(me, mixed, str_from("live"));
+    agnostic_ledger_latch(me, AGNOSTIC_CREW_COMPLETED, 0, rs);
+    var mv = agnostic_outcome_to_value_a(a, agnostic_ledger_outcome_a(a, me));
+    agnostic_ledger_describe_a(a, me, mv);
+    assert_eq(_t_valid(mv), 0 - 1, "⭐ a task that declared no shape says nothing, beside one that did");
+    var second = bayan_json_v_arr_get(bayan_json_v_obj_get_by_str(mv, AGNOSTIC_JK_RESULTS), 1);
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(second, AGNOSTIC_JK_OUTPUT_VALID)), 1,
+      "⭐ and the one that did says so, in the order the results came");
 
-    var e = agnostic_ledger_entry(str_from("a0000000-0000-4000-8000-000000000003"));
-    var first = _agnostic_ledger_output_checks_a(a, e);
-    assert_eq(_agnostic_ledger_output_checks_a(a, e), first, "⭐ read once: a second reader gets the same map");
-    var none = agnostic_ledger_entry(str_from("a0000000-0000-4000-8000-000000000006"));
-    assert_eq(load64(none + AGNOSTIC_LE_CHECKS), 0 - 1, "and a crew with no shapes remembers it has none");
-
-    # A cancelled crew takes its results after it latched, so it must not have settled on none.
+    # A cancelled crew takes its results after it latched, so nothing may have settled on none.
     var spec = agnosai_crew_new(str_from("c"));
     var t = agnosai_task_new(str_from("t"));
-    agnosai_task_with_output_schema(t, agnostic_decode_a(default_alloc(), str_from(verdict)));
+    agnosai_task_with_output_schema(t, agnostic_decode_a(default_alloc(), str_from(shape)));
     var tasks = vec_new();
     vec_push(tasks, t);
     agnosai_crew_with_tasks(spec, tasks);
-    var c = agnostic_ledger_record(str_from("a0000000-0000-4000-8000-000000000008"), str_from("c"), 0);
+    var c = agnostic_ledger_record(str_from("a0000000-0000-4000-8000-000000000007"), str_from("c"), 0);
     agnostic_ledger_set_plan(c, spec, str_from("live"));
     agnostic_ledger_latch(c, AGNOSTIC_CREW_CANCELLED, 0, 0);
-    assert_eq(_agnostic_ledger_output_checks_a(a, c), 0, "a crew with no results yet has nothing to check");
+    var before = agnostic_outcome_to_value_a(a, agnostic_ledger_outcome_a(a, c));
+    agnostic_ledger_describe_a(a, c, before);
+    assert_eq(bayan_json_v_arr_len(bayan_json_v_obj_get_by_str(before, AGNOSTIC_JK_RESULTS)), 0, "no results yet");
     var late = vec_new();
     vec_push(late, agnosai_task_result_new(agnosai_task_id(t), str_from("{\"verdict\":\"x\"}"), ok));
     agnostic_ledger_latch(c, AGNOSTIC_CREW_CANCELLED, 0, late);
-    assert_neq(_agnostic_ledger_output_checks_a(a, c), 0, "⭐ and checks them when they come");
+    var after = agnostic_outcome_to_value_a(a, agnostic_ledger_outcome_a(a, c));
+    agnostic_ledger_describe_a(a, c, after);
+    assert_eq(_t_valid(after), 1, "⭐ and they are read when they come");
 }
 
 fn test_tools_route() {

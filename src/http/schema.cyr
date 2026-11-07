@@ -318,6 +318,10 @@ fn _agnostic_sch_body_of(id): i64 {
     if (id == AGNOSTIC_ROUTE_CREW_SUBMIT) { return "crew"; }
     if (id == AGNOSTIC_ROUTE_DEF_CREATE) { return "agent_definition"; }
     if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { return "agent_definition"; }
+    if (id == AGNOSTIC_ROUTE_DEF_ROLLBACK) { return "definition_rollback"; }
+    if (id == AGNOSTIC_ROUTE_PKG_EXPORT) { return "package_export"; }
+    if (id == AGNOSTIC_ROUTE_PKG_IMPORT) { return "package"; }
+    if (id == AGNOSTIC_ROUTE_PRESET_RECOMMEND) { return "preset_recommendation"; }
     if (id == AGNOSTIC_ROUTE_AUTH_LOGIN) { return "login"; }
     if (id == AGNOSTIC_ROUTE_AUTH_PASSWORD) { return "password_change"; }
     if (id == AGNOSTIC_ROUTE_AUTH_KEY_NEW) { return "api_key"; }
@@ -342,6 +346,7 @@ fn _agnostic_sch_query_a(a, id): i64 {
         q = _agnostic_sch_name_a(a, q, "before");
     }
     if (id == AGNOSTIC_ROUTE_CREW_EVENTS) { q = _agnostic_sch_name_a(a, q, "after"); }
+    if (id == AGNOSTIC_ROUTE_PKG_IMPORT) { q = _agnostic_sch_name_a(a, q, "overwrite"); }
     if (id == AGNOSTIC_ROUTE_CREW_PLAN) {
         q = _agnostic_sch_name_a(a, q, "explain");
         q = _agnostic_sch_name_a(a, q, "task");
@@ -366,6 +371,7 @@ fn _agnostic_sch_route_headers_a(a, id): i64 {
     # Agent definitions (0.1.15).
     if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { h = _agnostic_sch_name_a(a, h, "if-match"); }
     if (id == AGNOSTIC_ROUTE_DEF_DELETE) { h = _agnostic_sch_name_a(a, h, "if-match"); }
+    if (id == AGNOSTIC_ROUTE_DEF_ROLLBACK) { h = _agnostic_sch_name_a(a, h, "if-match"); }
     return h;
 }
 
@@ -495,6 +501,20 @@ fn _agnostic_sch_keys_a(a, id): i64 {
     if (id == AGNOSTIC_ROUTE_DEF_GET) { return _agnostic_sch_words_a(a, k, "definition unforwarded etag storage"); }
     if (id == AGNOSTIC_ROUTE_DEF_REPLACE) { return _agnostic_sch_words_a(a, k, "definition unforwarded etag storage"); }
     if (id == AGNOSTIC_ROUTE_DEF_DELETE) { return _agnostic_sch_words_a(a, k, "key status storage"); }
+    if (id == AGNOSTIC_ROUTE_DEF_VERSIONS) { return _agnostic_sch_words_a(a, k, "key versions total storage"); }
+    if (id == AGNOSTIC_ROUTE_DEF_VERSION) {
+        return _agnostic_sch_words_a(a, k, "definition unforwarded etag storage version saved_at?");
+    }
+    if (id == AGNOSTIC_ROUTE_DEF_ROLLBACK) {
+        return _agnostic_sch_words_a(a, k, "definition unforwarded etag storage rolled_back_to");
+    }
+    if (id == AGNOSTIC_ROUTE_PKG_EXPORT) {
+        return _agnostic_sch_words_a(a, k, "format name version description? exported_at definitions total");
+    }
+    if (id == AGNOSTIC_ROUTE_PKG_IMPORT) { return _agnostic_sch_words_a(a, k, "name created replaced total storage"); }
+    if (id == AGNOSTIC_ROUTE_PRESET_RECOMMEND) {
+        return _agnostic_sch_words_a(a, k, "preset domain size reason matched alternatives");
+    }
     if (id == AGNOSTIC_ROUTE_AUDIT) {
         k = _agnostic_sch_words_a(a, k, "total entries_at_open appended dropped verified intact");
         # The verdict and its breaks (0.1.15).
@@ -585,7 +605,17 @@ fn _agnostic_sch_bodies_a(a): i64 {
     # And what the object fields are.
     var objects = bayan_json_v_obj_new_a(a);
     objects = _agnostic_sch_put_a(a, objects, "target", _agnostic_sch_cstr_a(a, "target"));
+    objects = _agnostic_sch_put_a(a, objects, "team", _agnostic_sch_cstr_a(a, "team"));
     crew = _agnostic_sch_put_a(a, crew, "objects", objects);
+    var one_of = bayan_json_v_arr_new_a(a);
+    one_of = _agnostic_sch_name_a(a, one_of, "agents");
+    one_of = _agnostic_sch_name_a(a, one_of, "team");
+    crew = _agnostic_sch_put_a(a, crew, "one_of", one_of);
+
+    var team = _agnostic_sch_fields_body_a(a, agnostic_team_fields_a(a));
+    var team_items = bayan_json_v_obj_new_a(a);
+    team_items = _agnostic_sch_put_a(a, team_items, "members", _agnostic_sch_cstr_a(a, "team_member"));
+    team = _agnostic_sch_put_a(a, team, "items", team_items);
 
     var task = _agnostic_sch_fields_body_a(a, agnostic_task_req_fields_a(a));
     var task_objects = bayan_json_v_obj_new_a(a);
@@ -605,6 +635,19 @@ fn _agnostic_sch_bodies_a(a): i64 {
     b = _agnostic_sch_put_a(a, b, "task", task);
     b = _agnostic_sch_put_a(a, b, "agent_definition", def);
     b = _agnostic_sch_put_a(a, b, "agent_reference", _agnostic_sch_fields_body_a(a, agnostic_agent_ref_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "team", team);
+    b = _agnostic_sch_put_a(a, b, "team_member", _agnostic_sch_fields_body_a(a, agnostic_team_member_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "definition_rollback", _agnostic_sch_fields_body_a(a,
+        agnostic_definition_rollback_fields_a(a)));
+    b = _agnostic_sch_put_a(a, b, "package_export",
+      _agnostic_sch_fields_body_a(a, agnostic_package_export_fields_a(a)));
+    var package = _agnostic_sch_fields_body_a(a, agnostic_package_fields_a(a));
+    var package_items = bayan_json_v_obj_new_a(a);
+    package_items = _agnostic_sch_put_a(a, package_items, "definitions", _agnostic_sch_cstr_a(a, "agent_definition"));
+    package = _agnostic_sch_put_a(a, package, "items", package_items);
+    b = _agnostic_sch_put_a(a, b, "package", package);
+    b = _agnostic_sch_put_a(a, b, "preset_recommendation", _agnostic_sch_fields_body_a(a,
+        agnostic_preset_recommendation_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "target", _agnostic_sch_fields_body_a(a, agnostic_target_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "output_schema", _agnostic_sch_fields_body_a(a, agnostic_output_schema_fields_a(a)));
     b = _agnostic_sch_put_a(a, b, "login", _agnostic_sch_fields_body_a(a, agnostic_login_fields_a(a)));

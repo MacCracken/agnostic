@@ -17,7 +17,7 @@
 #
 # ## ⚠ The submit ordering is load-bearing in two places
 #
-# `agnostic_crew_submit_owned` does: **build spec (joined to the request's trace) → subscribe →
+# `agnostic_crew_submit_owned_a` does: **build spec (joined to the request's trace) → subscribe →
 # submit → record → mark in flight.** None of the middle three may move:
 #
 #   * **Subscribe before submit.** `agnosai_event_bus_subscribe` creates the
@@ -50,7 +50,7 @@
 # in `AGNOSTIC_OC_CREW_ID` and the ledger key. There is no second id to confuse
 # it with, so the substitution that defect turns on cannot be written.
 
-# What `agnostic_crew_submit_owned` reports.
+# What `agnostic_crew_submit_owned_a` reports.
 enum AgnosticSubmitResult {
     AGNOSTIC_SUBMIT_OK            = 0;
     AGNOSTIC_SUBMIT_NO_ENGINE     = 1;
@@ -75,6 +75,11 @@ var _agnostic_orchestrator = 0;
 
 # The event bus the orchestrator publishes crew progress to.
 var _agnostic_event_bus = 0;
+
+# The pool every crew's arena comes from and goes back to (0.4.2, ADR 0034). The arenas held at once
+# are the crews the ledger holds, and each keeps the largest size it has grown to, so what this costs
+# stops at the ledger's cap times the largest crew.
+var _agnostic_crew_pool = 0;
 
 # The config the engine was built from, kept so `agnostic_engine_mode` can report
 # how it was wired.
@@ -219,6 +224,9 @@ fn agnostic_engine_init(cfg): i64 {
     _agnostic_event_bus = agnosai_event_bus_new();
     if (_agnostic_event_bus != 0) { agnosai_orchestrator_with_events(o, _agnostic_event_bus); }
 
+    _agnostic_crew_pool = agnosai_crew_pool_new(AGNOSAI_CREW_ARENA_BYTES);
+    if (_agnostic_crew_pool == 0) { return 0; }
+
     # Without a gateway the engine takes its placeholder path — crews run, tasks
     # produce placeholder output. That is a legitimate configuration for a
     # deployment that only exercises orchestration, so it is not a startup
@@ -269,6 +277,7 @@ fn agnostic_engine_init(cfg): i64 {
 fn agnostic_engine_reset(): i64 {
     _agnostic_orchestrator = 0;
     _agnostic_event_bus = 0;
+    _agnostic_crew_pool = 0;
     _agnostic_engine_cfg = 0;
     agnostic_ledger_reset();
     return 0;
@@ -308,6 +317,43 @@ fn agnostic_engine_crew_count(): i64 {
     return agnosai_orchestrator_crew_count(_agnostic_orchestrator);
 }
 
+# The arena a new crew will live in, for `agnostic_crew_req_in_a`: everything of the crew goes there,
+# from its decoded request to its ledger entry, and goes when the crew does (ADR 0034). With no engine
+# there is no pool and nothing will run, so it answers `a`, the request's own. 0 when the heap cannot
+# serve it.
+#
+# ⚠ **Until the crew is submitted, the arena is the caller's to give back**
+# (`agnostic_crew_arena_give`), or a refused body would keep one.
+fn agnostic_crew_arena_take_a(a): i64 {
+    if (_agnostic_crew_pool == 0) { return a; }
+    return agnosai_crew_pool_acquire(_agnostic_crew_pool);
+}
+
+# Give back an arena no crew was submitted in. Any other allocator stays as it is.
+fn agnostic_crew_arena_give(al): i64 {
+    agnosai_crew_arena_give_back(al);
+    return 0;
+}
+
+# How many arenas there have ever been. Flat under load means they are being reused.
+fn agnostic_crew_arenas_made(): i64 {
+    return agnosai_crew_pool_minted(_agnostic_crew_pool);
+}
+
+# End crew `spec`, whose subscription was `channel`, and give back what it held: 1, or 0 when it was
+# not in an arena or the engine refused. Nothing of the crew or its ledger entry may be read after
+# this, and `_agnostic_ledger_limbo_pass` is what says nothing can.
+fn agnostic_crew_release(spec, channel): i64 {
+    if (spec == 0 || _agnostic_orchestrator == 0) { return 0; }
+    if (agnosai_crew_arena(spec) == 0) { return 0; }
+    if (agnosai_orchestrator_release_crew(_agnostic_orchestrator, spec) != 0) {
+        sakshi_error("the engine refused to release a finished crew; its arena stays held", 67);
+        return 0;
+    }
+    if (_agnostic_event_bus != 0) { agnosai_event_bus_recycle(_agnostic_event_bus, channel); }
+    return 1;
+}
+
 # Submit a decoded crew request for asynchronous execution, for a crew that belongs to tenant
 # scope `scope`, submitted with `Idempotency-Key` `idem` over a body whose hex SHA-256 is `fprint`
 # (both 0 without a key) — 0.1.9. The ledger entry carries all three from the moment it exists.
@@ -318,10 +364,14 @@ fn agnostic_engine_crew_count(): i64 {
 # started.
 #
 # See the module header for why the four steps are in this order.
-fn agnostic_crew_submit_owned(r, out_entry, scope: Str, idem: Str, fprint: Str): i64 {
+#
+# The allocator `r` is in is the crew's own (`agnostic_crew_req_alloc`). On either refusal it is
+# still the caller's; past them the crew owns it. `a` holds only what this call says about it.
+fn agnostic_crew_submit_owned_a(a, r, out_entry, scope: Str, idem: Str, fprint: Str): i64 {
     if (out_entry != 0) { store64(out_entry, 0); }
     if (_agnostic_orchestrator == 0) { return AGNOSTIC_SUBMIT_NO_ENGINE; }
 
+    var al = agnostic_crew_req_alloc(r);
     var spec = agnostic_crew_spec_build(r);
     if (spec == 0) { return AGNOSTIC_SUBMIT_SPEC_FAILED; }
     # The crew joins the submitting request's trace (0.1.14, ADR 0018): its workflow, agent,
@@ -338,12 +388,12 @@ fn agnostic_crew_submit_owned(r, out_entry, scope: Str, idem: Str, fprint: Str):
 
     var sub = 0;
     if (_agnostic_event_bus != 0) {
-        sub = agnosai_event_bus_subscribe(_agnostic_event_bus, crew_id);
+        sub = agnosai_event_bus_subscribe_a(al, _agnostic_event_bus, crew_id);
     }
 
     var assigned = agnosai_orchestrator_submit_crew(_agnostic_orchestrator, spec);
 
-    var entry = agnostic_ledger_record_crew(crew_id, agnostic_crew_req_name(r), sub, scope, idem, fprint,
+    var entry = agnostic_ledger_record_in(al, crew_id, agnostic_crew_req_name(r), sub, scope, idem, fprint,
       agnostic_crew_req_target(r), agnostic_crew_req_unforwarded_bits(r));
     # What ran and how (0.1.9): the plan route, the 202's task ids and the persisted
     # outcome all read the engine's spec from here, and the mode it was accepted under.
@@ -380,8 +430,8 @@ fn agnostic_crew_submit_owned(r, out_entry, scope: Str, idem: Str, fprint: Str):
     }
 
     agnostic_log_kv_str(SK_INFO, "crew submitted", 14, "crew_id", 7, crew_id);
-    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from("crew.submit"),
-      agnostic_audit_detail("crew_id", crew_id));
+    agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, str_from_a(a, "crew.submit"),
+      agnostic_audit_detail_a(a, "crew_id", crew_id));
     return AGNOSTIC_SUBMIT_OK;
 }
 
@@ -461,10 +511,10 @@ fn _agnostic_crew_finished_results_a(a, crew_id: Str): i64 {
     return out;
 }
 
-# The current outcome of a submitted crew, in `a`.
+# ## What a poll does
 #
-# Returns 0 when **Agnostic never submitted this id** — which is the only 404.
-# Everything else answers with an outcome, including a crew the engine has
+# A crew's current outcome comes from its ledger entry. No entry means **Agnostic never submitted this
+# id**, which is the only 404. Everything else answers with an outcome, including a crew the engine has
 # forgotten.
 #
 # The ladder, and why each rung is where it is:
@@ -484,12 +534,6 @@ fn _agnostic_crew_finished_results_a(a, crew_id: Str): i64 {
 #   5. **Answer from the ledger, not from the engine.** This is what makes
 #      terminal states terminal: a latched `failed` is reported even if the engine
 #      is now saying something else.
-fn agnostic_crew_poll_a(a, crew_id: Str): i64 {
-    var entry = agnostic_ledger_entry(crew_id);
-    if (entry == 0) { return 0; }
-    agnostic_crew_refresh_a(a, entry, crew_id);
-    return agnostic_ledger_outcome_a(a, entry);
-}
 
 # The status to latch for what the engine reported, given when (if ever) the ledger
 # recorded the crew's start — epoch ms, or 0.

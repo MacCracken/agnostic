@@ -2,10 +2,17 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-06, at **0.4.1** — `GET /api/v1/gpu`, one read of this host at mount, which says a
+> Last refreshed: 2026-11-06, at **0.4.2** — a crew leaves nothing behind. **agnosai 2.2.5 and kavach 3.14.6**: a
+> crew lives in an arena and goes back when no reader can hold it, which closes audit P2
+> ([ADR 0034](../adr/0034-a-crew-lives-in-an-arena-and-readers-are-waited-for.md)), and a task is held to its
+> `output_schema` ([ADR 0033](../adr/0033-output-valid-is-the-engines-word.md)). Definition versions and rollback
+> ([ADR 0035](../adr/0035-every-write-of-a-definition-is-a-version.md)), packages
+> ([ADR 0036](../adr/0036-a-package-is-json-and-all-of-itself.md)), and `team` and a preset recommendation
+> ([ADR 0037](../adr/0037-a-team-becomes-agents-and-a-recommendation-is-words.md)). Version, Toolchain,
+> Dependencies, Source, the route table, Tests, Agent definitions, Persistence and Next were refreshed then.
+> Before that, 2026-11-06, at **0.4.1** — `GET /api/v1/gpu`, one read of this host at mount, which says a
 > crew is not held to it ([ADR 0032](../adr/0032-the-gpu-route-reads-the-host-once-and-binds-no-crew.md)), and
-> `AGNOSTIC_GPU_TOOLS`. Fleet gets no route until there is a fleet. No dependency moved. Version, Source, the
-> route table, Tests and Next were refreshed then.
+> `AGNOSTIC_GPU_TOOLS`. Fleet gets no route until there is a fleet. No dependency moved.
 > Before that, 2026-11-06, at **0.4.0** — a crew can say what it is for: a checked `target` under
 > `AGNOSTIC_TARGET_HOSTS` ([ADR 0029](../adr/0029-the-operator-lists-the-hosts-a-crew-may-test.md)), a
 > stored definition named in its body ([ADR 0030](../adr/0030-a-crew-names-a-stored-definition-and-copies-it.md)),
@@ -107,7 +114,7 @@
 
 ## Version
 
-**0.4.1** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.4.2** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -120,7 +127,7 @@ line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
   byte, and CI's gates passed there. What moved at each earlier release is in `CHANGELOG.md`.
 
 ✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin, and no pin is off its fold.** 6.7.18 folds
-**sigil 3.13.15**, **patra 1.16.6** and **bayan 1.11.1**. agnosai 2.2.4, kavach 3.14.2 and libro 2.11.3
+**sigil 3.13.15**, **patra 1.16.6** and **bayan 1.11.1**. agnosai 2.2.5, kavach 3.14.6 and libro 2.11.3
 declare that sigil, libro 2.11.3 declares that patra, and ai-hwaccel 2.5.6 declares that bayan. So every
 commit pin the lock records on a folded module names the bytes `lib/` holds.
 
@@ -149,11 +156,11 @@ order, the pin and the tags moving together) are in
 
 | dep | pin | how it arrives |
 |---|---|---|
-| `agnosai` | **2.2.4** | direct, `git` + `tag` + `modules` — pins every dep below |
+| `agnosai` | **2.2.5** | direct, `git` + `tag` + `modules` — pins every dep below |
 | `libro` | **2.11.3** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
-| `bote` / `majra` | **3.8.15** / **2.13.0** | transitive via agnosai 2.2.4. Neither repo calls a bote function |
-| `kavach` / `tyche` | **3.14.2** / **1.2.2** | transitive via agnosai 2.2.4 |
-| `ai-hwaccel` | **2.5.6** | transitive via agnosai 2.2.4 |
+| `bote` / `majra` | **3.8.15** / **2.13.0** | transitive via agnosai 2.2.5. Neither repo calls a bote function |
+| `kavach` / `tyche` | **3.14.6** / **1.2.2** | transitive via agnosai 2.2.5 |
+| `ai-hwaccel` | **2.5.6** | transitive via agnosai 2.2.5 |
 | `sigil` | **3.13.15** (folded) | folded stdlib (`[deps].stdlib`); agnosai and libro declare the same 3.13.15 |
 | `patra` | **1.16.6** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.16.6 |
 
@@ -173,14 +180,14 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 59 files, 34,801 lines, 1,531 top-level definitions (0.4.1; 34,564 and 1,503 at
-0.4.0), all `agnostic_*`-prefixed. 12,492 of those lines are generated:
+the real surface (0.1.10)** — 62 files, 36,527 lines, 1,648 top-level definitions (0.4.2; 34,801 and 1,531 at
+0.4.1), all `agnostic_*`-prefixed. 12,492 of those lines are generated:
 `src/presets_data.cyr` (837) and `src/webgui_data.cyr` (11,655 — six embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 40 suites, 3,870 assertions, 0 failed** (`cyrius test`, 0.4.1; 3,820 at 0.4.0), plus
+**Tests: 42 suites, 4,289 assertions, 0 failed** (`cyrius test`, 0.4.2; 3,870 at 0.4.1), plus
 **97 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+) — **and the
-same 40 suites natively on aarch64** (Raspberry Pi 4). Their counts match but for `crews_route`, 247 or 248
+same 42 suites natively on aarch64** (Raspberry Pi 4). Their counts match but for `crews_route`, 247 or 248
 from run to run, because two loops assert once per poll. Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
 shipped target since 0.1.7), `check-clean.sh` (also `gen-webgui.sh --check`,
@@ -277,6 +284,9 @@ refactor of any of it.
 | `src/routes/crews.cyr` | the crew surface |
 | `src/routes/definitions.cyr` | agent definition CRUD |
 | `src/routes/presets.cyr` | the preset surface, read-only |
+| `src/routes/packages.cyr` | a tenant's definitions as one document, and a preset recommendation (0.4.2, ADRs 0036 and 0037) |
+| `src/engine/team.cyr` | a crew's `team` becoming `agents` at the door (0.4.2, ADR 0037) |
+| `src/engine/recommend.cyr` | which preset a description reads as, from a table of words (0.4.2, ADR 0037) |
 | `src/routes/tools.cyr` | `GET /api/v1/tools`: the M6 gate on the wire (0.4.0) |
 | `src/engine/gpu.cyr`, `src/routes/gpu.cyr` | this host's accelerators, read once at mount (0.4.1, ADR 0032) |
 | `src/routes/plugins.cyr` | list plugins, switch one on or off (0.1.7) |
@@ -324,6 +334,12 @@ The crew surface, and what each code means:
 | `GET /api/v1/presets/{name}` | 200 · 404 unknown name |
 | `GET /api/v1/tools` | 200 — the 38 names, what resolves, the engine's tools, and `crews_call_tools` |
 | `GET /api/v1/gpu` | 200 — this host's accelerators at start, `vendor_tools`, and `gpu_required_enforced` |
+| `GET /api/v1/agents/definitions/{key}/versions` | 200 · 404 · 422 — every version, newest first, and which is current. A deleted definition still answers |
+| `GET /api/v1/agents/definitions/{key}/versions/{n}` | 200 · 404 · 409 · 422 — one version, whole |
+| `POST /api/v1/agents/definitions/{key}/rollback` | 200 · 400 · 404 · 409 · 412 · 422 — that version, current again, as a new one |
+| `POST /api/v1/packages/export` | 200 · 400 · 422 — definitions as one document |
+| `POST /api/v1/packages/import` | 200 · 400 · 409 · 422 — refused whole; `?overwrite=true` |
+| `POST /api/v1/preset-recommendations` | 200 · 400 · 422 — which preset fits, from a table of words |
 | `GET /api/v1/agents/definitions` | 200 |
 | `POST /api/v1/agents/definitions` | **201** · 400 (also an unknown `complexity`, 0.1.15) · **409** · 422 · **507** |
 | `GET /api/v1/agents/definitions/{key}` | 200 — with its revision, `etag` and an `ETag` header (0.1.15) · 404 · 422 |
@@ -348,7 +364,7 @@ CHANGELOG (0.1.13, Verified) records the live run that confirmed it, and a chang
 should re-read the skill.
 
 The table is a flat scan of 32 paths (33 patterns; 21 until 0.3.0). Since 0.1.13 (H5) it is literally a table
-— 35 rows of a pattern and the route id per method, built once at load, which the resolver walks
+— 41 rows of a pattern and the route id per method, built once at load, which the resolver walks
 in the old order and `agnostic_route_row_pattern` / `agnostic_route_row_id` expose. Re-measured then,
 in interleaved runs against a copy of the tree with the if-chain restored: 0.107 / 0.87 / 0.72 /
 2.15 µs against 0.108 / 0.92 / 0.78 / 2.19 µs — no slower, a miss ~7% faster, because the walk calls
@@ -507,8 +523,12 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**40 suites, 3,870 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.1, 2026-11-06),
-with `CYRIUS_DCE=1` as CI runs them. 0.4.1's additions, the rules mutation-checked (18 mutants, CHANGELOG
+**42 suites, 4,289 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.2, 2026-11-06),
+with `CYRIUS_DCE=1` as CI runs them. 0.4.2's additions, the rules mutation-checked (39 mutants, CHANGELOG
+[0.4.2]): `tests/crew_arena.tcyr` (245), `tests/definition_library.tcyr` (165), `serve/ledger-bracket`, and
+`crew_body`'s `output_valid` rewritten. `scripts/fake-gateway.py` lets the boot probe and the Crews view run
+live crews, and `scripts/load-test.py` gains step 8. `cyrius coverage --exec` reads 98%.
+At 0.4.1: 40 suites and 3,870 assertions. Its additions, the rules mutation-checked (18 mutants, CHANGELOG
 [0.4.1]): `tests/gpu.tcyr` (42), `config/gpu-tools`, and in `scripts/boot-probe.sh` a fake `nvidia-smi` on
 the `PATH` that proves from outside what the server spawns. `cyrius coverage --exec` reads 98%.
 At 0.4.0: 39 suites and 3,820 assertions. Its additions, the rules mutation-checked (97 mutants, CHANGELOG
@@ -814,6 +834,9 @@ decoder already did and one model cannot have two spellings.
 record is `ai-hwaccel`-shaped and Agnostic has no decoder for it. Every other
 refusal is refused because the engine genuinely cannot act on it.
 
+**Every write is a version since 0.4.2** ([ADR 0035](../adr/0035-every-write-of-a-definition-is-a-version.md)), on
+`agnostic_definition_versions`, kept to `AGNOSTIC_MAX_VERSIONS`. A delete keeps them, and a rollback is a new one.
+
 ✅ **The store is durable, in patra, since M4.** `"storage": "patra"` on all five
 responses; the nine store functions kept their signatures and
 `src/routes/definitions.cyr` was not touched. A definition created in one process
@@ -832,8 +855,8 @@ if that changes the cache goes rather than gets patched.
 
 ## Persistence
 
-**One patra database, ten tables**, behind `src/engine/store.cyr`:
-`agnostic_definitions (dkey, doc)`, `agnostic_crews (crew_id, cname, cstatus, doc)` (`cname`, never
+**One patra database, eleven tables**, behind `src/engine/store.cyr`:
+`agnostic_definitions (dkey, doc)`, `agnostic_definition_versions (dkey, version, saved_at, doc)` (0.4.2), `agnostic_crews (crew_id, cname, cstatus, doc)` (`cname`, never
 read, holds at most the name's first 255 bytes, cut on a character, since 0.1.13),
 the identity tables `agnostic_users`, `agnostic_apikeys` and `agnostic_tenants` (M5),
 `agnostic_settings (skey, sval)` (0.1.7), `agnostic_plugin_data` (0.1.8),
@@ -915,10 +938,10 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x and holds every gap the
 parity review found. `python-port/` is removed once that plan is finished and tagged.
 
-**At 0.4.1:** what is left of the 0.4.x line divides in two. Definition versions and rollback, packages, the
-`team` crew spec and `recommend_preset` wait on nothing. M6 proper, holding a tool to its target, the
-registry seam, the reviewer preset and the model picker wait on agnosai 2.3.x and 2.4.x, whose tag is not
-out: `git tag` there still ends at 2.2.4. Fleet routes wait for a fleet.
+**At 0.4.2:** nothing on the 0.4.x line can move without agnosai. M6 proper, holding a tool to its target, the
+registry seam, the reviewer preset and the model picker wait on its 2.3.x and 2.4.x, whose tags are not out:
+`git tag` there ends at 2.2.5. Tool upload waits for a sandbox, and fleet routes for a fleet. What waits on
+nothing is `[embed]`, and the shell's views of what 0.4.2 added, on the roadmap under M9.
 
 The notes below were written for M5 and remain true.
 
