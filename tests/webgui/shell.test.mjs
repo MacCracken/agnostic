@@ -12,7 +12,8 @@ import { loadPage, ROOT } from './harness.mjs';
 const page = loadPage('src/webgui/index.html', { globals: { window: {} }, only: [0] });
 const B = page.get('window.AgnosticBridge');
 const catalogue = JSON.parse(readFileSync(ROOT + 'src/webgui/permissions.json', 'utf8'));
-const swarm = JSON.parse(readFileSync(ROOT + 'src/webgui/plugins/swarm/plugin.json', 'utf8'));
+const manifest = (id) => JSON.parse(readFileSync(ROOT + 'src/webgui/plugins/' + id + '/plugin.json', 'utf8'));
+const swarm = manifest('swarm');
 const grants = B.grantsFor(swarm, catalogue);
 const UUID = '6ba7b810-9dad-41d1-80b4-00c04fd430c8';
 const req = (method, path, extra) => Object.assign({ type: 'agnostic:request', id: 'q1', method, path }, extra || {});
@@ -96,6 +97,22 @@ test('check() enforces the body rules: none on GET or DELETE, JSON, at most 256 
   assert.equal(B.check(req('PUT', '/api/v1/plugins/swarm/data/k', { body: { s: 'fine' } }), swarm, grants).ok, true);
 });
 
+test('a permission reaches what the views were given at 0.4.3, and no further', () => {
+  const library = manifest('library');
+  const crews = manifest('crews');
+  const lib = B.grantsFor(library, catalogue), cr = B.grantsFor(crews, catalogue);
+  const ok = (g, p, m, path) => B.check(req(m, path, m === 'GET' ? {} : { body: {} }), p, g).ok;
+  assert.equal(ok(lib, library, 'GET', '/api/v1/agents/definitions/qa/versions'), true);
+  assert.equal(ok(lib, library, 'GET', '/api/v1/agents/definitions/qa/versions/3'), true);
+  assert.equal(ok(lib, library, 'POST', '/api/v1/packages/export'), true);
+  assert.equal(ok(lib, library, 'POST', '/api/v1/packages/import?overwrite=true'), true);
+  assert.equal(ok(cr, crews, 'POST', '/api/v1/preset-recommendations'), true);
+  assert.equal(ok(cr, crews, 'GET', '/api/v1/presets/quality-lean'), true);
+  assert.equal(ok(cr, crews, 'POST', '/api/v1/packages/export'), false, 'Crews reads no definitions');
+  assert.equal(ok(cr, crews, 'POST', '/api/v1/agents/definitions/qa/rollback'), false);
+  assert.equal(ok(lib, library, 'POST', '/api/v1/crews'), false, 'and the Library starts no crew');
+});
+
 test('revisions and idempotency keys become headers — only on the methods they mean something on', () => {
   const etag = '"0123456789abcdef"';
   const put = B.check(req('PUT', '/api/v1/plugins/swarm/data/k', { body: {}, ifMatch: etag }), swarm, grants);
@@ -103,6 +120,13 @@ test('revisions and idempotency keys become headers — only on the methods they
   assert.equal(put.headers['If-Match'], etag);
   assert.equal(B.check(req('DELETE', '/api/v1/plugins/swarm/data/k', { ifMatch: etag }), swarm, grants).headers['If-Match'], etag);
   assert.equal(B.check(req('GET', '/api/v1/plugins/swarm/data/k', { ifMatch: etag }), swarm, grants).status, 400, 'not on a GET');
+  // A rollback writes over what is current, and is a POST (0.4.3).
+  const library = manifest('library');
+  const libGrants = B.grantsFor(library, catalogue);
+  const back = B.check(req('POST', '/api/v1/agents/definitions/qa/rollback', { body: { version: 1 }, ifMatch: etag }), library, libGrants);
+  assert.equal(back.ok, true, 'the Library may roll back');
+  assert.equal(back.headers['If-Match'], etag, 'with a revision');
+  assert.equal(B.check(req('POST', '/api/v1/agents/definitions/qa/rollback', { body: {} }), swarm, grants).status, 403, 'Swarm Command may not');
   assert.equal(B.check(req('PUT', '/api/v1/plugins/swarm/data/k', { body: {}, ifMatch: 'W/"weak"' }), swarm, grants).status, 400, 'not a weak or foreign tag');
   assert.equal(B.check(req('PUT', '/api/v1/plugins/swarm/data/k', { body: {}, ifNoneMatch: '*' }), swarm, grants).headers['If-None-Match'], '*');
   assert.equal(B.check(req('PUT', '/api/v1/plugins/swarm/data/k', { body: {}, ifNoneMatch: etag }), swarm, grants).status, 400, "If-None-Match is only '*'");

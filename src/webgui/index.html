@@ -248,8 +248,9 @@ h2 { font-size: 13px; margin: 0 0 12px; letter-spacing: .14em; color: var(--dim)
       }
       const headers = {};
       if (msg.ifMatch !== undefined) {
-        if ((method !== 'PUT' && method !== 'DELETE') || typeof msg.ifMatch !== 'string' || !RE_ETAG.test(msg.ifMatch)) {
-          return no(400, 'ifMatch is a document etag, on a PUT or a DELETE');
+        // A POST too since 0.4.3: a definition's rollback is one, and it writes over what is current.
+        if (!['PUT', 'DELETE', 'POST'].includes(method) || typeof msg.ifMatch !== 'string' || !RE_ETAG.test(msg.ifMatch)) {
+          return no(400, 'ifMatch is a document etag, on a PUT, a DELETE or a POST');
         }
         headers['If-Match'] = msg.ifMatch;
       }

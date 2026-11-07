@@ -511,6 +511,33 @@ fn test_plugin_rung() {
           "{\"key\":\"lib-probe\",\"role\":\"r\",\"goal\":\"g2\"}")), HTTP_OK, "replace one");
     assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_DELETE, "/api/v1/agents/definitions/lib-probe", "")), #skip-lint
       HTTP_OK, "and delete one");
+    # ⭐ 0.4.3: what a definition has been, through the same permissions, checked here as well as in the shell.
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/lib-gone/versions", "")),  #skip-lint
+      HTTP_NOT_FOUND, "a key with no past is the route's 404, not the rung's 403 (definitions:read)");
+    _t_req_for(a, "library", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions", "{\"key\":\"lib-back\",\"role\":\"r\",\"goal\":\"g\"}"); #skip-lint
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/lib-back/versions", "")),  #skip-lint
+      HTTP_OK, "Library reads what a definition has been");
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/agents/definitions/lib-back/versions/1", "")),  #skip-lint
+      HTTP_OK, "and one version");
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions/lib-back/rollback", "{\"version\":1}")),  #skip-lint
+      HTTP_OK, "rolls back (definitions:write)");
+    var pkg = _t_req_for(a, "library", AGNOSTIC_METHOD_POST, "/api/v1/packages/export", "{\"name\":\"k\"}");
+    assert_eq(agnostic_response_status(pkg), HTTP_OK, "exports (definitions:read)");
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_POST, "/api/v1/packages/import?overwrite=true", #skip-lint
+          str_cstr(bayan_json_v_build(agnostic_response_body(pkg))))), HTTP_OK, "and imports (definitions:write)");
+    assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_POST, "/api/v1/preset-recommendations", "{\"description\":\"tests\"}")),  #skip-lint
+      HTTP_OK, "and asks which preset fits (presets:read)");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/crews", "{\"enabled\":true}");
+    assert_eq(agnostic_response_status(_t_req_for(a, "crews", AGNOSTIC_METHOD_POST, "/api/v1/preset-recommendations", "{\"description\":\"tests\"}")),  #skip-lint
+      HTTP_OK, "⭐ the Crews view asks too (presets:read)");
+    assert_eq(agnostic_response_status(_t_req_for(a, "crews", AGNOSTIC_METHOD_POST, "/api/v1/agents/definitions/lib-back/rollback", "{\"version\":1}")),  #skip-lint
+      HTTP_FORBIDDEN, "⭐ but rolls nothing back");
+    assert_eq(agnostic_response_status(_t_req_for(a, "crews", AGNOSTIC_METHOD_POST, "/api/v1/packages/export", "{\"name\":\"k\"}")), HTTP_FORBIDDEN,  #skip-lint
+      "⭐ and exports nothing: it was granted no definitions");
+    assert_eq(agnostic_response_status(_t_req_for(a, "crews", AGNOSTIC_METHOD_POST, "/api/v1/packages/import", "{}")), HTTP_FORBIDDEN, #skip-lint
+      "nor imports");
+    _t_req(a, AGNOSTIC_METHOD_PUT, "/api/v1/plugins/crews", "{\"enabled\":false}");
+
     assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/crews", "")), HTTP_FORBIDDEN, #skip-lint
       "but not read crews");
     assert_eq(agnostic_response_status(_t_req_for(a, "library", AGNOSTIC_METHOD_GET, "/api/v1/audit/entries", "")), HTTP_FORBIDDEN, #skip-lint

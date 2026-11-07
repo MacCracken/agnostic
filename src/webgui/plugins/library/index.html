@@ -81,6 +81,16 @@ form.edit textarea { min-height: 76px; resize: vertical; }
 form.edit .checks { display: flex; gap: 18px; flex-wrap: wrap; padding-top: 6px; }
 form.edit .checks label { padding: 0; color: var(--text); }
 form.edit .row-actions { grid-column: 2; display: flex; gap: 8px; }
+.versions { width: 100%; border-collapse: collapse; }
+.versions th { text-align: left; color: var(--dim); font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; padding: 4px 8px; border-bottom: 1px solid var(--line-2); }
+.versions td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; white-space: pre-wrap; }
+.versions td.n { color: var(--faint); font-family: var(--mono); white-space: nowrap; }
+.versions td.f { color: var(--dim); white-space: nowrap; }
+.versions tr.differs td { background: #1a1608; }
+.versions tr.differs td.f { color: var(--warn); }
+.versions .pill { margin-left: 6px; color: var(--warn); border-color: rgba(245, 158, 11, .45); }
+.linkish { background: none; border: 0; padding: 0; color: var(--accent); font-weight: 600; }
+.linkish:hover { text-decoration: underline; }
 .empty { color: var(--dim); padding: 48px 20px; text-align: center; max-width: 60ch; margin: 0 auto; }
 @media (max-width: 720px) {
   .layout { grid-template-columns: 1fr; grid-template-rows: minmax(140px, 35%) 1fr; }
@@ -95,6 +105,9 @@ form.edit .row-actions { grid-column: 2; display: flex; gap: 8px; }
 <header class="bar">
   <div id="tabs" role="group" aria-label="Show"></div>
   <span class="spacer"></span>
+  <button class="btn" id="export-defs" type="button" hidden>Export</button>
+  <button class="btn" id="import-defs" type="button" hidden>Import</button>
+  <input id="import-file" type="file" accept=".json,application/json" hidden>
   <button class="btn primary" id="new-def" type="button" hidden>New definition</button>
 </header>
 <div class="layout" id="layout">
@@ -247,8 +260,13 @@ function errOf(r) {
  *  Presets are compiled in and read-only (GET /api/v1/presets[/{name}]). Definitions are the
  *  server's stored agents (/api/v1/agents/definitions[/{key}]): created with POST — a key that
  *  exists is 409 — replaced with PUT, deleted with DELETE, each audited by the server. A preset's
- *  agent can be saved as a definition. The tab and the item open are in the URL
- *  (`#plugin/library?tab=definitions&item=<key>`).
+ *  agent can be saved as a definition. The tab, the item and the version open are in the URL
+ *  (`#plugin/library?tab=definitions&item=<key>&version=<n>`).
+ *
+ *  Since 0.4.3 a definition shows what it has been: every write is a version on the server, and one
+ *  can be read, compared with what is current, and rolled back to, which is a new version. Deleting a
+ *  definition keeps them, so one can be brought back. And definitions travel: Export saves them as one
+ *  package, and Import takes a package, whole or not at all.
  *
  *  Everything above the VIEW section is plain logic with no DOM — tests/webgui/library.test.mjs
  *  runs it in Node against a fake agnostic.
@@ -259,6 +277,13 @@ const RE_PRESET = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const COMPLEXITY = Object.freeze(['', 'low', 'medium', 'high']);
 // The fields a definition carries, in the order the editor shows them (src/engine/agentdef.cyr).
 const DEF_STRINGS = Object.freeze(['name', 'role', 'goal', 'backstory', 'domain', 'complexity', 'llm_model', 'focus']);
+// What a comparison shows, in the order the definition does: its field, and the words for it.
+const DEF_ROWS = Object.freeze([['name', 'Name'], ['role', 'Role'], ['goal', 'Goal'], ['backstory', 'Backstory'], ['domain', 'Domain'],
+  ['tools', 'Tools'], ['complexity', 'Complexity'], ['llm_model', 'LLM model'], ['gpu_required', 'Needs a GPU'], ['gpu_preferred', 'Prefers a GPU'],
+  ['gpu_memory_min_mb', 'GPU memory (MB)'], ['focus', 'Focus'], ['allow_delegation', 'May delegate']]);
+// The largest request the shell's bridge carries (src/webgui/index.html). A larger package goes through the API.
+const MAX_BRIDGE_BODY = 256 * 1024;
+const PACKAGE_FORMAT = 'agnostic-package/1';
 
 /** A list of tool names from text: commas or newlines, trimmed, without repeats. */
 function parseTools(text) {
@@ -318,13 +343,70 @@ function definitionFromPresetAgent(agent) {
     tools: Array.isArray(agent.tools) ? agent.tools : [], allow_delegation: agent.allow_delegation === true,
   });
 }
-/** `?tab=…&item=…`, leaving out the defaults. */
-function paramsFor(tab, item) {
+/** `?tab=…&item=…&version=…`, leaving out the defaults. */
+function paramsFor(tab, item, version) {
   const p = [];
   if (tab && tab !== 'presets') p.push('tab=' + tab);
   if (item) p.push('item=' + encodeURIComponent(item));
+  if (item && version) p.push('version=' + version);
   return p.join('&');
 }
+/** A version number from the URL: a whole number from 1, else 0. */
+function versionFrom(text) {
+  const s = String(text || '');
+  if (!/^[1-9][0-9]{0,8}$/.test(s)) return 0;
+  return Number(s);
+}
+/** One field of a definition as words, for a comparison. An absent field is ''. */
+function fieldWords(d, key) {
+  const v = d && typeof d === 'object' ? d[key] : undefined;
+  if (Array.isArray(v)) return v.join(', ');
+  if (v === true) return 'yes';
+  if (v === undefined || v === null || v === false) return '';
+  return String(v);
+}
+/**
+ * What version `then` says against the definition as it is, `now` (null when it was deleted): one row
+ * per field either holds, `differs` when they say different things. Words are the wire's, not a text
+ * diff: a backstory that changed shows both, whole.
+ */
+function compareDefinitions(then, now) {
+  const rows = [];
+  for (const [key, label] of DEF_ROWS) {
+    const a = fieldWords(then, key), b = fieldWords(now, key);
+    if (a === '' && b === '') continue;
+    rows.push({ key, label, then: a, now: b, differs: a !== b });
+  }
+  return rows;
+}
+/** When a version was saved, in words. The first version of an old definition has no such time. */
+function whenSaved(ms) {
+  if (!Number.isInteger(ms) || ms <= 0) return 'before versions were kept';
+  return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+}
+/** The rows of a versions answer worth showing: a whole number, newest first as the server sends them. */
+function validVersions(data) {
+  if (!data || !Array.isArray(data.versions)) return [];
+  return data.versions.filter((v) => v && Number.isInteger(v.version) && v.version > 0);
+}
+/**
+ * A package from the text of a file: {pkg} or {error}. The door is the server's, whole. This only says
+ * something a person can act on before a file that was never a package reaches it.
+ */
+function parsePackage(text) {
+  let p;
+  try { p = JSON.parse(String(text)); } catch (err) { return { error: 'That file is not JSON.' }; }
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return { error: 'That file is not a package.' };
+  if (p.format !== PACKAGE_FORMAT) return { error: 'That file is not an agnostic package (' + PACKAGE_FORMAT + ').' };
+  if (!Array.isArray(p.definitions) || !p.definitions.length) return { error: 'That package holds no definitions.' };
+  return { pkg: p };
+}
+/** The keys a package holds, for showing before it goes in. */
+function packageKeys(pkg) {
+  return pkg.definitions.map((d) => (d && typeof d.key === 'string' ? d.key : '?'));
+}
+/** The file name for an export made at `ms`. */
+function packageFileName(ms) { return 'agnostic-definitions-' + new Date(ms).toISOString().slice(0, 10) + '.json'; }
 
 /** The presets, and the one open. Read-only. */
 class PresetShelf {
@@ -360,7 +442,14 @@ class DefinitionShelf {
   // `etag`: the revision of the open definition, from its last read or save (agnostic 0.1.15). A
   // save or delete sends it as If-Match, so an edit made from a stale copy is refused (412)
   // instead of silently undoing someone else's.
-  constructor(host) { this.host = host; this.items = []; this.loaded = false; this.error = ''; this.open = null; this.unforwarded = []; this.openError = ''; this.etag = null; }
+  constructor(host) {
+    this.host = host; this.items = []; this.loaded = false; this.error = ''; this.open = null; this.unforwarded = []; this.openError = ''; this.etag = null;
+    this.versions = [];        // what the open key has been, newest first
+    this.versionsKey = '';     // the key `versions` is of
+    this.versionsError = '';
+    this.version = null;       // the version open: {version, saved_at, definition, unforwarded}
+    this.versionError = '';
+  }
   async load() {
     const r = await this.host.request('GET', '/api/v1/agents/definitions');
     if (r.status !== 200 || !r.data || !Array.isArray(r.data.definitions)) { this.error = r.status === 403 ? 'Your role cannot read definitions.' : 'Could not list definitions: ' + errOf(r); return false; }
@@ -381,6 +470,77 @@ class DefinitionShelf {
     this.unforwarded = Array.isArray(r.data.unforwarded) ? r.data.unforwarded.filter((x) => typeof x === 'string') : [];
     this.etag = revisionOf(r);
     return this.open;
+  }
+  /** What `key` has been. Answers for a key that was deleted too, which is how one is brought back. */
+  async loadVersions(key) {
+    this.versions = [];
+    this.versionsKey = key;
+    this.versionsError = '';
+    if (!RE_DEF_KEY.test(key)) return [];
+    const r = await this.host.request('GET', '/api/v1/agents/definitions/' + key + '/versions');
+    if (r.status === 404) return [];
+    if (r.status !== 200) { this.versionsError = 'Could not read its versions: ' + errOf(r); return []; }
+    this.versions = validVersions(r.data);
+    return this.versions;
+  }
+  /** Version `n` of `key`, whole. */
+  async readVersion(key, n) {
+    this.version = null;
+    this.versionError = '';
+    if (!RE_DEF_KEY.test(key) || !n) return null;
+    const r = await this.host.request('GET', '/api/v1/agents/definitions/' + key + '/versions/' + n);
+    if (r.status === 200 && r.data && r.data.definition) {
+      this.version = { version: n, saved_at: r.data.saved_at, definition: r.data.definition, unforwarded: Array.isArray(r.data.unforwarded) ? r.data.unforwarded : [] };
+      return this.version;
+    }
+    this.versionError = r.status === 404 ? 'There is no such version: it was never saved, or it is past the number this server keeps.'
+      : r.status === 409 ? 'This version no longer reads as a definition.' : 'Could not read it: ' + errOf(r);
+    return null;
+  }
+  /**
+   * Make version `n` of `key` current, as a new version. Sends the open revision as If-Match, so a
+   * rollback made from a stale page is refused and does not undo someone's edit unseen. A deleted
+   * definition has none to send, and comes back. Resolves {ok, message}.
+   */
+  async rollback(key, n) {
+    const tag = this.open && this.open.key === key ? this.etag : null;
+    const r = await this.host.request('POST', '/api/v1/agents/definitions/' + key + '/rollback', { version: n }, tag ? { ifMatch: tag } : undefined);
+    if (r.status === 200 && r.data && r.data.definition) {
+      this.open = r.data.definition;
+      this.unforwarded = Array.isArray(r.data.unforwarded) ? r.data.unforwarded : [];
+      this.etag = revisionOf(r);
+      this.openError = '';
+      await this.load();
+      return { ok: true, message: key + ' says what version ' + n + ' said, as a new version.' };
+    }
+    if (r.status === 412) return { ok: false, stale: true, message: 'Someone else changed ' + key + ' since you opened it, so nothing was rolled back. Reload it first.' };
+    if (r.status === 409) return { ok: false, message: 'Version ' + n + ' would be refused as a definition today, so nothing changed. Edit the definition instead.' };
+    if (r.status === 404) return { ok: false, message: 'There is no version ' + n + ' of ' + key + ' any more.' };
+    if (r.status === 403) return { ok: false, message: 'Your role cannot roll back definitions.' };
+    return { ok: false, message: 'Could not roll back: ' + errOf(r) };
+  }
+  /** Every definition as one package. Resolves {ok, doc} or {ok: false, message}. */
+  async exportAll(now) {
+    const r = await this.host.request('POST', '/api/v1/packages/export', { name: 'definitions-' + new Date(now).toISOString().slice(0, 10) });
+    if (r.status === 200 && r.data && Array.isArray(r.data.definitions)) return { ok: true, doc: r.data };
+    return { ok: false, message: r.status === 403 ? 'Your role cannot export definitions.' : 'Could not export: ' + errOf(r) };
+  }
+  /** Import `pkg`, replacing keys already stored when `overwrite`. Resolves {ok, message, conflicts?}. */
+  async importPackage(pkg, overwrite) {
+    const body = JSON.stringify(pkg);
+    if (body.length > MAX_BRIDGE_BODY) return { ok: false, message: 'This package is larger than the 256 KB this view can carry. Import it with POST /api/v1/packages/import.' };
+    const r = await this.host.request('POST', '/api/v1/packages/import' + (overwrite ? '?overwrite=true' : ''), pkg);
+    if (r.status === 200 && r.data) {
+      await this.load();
+      const made = Array.isArray(r.data.created) ? r.data.created.length : 0, replaced = Array.isArray(r.data.replaced) ? r.data.replaced.length : 0;
+      return { ok: true, message: 'Imported ' + made + ' new' + (replaced ? ' and replaced ' + replaced : '') + '.' };
+    }
+    if (r.status === 409 && r.data && Array.isArray(r.data.conflicts)) {
+      return { ok: false, conflicts: r.data.conflicts.filter((k) => typeof k === 'string'), message: 'Nothing was imported: these keys are already stored.' };
+    }
+    if (r.status === 403) return { ok: false, message: 'Your role cannot import definitions.' };
+    if (r.status === 500) { await this.load(); return { ok: false, message: errOf(r) }; }
+    return { ok: false, message: 'Nothing was imported: ' + errOf(r) };
   }
   /** Create (`isNew`) or replace a definition. Resolves {ok, message, definition?}. */
   async save(def, isNew) {
@@ -404,7 +564,7 @@ class DefinitionShelf {
   async remove(key) {
     const tag = this.open && this.open.key === key ? this.etag : null;
     const r = await this.host.request('DELETE', '/api/v1/agents/definitions/' + key, undefined, tag ? { ifMatch: tag } : undefined);
-    if (r.status === 200 || r.status === 404) { this.open = null; this.etag = null; await this.load(); return { ok: true, message: 'Deleted ' + key + '.' }; }
+    if (r.status === 200 || r.status === 404) { this.open = null; this.etag = null; await this.load(); return { ok: true, message: 'Deleted ' + key + '.', deleted: key }; }
     if (r.status === 412) return { ok: false, stale: true, message: 'Someone else changed ' + key + ' since you opened it, so it was not deleted. Reload it first.' };
     if (r.status === 403) return { ok: false, message: 'Your role cannot delete definitions.' };
     return { ok: false, message: 'Could not delete: ' + errOf(r) };
@@ -419,8 +579,10 @@ class LibraryApp {
     this.defs = new DefinitionShelf(host);
     this.tab = 'presets';
     this.item = '';
+    this.versionNo = 0;        // the version open, or 0 for the definition as it is
     this.editing = null;       // {isNew, fields} while the editor is open
-    this.message = null;       // {ok, text}, the last write's answer
+    this.message = null;       // {ok, text, deleted?}, the last write's answer
+    this.importing = null;     // {pkg, keys, conflicts} while a package waits to go in
     this.gen = 0;
     this.listeners = new Set();
     host.onChange(() => this.onHost());
@@ -440,9 +602,11 @@ class LibraryApp {
     const t = this.host.param('tab');
     const tab = TABS.includes(t) ? t : 'presets';
     const item = this.host.param('item');
+    const version = versionFrom(this.host.param('version'));
     const gen = ++this.gen;
     if (force || tab !== this.tab) { this.tab = tab; this.editing = null; }
     if (force || item !== this.item) { this.item = item; this.editing = null; }
+    this.versionNo = version;
     this.emit();
     const shelf = this.tab === 'presets' ? this.presets : this.defs;
     if (force || !shelf.loaded) await shelf.load();
@@ -450,11 +614,24 @@ class LibraryApp {
     if (this.item) await shelf.read(this.item);
     else { shelf.open = null; shelf.openError = ''; }
     if (gen !== this.gen) return;
+    if (shelf === this.defs) await this.loadPast(gen);
+    if (gen !== this.gen) return;
     this.emit();
   }
-  go(tab, item) {
+  /** What the open definition has been, and the version open. */
+  async loadPast(gen) {
+    const d = this.defs;
+    d.versions = [];
+    d.version = null;
+    d.versionError = '';
+    if (!this.item || !this.host.can('definitions:read')) return;
+    await d.loadVersions(this.item);
+    if (gen !== this.gen || !this.versionNo) return;
+    await d.readVersion(this.item, this.versionNo);
+  }
+  go(tab, item, version) {
     this.message = null;
-    const params = paramsFor(tab, item);
+    const params = paramsFor(tab, item, version);
     if (this.host.navigate(this.host.pluginId() || 'library', params)) return;
     this.host.params = params;
     this.applyParams(false);
@@ -485,8 +662,52 @@ class LibraryApp {
   }
   async remove(key) {
     const r = await this.defs.remove(key);
-    this.message = { ok: r.ok, text: r.message };
     if (r.ok) this.go('definitions', '');
+    // After `go`, which clears it: a deletion's message offers the way back.
+    this.message = { ok: r.ok, text: r.message, deleted: r.deleted };
+    this.emit();
+    return r;
+  }
+  /** Make version `n` of the open key current. Resolves {ok, message}. */
+  async rollback(n) {
+    const key = this.item;
+    const r = await this.defs.rollback(key, n);
+    if (r.ok) {
+      this.go('definitions', key);
+      this.message = { ok: true, text: r.message };
+    } else {
+      this.message = { ok: false, text: r.message };
+    }
+    this.emit();
+    return r;
+  }
+  /** Every definition as one package, for the view to save. Resolves {ok, text?, file?}. */
+  async exportAll(now) {
+    this.message = null;
+    const r = await this.defs.exportAll(now);
+    if (!r.ok) { this.message = { ok: false, text: r.message }; this.emit(); return r; }
+    this.message = { ok: true, text: 'Exported ' + r.doc.definitions.length + ' definitions.' };
+    this.emit();
+    return { ok: true, text: JSON.stringify(r.doc, null, 2), file: packageFileName(now) };
+  }
+  /** Take the text of a chosen file: show what it holds, and wait to be told to import it. */
+  choosePackage(text) {
+    this.message = null;
+    const p = parsePackage(text);
+    if (p.error) { this.importing = null; this.message = { ok: false, text: p.error }; this.emit(); return false; }
+    this.importing = { pkg: p.pkg, keys: packageKeys(p.pkg), conflicts: [] };
+    this.emit();
+    return true;
+  }
+  cancelImport() { this.importing = null; this.emit(); }
+  /** Import the package waiting. Conflicts stay on it, and `overwrite` is what answers them. */
+  async runImport(overwrite) {
+    const im = this.importing;
+    if (!im) return { ok: false, message: 'Nothing is waiting to be imported.' };
+    const r = await this.defs.importPackage(im.pkg, overwrite);
+    this.message = { ok: r.ok, text: r.message };
+    if (r.ok) this.importing = null;
+    else if (r.conflicts) im.conflicts = r.conflicts;
     this.emit();
     return r;
   }
@@ -516,6 +737,7 @@ class LibraryView {
     this.app = app;
     this.$ = (id) => document.getElementById(id);
     this.confirmDelete = '';
+    this.confirmRollback = 0;
     const tabs = this.$('tabs');
     for (const [id, label] of [['presets', 'Presets'], ['definitions', 'Agent definitions']]) {
       const b = el('button', 'chip', label);
@@ -525,6 +747,18 @@ class LibraryView {
       tabs.append(b);
     }
     this.$('new-def').addEventListener('click', () => { this.app.edit(true); });
+    this.$('export-defs').addEventListener('click', async () => {
+      const r = await this.app.exportAll(Date.now());
+      if (r.ok) this.save(r.file, r.text);
+    });
+    this.$('import-defs').addEventListener('click', () => this.$('import-file').click());
+    this.$('import-file').addEventListener('change', async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      const text = await f.text();
+      e.target.value = '';      // so that the same file can be chosen again
+      this.app.choosePackage(text);
+    });
     app.onChange(() => this.render());
     this.render();
   }
@@ -535,6 +769,8 @@ class LibraryView {
     this.$('layout').hidden = st !== 'ready';
     this.$('tabs').hidden = st !== 'ready';
     this.$('new-def').hidden = !(st === 'ready' && a.tab === 'definitions' && a.mayWrite());
+    this.$('export-defs').hidden = !(st === 'ready' && a.tab === 'definitions' && a.host.can('definitions:read'));
+    this.$('import-defs').hidden = !(st === 'ready' && a.tab === 'definitions' && a.mayWrite());
     let msg = this.$('message');
     if (st !== 'ready') {
       if (!msg) { msg = el('div', 'empty'); msg.id = 'message'; document.body.append(msg); }
@@ -545,6 +781,16 @@ class LibraryView {
     if (msg) msg.remove();
     this.renderList();
     this.renderDetail();
+  }
+  /** Save `text` as a file: the sandbox allows a download, and nothing else leaves this page. */
+  save(name, text) {
+    const link = el('a');
+    link.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    link.download = name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
   }
   renderList() {
     const a = this.app;
@@ -578,8 +824,18 @@ class LibraryView {
     const box = this.$('detail');
     const keep = box.scrollTop;
     box.replaceChildren();
-    if (a.message) box.append(el('div', 'box ' + (a.message.ok ? 'ok' : 'bad'), a.message.text));
-    if (a.editing) this.fillEditor(box);
+    if (a.message) {
+      const m = el('div', 'box ' + (a.message.ok ? 'ok' : 'bad'), a.message.text);
+      if (a.message.deleted) {
+        const back = el('button', 'linkish', ' Its versions are kept: bring it back');
+        back.type = 'button';
+        back.addEventListener('click', () => a.go('definitions', a.message.deleted));
+        m.append(back);
+      }
+      box.append(m);
+    }
+    if (a.importing) this.fillImport(box);
+    else if (a.editing) this.fillEditor(box);
     else if (a.tab === 'presets') this.fillPreset(box);
     else this.fillDefinition(box);
     box.scrollTop = keep;
@@ -627,8 +883,22 @@ class LibraryView {
     const a = this.app;
     const d = a.defs.open;
     if (!a.item) { box.append(el('div', 'empty', 'Choose a definition to see it' + (a.mayWrite() ? ', or create one.' : '.'))); return; }
-    if (a.defs.openError) { box.append(el('div', 'box bad', a.defs.openError)); return; }
+    if (a.defs.openError) {
+      // Deleted, with its past kept: this is the way back.
+      if (a.defs.versions.length) {
+        box.append(el('h1', null, a.item), el('p', 'lede', 'This definition was deleted. Its versions are kept' + (a.mayWrite() ? ': roll back to one to bring it back.' : '.')));
+        if (a.versionNo) this.fillVersion(box, null); else this.fillVersions(box);
+        return;
+      }
+      box.append(el('div', 'box bad', a.defs.openError));
+      return;
+    }
     if (!d) { box.append(el('div', 'muted', 'Loading…')); return; }
+    if (a.versionNo) {
+      box.append(el('h1', null, (d.name || d.key)), el('div', 'muted', d.key));
+      this.fillVersion(box, d);
+      return;
+    }
     const h = el('h1');
     h.append(el('span', null, d.name || d.key));
     box.append(h, el('div', 'muted', d.key));
@@ -645,7 +915,7 @@ class LibraryView {
         const no = el('button', 'btn', 'Keep it');
         no.type = 'button';
         no.addEventListener('click', () => { this.confirmDelete = ''; this.renderDetail(); });
-        act.append(el('span', 'muted', 'Delete ' + d.key + '? Crews that name it by key will no longer find it.'), yes, no);
+        act.append(el('span', 'muted', 'Delete ' + d.key + '? Crews that name it by key will no longer find it. Its versions are kept.'), yes, no);
       } else {
         const del = el('button', 'btn danger', 'Delete');
         del.type = 'button';
@@ -670,6 +940,123 @@ class LibraryView {
     if (a.defs.unforwarded.length) {
       box.append(el('div', 'box', 'Kept but not used by the engine: ' + a.defs.unforwarded.join(', ') + '. They round-trip with the definition and shape nothing.'));
     }
+    this.fillVersions(box);
+  }
+  /** What the definition has been: every write, newest first. */
+  fillVersions(box) {
+    const a = this.app;
+    box.append(el('h2', null, 'Versions'));
+    if (a.defs.versionsError) { box.append(el('div', 'box bad', a.defs.versionsError)); return; }
+    if (!a.defs.versions.length) { box.append(el('div', 'muted', 'None yet: this definition has not been written since versions were kept.')); return; }
+    const t = el('table', 'versions');
+    const head = el('thead');
+    const hr = el('tr');
+    for (const c of ['Version', 'Saved', 'Name', 'Role', '']) hr.append(el('th', null, c));
+    head.append(hr);
+    t.append(head);
+    const body = el('tbody');
+    for (const v of a.defs.versions) {
+      const tr = el('tr');
+      const s = v.definition && typeof v.definition === 'object' ? v.definition : {};
+      const no = el('td', 'n');
+      // A row that no longer decodes has no definition, and says so.
+      if (v.definition) {
+        const open = el('button', 'linkish', 'v' + v.version);
+        open.type = 'button';
+        open.title = 'Compare version ' + v.version + ' with what is current';
+        open.addEventListener('click', () => a.go('definitions', a.item, v.version));
+        no.append(open);
+      } else {
+        no.textContent = 'v' + v.version;
+      }
+      tr.append(no, el('td', null, whenSaved(v.saved_at)), el('td', null, s.name || ''), el('td', null, v.definition ? (s.role || '') : 'no longer reads as a definition'));
+      const st = el('td');
+      if (v.current === true) st.append(el('span', 'pill', 'current'));
+      tr.append(st);
+      body.append(tr);
+    }
+    t.append(body);
+    box.append(t);
+  }
+  /** One version, against the definition `now` (null when it was deleted), and the way back to it. */
+  fillVersion(box, now) {
+    const a = this.app;
+    const n = a.versionNo;
+    box.append(el('h2', null, 'Version ' + n));
+    const back = el('button', 'btn', now ? 'Back to the definition' : 'All its versions');
+    back.type = 'button';
+    back.addEventListener('click', () => { this.confirmRollback = 0; a.go('definitions', a.item); });
+    const act = el('div', 'actions');
+    act.append(back);
+    if (a.defs.versionError) { box.append(act, el('div', 'box bad', a.defs.versionError)); return; }
+    const v = a.defs.version;
+    if (!v) { box.append(act, el('div', 'muted', 'Loading…')); return; }
+    const rows = compareDefinitions(v.definition, now);
+    const same = now !== null && rows.every((r) => !r.differs);
+    if (a.mayWrite() && !same) {
+      if (this.confirmRollback === n) {
+        const yes = el('button', 'btn danger', now ? 'Yes, roll back' : 'Yes, bring it back');
+        yes.type = 'button';
+        yes.addEventListener('click', async () => { this.confirmRollback = 0; yes.disabled = true; await a.rollback(n); });
+        const no = el('button', 'btn', 'Keep it as it is');
+        no.type = 'button';
+        no.addEventListener('click', () => { this.confirmRollback = 0; this.renderDetail(); });
+        act.append(el('span', 'muted', (now ? 'Make this what ' + a.item + ' says?' : 'Bring ' + a.item + ' back as this?') + ' It affects every crew that names it from now on, and it is a new version, so it can be undone.'), yes, no);
+      } else {
+        const b = el('button', 'btn primary', now ? 'Roll back to version ' + n : 'Bring it back as version ' + n);
+        b.type = 'button';
+        b.addEventListener('click', () => { this.confirmRollback = n; this.renderDetail(); });
+        act.append(b);
+      }
+    }
+    box.append(act, el('p', 'muted', 'Saved ' + whenSaved(v.saved_at)));
+    if (same) box.append(el('div', 'box', 'This version says what the definition says now.'));
+    const t = el('table', 'versions');
+    const head = el('thead');
+    const hr = el('tr');
+    for (const c of now ? ['Field', 'Version ' + n, 'Now'] : ['Field', 'Version ' + n]) hr.append(el('th', null, c));
+    head.append(hr);
+    t.append(head);
+    const body = el('tbody');
+    for (const r of rows) {
+      const tr = el('tr', r.differs && now ? 'differs' : '');
+      const label = el('td', 'f', r.label);
+      // In words as well as in colour.
+      if (r.differs && now) label.append(el('span', 'pill', 'differs'));
+      tr.append(label, el('td', null, r.then));
+      if (now) tr.append(el('td', null, r.now));
+      body.append(tr);
+    }
+    t.append(body);
+    box.append(t);
+  }
+  /** A package chosen, and what it would do. */
+  fillImport(box) {
+    const a = this.app;
+    const im = a.importing;
+    box.append(el('h1', null, 'Import ' + (typeof im.pkg.name === 'string' ? im.pkg.name : 'a package')));
+    box.append(el('p', 'lede', 'What a package holds reaches a model when a crew runs it, so import only what you trust. It goes in whole or not at all, and each definition gains a version.'));
+    const tags = el('div', 'tags');
+    for (const k of im.keys) tags.append(el('span', 'tag', k));
+    box.append(tags);
+    const act = el('div', 'actions');
+    const go = el('button', 'btn primary', 'Import ' + im.keys.length + (im.keys.length === 1 ? ' definition' : ' definitions'));
+    go.type = 'button';
+    go.addEventListener('click', async () => { go.disabled = true; await a.runImport(false); });
+    const cancel = el('button', 'btn', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => a.cancelImport());
+    if (im.conflicts.length) {
+      box.append(el('div', 'box bad', 'Already stored: ' + im.conflicts.join(', ') + '. Replacing them keeps what they said as a version.'));
+      const over = el('button', 'btn danger', 'Replace them and import');
+      over.type = 'button';
+      over.addEventListener('click', async () => { over.disabled = true; await a.runImport(true); });
+      act.append(over);
+    } else {
+      act.append(go);
+    }
+    act.append(cancel);
+    box.append(act);
   }
   fillEditor(box) {
     const a = this.app;

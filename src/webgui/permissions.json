@@ -9,10 +9,11 @@
     ]
   },
   "presets:read": {
-    "grants": "read the preset library",
+    "grants": "read the preset library and ask which preset fits",
     "routes": [
       "GET /api/v1/presets",
-      "GET /api/v1/presets/:name"
+      "GET /api/v1/presets/:name",
+      "POST /api/v1/preset-recommendations"
     ]
   },
   "tools:read": {
@@ -22,18 +23,23 @@
     ]
   },
   "definitions:read": {
-    "grants": "read agent definitions",
+    "grants": "read agent definitions and their versions, and export them",
     "routes": [
       "GET /api/v1/agents/definitions",
-      "GET /api/v1/agents/definitions/:key"
+      "GET /api/v1/agents/definitions/:key",
+      "GET /api/v1/agents/definitions/:key/versions",
+      "GET /api/v1/agents/definitions/:key/versions/:n",
+      "POST /api/v1/packages/export"
     ]
   },
   "definitions:write": {
-    "grants": "create, change and delete agent definitions",
+    "grants": "create, change, delete, roll back and import agent definitions",
     "routes": [
       "POST /api/v1/agents/definitions",
       "PUT /api/v1/agents/definitions/:key",
-      "DELETE /api/v1/agents/definitions/:key"
+      "DELETE /api/v1/agents/definitions/:key",
+      "POST /api/v1/agents/definitions/:key/rollback",
+      "POST /api/v1/packages/import"
     ]
   },
   "crews:read": {

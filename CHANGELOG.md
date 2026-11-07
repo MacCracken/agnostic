@@ -4,6 +4,65 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-11-06
+
+**The WebGUI reaches what 0.4.2 added.** A definition shows what it has been, an edit can be undone from the page, a
+deleted definition can be brought back, and definitions travel as a file. The Crews view can now start a crew, by
+saying who it needs. No route and no dependency moved.
+
+### Added
+
+- **Versions in the Library:** every version of a definition, newest first. Open one to see it beside what is current,
+  field by field, and roll back with the revision you read as `If-Match`, so that a rollback from a stale page is refused
+  and undoes nobody. A version today's door would refuse says so, and nothing changes. The version open is in the link.
+- **A deleted definition can be brought back:** the message after a delete offers it, and the definition's link
+  shows its versions.
+- **Export and Import in the Library:** Export saves every definition as a file. Import shows what a file holds before
+  anything goes in, and a key already stored stops it, by name, until Replace is asked for.
+- **New crew in the Crews view:** a name, a team by role, tasks, how they run and a target. A retry keeps its
+  `Idempotency-Key`, so a lost answer cannot start a second crew, and a refused crew keeps what was typed.
+- **Which preset fits,** in the same form: a preset, what it went on and the alternatives, and **Use its roles** fills the
+  team from one.
+- **Agents on a crew's page,** from its plan, so a team says who it became.
+- **`tests/webgui/browser/library.e2e.mjs`,** by hand as the others are: versions, a rollback, a stale one refused, a
+  deletion undone, a real download out of a sandboxed frame, and a file back in through the page's own input.
+
+### Changed
+
+- **`src/webgui/permissions.json`** ([ADR 0038](docs/adr/0038-the-views-use-the-permissions-they-had-and-a-rollback-sends-its-revision.md)):
+  `definitions:read` gains the versions routes and export, `definitions:write` gains rollback and import, and
+  `presets:read` gains the recommendation. The server enforces these as it does the rest, and Settings shows the new words.
+- **The shell forwards `ifMatch` on a POST,** which a rollback is.
+- **The Crews view holds `presets:read`.** Library 0.2.0, Crews 0.2.0.
+
+### Fixed
+
+- **The Library's "Deleted …" message never showed.** It was set, and the navigation that followed cleared it. It
+  had been that way since 0.1.10.
+
+### Performance
+
+- **No server code changed,** so the only cost is the pages: the x86_64 binary 4,379,912 → 4,420,440 B.
+- **Nothing moved.** The recorded run was on a loaded machine and read `recommend_route` +42% and `audit_open_10k`
+  +18%. Run again, those read 18.7 µs and 250 ms, what 0.4.2 recorded.
+
+### Verified
+
+- **x86_64, `CYRIUS_DCE=1`:** 42 suites, 4,300 assertions, 0 failed, and 119 JavaScript tests. Coverage 98% against the
+  gate of 95. `check-clean.sh`, `check-symbols.sh`, `check-skill.py` and the schema check pass, and all 8 load-test steps,
+  with 9,375 crews through a restart and 20,339 reads of crews about to go.
+- **A Raspberry Pi 4, natively:** the same 42 suites and 4,300 assertions, the boot probe and load-test steps 1 to 7, on
+  106 files compared by hash. Step 8 was not repeated there: no server code changed since 0.4.2.
+- **Real Chromium:** the Library 35 of 35, Crews 24 of 24, Users 25 of 25. A rollback's `If-Match` crosses the bridge and
+  a stale one is refused, a deleted definition comes back, a package saves as a real download out of a sandboxed frame
+  and returns through the page's file input, and a team's crew starts, against a gateway, and says who it became.
+- **44 mutants, all caught:** 36 on the views' logic and the bridge, and 8 on the permission vocabulary, where a
+  route dropped from a grant or a permission added to Crews fails `plugins/rung`.
+
+**What this does not show.** The file input was filled by the browser's debugging protocol, so the native file picker
+was not opened by hand. The views ran in Chromium alone, and a viewer's page was checked in Node and not in a browser. The
+composer's and the Library's drawing code has browser tests and no mutants: the mutants cover their logic.
+
 ## [0.4.2] — 2026-11-06
 
 **A crew leaves nothing behind.** agnosai 2.2.5 repaired both reports agnostic filed with it, and this release is

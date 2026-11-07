@@ -2,7 +2,12 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-06, at **0.4.2** — a crew leaves nothing behind. **agnosai 2.2.5 and kavach 3.14.6**: a
+> Last refreshed: 2026-11-06, at **0.4.3** — the WebGUI reaches what 0.4.2 added: a definition's versions, a
+> rollback and a deletion undone in the Library, packages out and back in, and a crew started in the Crews view by
+> who it needs, with a preset recommendation
+> ([ADR 0038](../adr/0038-the-views-use-the-permissions-they-had-and-a-rollback-sends-its-revision.md)). No route
+> and no dependency moved. Version, Tests, the WebGUI section and Next were refreshed then.
+> Before that, 2026-11-06, at **0.4.2** — a crew leaves nothing behind. **agnosai 2.2.5 and kavach 3.14.6**: a
 > crew lives in an arena and goes back when no reader can hold it, which closes audit P2
 > ([ADR 0034](../adr/0034-a-crew-lives-in-an-arena-and-readers-are-waited-for.md)), and a task is held to its
 > `output_schema` ([ADR 0033](../adr/0033-output-valid-is-the-engines-word.md)). Definition versions and rollback
@@ -114,7 +119,7 @@
 
 ## Version
 
-**0.4.2** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.4.3** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -180,13 +185,13 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 62 files, 36,527 lines, 1,648 top-level definitions (0.4.2; 34,801 and 1,531 at
-0.4.1), all `agnostic_*`-prefixed. 12,492 of those lines are generated:
-`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (11,655 — six embedded pages and the plugin
+the real surface (0.1.10)** — 62 files, 37,312 lines, 1,648 top-level definitions (0.4.3; 36,527 and 1,648 at
+0.4.2), all `agnostic_*`-prefixed. 13,277 of those lines are generated:
+`src/presets_data.cyr` (837) and `src/webgui_data.cyr` (12,440 — six embedded pages and the plugin
 permission vocabulary).
 
-**Tests: 42 suites, 4,289 assertions, 0 failed** (`cyrius test`, 0.4.2; 3,870 at 0.4.1), plus
-**97 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+) — **and the
+**Tests: 42 suites, 4,300 assertions, 0 failed** (`cyrius test`, 0.4.3; 4,289 at 0.4.2), plus
+**119 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+) — **and the
 same 42 suites natively on aarch64** (Raspberry Pi 4). Their counts match but for `crews_route`, 247 or 248
 from run to run, because two loops assert once per poll. Gates
 green: `check-symbols.sh` (4 rules — Rule 4, the `lib/`↔`lib/` constant check, is evaluated per
@@ -425,18 +430,20 @@ and carries query strings, revisions and idempotency keys. Plugin documents have
   `POST /api/v1/auth/login` and keeps the token per tab (`sessionStorage`). It is also the
   **host bridge**: it answers a plugin's `postMessage` requests that its manifest permits,
   with the user's token, which the plugin never sees.
-- **Crews 0.1.3** (`crews`, 50,514 B, `data: live`, `crews:read`, `crews:write`) — the tenant's
+- **Crews 0.2.0** (`crews`, 69,750 B, `data: live`, `crews:read`, `crews:write`, `presets:read`) — the tenant's
   crews by status, a page at a time; a crew's plan, progress by cursor, each task's result with its
   tokens, cost and time, the totals (tokens only when metered, cost only when priced); cancel, asked
   inline; a cancelled crew followed until its finished tasks' results arrive; links to Swarm Command.
   Since 0.1.13: an **Interrupted** filter and pill, and an interrupted crew's `interrupted_at`.
   0.1.2 (with agnostic 0.1.15): each task names the agent that did it from the result's
-  `agent_key`, so a finished crew, or one whose events are gone, still says.
-- **Library 0.1.1** (`library`, 40,065 B, `data: live`, `presets:read`, `definitions:read`,
+  `agent_key`, so a finished crew, or one whose events are gone, still says. 0.2.0 (with agnostic
+  0.4.3): **New crew**, by team, with which preset fits and a preset's roles; a crew's page lists its agents.
+- **Library 0.2.0** (`library`, 60,735 B, `data: live`, `presets:read`, `definitions:read`,
   `definitions:write`) — the presets and their agents; definitions listed, created, edited (key
   fixed), deleted; a preset's agent saved as a definition. 0.1.1 (with agnostic 0.1.15): a save or
   delete sends the revision it read as `If-Match`, and a 412 keeps the edits and says someone else
-  changed the definition.
+  changed the definition. 0.2.0 (with agnostic 0.4.3): a definition's versions, compared with what is
+  current and rolled back to; a deleted one brought back; Export and Import.
 - **Audit trail 0.1.1** (`audit`, 28,182 B, `data: live`, `audit:read`) — the chain's verdict at
   start-up, its count and dropped appends, and its newest entries by index (severity and text
   filters; each entry's hash and whether it names the one before it, as sent). SUPER routes.
@@ -523,8 +530,12 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**42 suites, 4,289 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.2, 2026-11-06),
-with `CYRIUS_DCE=1` as CI runs them. 0.4.2's additions, the rules mutation-checked (39 mutants, CHANGELOG
+**42 suites, 4,300 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.3, 2026-11-06),
+with `CYRIUS_DCE=1` as CI runs them. 0.4.3's additions, the rules mutation-checked (44 mutants, CHANGELOG
+[0.4.3]): 22 JavaScript tests over the Library's versions and packages and the Crews composer, `plugins/rung` on
+the new grants, and `tests/webgui/browser/library.e2e.mjs`, by hand in real Chromium. `crews.e2e.mjs` starts a crew
+by team. `cyrius coverage --exec` reads 98%.
+At 0.4.2: 42 suites and 4,289 assertions. Its additions, the rules mutation-checked (39 mutants, CHANGELOG
 [0.4.2]): `tests/crew_arena.tcyr` (245), `tests/definition_library.tcyr` (165), `serve/ledger-bracket`, and
 `crew_body`'s `output_valid` rewritten. `scripts/fake-gateway.py` lets the boot probe and the Crews view run
 live crews, and `scripts/load-test.py` gains step 8. `cyrius coverage --exec` reads 98%.
@@ -938,10 +949,10 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x and holds every gap the
 parity review found. `python-port/` is removed once that plan is finished and tagged.
 
-**At 0.4.2:** nothing on the 0.4.x line can move without agnosai. M6 proper, holding a tool to its target, the
+**At 0.4.3:** nothing on the 0.4.x line can move without agnosai. M6 proper, holding a tool to its target, the
 registry seam, the reviewer preset and the model picker wait on its 2.3.x and 2.4.x, whose tags are not out:
 `git tag` there ends at 2.2.5. Tool upload waits for a sandbox, and fleet routes for a fleet. What waits on
-nothing is `[embed]`, and the shell's views of what 0.4.2 added, on the roadmap under M9.
+nothing is `[embed]`.
 
 The notes below were written for M5 and remain true.
 

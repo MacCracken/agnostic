@@ -1,6 +1,7 @@
 // The Crews view in a real browser, on what a crew's body can say since 0.4.0: its target, a task's own,
 // and an answer out of the shape it declared, which takes a gateway since 0.4.2: a placeholder is not
-// judged, so this runs `scripts/fake-gateway.py`. The same harness as `users.e2e.mjs`.
+// judged, so this runs `scripts/fake-gateway.py`. Since 0.4.3 it starts a crew by who it needs, too. The
+// same harness as `users.e2e.mjs`.
 //
 // By hand, and not in CI, which has no browser:
 //   node tests/webgui/browser/crews.e2e.mjs "$PWD/build/agnostic" <directory for screenshots>
@@ -99,6 +100,42 @@ const plan = await (await fetch(BASE + '/api/v1/crews/' + crewId + '/plan', { he
 ok(plan.agents[0].key === 'reviewer' && plan.agents[0].name === 'Reviewer', 'the agent is the stored definition it named');
 ok((await inFrame(`[...document.querySelectorAll('.fact a')].length`)) === 0, '⭐ a target is text, never a link');
 await shot('crews-target.png');
+
+// The composer (0.4.3): a crew said by who it needs, on the same gateway.
+const click = (label) => inFrame(`(() => { const b = [...document.querySelectorAll('button')].find((x) => !x.hidden && x.textContent.trim() === ${JSON.stringify(label)}); if (!b) return false; b.click(); return true; })()`);
+const text = () => inFrame(`document.body.innerText`);
+const until = async (want) => { for (let i = 0; i < 40; i++) { if (want.test(await text())) return true; await sleep(100); } console.log('  waited for ' + want + '; page: ' + (await text()).slice(0, 300)); return false; };
+// Typed as a person types: the view keeps what an `input` event hands it, and nothing else.
+const type = (selector, value) => inFrame(`(() => { const i = document.querySelector(${JSON.stringify(selector)}); if (!i) return false; i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+
+ok(await click('New crew'), 'a crew can be started from here');
+ok(await until(/Say who the crew needs/), 'the composer opens');
+await type('#c-name', 'team crew');
+await type('#c-about', 'a thorough regression audit');
+ok(await click('Suggest a preset'), 'it asks which preset fits');
+ok(await until(/quality-large/), '⭐ and the server answers');
+ok((await text()).includes('It went on: regression'), '⭐ with what it went on');
+await shot('crews-suggest.png');
+await click('Use its roles');
+ok(await until(/These are the roles of quality-large/), 'a preset fills the team');
+const roles = await inFrame(`[...document.querySelectorAll('.line:not(.task) input[type=text]:first-child')].map((i) => i.value)`);
+ok(roles.length > 1 && roles.every(Boolean), '⭐ with its roles: ' + roles.length);
+ok((await inFrame(`document.querySelector('#c-name').value`)) === 'team crew', '⭐ and what was typed survives the redraw');
+await type('.line.task textarea', 'look at the login page');
+await type('#c-target', 'https://nowhere.example/');
+await click('Start crew');
+ok(await until(/not one this deployment may test/), '⭐ the door refuses a target off the list, in the form');
+ok((await inFrame(`document.querySelector('#c-name').value`)) === 'team crew', 'and nothing typed is lost');
+await type('#c-target', 'https://sut.example/app');
+await shot('crews-compose.png');
+await click('Start crew');
+ok(await until(/agents/i), '⭐ it starts, and opens');
+const started = await inFrame(`document.querySelector('.id').textContent`);
+const madePlan = await (await fetch(BASE + '/api/v1/crews/' + started + '/plan', { headers: auth })).json();
+ok(madePlan.agents.length === roles.length, '⭐ one agent for each role');
+ok(madePlan.agents.every((a) => (a.key || '').length > 0) && (await text()).includes(madePlan.agents[0].role), '⭐ and the page says who it became');
+ok(!madePlan.agents[0].key.includes(' '), 'under keys a crew can hold');
+await shot('crews-started.png');
 
 const noise = errors.filter((e) => !/401|Failed to load resource/.test(e));
 ok(noise.length === 0, 'no script error and no CSP violation in the console' + (noise.length ? ': ' + noise.slice(0, 3).join(' | ') : ''));

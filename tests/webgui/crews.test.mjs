@@ -10,7 +10,8 @@ import { loadPage, tick } from './harness.mjs';
 
 const page = loadPage('src/webgui/plugins/crews/index.html');
 const C = page.get(`({ FILTERS, PAGE_SIZE, mergeFirstPage, paramsFor, listsBefore, validRow, taskTitle, fmtMicro,
-  fmtTokens, fmtDuration, CrewList, CrewDetail, CrewsApp })`);
+  fmtTokens, fmtDuration, CrewList, CrewDetail, CrewsApp, CrewComposer, blankCrew, teamCrewBody, recommendationOf,
+  membersFromPreset, TEAM_MAX })`);
 
 const uuid = (n) => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
 const ACTIVE = ['pending', 'running'];
@@ -26,6 +27,11 @@ class FakeAgnostic {
     this.oldest = new Map();  // id → the oldest seq the window still holds (absent: 1)
     this.calls = [];
     this.cancelAnswer = 200;
+    this.submitAnswer = null;  // {status, data} in place of accepting a crew
+    this.seen = new Map();     // Idempotency-Key → the crew it started
+    this.presets = new Map([['quality-lean', { name: 'quality-lean', agents: [{ agent_key: 'qa-manager', role: 'QA Manager' }, { agent_key: 'qa', role: 'QA Engineer' }] }]]);
+    this.recommendation = { preset: 'quality-lean', domain: 'quality', size: 'lean', reason: 'the description reads as quality work: 1 word matched', matched: ['test'],
+      alternatives: [{ preset: 'quality-standard', reason: 'the middle size of the same team' }] };
   }
   answer(status, data) { return Promise.resolve({ status, data: data === undefined ? null : structuredClone(data), etag: null }); }
   addCrew(n, status, extra = {}) {
@@ -42,11 +48,25 @@ class FakeAgnostic {
     const evs = this.events.get(id);
     evs.push({ seq: evs.length + 1, at_ms: evs.length * 10, type, data });
   }
-  request(method, path, body) {
-    this.calls.push({ method, path, body });
+  request(method, path, body, opts) {
+    this.calls.push({ method, path, body, opts });
     const [bare, query] = path.split('?');
     const q = new URLSearchParams(query || '');
     let m;
+    if (method === 'POST' && bare === '/api/v1/preset-recommendations') return this.answer(200, this.recommendation);
+    if (method === 'GET' && (m = bare.match(/^\/api\/v1\/presets\/([a-z0-9-]+)$/))) {
+      return this.presets.has(m[1]) ? this.answer(200, this.presets.get(m[1])) : this.answer(404, { error: 'preset not found' });
+    }
+    if (method === 'POST' && bare === '/api/v1/crews') {
+      if (this.submitAnswer) return this.answer(this.submitAnswer.status, this.submitAnswer.data);
+      const key = opts && opts.idempotencyKey;
+      if (key && this.seen.has(key)) return this.answer(202, { crew_id: this.seen.get(key), status: 'pending', replayed: true });
+      const n = 500 + this.crews.length;
+      const id = this.addCrew(n, 'pending', { name: body.name });
+      if (key) this.seen.set(key, id);
+      this.plans.set(id, { crew_id: id, process: 'sequential', tasks: [], agents: body.team.members.map((m, i) => ({ key: 'agent-' + i, name: m.role, role: m.role })) });
+      return this.answer(202, { crew_id: id, status: 'pending', name: body.name });
+    }
     if (method === 'GET' && bare === '/api/v1/crews') {
       const limit = Number(q.get('limit') || 50);
       const st = q.get('status');
@@ -456,3 +476,170 @@ test('cancel is offered only to a role that may write, with crews:write', () => 
   h.mode = 'standalone';
   assert.equal(app.state(), 'standalone');
 });
+
+/** What the composer needs to be able to start. */
+const filled = (over) => Object.assign(C.blankCrew(), { name: 'sweep', members: [{ role: 'QA Manager', context: '', tools: '', lead: false }],
+  tasks: [{ description: 'look', expected: '' }] }, over);
+const plain = (x) => JSON.parse(JSON.stringify(x));
+
+test('a team goes to the server as a team, with what was left empty left out', () => {
+  assert.deepEqual(plain(C.teamCrewBody(filled()).body), { name: 'sweep', team: { members: [{ role: 'QA Manager' }] }, tasks: [{ description: 'look' }] });
+  const { body } = C.teamCrewBody(filled({ project: ' airship trials ', process: 'parallel', concurrency: '4', target: 'https://sut.example/',
+    members: [{ role: 'A', context: 'edges', tools: 'x, y\nx', lead: true }, { role: '', context: '', tools: '', lead: false }],
+    tasks: [{ description: 'one', expected: 'a list' }, { description: '', expected: '' }] }));
+  assert.deepEqual(plain(body), { name: 'sweep', team: { members: [{ role: 'A', context: 'edges', tools: ['x', 'y'], lead: true }], project_context: 'airship trials' },
+    tasks: [{ description: 'one', expected_output: 'a list' }], process: 'parallel', max_concurrency: 4, target: { url: 'https://sut.example/' } },
+    'a row nobody filled in is skipped');
+  assert.equal(C.teamCrewBody(filled({ process: 'sequential', concurrency: '4' })).body.max_concurrency, undefined, 'it applies only to parallel, as the door has it');
+  assert.equal('agents' in C.teamCrewBody(filled()).body, false, '⭐ never agents beside it: the server refuses both');
+});
+
+test('what a person can fix is said before anything is sent', () => {
+  const says = (over, re) => assert.match(C.teamCrewBody(filled(over)).error, re);
+  says({ name: ' ' }, /needs a name/);
+  says({ members: [C.blankCrew().members[0]] }, /at least one role/);
+  says({ members: [{ role: '', context: 'edges', tools: '', lead: false }] }, /needs a role/);
+  says({ members: [{ role: 'x'.repeat(201), context: '', tools: '', lead: false }] }, /at most 200/);
+  says({ members: [{ role: 'r', context: 'x'.repeat(1001), tools: '', lead: false }] }, /at most 1000/);
+  says({ members: Array.from({ length: C.TEAM_MAX + 1 }, (_, i) => ({ role: 'r' + i, context: '', tools: '', lead: false })) }, /at most 20/);
+  says({ tasks: [C.blankCrew().tasks[0]] }, /at least one task/);
+  says({ tasks: [{ description: '', expected: 'a list' }] }, /needs a description/);
+  says({ project: 'x'.repeat(2001) }, /at most 2000/);
+  says({ process: 'parallel', concurrency: '65' }, /1 to 64/);
+  says({ process: 'parallel', concurrency: '1.5' }, /1 to 64/);
+});
+
+test('a recommendation is read for what it can safely become', () => {
+  const r = C.recommendationOf({ preset: 'quality-lean', reason: 'why', matched: ['test', 7], alternatives: [{ preset: 'x-y', reason: 'a' }, { preset: '../evil', reason: 'b' }, null] });
+  assert.equal(r.preset, 'quality-lean');
+  assert.deepEqual([...r.matched], ['test'], 'words only');
+  assert.deepEqual(plain(r.alternatives.map((a) => a.preset)), ['x-y'], '⭐ a name that would not be a path is not offered');
+  assert.equal(C.recommendationOf({ preset: '../evil' }), null);
+  assert.equal(C.recommendationOf(null), null);
+  const many = C.membersFromPreset({ agents: Array.from({ length: 30 }, (_, i) => ({ role: 'r' + i })).concat([null, { role: '' }]) });
+  assert.equal(many.length, C.TEAM_MAX, 'a team holds what the door takes');
+  assert.equal(C.membersFromPreset(null).length, 0);
+});
+
+test('the composer asks which preset fits, and a preset fills the team', async () => {
+  const fake = new FakeAgnostic();
+  const c = new C.CrewComposer(hostFor(fake));
+  assert.equal(await c.suggest(), null, 'nothing to go on is not worth asking');
+  assert.match(c.suggestError, /Say what the crew is for/);
+  assert.equal(fake.calls.length, 0, 'and nothing was asked');
+  c.fields.about = 'regression tests';
+  const s = await c.suggest();
+  assert.equal(s.preset, 'quality-lean');
+  assert.deepEqual(plain(fake.calls.at(-1).body), { description: 'regression tests' });
+  c.fields.members[0].role = 'typed by hand';
+  assert.equal(await c.usePreset('quality-lean'), true);
+  assert.deepEqual(plain(c.fields.members.map((m) => m.role)), ['QA Manager', 'QA Engineer'], '⭐ its roles, which the door matches to its agents');
+  assert.equal(c.used, 'quality-lean');
+  assert.equal(await c.usePreset('no-such'), false);
+  assert.match(c.suggestError, /Could not read that preset/);
+  assert.equal(c.fields.members.length, 2, 'and what was there stays');
+  assert.equal(await c.usePreset('../x'), false);
+  fake.recommendation = { preset: '../evil' };
+  assert.equal(await c.suggest(), null);
+  assert.match(c.suggestError, /Could not ask/);
+});
+
+test('the about text does not go with the crew', () => {
+  const b = C.teamCrewBody(filled({ about: 'secret plans' })).body;
+  assert.equal(JSON.stringify(b).includes('secret plans'), false, '⭐ what it is for was asked of the table, not the model');
+});
+
+test('a crew started twice is one crew: a retry keeps its key, changed words get another', async () => {
+  const fake = new FakeAgnostic();
+  const c = new C.CrewComposer(hostFor(fake));
+  Object.assign(c.fields, filled());
+  const a = await c.submit();
+  const key = fake.calls.at(-1).opts.idempotencyKey;
+  assert.match(key, /^crews-[a-z0-9]{16}$/);
+  const b = await c.submit();
+  assert.equal(b.id, a.id, '⭐ the same words, after a lost answer, find the crew they started');
+  assert.equal(fake.calls.at(-1).opts.idempotencyKey, key);
+  c.fields.name = 'another';
+  await c.submit();
+  assert.notEqual(fake.calls.at(-1).opts.idempotencyKey, key, '⭐ changed words are another crew: one key over two bodies is refused');
+});
+
+test('a refused crew keeps what was written, and says why', async () => {
+  const fake = new FakeAgnostic();
+  const h = hostFor(fake);
+  const app = new C.CrewsApp(h, { pollMs: 5 });
+  h.connect();
+  await tick(5);
+  app.compose();
+  Object.assign(app.composer.fields, filled({ target: 'https://not-listed.example/' }));
+  fake.submitAnswer = { status: 403, data: { error: 'this host is not one this deployment may test (AGNOSTIC_TARGET_HOSTS)' } };
+  const r = await app.start();
+  assert.equal(r.ok, false);
+  assert.match(app.composer.error, /AGNOSTIC_TARGET_HOSTS/, '⭐ the server\'s words');
+  assert.equal(app.composing, true, 'the form stays');
+  assert.equal(app.composer.fields.target, 'https://not-listed.example/', 'with what was typed');
+  fake.submitAnswer = { status: 403, data: null };
+  await app.start();
+  assert.match(app.composer.error, /Your role cannot start crews/);
+  app.closeComposer();
+  assert.equal(app.composer, null);
+  assert.equal(app.composing, false);
+});
+
+test('starting a crew opens it, and the plan says who the team became', async () => {
+  const fake = new FakeAgnostic();
+  const h = hostFor(fake, { params: 'status=failed' });
+  const app = new C.CrewsApp(h, { pollMs: 5 });
+  h.connect();
+  await tick(5);
+  app.compose();
+  assert.equal(app.composing, true);
+  Object.assign(app.composer.fields, filled());
+  const r = await app.start();
+  assert.equal(r.ok, true);
+  assert.equal(app.composer, null, 'the draft is done with');
+  assert.equal(app.composing, false);
+  await tick(10);
+  assert.deepEqual(h.navigated.at(-1), ['crews', 'crew=' + r.id], '⭐ under All: under Failed a new crew would not be listed');
+  assert.equal(app.selected, r.id);
+  assert.equal(app.detail.agents()[0].role, 'QA Manager', '⭐ who it became');
+  app.detail.stop();
+});
+
+test('a draft survives looking at another crew', async () => {
+  const fake = new FakeAgnostic();
+  const a = fake.addCrew(1, 'completed');
+  const h = hostFor(fake);
+  const app = new C.CrewsApp(h, { pollMs: 5 });
+  h.connect();
+  await tick(5);
+  app.compose();
+  app.composer.fields.name = 'half done';
+  app.go('all', a);
+  await tick(10);
+  assert.equal(app.composing, false, 'the crew shows');
+  app.compose();
+  assert.equal(app.composer.fields.name, 'half done', '⭐ and the draft is still there');
+  if (app.detail) app.detail.stop();
+});
+
+test('starting is for a role that may write, and asking needs the preset library', () => {
+  const fake = new FakeAgnostic();
+  const on = new C.CrewsApp(hostFor(fake, { perms: ['crews:read', 'crews:write', 'presets:read'] }));
+  assert.equal(on.mayStart(), true);
+  assert.equal(on.mayAsk(), true);
+  const viewer = new C.CrewsApp(hostFor(fake, { role: 'viewer' }));
+  assert.equal(viewer.mayStart(), false);
+  viewer.compose();
+  assert.equal(viewer.composer, null, '⭐ a viewer gets no composer');
+  assert.equal(new C.CrewsApp(hostFor(fake, { perms: ['crews:read'] })).mayStart(), false);
+  assert.equal(new C.CrewsApp(hostFor(fake, { perms: ['crews:read', 'crews:write'] })).mayAsk(), false);
+});
+
+test('a plan with no agents shows none', () => {
+  const d = new C.CrewDetail(hostFor(new FakeAgnostic()), uuid(1));
+  assert.equal(d.agents().length, 0);
+  d.plan = { agents: [{ key: 'a' }, { role: 'no key' }, null, 7] };
+  assert.equal(d.agents().length, 1);
+});
+

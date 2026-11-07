@@ -1,8 +1,8 @@
 {
   "id": "library",
   "name": "Library",
-  "description": "The preset crews built into this server and the agent definitions stored in it: browse both, save a preset's agent as a definition, and create, edit or delete definitions.",
-  "version": "0.1.1",
+  "description": "The preset crews built into this server and the agent definitions stored in it: browse both, save a preset's agent as a definition, create, edit or delete definitions, compare a definition's versions and roll back, and move definitions between servers as a package.",
+  "version": "0.2.0",
   "data": "live",
   "entry": "index.html",
   "permissions": ["presets:read", "definitions:read", "definitions:write"]

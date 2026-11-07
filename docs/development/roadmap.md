@@ -317,10 +317,6 @@ owed for 1.0.0:
   (ADR 0009), but it is still a one-second poll. Needs a transport that does not hold a pooled
   worker per watcher.
 - [ ] M8's reports, once they exist, as views or downloads from the shell.
-- [ ] **A definition's versions in the Library:** read one, compare it with what is current, and roll
-  back, with the ETag as `If-Match`. The routes are there since 0.4.2 and nothing in the shell calls them.
-- [ ] **Assemble a team in Crews, and ask which preset fits.** The same: a body field and a route since
-  0.4.2, with no view.
 - [ ] **"Which crew needs me?"** Once agnosai F3 ships, show `awaiting_approval` as a crew
   status and in its events. Roll it up as a badge from task to crew to tenant in Crews and
   Swarm Command, with an approve/reject action behind a permission. This is the HITL surface

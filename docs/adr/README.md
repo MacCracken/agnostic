@@ -58,3 +58,4 @@ Decisions about agnostic — what we chose, the context, and the consequences we
 | [0035](0035-every-write-of-a-definition-is-a-version.md) | Every write of a definition is a version, and a delete keeps them |
 | [0036](0036-a-package-is-json-and-all-of-itself.md) | A package is JSON, and all of itself or none |
 | [0037](0037-a-team-becomes-agents-and-a-recommendation-is-words.md) | A team becomes agents at the door, and a recommendation is a table of words |
+| [0038](0038-the-views-use-the-permissions-they-had-and-a-rollback-sends-its-revision.md) | The views reach the new routes through the permissions they had, and a rollback sends its revision |

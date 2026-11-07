@@ -25,14 +25,16 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans); }
 body { display: flex; flex-direction: column; }
-button { font: inherit; color: inherit; cursor: pointer; }
-button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 [hidden] { display: none !important; }
 .muted { color: var(--dim); }
 .mono { font-family: var(--mono); }
 .btn { background: #0f1823; border: 1px solid var(--line-2); border-radius: 5px; padding: 5px 11px; font: 600 12px var(--sans); }
 .btn:hover { border-color: var(--accent); }
 .btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: #0e3346; border-color: var(--accent); color: var(--accent); }
 .btn.danger { color: var(--err); border-color: rgba(239, 68, 68, .5); }
 .btn.link { color: var(--accent); }
 
@@ -85,10 +87,24 @@ h2 { font-size: 12px; margin: 22px 0 8px; letter-spacing: .14em; color: var(--di
 .feed li { padding: 3px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; }
 .feed li:last-child { border-bottom: 0; }
 .feed .t { color: var(--faint); min-width: 5.5em; text-align: right; }
+.lede { color: var(--dim); margin: 6px 0 0; max-width: 75ch; }
+.compose { max-width: 900px; }
+.compose label { display: block; color: var(--dim); margin: 12px 0 3px; }
+.compose .hint { color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+.compose input[type="text"], .compose input[type="number"], .compose textarea, .compose select { width: 100%; background: #0b131c; border: 1px solid var(--line-2); border-radius: 5px; padding: 6px 9px; }
+.compose textarea { min-height: 58px; resize: vertical; }
+.compose .line { display: grid; grid-template-columns: 1fr 1fr 1fr auto auto; gap: 8px; align-items: center; margin-top: 6px; }
+.compose .line.task { grid-template-columns: 2fr 1fr auto; align-items: start; }
+.compose .line label { margin: 0; color: var(--text); white-space: nowrap; }
+.compose .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.offer { border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 11px; margin-top: 8px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.offer .what { flex: 1; min-width: 200px; }
+.offer .nm { font-weight: 600; }
 .empty { color: var(--dim); padding: 48px 20px; text-align: center; max-width: 60ch; margin: 0 auto; }
 @media (max-width: 720px) {
   .layout { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 40%) 1fr; }
   .list { border-right: 0; border-bottom: 1px solid var(--line-2); }
+  .compose .line, .compose .line.task, .compose .two { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -98,6 +114,7 @@ h2 { font-size: 12px; margin: 22px 0 8px; letter-spacing: .14em; color: var(--di
   <span class="spacer"></span>
   <span class="muted" id="scope"></span>
   <button class="btn" id="refresh" type="button">Refresh</button>
+  <button class="btn primary" id="new-crew" type="button" hidden>New crew</button>
 </header>
 <div class="layout" id="layout">
   <nav class="list" aria-label="Crews"><div id="list"></div><div class="foot" id="list-foot"></div></nav>
@@ -252,6 +269,10 @@ function errOf(r) {
  *  bound to events and results by the engine's task id. What is open is in the URL
  *  (`#plugin/crews?crew=<uuid>&status=<filter>`), so it is a link anyone can follow.
  *
+ *  Since 0.4.3 a crew can be started here, by saying who it needs: a `team`, which the server turns
+ *  into agents at the door (ADR 0037), and the plan shows who it became. POST
+ *  /api/v1/preset-recommendations says which preset fits, and a preset's roles can fill the team.
+ *
  *  Everything above the VIEW section is plain logic with no DOM — tests/webgui/crews.test.mjs
  *  runs it in Node against a fake agnostic.
  * ===================================================================================== */
@@ -269,6 +290,9 @@ const PAGE_SIZE = 50;
 const MAX_EVENTS = 400;              // events kept for the feed, newest
 const MAX_TAIL_POLLS = 120;          // polls of a cancelled crew waiting for its last results
 const RE_CREW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const RE_PRESET = /^[a-z0-9][a-z0-9-]{0,99}$/;
+// The server's own bounds on a team (src/engine/team.cyr): said here so a slip is caught at the field.
+const TEAM_MAX = 20, ROLE_MAX = 200, CONTEXT_MAX = 1000, PROJECT_MAX = 2000;
 const isActive = (s) => ACTIVE.includes(s);
 const filterOf = (id) => FILTERS.find((f) => f.id === id) || FILTERS[0];
 const int = (v) => (Number.isInteger(v) ? v : null);
@@ -344,6 +368,154 @@ function paramsFor(filter, crew) {
   if (filter && filter !== 'all') p.push('status=' + filter);
   if (crew) p.push('crew=' + crew);
   return p.join('&');
+}
+
+const blankMember = () => ({ role: '', context: '', tools: '', lead: false });
+const blankTask = () => ({ description: '', expected: '' });
+/** A blank composer: one member and one task, as a crew needs at least that. */
+function blankCrew() {
+  return { name: '', about: '', project: '', process: 'sequential', concurrency: '', target: '', members: [blankMember()], tasks: [blankTask()] };
+}
+/** Tool names from text: commas or newlines, trimmed, without repeats. */
+function parseTools(text) {
+  const out = [];
+  for (const t of String(text || '').split(/[,\n]/)) {
+    const v = t.trim();
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+/**
+ * The body of POST /api/v1/crews for what the composer holds: {body} or {error}. A member or a task
+ * left wholly empty is a row nobody filled in, and is skipped. An empty optional field is absent. The
+ * door is the server's, and this catches only what a person can fix before asking it.
+ */
+function teamCrewBody(f) {
+  const name = String(f.name || '').trim();
+  if (!name) return { error: 'A crew needs a name.' };
+  const members = [];
+  for (const m of f.members || []) {
+    const role = String(m.role || '').trim(), context = String(m.context || '').trim(), tools = parseTools(m.tools);
+    if (!role && !context && !tools.length) continue;
+    if (!role) return { error: 'Each member of the team needs a role.' };
+    if (role.length > ROLE_MAX) return { error: 'A role is at most ' + ROLE_MAX + ' characters.' };
+    if (context.length > CONTEXT_MAX) return { error: 'What a member focuses on is at most ' + CONTEXT_MAX + ' characters.' };
+    const one = { role };
+    if (context) one.context = context;
+    if (tools.length) one.tools = tools;
+    if (m.lead) one.lead = true;
+    members.push(one);
+  }
+  if (!members.length) return { error: 'Say who the crew needs: at least one role.' };
+  if (members.length > TEAM_MAX) return { error: 'A team has at most ' + TEAM_MAX + ' members.' };
+  const tasks = [];
+  for (const t of f.tasks || []) {
+    const description = String(t.description || '').trim(), expected = String(t.expected || '').trim();
+    if (!description && !expected) continue;
+    if (!description) return { error: 'Each task needs a description.' };
+    const one = { description };
+    if (expected) one.expected_output = expected;
+    tasks.push(one);
+  }
+  if (!tasks.length) return { error: 'Say what the crew should do: at least one task.' };
+  const team = { members };
+  const project = String(f.project || '').trim();
+  if (project.length > PROJECT_MAX) return { error: 'The project context is at most ' + PROJECT_MAX + ' characters.' };
+  if (project) team.project_context = project;
+  const body = { name, team, tasks };
+  if (f.process === 'parallel') {
+    body.process = 'parallel';
+    const c = String(f.concurrency || '').trim();
+    if (c) {
+      const n = Number(c);
+      if (!Number.isInteger(n) || n < 1 || n > 64) return { error: 'At most this many at once is a whole number from 1 to 64.' };
+      body.max_concurrency = n;
+    }
+  }
+  const target = String(f.target || '').trim();
+  if (target) body.target = { url: target };
+  return { body };
+}
+/**
+ * A recommendation as the view shows it, or null. Only a preset named in the library's own spelling
+ * goes on, as each becomes a path: `reason` and `matched` are words, written with textContent.
+ */
+function recommendationOf(data) {
+  if (!data || typeof data.preset !== 'string' || !RE_PRESET.test(data.preset)) return null;
+  const strs = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  const alts = Array.isArray(data.alternatives) ? data.alternatives : [];
+  return {
+    preset: data.preset, reason: typeof data.reason === 'string' ? data.reason : '', matched: strs(data.matched),
+    alternatives: alts.filter((x) => x && typeof x.preset === 'string' && RE_PRESET.test(x.preset))
+      .map((x) => ({ preset: x.preset, reason: typeof x.reason === 'string' ? x.reason : '' })),
+  };
+}
+/** A preset's agents as team members, by role: the door then matches each to that agent. */
+function membersFromPreset(preset) {
+  const out = [];
+  for (const a of preset && Array.isArray(preset.agents) ? preset.agents : []) {
+    if (!a || typeof a.role !== 'string' || !a.role || out.length === TEAM_MAX) continue;
+    out.push(Object.assign(blankMember(), { role: a.role }));
+  }
+  return out;
+}
+
+/** A crew being written: its fields, what was recommended, and the answer to starting it. */
+class CrewComposer {
+  constructor(host) {
+    this.host = host;
+    this.fields = blankCrew();
+    this.suggestion = null;
+    this.suggesting = false;
+    this.suggestError = '';
+    this.used = '';            // the preset whose roles fill the team
+    this.submitting = false;
+    this.error = '';
+    this.idem = '';            // the key of the body last sent, so a retry cannot start a second crew
+    this.sent = '';
+  }
+  /** Ask which preset fits what the crew is for. */
+  async suggest() {
+    const words = String(this.fields.about || '').trim();
+    this.suggestError = '';
+    this.suggestion = null;
+    if (!words) { this.suggestError = 'Say what the crew is for, and this will suggest a preset.'; return null; }
+    this.suggesting = true;
+    const r = await this.host.request('POST', '/api/v1/preset-recommendations', { description: words });
+    this.suggesting = false;
+    const got = r.status === 200 ? recommendationOf(r.data) : null;
+    if (!got) { this.suggestError = 'Could not ask: ' + errOf(r); return null; }
+    this.suggestion = got;
+    return got;
+  }
+  /** Fill the team with preset `name`'s roles, replacing what is there. */
+  async usePreset(name) {
+    this.suggestError = '';
+    if (!RE_PRESET.test(name)) { this.suggestError = 'There is no such preset.'; return false; }
+    const r = await this.host.request('GET', '/api/v1/presets/' + name);
+    const members = r.status === 200 ? membersFromPreset(r.data) : [];
+    if (!members.length) { this.suggestError = 'Could not read that preset: ' + errOf(r); return false; }
+    this.fields.members = members;
+    this.used = name;
+    return true;
+  }
+  /** Start the crew. Resolves {ok, id} or {ok: false, message}. */
+  async submit() {
+    if (this.submitting) return { ok: false, message: 'Already starting it.' };
+    this.error = '';
+    const built = teamCrewBody(this.fields);
+    if (built.error) { this.error = built.error; return { ok: false, message: built.error }; }
+    // The same words keep their key, so a retry after a lost answer finds the crew it started. Changed
+    // words are another crew, and one key over two bodies would be refused.
+    const text = JSON.stringify(built.body);
+    if (text !== this.sent) { this.sent = text; this.idem = 'crews-' + Host.token(16); }
+    this.submitting = true;
+    const r = await this.host.request('POST', '/api/v1/crews', built.body, { idempotencyKey: this.idem });
+    this.submitting = false;
+    if (r.status === 202 && r.data && typeof r.data.crew_id === 'string' && RE_CREW_ID.test(r.data.crew_id)) return { ok: true, id: r.data.crew_id };
+    this.error = r.status === 403 && !(r.data && typeof r.data.error === 'string') ? 'Your role cannot start crews.' : errOf(r);
+    return { ok: false, message: this.error };
+  }
 }
 
 /** The crews list: a page at a time, one filter at a time. */
@@ -631,6 +803,11 @@ class CrewDetail {
     if (!this.stopped) this.poll();
     return out;
   }
+  /** Who the crew's plan says it has: for a team, who it became. */
+  agents() {
+    const list = this.plan && Array.isArray(this.plan.agents) ? this.plan.agents : [];
+    return list.filter((a) => a && typeof a.key === 'string');
+  }
   /** The numbers worth showing, from the outcome and the plan. */
   summary() {
     const d = this.doc || {};
@@ -673,6 +850,8 @@ class CrewsApp {
     this.list = new CrewList(host);
     this.detail = null;
     this.selected = '';
+    this.composer = null;      // the crew being written, kept while another is looked at
+    this.composing = false;
     this.listeners = new Set();
     this.detailListeners = new Set();
     host.onChange(() => this.onHost());
@@ -704,6 +883,8 @@ class CrewsApp {
   }
   /** Change the filter or the crew — through the shell when it can, so the URL is a link to it. */
   go(filter, crew) {
+    this.composing = false;
+    this.emit();
     const params = paramsFor(filter, crew);
     if (this.host.navigate(this.host.pluginId() || 'crews', params)) return;
     this.host.params = params;
@@ -719,6 +900,46 @@ class CrewsApp {
     d.start();
   }
   mayCancel() { return this.host.can('crews:write') && this.host.mayWrite(); }
+  mayStart() { return this.host.can('crews:write') && this.host.mayWrite(); }
+  mayAsk() { return this.host.can('presets:read'); }
+  /** Open the composer, on what was being written if anything was. */
+  compose() {
+    if (!this.mayStart()) return;
+    if (!this.composer) this.composer = new CrewComposer(this.host);
+    this.composing = true;
+    this.emit();
+  }
+  closeComposer() { this.composer = null; this.composing = false; this.emit(); }
+  async suggest() {
+    const c = this.composer;
+    if (!c) return null;
+    const p = c.suggest();
+    this.emit();
+    const got = await p;
+    this.emit();
+    return got;
+  }
+  async usePreset(name) {
+    const c = this.composer;
+    if (!c) return false;
+    const ok = await c.usePreset(name);
+    this.emit();
+    return ok;
+  }
+  /** Start the crew written, and open it: the plan there says who the team became. */
+  async start() {
+    const c = this.composer;
+    if (!c) return { ok: false, message: 'Nothing is being written.' };
+    const p = c.submit();
+    this.emit();
+    const r = await p;
+    if (!r.ok) { this.emit(); return r; }
+    this.composer = null;
+    this.list.refresh();
+    // Under `all`: a crew just started would be missing from the list under most filters.
+    this.go('all', r.id);
+    return r;
+  }
 }
 
 /* =====================================================================================
@@ -742,8 +963,10 @@ class CrewsView {
     this.openOutputs = new Set(); // task ids whose output is unfolded — kept across re-renders
     this.renderFilters();
     this.$('refresh').addEventListener('click', () => { this.app.list.refresh(); if (this.app.detail) this.app.detail.poll(); });
+    this.$('new-crew').addEventListener('click', () => this.app.compose());
     app.onChange(() => this.render());
-    app.onDetail(() => this.renderDetail());
+    // Not over the composer: a crew open behind it polls, and rebuilding the form would take the focus.
+    app.onDetail(() => { if (!this.app.composing) this.renderDetail(); });
     app.list.onChange(() => this.renderList());
     // Running crews are re-listed every few seconds, others now and then — less when hidden.
     setInterval(() => {
@@ -772,6 +995,7 @@ class CrewsView {
     this.$('layout').hidden = st !== 'ready';
     this.$('filters').hidden = st !== 'ready';
     this.$('refresh').disabled = st !== 'ready';
+    this.$('new-crew').hidden = !(st === 'ready' && this.app.mayStart());
     let msg = this.$('message');
     if (st !== 'ready') {
       if (!msg) { msg = el('div', 'empty'); msg.id = 'message'; document.body.append(msg); }
@@ -813,7 +1037,7 @@ class CrewsView {
     foot.replaceChildren();
     if (l.error) foot.append(el('div', 'box bad', l.error));
     else if (l.loading && !l.crews.length) foot.textContent = 'Loading…';
-    else if (l.loaded && !l.crews.length) foot.textContent = l.filter === 'all' ? 'No crews yet. Start one from Swarm Command, or POST /api/v1/crews — every crew in your tenant is listed here.' : 'No crews match this filter.';
+    else if (l.loaded && !l.crews.length) foot.textContent = l.filter === 'all' ? 'No crews yet. Start one here or from Swarm Command, or POST /api/v1/crews — every crew in your tenant is listed here.' : 'No crews match this filter.';
     if (l.next) {
       const more = el('button', 'btn', l.loading ? 'Loading…' : 'Load more');
       more.type = 'button';
@@ -835,7 +1059,159 @@ class CrewsView {
     const feed = box.querySelector('.feed');
     if (feed) feed.scrollTop = atEnd ? feed.scrollHeight : feedKeep;
   }
+  /** A text field bound to `obj[name]`: what is typed is kept as it is typed, so a re-render loses nothing. */
+  field(obj, name, opts = {}) {
+    const i = el(opts.area ? 'textarea' : 'input');
+    if (!opts.area) i.type = opts.number ? 'number' : 'text';
+    i.value = obj[name] === undefined || obj[name] === null ? '' : String(obj[name]);
+    i.spellcheck = false;
+    if (opts.placeholder) i.placeholder = opts.placeholder;
+    if (opts.label) i.setAttribute('aria-label', opts.label);
+    if (opts.id) i.id = opts.id;
+    i.addEventListener('input', () => { obj[name] = i.value; });
+    return i;
+  }
+  /** A labelled field, with what it is for beneath it. */
+  labelled(box, id, label, control, hint) {
+    const l = el('label', null, label);
+    l.htmlFor = id;
+    control.id = id;
+    box.append(l, control);
+    if (hint) box.append(el('div', 'hint', hint));
+  }
+  /** One preset on offer, and the way to use it. */
+  offer(box, name, reason) {
+    const a = this.app;
+    const row = el('div', 'offer');
+    const what = el('div', 'what');
+    what.append(el('div', 'nm', name));
+    if (reason) what.append(el('div', 'muted', reason));
+    row.append(what);
+    const use = el('button', 'btn', 'Use its roles');
+    use.type = 'button';
+    use.addEventListener('click', async () => { use.disabled = true; await a.usePreset(name); });
+    row.append(use);
+    if (a.host.hasView('library')) {
+      const see = el('button', 'btn link', 'Open in Library');
+      see.type = 'button';
+      see.addEventListener('click', () => a.host.navigate('library', 'item=' + name));
+      row.append(see);
+    }
+    box.append(row);
+  }
+  fillComposer(box) {
+    const a = this.app;
+    const c = a.composer;
+    const f = c.fields;
+    box.append(el('h1', null, 'New crew'));
+    box.append(el('p', 'lede', 'Say who the crew needs. Each role takes the closest agent you have stored or the preset library holds, and one nothing knows is written from the role. The crew’s page shows who it became.'));
+    const form = el('div', 'compose');
+    this.labelled(form, 'c-name', 'Name *', this.field(f, 'name'));
+
+    if (a.mayAsk()) {
+      this.labelled(form, 'c-about', 'What is it for?', this.field(f, 'about', { area: true }), 'To ask which preset fits. It matches words and uses no model, and it is not sent with the crew.');
+      const ask = el('div', 'actions');
+      const go = el('button', 'btn', c.suggesting ? 'Asking…' : 'Suggest a preset');
+      go.type = 'button';
+      go.id = 'c-suggest';
+      go.disabled = c.suggesting;
+      go.addEventListener('click', () => a.suggest());
+      ask.append(go);
+      form.append(ask);
+      if (c.suggestError) form.append(el('div', 'box bad', c.suggestError));
+      if (c.suggestion) {
+        const s = c.suggestion;
+        this.offer(form, s.preset, s.reason);
+        // Nothing matched means nothing to go on, and the words say so.
+        if (s.matched.length) form.append(el('div', 'hint', 'It went on: ' + s.matched.join(', ')));
+        for (const alt of s.alternatives) this.offer(form, alt.preset, alt.reason);
+      }
+    }
+
+    form.append(el('h2', null, 'Team'));
+    if (c.used) form.append(el('div', 'hint', 'These are the roles of ' + c.used + '. Change them as you like.'));
+    f.members.forEach((m, i) => {
+      const line = el('div', 'line');
+      line.append(this.field(m, 'role', { placeholder: 'Role *', label: 'Role of member ' + (i + 1) }));
+      line.append(this.field(m, 'context', { placeholder: 'What should it focus on?', label: 'Focus of member ' + (i + 1) }));
+      line.append(this.field(m, 'tools', { placeholder: 'Tools, by commas', label: 'Tools of member ' + (i + 1) }));
+      const l = el('label');
+      const lead = el('input');
+      lead.type = 'checkbox';
+      lead.checked = !!m.lead;
+      lead.addEventListener('change', () => { m.lead = lead.checked; });
+      l.append(lead, document.createTextNode(' Leads'));
+      line.append(l);
+      const rm = el('button', 'btn', 'Remove');
+      rm.type = 'button';
+      rm.disabled = f.members.length === 1;
+      rm.setAttribute('aria-label', 'Remove member ' + (i + 1));
+      rm.addEventListener('click', () => { f.members.splice(i, 1); this.renderDetail(); });
+      line.append(rm);
+      form.append(line);
+    });
+    const addM = el('div', 'actions');
+    const am = el('button', 'btn', 'Add a member');
+    am.type = 'button';
+    am.disabled = f.members.length >= TEAM_MAX;
+    am.addEventListener('click', () => { f.members.push(blankMember()); this.renderDetail(); });
+    addM.append(am);
+    form.append(addM);
+    this.labelled(form, 'c-project', 'Project context', this.field(f, 'project', { area: true }), 'It reaches every agent’s backstory, and so the model. With no one marked, the first member leads.');
+
+    form.append(el('h2', null, 'Tasks'));
+    f.tasks.forEach((t, i) => {
+      const line = el('div', 'line task');
+      line.append(this.field(t, 'description', { area: true, placeholder: 'What should be done? *', label: 'Task ' + (i + 1) }));
+      line.append(this.field(t, 'expected', { area: true, placeholder: 'What should come back?', label: 'Expected output of task ' + (i + 1) }));
+      const rm = el('button', 'btn', 'Remove');
+      rm.type = 'button';
+      rm.disabled = f.tasks.length === 1;
+      rm.setAttribute('aria-label', 'Remove task ' + (i + 1));
+      rm.addEventListener('click', () => { f.tasks.splice(i, 1); this.renderDetail(); });
+      line.append(rm);
+      form.append(line);
+    });
+    const addT = el('div', 'actions');
+    const at = el('button', 'btn', 'Add a task');
+    at.type = 'button';
+    at.addEventListener('click', () => { f.tasks.push(blankTask()); this.renderDetail(); });
+    addT.append(at);
+    form.append(addT);
+
+    const two = el('div', 'two');
+    const left = el('div'), right = el('div');
+    const proc = el('select');
+    for (const [v, label] of [['sequential', 'One after another'], ['parallel', 'At the same time']]) {
+      const o = el('option', null, label);
+      o.value = v;
+      proc.append(o);
+    }
+    proc.value = f.process;
+    proc.addEventListener('change', () => { f.process = proc.value; this.renderDetail(); });
+    this.labelled(left, 'c-process', 'How the tasks run', proc);
+    if (f.process === 'parallel') this.labelled(right, 'c-concurrency', 'At most this many at once', this.field(f, 'concurrency', { number: true }));
+    two.append(left, right);
+    form.append(two);
+    this.labelled(form, 'c-target', 'Target', this.field(f, 'target', { placeholder: 'https://…' }), 'What the crew tests, if anything. Only a host this deployment lists can be named.');
+
+    if (c.error) form.append(el('div', 'box bad', c.error));
+    const acts = el('div', 'actions');
+    // Not a submit: the shell frames this page without `allow-forms`.
+    const go = el('button', 'btn primary', c.submitting ? 'Starting…' : 'Start crew');
+    go.type = 'button';
+    go.id = 'c-start';
+    go.disabled = c.submitting;
+    go.addEventListener('click', () => a.start());
+    const cancel = el('button', 'btn', 'Discard');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => a.closeComposer());
+    acts.append(go, cancel);
+    form.append(acts);
+    box.append(form);
+  }
   fillDetail(box) {
+    if (this.app.composing) { this.fillComposer(box); return; }
     const d = this.app.detail;
     if (this.noteFor !== (d ? d.id : '')) { this.note = ''; this.confirming = false; this.noteFor = d ? d.id : ''; }
     if (!d) { box.append(el('div', 'empty', 'Choose a crew to see its plan, its progress and its results.')); return; }
@@ -900,6 +1276,27 @@ class CrewsView {
     fact('Tokens', s.tokens !== null ? fmtTokens(s.tokens) : 'not metered', 'what the engine metered for this crew’s tasks');
     fact('Cost', s.cost !== null ? fmtMicro(s.cost) : 'not priced', 'only a priced call has a cost: an unpriced one is not $0');
     box.append(facts);
+
+    const agents = d.agents();
+    if (agents.length) {
+      box.append(el('h2', null, 'Agents'));
+      const t = el('table', 'tasks');
+      const hr = el('tr');
+      for (const c of ['Agent', 'Role']) hr.append(el('th', null, c));
+      t.append(el('thead'));
+      t.firstChild.append(hr);
+      const body = el('tbody');
+      for (const ag of agents) {
+        const tr = el('tr');
+        const who = el('td');
+        who.append(el('div', 'ttl', ag.name || ag.key));
+        if (ag.name && ag.name !== ag.key) who.append(el('div', 'muted', ag.key));
+        tr.append(who, el('td', null, ag.role || ''));
+        body.append(tr);
+      }
+      t.append(body);
+      box.append(t);
+    }
 
     box.append(el('h2', null, 'Tasks'));
     if (d.planNote) box.append(el('div', 'muted', d.planNote));

@@ -8,6 +8,7 @@ import { loadPage, tick } from './harness.mjs';
 
 const page = loadPage('src/webgui/plugins/library/index.html');
 const L = page.get(`({ parseTools, definitionFromFields, fieldsFromDefinition, definitionFromPresetAgent, paramsFor,
+  versionFrom, compareDefinitions, whenSaved, validVersions, parsePackage, packageKeys, packageFileName, MAX_BRIDGE_BODY,
   PresetShelf, DefinitionShelf, LibraryApp })`);
 
 class FakeAgnostic {
@@ -17,7 +18,16 @@ class FakeAgnostic {
         backstory: 'Seasoned.', focus: 'canaries', domain: 'devops', tools: ['kubectl', 'helm'], complexity: 'high', celery_queue: 'q', redis_prefix: 'r', allow_delegation: true }] }]]);
     this.defs = new Map();
     this.revs = new Map();    // key -> revision number; the ETag is derived from it
+    this.history = new Map(); // key -> [{version, saved_at, doc}], as the server keeps them
     this.calls = [];
+  }
+  // Every write is a version, and one that changes nothing adds none (ADR 0035).
+  keep(key, doc) {
+    const h = this.history.get(key) || [];
+    const last = h[h.length - 1];
+    if (last && JSON.stringify(last.doc) === JSON.stringify(doc)) return;
+    h.push({ version: last ? last.version + 1 : 1, saved_at: 1800000000000 + h.length, doc: structuredClone(doc) });
+    this.history.set(key, h);
   }
   answer(status, data, etag) { return Promise.resolve({ status, data: data === undefined ? null : structuredClone(data), etag: etag || null }); }
   tag(key) { return '"' + String(this.revs.get(key) || 0).padStart(16, '0') + '"'; }
@@ -40,8 +50,50 @@ class FakeAgnostic {
       for (const k of ['agent_key', 'celery_queue', 'redis_prefix']) if (k in body) return this.answer(422, { error: "'" + k + "' is unsupported" });
       if (this.defs.has(body.key)) return this.answer(409, { error: 'exists' });
       this.defs.set(body.key, structuredClone(body));
+      this.keep(body.key, body);
       this.bump(body.key);
       return this.answer(201, this.body(body), this.tag(body.key));
+    }
+    if ((m = path.match(/^\/api\/v1\/agents\/definitions\/([a-z0-9-]+)\/versions$/)) && method === 'GET') {
+      const h = this.history.get(m[1]);
+      if (!h && !this.defs.has(m[1])) return this.answer(404, { error: 'agent definition not found' });
+      const cur = JSON.stringify(this.defs.get(m[1]));
+      const versions = (h || []).slice().reverse().map((v) => (v.broken ? { version: v.version, saved_at: v.saved_at }
+        : { version: v.version, saved_at: v.saved_at, etag: '"v' + v.version + '"', definition: { key: v.doc.key, name: v.doc.name, role: v.doc.role }, current: JSON.stringify(v.doc) === cur }));
+      return this.answer(200, { key: m[1], versions, total: versions.length, storage: 'patra' });
+    }
+    if ((m = path.match(/^\/api\/v1\/agents\/definitions\/([a-z0-9-]+)\/versions\/([0-9]+)$/)) && method === 'GET') {
+      const v = (this.history.get(m[1]) || []).find((x) => x.version === Number(m[2]));
+      if (!v) return this.answer(404, { error: 'no such version of this definition' });
+      if (v.broken) return this.answer(409, { error: 'this version no longer reads as a definition' });
+      return this.answer(200, Object.assign(this.body(v.doc), { version: v.version, saved_at: v.saved_at }));
+    }
+    if ((m = path.match(/^\/api\/v1\/agents\/definitions\/([a-z0-9-]+)\/rollback$/)) && method === 'POST') {
+      const key = m[1];
+      if (this.defs.has(key) ? this.stale(opts, key) : opts && opts.ifMatch) return this.answer(412, { error: 'stale', code: 'revision' });
+      const v = (this.history.get(key) || []).find((x) => x.version === body.version);
+      if (!v) return this.answer(404, { error: 'no such version of this definition' });
+      if (v.unfit) return this.answer(409, { error: 'this version would be refused as a definition today' });
+      this.defs.set(key, structuredClone(v.doc));
+      this.keep(key, v.doc);
+      this.bump(key);
+      return this.answer(200, Object.assign(this.body(v.doc), { rolled_back_to: body.version }), this.tag(key));
+    }
+    if (method === 'POST' && path === '/api/v1/packages/export') {
+      return this.answer(200, { format: 'agnostic-package/1', name: body.name, version: '1.0.0', exported_at: 1800000000000, definitions: [...this.defs.values()], total: this.defs.size });
+    }
+    if (method === 'POST' && path.startsWith('/api/v1/packages/import')) {
+      const overwrite = path.endsWith('?overwrite=true');
+      const conflicts = body.definitions.map((d) => d.key).filter((k) => this.defs.has(k));
+      if (conflicts.length && !overwrite) return this.answer(409, { error: 'already stored', conflicts });
+      const created = [], replaced = [];
+      for (const d of body.definitions) {
+        (this.defs.has(d.key) ? replaced : created).push(d.key);
+        this.defs.set(d.key, structuredClone(d));
+        this.keep(d.key, d);
+        this.bump(d.key);
+      }
+      return this.answer(200, { name: body.name, created, replaced, total: created.length + replaced.length, storage: 'patra' });
     }
     if ((m = path.match(/^\/api\/v1\/agents\/definitions\/([a-z0-9-]+)$/))) {
       const key = m[1];
@@ -51,6 +103,7 @@ class FakeAgnostic {
         if (this.stale(opts, key)) return this.answer(412, { error: 'the definition is not the revision this write was made from; read it again', code: 'revision' });
         if (body.key !== key) return this.answer(400, { error: "the 'key' in the body must match the key in the path" });
         this.defs.set(key, structuredClone(body));
+        this.keep(key, body);
         this.bump(key);
         return this.answer(200, this.body(body), this.tag(key));
       }
@@ -225,3 +278,203 @@ test('a viewer, or a build without definitions:write, cannot edit', () => {
   assert.equal(new L.LibraryApp(hostFor(fake, { perms: ['presets:read', 'definitions:read'] })).mayWrite(), false);
   assert.equal(new L.LibraryApp(hostFor(fake, { perms: [] })).state(), 'forbidden');
 });
+
+/** A connected app on `fake`, opened at `params`. */
+async function opened(fake, params, opts) {
+  const host = hostFor(fake, Object.assign({ params }, opts));
+  const app = new L.LibraryApp(host);
+  host.connect();
+  await tick(10);
+  return { host, app };
+}
+
+/** Definition `key` written `goals.length` times: version 1 says the first goal. */
+function written(fake, key, goals) {
+  for (const [i, goal] of goals.entries()) {
+    const body = { key, name: 'QA lead', role: 'tester', goal, focus: 'edges' };
+    fake.request(i ? 'PUT' : 'POST', '/api/v1/agents/definitions' + (i ? '/' + key : ''), body);
+  }
+}
+
+test('the link carries the version, and only a real one', () => {
+  assert.equal(L.paramsFor('definitions', 'qa', 3), 'tab=definitions&item=qa&version=3');
+  assert.equal(L.paramsFor('definitions', 'qa', 0), 'tab=definitions&item=qa');
+  assert.equal(L.paramsFor('definitions', '', 3), 'tab=definitions', 'no version with no item');
+  for (const bad of ['', '0', '-1', '1.5', '01', 'x', '1e3', '1234567890']) assert.equal(L.versionFrom(bad), 0, bad);
+  assert.equal(L.versionFrom('12'), 12);
+});
+
+test('a comparison shows a row for each field either holds, and which differ', () => {
+  const rows = L.compareDefinitions({ role: 'a', goal: 'old', tools: ['x', 'y'], gpu_required: true }, { role: 'a', goal: 'new', tools: ['x', 'y'], focus: 'f' });
+  const by = Object.fromEntries(rows.map((r) => [r.key, r]));
+  assert.equal(by.role.differs, false, 'the same');
+  assert.equal(by.goal.differs, true);
+  assert.equal(by.goal.then, 'old');
+  assert.equal(by.goal.now, 'new');
+  assert.equal(by.tools.then, 'x, y');
+  assert.equal(by.tools.differs, false, 'lists compare as what they say');
+  assert.equal(by.gpu_required.then, 'yes');
+  assert.equal(by.gpu_required.differs, true, 'a field only one holds differs');
+  assert.equal(by.focus.then, '');
+  assert.equal(by.name, undefined, 'a field neither holds is not a row');
+  const gone = L.compareDefinitions({ role: 'a' }, null);
+  assert.equal(gone[0].now, '', 'nothing to compare with: a deleted definition');
+  assert.equal(L.whenSaved(0), 'before versions were kept', 'the first version of an old definition says when it does not know');
+  assert.equal(L.whenSaved(1800000000000), '2027-01-15 08:00 UTC');
+});
+
+test('a definition shows what it has been, and a link opens one version', async () => {
+  const fake = new FakeAgnostic();
+  written(fake, 'qa', ['one', 'two', 'three']);
+  const { app } = await opened(fake, 'tab=definitions&item=qa');
+  assert.deepEqual([...app.defs.versions].map((v) => v.version), [3, 2, 1], 'newest first');
+  assert.equal(app.defs.versions[0].current, true);
+  assert.equal(app.defs.version, null, 'none open');
+
+  app.go('definitions', 'qa', 1);
+  await tick(10);
+  assert.equal(app.versionNo, 1);
+  assert.equal(app.defs.version.definition.goal, 'one', 'what it said then');
+  assert.equal(app.defs.open.goal, 'three', 'and what it says now, to compare it with');
+
+  const none = await opened(fake, 'tab=definitions&item=qa&version=9');
+  assert.equal(none.app.defs.version, null);
+  assert.match(none.app.defs.versionError, /no such version/);
+  fake.history.get('qa')[0].broken = true;
+  const broken = await opened(fake, 'tab=definitions&item=qa&version=1');
+  assert.match(broken.app.defs.versionError, /no longer reads/);
+  assert.equal(broken.app.defs.versions.at(-1).definition, undefined, 'it stays on the list, saying only that');
+});
+
+test('a rollback is a new version, sent from the revision that was read', async () => {
+  const fake = new FakeAgnostic();
+  written(fake, 'qa', ['one', 'two']);
+  const { app, host } = await opened(fake, 'tab=definitions&item=qa&version=1');
+  const r = await app.rollback(1);
+  assert.equal(r.ok, true);
+  const call = fake.calls.find((c) => c.path.endsWith('/rollback'));
+  assert.deepEqual(JSON.parse(JSON.stringify(call.body)), { version: 1 });
+  assert.equal(call.opts.ifMatch, '"0000000000000002"', '⭐ it says which revision it was made from');
+  assert.equal(fake.defs.get('qa').goal, 'one');
+  assert.equal(fake.history.get('qa').length, 3, '⭐ as a new version');
+  await tick(10);
+  assert.deepEqual(host.navigated.at(-1), ['library', 'tab=definitions&item=qa'], 'back to the definition');
+  assert.match(app.message.text, /says what version 1 said/);
+  assert.equal(app.defs.open.goal, 'one');
+  assert.deepEqual([...app.defs.versions].map((v) => v.version), [3, 2, 1], 'and the list holds it');
+});
+
+test('a rollback from a stale page undoes nobody', async () => {
+  const fake = new FakeAgnostic();
+  written(fake, 'qa', ['one', 'two']);
+  const { app } = await opened(fake, 'tab=definitions&item=qa&version=1');
+  fake.request('PUT', '/api/v1/agents/definitions/qa', { key: 'qa', role: 'tester', goal: 'theirs' });
+  const r = await app.rollback(1);
+  assert.equal(r.ok, false);
+  assert.equal(r.stale, true);
+  assert.match(app.message.text, /Someone else changed qa/);
+  assert.equal(fake.defs.get('qa').goal, 'theirs', '⭐ their edit stands');
+
+  fake.history.get('qa')[0].unfit = true;
+  await app.defs.read('qa');
+  assert.match((await app.rollback(1)).message, /would be refused as a definition today/);
+  assert.match((await app.rollback(99)).message, /no version 99/);
+});
+
+test('a deleted definition can be brought back, and says it can', async () => {
+  const fake = new FakeAgnostic();
+  written(fake, 'qa', ['one', 'two']);
+  const { app, host } = await opened(fake, 'tab=definitions&item=qa');
+  await app.remove('qa');
+  assert.equal(app.message.deleted, 'qa', '⭐ the message offers the way back');
+  assert.match(app.message.text, /Deleted qa/);
+  await tick(10);
+
+  app.go('definitions', 'qa');
+  await tick(10);
+  assert.equal(app.defs.open, null, 'it is gone');
+  assert.match(app.defs.openError, /no such definition/);
+  assert.deepEqual([...app.defs.versions].map((v) => v.version), [2, 1], '⭐ and its versions are not');
+
+  app.go('definitions', 'qa', 1);
+  await tick(10);
+  assert.equal(app.defs.version.definition.goal, 'one');
+  const r = await app.rollback(1);
+  assert.equal(r.ok, true, '⭐ it comes back');
+  const call = fake.calls.filter((c) => c.path.endsWith('/rollback')).at(-1);
+  assert.equal(call.opts, undefined, 'with no revision to send: nothing is current');
+  assert.equal(fake.defs.get('qa').goal, 'one');
+  await tick(10);
+  assert.equal(app.defs.open.goal, 'one');
+  assert.equal(app.defs.openError, '');
+  assert.deepEqual(host.navigated.at(-1), ['library', 'tab=definitions&item=qa']);
+});
+
+test('a key nothing was ever written under has no past to show', async () => {
+  const fake = new FakeAgnostic();
+  const { app } = await opened(fake, 'tab=definitions&item=nobody');
+  assert.equal(app.defs.versions.length, 0);
+  assert.match(app.defs.openError, /no such definition/);
+  assert.equal(app.defs.versionsError, '', '⭐ having none is not a failure to read them');
+});
+
+test('a file is a package, or says what it is not', () => {
+  assert.match(L.parsePackage('nope').error, /not JSON/);
+  assert.match(L.parsePackage('[1]').error, /not a package/);
+  assert.match(L.parsePackage('{"format":"agnostic-package/2","definitions":[{}]}').error, /not an agnostic package/);
+  assert.match(L.parsePackage('{"format":"agnostic-package/1","definitions":[]}').error, /holds no definitions/);
+  const { pkg } = L.parsePackage('{"format":"agnostic-package/1","name":"k","definitions":[{"key":"a"},{"role":"r"}]}');
+  assert.deepEqual([...L.packageKeys(pkg)], ['a', '?'], 'what cannot be named is the door\'s to refuse');
+  assert.equal(L.packageFileName(1800000000000), 'agnostic-definitions-2027-01-15.json');
+});
+
+test('export hands the view a file, and import goes in whole or asks', async () => {
+  const fake = new FakeAgnostic();
+  written(fake, 'one', ['g1']);
+  written(fake, 'two', ['g2']);
+  const { app } = await opened(fake, 'tab=definitions');
+
+  const out = await app.exportAll(1800000000000);
+  assert.equal(out.ok, true);
+  assert.equal(out.file, 'agnostic-definitions-2027-01-15.json');
+  assert.match(app.message.text, /Exported 2/);
+  const pkg = out.text;
+
+  assert.equal(app.choosePackage('not a package'), false);
+  assert.match(app.message.text, /not JSON/);
+  assert.equal(app.importing, null, 'nothing waits');
+
+  assert.equal(app.choosePackage(pkg), true);
+  assert.deepEqual([...app.importing.keys], ['one', 'two'], 'it shows what the package holds first');
+  assert.equal(fake.calls.filter((c) => c.path.startsWith('/api/v1/packages/import')).length, 0, '⭐ and nothing goes in until asked');
+
+  fake.defs.delete('one');
+  const r = await app.runImport(false);
+  assert.equal(r.ok, false);
+  assert.deepEqual([...app.importing.conflicts], ['two'], '⭐ a key already stored stops it, and says which');
+  assert.equal(fake.defs.has('one'), false, 'and nothing went in');
+
+  const over = await app.runImport(true);
+  assert.equal(over.ok, true, 'replacing is asked for');
+  assert.equal(fake.calls.at(-2).path, '/api/v1/packages/import?overwrite=true');
+  assert.match(app.message.text, /Imported 1 new and replaced 1/);
+  assert.equal(app.importing, null);
+  assert.equal(fake.defs.has('one'), true);
+  app.choosePackage(pkg);
+  app.cancelImport();
+  assert.equal(app.importing, null);
+});
+
+test('a package past what the bridge carries is refused here, with where to take it', async () => {
+  const fake = new FakeAgnostic();
+  const { app } = await opened(fake, 'tab=definitions');
+  const big = JSON.stringify({ format: 'agnostic-package/1', name: 'k', definitions: [{ key: 'a', role: 'r', goal: 'x'.repeat(L.MAX_BRIDGE_BODY) }] });
+  app.choosePackage(big);
+  const before = fake.calls.length;
+  const r = await app.runImport(false);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /256 KB/);
+  assert.match(r.message, /POST \/api\/v1\/packages\/import/);
+  assert.equal(fake.calls.length, before, 'nothing was sent');
+});
+

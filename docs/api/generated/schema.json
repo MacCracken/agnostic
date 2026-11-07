@@ -775,7 +775,12 @@
       "auth": true,
       "permission": "read",
       "min_role": "viewer",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "presets:read",
+          "self": []
+        }
+      ],
       "body": "preset_recommendation",
       "query": [],
       "headers": [],
@@ -997,7 +1002,12 @@
       "auth": true,
       "permission": "read",
       "min_role": "viewer",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "definitions:read",
+          "self": []
+        }
+      ],
       "body": null,
       "query": [],
       "headers": [],
@@ -1020,7 +1030,12 @@
       "auth": true,
       "permission": "read",
       "min_role": "viewer",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "definitions:read",
+          "self": []
+        }
+      ],
       "body": null,
       "query": [],
       "headers": [],
@@ -1045,7 +1060,12 @@
       "auth": true,
       "permission": "write",
       "min_role": "operator",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "definitions:write",
+          "self": []
+        }
+      ],
       "body": "definition_rollback",
       "query": [],
       "headers": [
@@ -1071,7 +1091,12 @@
       "auth": true,
       "permission": "read",
       "min_role": "viewer",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "definitions:read",
+          "self": []
+        }
+      ],
       "body": "package_export",
       "query": [],
       "headers": [],
@@ -1097,7 +1122,12 @@
       "auth": true,
       "permission": "write",
       "min_role": "operator",
-      "plugin_permissions": [],
+      "plugin_permissions": [
+        {
+          "name": "definitions:write",
+          "self": []
+        }
+      ],
       "body": "package",
       "query": [
         "overwrite"

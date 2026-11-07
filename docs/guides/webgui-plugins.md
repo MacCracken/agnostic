@@ -11,8 +11,8 @@ This build carries four:
 | Plugin | Shows | `data` |
 |---|---|---|
 | **Swarm Command** (`swarm`) | an RTS-style map of a swarm — simulated, estimated, or a live crew | `mixed` |
-| **Crews** (`crews`) | every crew in your tenant: filter by status, a crew's plan, live progress, results and cost; cancel | `live` |
-| **Library** (`library`) | the preset crews built in, and the agent definitions stored here — create, edit, delete, or save a preset's agent as one | `live` |
+| **Crews** (`crews`) | every crew in your tenant: filter by status, a crew's plan, live progress, results and cost; cancel; start one by who it needs, and ask which preset fits | `live` |
+| **Library** (`library`) | the preset crews built in, and the agent definitions stored here — create, edit, delete, or save a preset's agent as one; compare versions and roll back; export and import a package | `live` |
 | **Audit trail** (`audit`) | whether the audit chain verified, what was dropped, and its newest entries — administrators only | `live` |
 
 A view's state is in the URL — `/ui#plugin/crews?crew=<uuid>` opens that crew — so a link to it can
@@ -137,10 +137,10 @@ server enforces it, and the shell reads it from `GET /api/v1/plugins` (`catalogu
 | Permission | The plugin may call |
 |---|---|
 | `storage` | `GET /api/v1/plugins/<own id>/data` · `GET`, `PUT`, `DELETE /api/v1/plugins/<own id>/data/<key>` |
-| `presets:read` | `GET /api/v1/presets` · `GET /api/v1/presets/<name>` |
+| `presets:read` | `GET /api/v1/presets` · `GET /api/v1/presets/<name>` · `POST /api/v1/preset-recommendations` |
 | `tools:read` | `GET /api/v1/tools` |
-| `definitions:read` | `GET /api/v1/agents/definitions` · `GET /api/v1/agents/definitions/<key>` |
-| `definitions:write` | `POST /api/v1/agents/definitions` · `PUT`, `DELETE /api/v1/agents/definitions/<key>` |
+| `definitions:read` | `GET /api/v1/agents/definitions` · `GET /api/v1/agents/definitions/<key>` · `…/versions` · `…/versions/<n>` · `POST /api/v1/packages/export` |
+| `definitions:write` | `POST /api/v1/agents/definitions` · `PUT`, `DELETE /api/v1/agents/definitions/<key>` · `POST …/rollback` · `POST /api/v1/packages/import` |
 | `crews:read` | `GET /api/v1/crews` · `GET /api/v1/crews/<uuid>` · `…/events` · `…/plan` |
 | `crews:write` | `POST /api/v1/crews` · `POST /api/v1/crews/<uuid>/cancel` |
 | `audit:read` | `GET /api/v1/audit` · `GET /api/v1/audit/entries` — SUPER routes: the user must be a super administrator too |
@@ -170,7 +170,7 @@ window.parent.postMessage({ type: 'agnostic:hello', protocol: 1 }, '*');
 window.parent.postMessage({ type: 'agnostic:request', id: 'q1', method: 'GET', path: '/api/v1/presets' }, '*');
 // ← { type: 'agnostic:response', id: 'q1', status: 200, data: {...}, etag? }   — status 0: never reached the server
 
-// Optional, by feature: `ifMatch` (an etag) on a PUT or DELETE and `ifNoneMatch: '*'` on a PUT
+// Optional, by feature: `ifMatch` (an etag) on a PUT, DELETE or POST and `ifNoneMatch: '*'` on a PUT
 // ('revisions' — the answer then carries `etag`); `idempotencyKey` on a POST ('idempotency').
 
 // 3. Navigate ('navigate', 0.1.10): open 'overview', 'settings' or a plugin that is switched on, with
@@ -275,6 +275,12 @@ kept on the cancelled crew ([ADR 0012](../adr/0012-a-cancelled-crew-keeps-its-fi
 the view stays on the crew until they arrive. Cancelling needs `crews:write` and a role that may
 write; a viewer sees everything else. **Watch in Swarm Command** opens the same crew on the map.
 
+**New crew** starts a crew by saying who it needs: each role takes the closest agent you have stored or the
+preset library holds, and one nothing knows is written from the role. The crew's page shows who it became, under
+**Agents**. **What is it for?** asks which preset fits, from a table of words and with no model, and **Use its roles**
+fills the team from a preset. That description is not sent with the crew. Starting a crew needs `crews:write` and a
+role that may write. A retry after a lost answer finds the crew it started.
+
 ## Library
 
 **Presets** are the crews compiled into the server (read-only): a preset's agents, with their roles,
@@ -285,6 +291,18 @@ definition, under its own key.
 once created), or delete it — each audited by the server. A key that exists is refused rather than
 overwritten; a field the engine keeps but does not use (`focus`, `allow_delegation`) is labelled so.
 Changing definitions needs `definitions:write` and a role that may write.
+
+**Versions.** Every write of a definition is a version, listed under it, newest first. Open one to see it
+beside what is current, field by field, and **Roll back** to make it current again, which is a new version,
+so it can be undone. It is refused if someone changed the definition since you opened it, and if today's rules
+would refuse that version. Deleting keeps the versions: the message offers the way back, and the link
+`#plugin/library?tab=definitions&item=<key>` reaches them later. How many are kept is `AGNOSTIC_MAX_VERSIONS`.
+
+**Packages.** On the Agent definitions tab, **Export** saves every definition in your tenant as one file, and
+**Import** takes such a file: it shows what the file holds, and goes in whole or not at all. A key already stored
+stops it and is named, and **Replace them** keeps what they said as a version. What a package holds reaches a model
+when a crew runs it, so import only what you trust. A file over 256 KB goes through
+`POST /api/v1/packages/import`, as the bridge carries no more.
 
 ## Audit trail
 
