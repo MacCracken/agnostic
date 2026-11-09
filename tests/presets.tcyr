@@ -142,26 +142,14 @@ fn test_tool_manifest() {
     agnostic_presets_reset();
     agnostic_presets_init();
 
-    # ⭐ THE M6 CONTRACT.
-    #
-    # The deduplicated union of every tool name every preset agent references.
-    # When M6 stands up the QA tool registry, every one of these must resolve —
-    # and a miss must be an ERROR, never an agent with fewer tools than it asked
-    # for, which is what the oracle did for all 38 of them.
-    assert_eq(agnostic_preset_tool_count(), 38, "38 distinct tool names across the library");
-
-    assert_eq(agnostic_preset_tool_is_named(str_from("RegressionTestingTool")), 1, "a real one is named");
-    assert_eq(agnostic_preset_tool_is_named(str_from("LoadTestingTool")), 1, "and another");
-    assert_eq(agnostic_preset_tool_is_named(str_from("TestPlanDecompositionTool")), 1, "and another");
-
-    # ⚠ These two are named by `quality-large` and have NO IMPLEMENTATION
-    # anywhere in the oracle — not merely unregistered, absent. M6 must either
-    # write them or strike them from the preset that names them; this assertion
-    # is what stops that decision being forgotten.
-    assert_eq(agnostic_preset_tool_is_named(str_from("ArtifactManagementTool")), 1,
-      "ArtifactManagementTool is named but has no implementation — M6 owes a decision");
-    assert_eq(agnostic_preset_tool_is_named(str_from("CIPipelineIntegrationTool")), 1,
-      "CIPipelineIntegrationTool likewise");
+    # ⭐ THE M6 CONTRACT, since 0.4.5 (ADR 0040). A preset names only what runs, and a name goes back
+    # when its tool is written. An agent told it holds a tool it cannot call writes down what the
+    # tool would have said. The 38 are `agnostic_qa_ledger_*`'s, and `tests/tools.tcyr` pins them.
+    assert_eq(agnostic_preset_tool_count(), 2, "two tools across the library");
+    assert_eq(agnostic_preset_tool_is_named(str_from("LoadTestingTool")), 1, "a load test");
+    assert_eq(agnostic_preset_tool_is_named(str_from("SecurityAssessmentTool")), 1, "and a security audit");
+    assert_eq(agnostic_preset_tool_is_named(str_from("RegressionTestingTool")), 0, "⭐ and nothing that is not written");
+    assert_eq(agnostic_preset_tool_is_named(str_from("ArtifactManagementTool")), 0, "⭐ nor what exists nowhere");
 
     assert_eq(agnostic_preset_tool_is_named(str_from("NotARealTool")), 0, "an unnamed tool is not claimed");
     assert_eq(agnostic_preset_tool_is_named(0), 0, "a null name is not claimed");
@@ -181,7 +169,7 @@ fn test_tool_manifest() {
         if (str_len(agnostic_preset_tool_at(i)) > 0) { nonempty = nonempty + 1; }
         i = i + 1;
     }
-    assert_eq(nonempty, 38, "every manifest entry is a non-empty name");
+    assert_eq(nonempty, 2, "every manifest entry is a non-empty name");
     assert_eq(agnostic_preset_tool_at(38), 0, "past the end is 0");
 }
 

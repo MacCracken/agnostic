@@ -480,11 +480,9 @@ fn _agnostic_ad_opt_str(a, al, out, index, v, key: Str, e, which): i64 {
 # The `tools` array — checked only, and nothing built, when `e` is 0. Returns 1 on success, 0
 # with a rejection stored.
 #
-# ⚠ **Never filtered against a registry.** There is no tool registry in the
-# Cyrius tree yet — M6 owns it — and filtering against an empty one would drop
-# every tool silently, which is precisely what the oracle did to all 38 of its
-# preset tool names (`ORACLE-AUDIT.md` §3.15). Names are carried through
-# verbatim; resolution, and erroring on a miss, is M6's.
+# ⚠ **Never filtered.** Dropping a name that resolves to nothing is what the oracle did to all 38 of
+# its preset tool names (`ORACLE-AUDIT.md` §3.15). A definition is a document, so names are carried
+# through verbatim, and a crew is what must resolve them: `agnostic_agent_tools_check_a`.
 fn _agnostic_ad_tools(a, al, out, index, v, e): i64 {
     var tv = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_TOOLS);
     if (tv == 0) { return 1; }
@@ -503,6 +501,42 @@ fn _agnostic_ad_tools(a, al, out, index, v, e): i64 {
         i = i + 1;
     }
     if (e != 0) { agnosai_agent_with_tools(e, tools); }
+    return 1;
+}
+
+# Each name in `v`'s `tools` must have something behind it (0.4.5, ADR 0040). Returns 1, or 0 with
+# a rejection stored. Crew submission only: a stored definition may name what is not written yet.
+fn agnostic_agent_tools_check_a(a, v, index, out): i64 {
+    var tv = bayan_json_v_obj_get_by_str(v, AGNOSTIC_JK_TOOLS);
+    if (tv == 0) { return 1; }
+    if (bayan_json_v_is_null(tv) == 1) { return 1; }
+    var n = bayan_json_v_arr_len(tv);
+    var i = 0;
+    while (i < n) {
+        var name = bayan_json_v_str(bayan_json_v_arr_get(tv, i));
+        if (agnostic_qa_engine_name(name) == 0) {
+            var sb = str_builder_new_a(a);
+            str_builder_add_cstr_a(a, sb, "tool '");
+            str_builder_add_a(a, sb, name);
+            str_builder_add_cstr_a(a, sb, "' has nothing behind it");
+            _agnostic_ad_reject(a, out, index, HTTP_BAD_REQUEST, str_builder_build_a(a, sb));
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Replace each of the engine agent `e`'s tools with the engine's own name for it, in `al`. Each has
+# been through `agnostic_agent_tools_check_a`.
+fn agnostic_agent_tools_resolve_a(al, e): i64 {
+    var tools = agnosai_agent_tools(e);
+    if (tools == 0) { return 1; }
+    var i = 0;
+    while (i < vec_len(tools)) {
+        vec_set(tools, i, str_clone_a(al, agnostic_qa_engine_name(vec_get(tools, i))));
+        i = i + 1;
+    }
     return 1;
 }
 

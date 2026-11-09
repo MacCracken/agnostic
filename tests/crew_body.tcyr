@@ -729,14 +729,14 @@ fn test_tools_route() {
     assert_eq(_t_st(r), HTTP_OK, "the route answers");
     var b = agnostic_response_body(r);
     var tools = bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_TOOLS);
-    assert_eq(bayan_json_v_arr_len(tools), 38, "the 38 names the presets use");
+    assert_eq(bayan_json_v_arr_len(tools), 38, "the 38 names of the ledger");
     assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_TOTAL)), 38, "and says how many");
     assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_RESOLVED)), 2,
       "⭐ the gate's number, on the wire");
     assert_eq(bayan_json_v_int(bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_UNRESOLVED)), 36,
       "and the one M6 takes to 0");
-    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_CALL_TOOLS)), 0,
-      "⭐ and no crew calls any of them yet, which every answer says");
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(b, AGNOSTIC_JK_CALL_TOOLS)), 1,
+      "⭐ and a crew calls the ones that resolve, which every answer says");
 
     var ticked = 0;
     var backed = 0;
@@ -779,7 +779,7 @@ fn test_tools_route() {
     }
     assert_eq(has_load, 1, "holding the backend the gate named");
     assert_eq(sorted, 1, "by name, so an answer can be diffed");
-    assert_eq(AGNOSTIC_CREWS_CALL_TOOLS, 0, "⭐ pinned: turning this on is M6's, with agnosai's loop");
+    assert_eq(AGNOSTIC_CREWS_CALL_TOOLS, 1, "⭐ pinned: a crew's agents call what resolves (ADR 0040)");
 }
 
 fn main() {

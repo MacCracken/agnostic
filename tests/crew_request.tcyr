@@ -16,6 +16,7 @@ include "src/http/response.cyr"
 include "src/http/codec.cyr"
 include "src/engine/reject.cyr"
 include "src/engine/target.cyr"
+include "src/engine/tools.cyr"
 include "src/engine/agentdef.cyr"
 include "src/engine/request.cyr"
 
@@ -202,7 +203,7 @@ fn test_optional_agent_fields_forwarded() {
     var a = arena_allocator(262144);
     var rj: i64[1];
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"name\":\"Ann\",\"domain\":\"qa\",\"backstory\":\"veteran\",\"complexity\":\"high\",\"llm_model\":\"m1\",\"tools\":[\"grep\",\"curl\"]}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
+      "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"t\",\"goal\":\"g\",\"name\":\"Ann\",\"domain\":\"qa\",\"backstory\":\"veteran\",\"complexity\":\"high\",\"llm_model\":\"m1\",\"tools\":[\"echo\",\"load_testing\"]}],\"tasks\":[{\"description\":\"x\"}]}", #skip-lint
       &rj);
     assert_neq(r, 0, "every listed agent field is accepted");
 
@@ -415,8 +416,8 @@ fn _t_hinted(hints): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"name\":\"h\",\"agents\":[");
     str_builder_add_cstr(sb,
-      "{\"key\":\"web\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"playwright\"],\"domain\":\"web\"},");
-    str_builder_add_cstr(sb, "{\"key\":\"load\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"k6\"],\"domain\":\"performance\",\"complexity\":\"high\",\"gpu_required\":true}"); #skip-lint
+      "{\"key\":\"web\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"echo\"],\"domain\":\"web\"},");
+    str_builder_add_cstr(sb, "{\"key\":\"load\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"load_testing\"],\"domain\":\"performance\",\"complexity\":\"high\",\"gpu_required\":true}"); #skip-lint
     str_builder_add_cstr(sb, "],\"tasks\":[{\"description\":\"x\"");
     str_builder_add_cstr(sb, hints);
     str_builder_add_cstr(sb, "}]}");
@@ -448,7 +449,7 @@ fn test_selection_hints() {
 
     var a = arena_allocator(262144);
     var rj: i64[1];
-    var r = _t_decode(a, _t_hinted(",\"required_tools\":[\"k6\",\"jq\"],\"complexity\":\"high\",\"domain\":\"Performance\",\"gpu_required\":true"), &rj); #skip-lint
+    var r = _t_decode(a, _t_hinted(",\"required_tools\":[\"load_testing\",\"json_transform\"],\"complexity\":\"high\",\"domain\":\"Performance\",\"gpu_required\":true"), &rj); #skip-lint
     assert_neq(r, 0, "a task with all four hints decodes");
     var t = vec_get(agnostic_crew_req_tasks(r), 0);
     assert_eq(vec_len(agnostic_task_req_required_tools(t)), 2, "required_tools decoded");
@@ -460,7 +461,7 @@ fn test_selection_hints() {
     var ctx = agnosai_task_context(vec_get(agnosai_crew_tasks(spec), 0));
     var tools = map_get(ctx, str_from("required_tools"));
     assert_eq(bayan_json_v_is_arr(tools), 1, "required_tools reaches the engine as an array");
-    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_arr_get(tools, 0)), "k6"), 1, "of the names sent");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_arr_get(tools, 0)), "load_testing"), 1, "of the names sent");
     assert_eq(str_eq_cstr(bayan_json_v_str(map_get(ctx, str_from("complexity"))), "high"), 1,
       "complexity as its wire name");
     assert_eq(str_eq_cstr(bayan_json_v_str(map_get(ctx, str_from("domain"))), "Performance"), 1, "domain as sent");
@@ -482,11 +483,12 @@ fn test_selection_hints() {
     # medium — so `web` (medium by default) beats `load` (high); each hint alone moves the task
     # to the agent that matches it.
     assert_eq(_t_picked(a, ""), 0, "no hints: complexity alone decides, for the medium agent");
-    assert_eq(_t_picked(a, ",\"required_tools\":[\"k6\"]"), 1, "required_tools picks the agent with the tool");
+    assert_eq(_t_picked(a, ",\"required_tools\":[\"load_testing\"]"), 1,
+      "required_tools picks the agent with the tool");
     assert_eq(_t_picked(a, ",\"domain\":\"PERFORMANCE\""), 1, "domain picks the agent in it, case-insensitively");
     assert_eq(_t_picked(a, ",\"complexity\":\"high\""), 1, "complexity picks the agent that matches it");
     assert_eq(_t_picked(a, ",\"gpu_required\":true"), 1, "gpu_required picks the agent with a GPU");
-    assert_eq(_t_picked(a, ",\"required_tools\":[\"playwright\"],\"domain\":\"web\""), 0,
+    assert_eq(_t_picked(a, ",\"required_tools\":[\"echo\"],\"domain\":\"web\""), 0,
       "and hints for the other agent pick it");
 
     # Accepted edges: an empty tool list (no requirement), null for any hint (absent).
@@ -496,9 +498,9 @@ fn test_selection_hints() {
     assert_eq(_t_hint_status(a, ",\"gpu_required\":false"), 0, "gpu_required false is accepted");
 
     # Refused, each by name — the engine would have read every one of these silently.
-    assert_eq(_t_hint_status(a, ",\"required_tools\":\"k6\""), AGNOSTIC_HTTP_UNPROCESSABLE,
+    assert_eq(_t_hint_status(a, ",\"required_tools\":\"load_testing\""), AGNOSTIC_HTTP_UNPROCESSABLE,
       "required_tools that is not an array is 422");
-    assert_eq(_t_hint_status(a, ",\"required_tools\":[\"k6\",7]"), AGNOSTIC_HTTP_UNPROCESSABLE,
+    assert_eq(_t_hint_status(a, ",\"required_tools\":[\"load_testing\",7]"), AGNOSTIC_HTTP_UNPROCESSABLE,
       "one non-string entry is 422 — the engine would score every agent full coverage");
     assert_eq(_t_hint_status(a, ",\"required_tools\":[\"\"]"), HTTP_BAD_REQUEST, "an empty tool name is 400");
     var many = str_builder_new();
@@ -537,9 +539,8 @@ fn test_selection_hints() {
     assert_eq(_t_hint_status(a, str_cstr(str_builder_build(longdom))), HTTP_BAD_REQUEST,
       "and so is a domain");
 
-    # ⭐ Rendered as the engine renders them: 64 names of 256 control bytes each are within
-    # every per-field cap, but escaped (\u0001 is six bytes) they come to ~98 KB — past the
-    # engine's 50,000-byte prompt-input cap, where the model would see them cut in half.
+    # ⭐ A name has something behind it or the task is refused (ADR 0040), so 64 names of 256 control
+    # bytes, which would come to ~98 KB once rendered, are refused at the first of them.
     var esc = str_builder_new();
     str_builder_add_cstr(esc, ",\"required_tools\":[");
     var k = 0;
@@ -554,22 +555,19 @@ fn test_selection_hints() {
     str_builder_add_cstr(esc, "]");
     var big = arena_allocator(8388608);
     assert_eq(_t_hint_status(big, str_cstr(str_builder_build(esc))), HTTP_BAD_REQUEST,
-      "hints past the engine's context cap once rendered are 400");
+      "a name with nothing behind it is 400");
     reset_via(big);
     var full = str_builder_new();
     str_builder_add_cstr(full, ",\"required_tools\":[");
     k = 0;
     while (k < AGNOSTIC_REQ_MAX_TOOLS) {
         if (k > 0) { str_builder_add_cstr(full, ","); }
-        str_builder_add_cstr(full, "\"");
-        j = 0;
-        while (j < AGNOSTIC_REQ_MAX_HINT) { str_builder_add_cstr(full, "t"); j = j + 1; }
-        str_builder_add_cstr(full, "\"");
+        str_builder_add_cstr(full, "\"load_testing\"");
         k = k + 1;
     }
     str_builder_add_cstr(full, "]");
     assert_eq(_t_hint_status(big, str_cstr(str_builder_build(full))), 0,
-      "while every cap at its limit, in plain names, fits");
+      "while as many as the cap allows, of a tool that exists, fit");
     reset_via(big);
     # ⚠ And an arena too small to render them in answers -1, which refuses — never 0, which
     # would read as "nothing to render" and wave them through.
@@ -634,15 +632,14 @@ fn test_agent_complexity_is_checked() {
 }
 
 # ⭐ 0.1.15: the hints Swarm Command 0.5.1 sends pick each task's role agent. Its role roster
-# gives each agent `domain` its role and `tools` the kinds the role uses, and each task the same
-# `domain` and `required_tools` — the shape `specToCrewRequest` builds (tests/webgui). A coder
-# and a reviewer use the same kinds, so the tools alone tie and the domain decides.
+# gives each agent `domain` its role, and each task the same — the shape `specToCrewRequest` builds
+# (tests/webgui). The domain decides.
 fn test_swarm_role_hints_pick_the_role() {
     test_group("request/swarm-roles");
     var a = arena_allocator(262144);
     var rj: i64[1];
     var r = _t_decode(a,
-      "{\"name\":\"s\",\"process\":\"parallel\",\"agents\":[{\"key\":\"planner\",\"role\":\"Planner\",\"goal\":\"g\",\"domain\":\"planner\",\"tools\":[\"llm\",\"db\",\"fs\"]},{\"key\":\"coder\",\"role\":\"Coder\",\"goal\":\"g\",\"domain\":\"coder\",\"tools\":[\"exec\",\"fs\",\"llm\"]},{\"key\":\"reviewer\",\"role\":\"Reviewer\",\"goal\":\"g\",\"domain\":\"reviewer\",\"tools\":[\"llm\",\"exec\",\"fs\"]}],\"tasks\":[{\"description\":\"review\",\"domain\":\"reviewer\",\"required_tools\":[\"llm\",\"exec\",\"fs\"]},{\"description\":\"code\",\"domain\":\"coder\",\"required_tools\":[\"exec\",\"fs\",\"llm\"]},{\"description\":\"plan\",\"domain\":\"planner\",\"required_tools\":[\"llm\",\"db\",\"fs\"]}]}", #skip-lint
+      "{\"name\":\"s\",\"process\":\"parallel\",\"agents\":[{\"key\":\"planner\",\"role\":\"Planner\",\"goal\":\"g\",\"domain\":\"planner\"},{\"key\":\"coder\",\"role\":\"Coder\",\"goal\":\"g\",\"domain\":\"coder\"},{\"key\":\"reviewer\",\"role\":\"Reviewer\",\"goal\":\"g\",\"domain\":\"reviewer\"}],\"tasks\":[{\"description\":\"review\",\"domain\":\"reviewer\"},{\"description\":\"code\",\"domain\":\"coder\"},{\"description\":\"plan\",\"domain\":\"planner\"}]}", #skip-lint
       &rj);
     assert_neq(r, 0, "the swarm's request decodes");
     if (r == 0) { return 0; }
@@ -650,7 +647,7 @@ fn test_swarm_role_hints_pick_the_role() {
     var agents = agnosai_crew_agents(spec);
     var tasks = agnosai_crew_tasks(spec);
     assert_eq(agnosai_scored_index(vec_get(agnosai_rank_agents(agents, vec_get(tasks, 0)), 0)), 2,
-      "⭐ the review goes to the reviewer, though the coder has the same tools");
+      "⭐ the review goes to the reviewer");
     assert_eq(agnosai_scored_index(vec_get(agnosai_rank_agents(agents, vec_get(tasks, 1)), 0)), 1,
       "the code to the coder");
     assert_eq(agnosai_scored_index(vec_get(agnosai_rank_agents(agents, vec_get(tasks, 2)), 0)), 0,
@@ -680,7 +677,7 @@ fn test_an_accepted_crew_outlives_the_arena() {
     test_group("request/outlives-arena");
     var a = arena_allocator(65536);
     var rj: i64[1];
-    var r = _t_decode(a, "{\"name\":\"keep\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"tools\":[\"k6\"],\"focus\":\"api\"}],\"tasks\":[{\"description\":\"first\",\"expected_output\":\"a report\",\"required_tools\":[\"k6\"],\"domain\":\"performance\",\"complexity\":\"high\",\"priority\":\"high\",\"risk\":\"low\",\"gpu_required\":true,\"output_schema\":{\"type\":\"object\",\"required\":[\"verdict\"]}},{\"description\":\"second\",\"dependencies\":[0]}]}", &rj); #skip-lint
+    var r = _t_decode(a, "{\"name\":\"keep\",\"process\":\"dag\",\"agents\":[{\"key\":\"a1\",\"role\":\"tester\",\"goal\":\"find bugs\",\"tools\":[\"load_testing\"],\"focus\":\"api\"}],\"tasks\":[{\"description\":\"first\",\"expected_output\":\"a report\",\"required_tools\":[\"load_testing\"],\"domain\":\"performance\",\"complexity\":\"high\",\"priority\":\"high\",\"risk\":\"low\",\"gpu_required\":true,\"output_schema\":{\"type\":\"object\",\"required\":[\"verdict\"]}},{\"description\":\"second\",\"dependencies\":[0]}]}", &rj); #skip-lint
     assert_neq(r, 0, "the crew is accepted");
     if (r == 0) { return 0; }
     reset_via(a);
@@ -692,7 +689,7 @@ fn test_an_accepted_crew_outlives_the_arena() {
     assert_eq(str_eq_cstr(agnostic_task_req_description(t0), "first"), 1, "a task's description");
     assert_eq(str_eq_cstr(agnostic_task_req_expected_output(t0), "a report"), 1, "its expected output");
     var tools = agnostic_task_req_required_tools(t0);
-    assert_eq(tools != 0 && vec_len(tools) == 1 && str_eq_cstr(vec_get(tools, 0), "k6") == 1, 1,
+    assert_eq(tools != 0 && vec_len(tools) == 1 && str_eq_cstr(vec_get(tools, 0), "load_testing") == 1, 1,
       "its required tools");
     assert_eq(str_eq_cstr(agnostic_task_req_domain(t0), "performance"), 1, "its domain");
     assert_eq(agnostic_task_req_complexity(t0), agnostic_complexity_from_wire(str_from("high")), "its complexity");
@@ -763,8 +760,52 @@ fn test_dependencies_need_a_dag() {
     assert_neq(_t_decode(a, str_data(str_builder_build(sb)), &rj), 0, "and a dag takes it");
 }
 
+# ⭐ A tool resolves or the crew is refused (ADR 0040), and the crew carries the engine's word for it.
+fn test_a_tool_resolves_or_the_crew_is_refused() {
+    test_group("request/tools");
+    var a = arena_allocator(1048576);
+    var rj[8];
+    var head = "{\"name\":\"s\",\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[";
+    var tail = "]}],\"tasks\":[{\"description\":\"d\"}]}";
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, head);
+    str_builder_add_cstr(sb, "\"LoadTestingTool\",\"echo\"");
+    str_builder_add_cstr(sb, tail);
+    var r = _t_decode(a, str_cstr(str_builder_build(sb)), &rj);
+    assert_neq(r, 0, "a name with something behind it is accepted");
+    var e = agnostic_agent_def_engine(vec_get(agnostic_crew_req_agents(r), 0));
+    assert_eq(str_eq_cstr(vec_get(agnosai_agent_tools(e), 0), "load_testing"), 1,
+      "⭐ and goes to the engine as the engine's");
+    assert_eq(str_eq_cstr(vec_get(agnosai_agent_tools(e), 1), "echo"), 1, "beside one the engine named");
+
+    store64(&rj, 0);
+    var miss = str_builder_new();
+    str_builder_add_cstr(miss, head);
+    str_builder_add_cstr(miss, "\"echo\",\"RiskScoringTool\"");
+    str_builder_add_cstr(miss, tail);
+    assert_eq(_t_decode(a, str_cstr(str_builder_build(miss)), &rj), 0,
+      "⭐ one name with nothing behind it refuses the crew");
+    assert_eq(agnostic_reject_status(load64(&rj)), HTTP_BAD_REQUEST, "with a 400");
+    assert_eq(_t_has(agnostic_reject_message(load64(&rj)), "agents[0]: tool 'RiskScoringTool' has nothing behind it"), 1, "⭐ naming it");  #skip-lint
+
+    store64(&rj, 0);
+    assert_eq(_t_decode(a, _t_hinted(",\"required_tools\":[\"NoSuchTool\"]"), &rj), 0, "⭐ a required tool likewise");
+    assert_eq(_t_has(agnostic_reject_message(load64(&rj)), "tasks[0]: tool 'NoSuchTool' has nothing behind it"), 1,
+      "and says so");
+
+    store64(&rj, 0);
+    var hinted = _t_decode(a, _t_hinted(",\"required_tools\":[\"LoadTestingTool\"]"), &rj);
+    assert_neq(hinted, 0, "a required tool the ledger knows is accepted");
+    var req = agnostic_task_req_required_tools(vec_get(agnostic_crew_req_tasks(hinted), 0));
+    assert_eq(str_eq_cstr(vec_get(req, 0), "load_testing"), 1,
+      "⭐ and is the engine's word too, or no agent would match it");
+}
+
 fn main() {
     alloc_init();
+    agnostic_qa_catalog_init();
+    test_a_tool_resolves_or_the_crew_is_refused();
     test_a_target_outlives_the_arena();
     test_dependencies_need_a_dag();
     thread_local_init();

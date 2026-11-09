@@ -1212,7 +1212,7 @@ fn test_plan_explains_selection() {
 }
 
 # Two agents and two tasks: one task names no hint, the other asks for `load`'s tool and domain.
-var _T_HINTED = "{\"name\":\"hinted\",\"agents\":[{\"key\":\"web\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"playwright\"]},{\"key\":\"load\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"k6\"],\"domain\":\"performance\"}],\"tasks\":[{\"description\":\"plain\"},{\"description\":\"soak\",\"required_tools\":[\"k6\"],\"complexity\":\"medium\",\"domain\":\"performance\",\"gpu_required\":false}]}"; #skip-lint
+var _T_HINTED = "{\"name\":\"hinted\",\"agents\":[{\"key\":\"web\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"echo\"]},{\"key\":\"load\",\"role\":\"r\",\"goal\":\"g\",\"tools\":[\"load_testing\"],\"domain\":\"performance\"}],\"tasks\":[{\"description\":\"plain\"},{\"description\":\"soak\",\"required_tools\":[\"load_testing\"],\"complexity\":\"medium\",\"domain\":\"performance\",\"gpu_required\":false}]}"; #skip-lint
 
 # The plan says what each task was hinted with, and the explanation shows the hints at work
 # (0.1.14, ADR 0017).
@@ -1240,7 +1240,8 @@ fn test_plan_shows_hints() {
     if (bayan_json_v_obj_get_by_cstr(plain, "gpu_required") != 0) { echoed = echoed + 1; }
     assert_eq(echoed, 0, "a task with no hints shows none");
     var rt = bayan_json_v_obj_get_by_cstr(soak, "required_tools");
-    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_arr_get(rt, 0)), "k6"), 1, "a hinted task shows its tools");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_arr_get(rt, 0)), "load_testing"), 1,
+      "a hinted task shows its tools");
     assert_eq(str_eq_cstr(agnostic_req_str(soak, str_from("complexity")), "medium"), 1, "its complexity");
     assert_eq(str_eq_cstr(agnostic_req_str(soak, str_from("domain")), "performance"), 1, "its domain");
     assert_eq(bayan_json_v_is_bool(bayan_json_v_obj_get_by_cstr(soak, "gpu_required")), 1,

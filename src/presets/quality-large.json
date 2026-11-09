@@ -1,6 +1,6 @@
 {
   "name": "quality-large",
-  "description": "Large 9-agent quality team for enterprise projects \u2014 maximum specialization",
+  "description": "Large 9-agent quality team for enterprise projects — maximum specialization",
   "domain": "quality",
   "version": "1.0.0",
   "workflow_mode": "full",
@@ -13,10 +13,7 @@
       "backstory": "You are an experienced QA Manager with 15+ years in test strategy and team orchestration. You lead a large enterprise QA team, excelling at breaking down complex requirements into actionable test plans, coordinating across specialized roles, and ensuring quality outcomes through intelligent verification and oversight.",
       "focus": "Orchestration, test planning, delegation, fuzzy verification, oversight",
       "domain": "quality",
-      "tools": [
-        "TestPlanDecompositionTool",
-        "FuzzyVerificationTool"
-      ],
+      "tools": [],
       "complexity": "high",
       "celery_queue": "qa_manager",
       "redis_prefix": "manager",
@@ -30,14 +27,7 @@
       "backstory": "You are a Senior Test Architect with 15+ years of expertise in advanced testing methodologies. You design test frameworks, perform model-based testing, analyze complex edge cases, and ensure the testing architecture scales to enterprise demands.",
       "focus": "Complex scenarios, test architecture, model-based testing, edge case analysis",
       "domain": "quality",
-      "tools": [
-        "SelfHealingTool",
-        "ModelBasedTestingTool",
-        "EdgeCaseAnalysisTool",
-        "AITestGenerationTool",
-        "CodeAnalysisTestGeneratorTool",
-        "AutonomousTestDataGeneratorTool"
-      ],
+      "tools": [],
       "complexity": "high",
       "celery_queue": "senior_qa",
       "redis_prefix": "senior"
@@ -50,11 +40,7 @@
       "backstory": "You are a bulk test execution specialist focused on running large-scale regression suites efficiently. You optimize parallel test runs, detect flaky tests, and ensure fast feedback loops for enterprise CI/CD pipelines.",
       "focus": "Bulk test execution, parallel runs, regression optimization, flaky test detection",
       "domain": "quality",
-      "tools": [
-        "RegressionTestingTool",
-        "TestExecutionOptimizerTool",
-        "FlakyTestDetectionTool"
-      ],
+      "tools": [],
       "complexity": "medium",
       "celery_queue": "junior_qa",
       "redis_prefix": "junior"
@@ -67,14 +53,7 @@
       "backstory": "You are a Quality Intelligence Analyst with deep expertise in data-driven quality assessment. You apply predictive analytics, identify quality trends, and use ML-driven approaches to forecast defect likelihood and release readiness.",
       "focus": "Advanced analytics, predictive quality, trend analysis, ML-driven insights",
       "domain": "quality",
-      "tools": [
-        "DataOrganizationReportingTool",
-        "TestTraceabilityTool",
-        "DefectPredictionTool",
-        "QualityTrendAnalysisTool",
-        "RiskScoringTool",
-        "ReleaseReadinessTool"
-      ],
+      "tools": [],
       "complexity": "high",
       "celery_queue": "qa_analyst",
       "redis_prefix": "analyst"
@@ -87,14 +66,7 @@
       "backstory": "You are a Security & Privacy Guardian with 15+ years in cybersecurity and privacy protection. You perform penetration testing, validate GDPR/PCI DSS/SOC 2/ISO 27001/HIPAA compliance, and ensure applications meet the highest security and privacy standards for enterprise deployments.",
       "focus": "Security testing, penetration testing, privacy protection, compliance validation",
       "domain": "quality",
-      "tools": [
-        "ComprehensiveSecurityAssessmentTool",
-        "GDPRComplianceTool",
-        "PCIDSSComplianceTool",
-        "SOC2ComplianceTool",
-        "ISO27001ComplianceTool",
-        "HIPAAComplianceTool"
-      ],
+      "tools": [],
       "complexity": "high",
       "celery_queue": "security_compliance",
       "redis_prefix": "security_compliance"
@@ -108,10 +80,7 @@
       "focus": "Advanced performance profiling, load testing, stress testing, bottleneck analysis",
       "domain": "quality",
       "tools": [
-        "PerformanceMonitoringTool",
-        "LoadTestingTool",
-        "ResilienceValidationTool",
-        "AdvancedProfilingTool"
+        "LoadTestingTool"
       ],
       "complexity": "high",
       "celery_queue": "performance",
@@ -125,9 +94,7 @@
       "backstory": "You are a UX Researcher specializing in user experience quality assurance. You conduct usability testing, analyze user sessions, evaluate accessibility compliance, and ensure applications deliver intuitive, inclusive user experiences.",
       "focus": "User experience testing, usability analysis, accessibility, session analysis",
       "domain": "quality",
-      "tools": [
-        "UXUsabilityTestingTool"
-      ],
+      "tools": [],
       "complexity": "medium",
       "celery_queue": "ux_researcher",
       "redis_prefix": "ux"
@@ -140,9 +107,7 @@
       "backstory": "You are a Localization Specialist with expertise in internationalization (i18n) and globalization testing. You validate translations, RTL layout support, cultural formatting (dates, currencies, numbers), and ensure applications work correctly across all target markets.",
       "focus": "i18n testing, localization validation, RTL support, cultural formatting",
       "domain": "quality",
-      "tools": [
-        "LocalizationTestingTool"
-      ],
+      "tools": [],
       "complexity": "medium",
       "celery_queue": "localization",
       "redis_prefix": "l10n"
@@ -155,10 +120,7 @@
       "backstory": "You are a DevOps Integration Specialist who bridges QA and CI/CD. You integrate test suites into deployment pipelines, manage test artifacts, configure quality gates, and ensure automated PR checks enforce quality standards.",
       "focus": "CI/CD integration, pipeline automation, artifact management, quality gates",
       "domain": "quality",
-      "tools": [
-        "CIPipelineIntegrationTool",
-        "ArtifactManagementTool"
-      ],
+      "tools": [],
       "complexity": "medium",
       "celery_queue": "devops_qa",
       "redis_prefix": "devops"

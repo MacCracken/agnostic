@@ -27,7 +27,7 @@ The version is the one in `VERSION`. Per decision #4 the milestones ship togethe
 | Milestone | Where it stands |
 |---|---|
 | **M0–M5** | Complete: scaffold, the HTTP skeleton, the crew surface on agnosai (in-process, `dist/agnosai.cyr`), agent definitions and presets, persistence on patra behind libro's tamper-evident audit chain, identity and tenancy. |
-| **M6** — QA tools | Started and blocked. The viability gate is built (2 of 38 preset tool names resolve); what blocks it is the tool-registry decision (§8) and agnosai's tool-calling loop (F1). |
+| **M6** — QA tools | Running. A crew's agents call what resolves (0.4.5, ADR 0040): 2 of the ledger's 38 names, and a preset names only those. What is left is writing the rest (§8). |
 | **M7** — MCP and A2A | Not started; the target spec revisions are recorded in the roadmap. |
 | **M8** — reports | Not started; HTML, CSV, JSON and PDF, on bayan. |
 | **M9** — WebGUI | Built: the shell at `/ui`, a plugin platform the server enforces (ADRs 0004–0007, 0010), and the Crews, Library, Audit trail and Swarm Command views. Owed: streaming events, reports, the approval roll-up (agnosai F3). |
@@ -485,30 +485,14 @@ change.
 
 ---
 
-## 8. ⛔ The decision M6 is waiting on: who owns the tool registry
+## 8. M6: the ledger, the registry and what a tool is
 
-**Deferred deliberately. Do not guess at it — settle it first.**
+**agnostic owns the registry and hands it to the orchestrator** (ADR 0040). `src/engine/tools.cyr` holds the ledger of 38
+names and the table from a name to the engine tool behind it: **2 of 38 resolve; 36 do not**, pinned by `tests/tools.tcyr`.
+M6 is finished when the unresolved count reaches 0.
 
-`src/engine/tools.cyr` resolves the preset tool vocabulary against the engine's
-registry and reports the gap: **2 of 38 resolve; 36 do not**, both pinned by
-`tests/tools.tcyr`. M6 is finished when the unresolved count reaches 0.
-
-What is *not* settled is where agnostic's QA tools would register.
-`agnostic_engine_init` exposes **no registry handle** — the orchestrator owns one
-internally — so there is currently nowhere to put a QA tool that the
-orchestrator's agents would actually read. The gate is therefore a library
-question, not a served one, and is not wired into mount.
-
-Since 0.4.0 `agnostic_qa_catalog_init` keeps a registry of its own for `GET /api/v1/tools` to read.
-⚠ That is a catalogue, not an answer to this: nothing runs it, and it is not the
-orchestrator's registry.
-
-**Implementing tools before settling this means writing 36 of them against a seam
-that may not exist.** The options, none chosen:
-
-1. Agnostic stands up its own registry and hands it to the orchestrator.
-2. AgnosAI grows a registration entry point agnostic calls at mount.
-3. Tools are resolved at crew-build time rather than registered at all.
+Writing a tool is one function pair (`agnosai_tool_new`; agnosai's `docs/guides/adding-tools.md`), a row in
+`agnostic_qa_tools_init`, its registration in `agnostic_qa_catalog_init`, and its name back in the presets.
 
 Two things that are already decided and should not be re-opened:
 

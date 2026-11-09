@@ -281,6 +281,7 @@ fn _agnostic_bench_server_span(): i64 {
 # builds anything, so an accepted body is decoded twice; this is the price. The arena is
 # rewound each time; what the build keeps on the global heap is the engine's to keep.
 fn _agnostic_bench_crew_decode(): i64 {
+    agnostic_qa_catalog_init();
     var a = arena_allocator(1048576);
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"name\":\"bench\",\"process\":\"dag\",\"agents\":[");
@@ -290,7 +291,7 @@ fn _agnostic_bench_crew_decode(): i64 {
         str_builder_add_cstr(sb, "{\"key\":\"agent-");
         str_builder_add_int(sb, i);
         str_builder_add_cstr(sb, "\",\"role\":\"tester\",\"goal\":\"find the bugs\",\"complexity\":\"medium\"");
-        str_builder_add_cstr(sb, ",\"tools\":[\"k6\",\"playwright\"]}");
+        str_builder_add_cstr(sb, ",\"tools\":[\"load_testing\",\"echo\"]}");
         i = i + 1;
     }
     str_builder_add_cstr(sb, "],\"tasks\":[");
@@ -318,6 +319,8 @@ fn _agnostic_bench_crew_decode(): i64 {
     }
     bench_batch_stop(b, 2000);
     bench_report(b);
+    # ⚠ A body the door refuses is measured as a refusal: at 0.4.5 this row read -88% that way.
+    if (ok != 2000) { println("crew_decode_4a_8t: the body was refused"); sys_exit_group(1); }
 
     # What the row above leaves out: it decodes a value parsed once, outside its loop, so a change to
     # bayan's parser cannot show there. Every JSON write route pays this first.

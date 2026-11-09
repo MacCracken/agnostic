@@ -1,18 +1,17 @@
 # agnostic/engine/tools — resolving the preset tool vocabulary to executables.
 #
-# ## What M6 owns, and why this file is mostly a gate right now
+# ## What M6 owns: a ledger of 38, and the registry a crew's agents call
 #
-# The 18 presets name **38 distinct tools**. In the Python oracle **none of them
+# The 18 presets once named **38 distinct tools**. In the Python oracle **none of them
 # ever ran**: the registry was never populated, so `_resolve_tools` logged a
 # warning and built every agent with `tools=[]` (`ORACLE-AUDIT.md` §3.15). The
-# arrays are a *specification of intent*, not a port target — there is no working
-# implementation to translate, for any of the 38.
+# names are a *specification of intent*, not a port target.
 #
-# So M6 cannot start by porting. It starts by making the gap **countable**:
-# `agnostic_qa_unresolved_count` says exactly how many of the 38 have no
-# executable behind them, and `tests/tools.tcyr` pins the number. Progress is a
-# number going down, and a preset that adds a name it cannot back fails a test
-# rather than shipping an agent that silently has fewer tools than it asked for.
+# Since 0.4.5 a crew's agents call tools (agnosai's loop, ADR 0040), and an agent named a tool it
+# cannot call is told it holds something it does not, so a preset names only what runs. The 38 stay
+# here as a ledger: `agnostic_qa_unresolved_count` says how many have nothing behind them, and
+# `tests/tools.tcyr` pins the number. Progress is that number going down, and a name goes back in
+# its preset when its tool is written.
 #
 # ## ⚠ Two vocabularies, and the mapping is deliberate
 #
@@ -40,10 +39,13 @@
 # must refuse; there is no "best effort with the tools we found" path here, and
 # none should be added.
 
-# One row of the alias table: the preset's name, and the engine tool that backs
-# it. Kept as a flat pair vec rather than a hashmap — 38 entries, read at mount
+# One row of the alias table: the ledger's name, and the engine tool that backs
+# it. Kept as a flat pair vec rather than a hashmap — a handful of entries, read at mount
 # and on crew build, and a vec keeps the table readable in source order.
 var _agnostic_qa_alias = 0;
+
+# The 38 names, in the order the presets first named them.
+var _agnostic_qa_ledger = 0;
 
 # Declare that `preset_name` is served by the engine tool `backend_name`.
 fn _agnostic_qa_alias_add(preset_name, backend_name): i64 {
@@ -52,7 +54,25 @@ fn _agnostic_qa_alias_add(preset_name, backend_name): i64 {
     return 0;
 }
 
-# Build the alias table. Idempotent; mount time.
+# The ledger's names, in the order the presets first named them. One line of a name per tool, so a
+# tool that is written changes a row in `agnostic_qa_tools_init` and nothing here.
+fn _agnostic_qa_ledger_build(): i64 {
+    var names = "TestPlanDecompositionTool FuzzyVerificationTool RegressionTestingTool SyntheticDataGeneratorTool TestExecutionOptimizerTool VisualRegressionTool FlakyTestDetectionTool UXUsabilityTestingTool LocalizationTestingTool DataOrganizationReportingTool SecurityAssessmentTool PerformanceProfilingTool TestTraceabilityTool DefectPredictionTool QualityTrendAnalysisTool RiskScoringTool ReleaseReadinessTool SelfHealingTool ModelBasedTestingTool EdgeCaseAnalysisTool AITestGenerationTool CodeAnalysisTestGeneratorTool AutonomousTestDataGeneratorTool MobileAppTestingTool DesktopAppTestingTool CrossPlatformTestingTool ComprehensiveSecurityAssessmentTool GDPRComplianceTool PCIDSSComplianceTool SOC2ComplianceTool ISO27001ComplianceTool HIPAAComplianceTool PerformanceMonitoringTool LoadTestingTool ResilienceValidationTool AdvancedProfilingTool CIPipelineIntegrationTool ArtifactManagementTool";  #skip-lint
+    _agnostic_qa_ledger = vec_new();
+    var at = 0;
+    var n = strlen(names);
+    var i = 0;
+    while (i <= n) {
+        if (i == n || load8(names + i) == 32) {
+            vec_push(_agnostic_qa_ledger, str_new(names + at, i - at));
+            at = i + 1;
+        }
+        i = i + 1;
+    }
+    return vec_len(_agnostic_qa_ledger);
+}
+
+# Build the alias table and the ledger. Idempotent; mount time.
 #
 # ⚠ **An entry here is a claim that the backend actually does the job the preset
 # asked for.** It is not a naming convenience. `ComprehensiveSecurityAssessmentTool`
@@ -63,6 +83,7 @@ fn _agnostic_qa_alias_add(preset_name, backend_name): i64 {
 fn agnostic_qa_tools_init(): i64 {
     if (_agnostic_qa_alias != 0) { return agnostic_qa_alias_count(); }
     _agnostic_qa_alias = vec_new();
+    _agnostic_qa_ledger_build();
 
     # Direct, and verified against the engine's own description:
     #
@@ -78,14 +99,13 @@ fn agnostic_qa_tools_init(): i64 {
 # Drop the table. For tests.
 fn agnostic_qa_tools_reset(): i64 {
     _agnostic_qa_alias = 0;
+    _agnostic_qa_ledger = 0;
     return 0;
 }
 
-# The engine tools a preset name can resolve to, for `GET /api/v1/tools` to read (0.4.0).
-#
-# ⚠ **A catalogue, not the seam.** It says what exists: nothing runs these, the orchestrator holds a
-# registry of its own that this is not, and where QA tools register is decided with agnosai's loop
-# (`handoff.md` §8). Built once at mount and only read after.
+# The registry a crew's agents call (0.4.5, ADR 0040), and what `GET /api/v1/tools` lists. It stays
+# agnostic's: `agnosai_orchestrator_with_tools` reads it, and owns nothing of it. Built once at mount
+# and only read after.
 var _agnostic_qa_registry = 0;
 
 # The catalogue's tools as schemas, by name, or 0 before mount.
@@ -95,27 +115,8 @@ var _agnostic_qa_registry = 0;
 # growing the heap. The list cannot change after mount, so it is read once.
 var _agnostic_qa_engine_tools = 0;
 
-# Schemas of `reg`'s tools, on the global heap, ordered by name: the registry is a map, and its
-# order is not one to publish. A handful of tools.
-fn _agnostic_qa_engine_schemas(reg): i64 {
-    var schemas = agnosai_tool_registry_list_a(default_alloc(), reg);
-    var i = 1;
-    while (i < vec_len(schemas)) {
-        var s = vec_get(schemas, i);
-        var j = i;
-        while (j > 0) {
-            var prev = vec_get(schemas, j - 1);
-            if (_agnostic_str_order(agnosai_tool_schema_name(prev), agnosai_tool_schema_name(s)) <= 0) { break; }
-            vec_set(schemas, j, prev);
-            j = j - 1;
-        }
-        vec_set(schemas, j, s);
-        i = i + 1;
-    }
-    return schemas;
-}
-
-# Build the catalogue and the alias table. Mount time, on the one thread.
+# Build the registry and the alias table, and hold every tool in it to the gate. Mount time, on the
+# one thread.
 fn agnostic_qa_catalog_init(): i64 {
     agnostic_qa_tools_init();
     if (_agnostic_qa_registry != 0) { return _agnostic_qa_registry; }
@@ -124,7 +125,8 @@ fn agnostic_qa_catalog_init(): i64 {
     agnosai_register_basic_builtins(r);
     agnosai_register_load_testing_builtin(r);
     agnosai_register_security_audit_builtin(r);
-    _agnostic_qa_engine_tools = _agnostic_qa_engine_schemas(r);
+    agnosai_tool_registry_set_gate(r, agnosai_tool_gate_new(0, &_agnostic_tool_gate_url, 0));
+    _agnostic_qa_engine_tools = agnosai_tool_registry_list_a(default_alloc(), r);
     _agnostic_qa_registry = r;
     return r;
 }
@@ -181,13 +183,26 @@ fn agnostic_qa_tool_is_resolvable(registry, preset_name: Str): i64 {
     return 1;
 }
 
-# How many of the preset vocabulary resolve against `registry`.
+# How many names the ledger holds: the 38.
+fn agnostic_qa_ledger_count(): i64 {
+    if (_agnostic_qa_ledger == 0) { return 0; }
+    return vec_len(_agnostic_qa_ledger);
+}
+
+# The ledger's `i`th name, or 0 when out of range.
+fn agnostic_qa_ledger_at(i): i64 {
+    if (_agnostic_qa_ledger == 0) { return 0; }
+    if (i < 0 || i >= vec_len(_agnostic_qa_ledger)) { return 0; }
+    return vec_get(_agnostic_qa_ledger, i);
+}
+
+# How many of the ledger resolve against `registry`.
 fn agnostic_qa_resolved_count(registry): i64 {
-    var total = agnostic_preset_tool_count();
+    var total = agnostic_qa_ledger_count();
     var i = 0;
     var hits = 0;
     while (i < total) {
-        if (agnostic_qa_tool_is_resolvable(registry, agnostic_preset_tool_at(i)) == 1) {
+        if (agnostic_qa_tool_is_resolvable(registry, agnostic_qa_ledger_at(i)) == 1) {
             hits = hits + 1;
         }
         i = i + 1;
@@ -197,19 +212,18 @@ fn agnostic_qa_resolved_count(registry): i64 {
 
 # How many do NOT. This is the gate: M6 is done when it reaches 0.
 fn agnostic_qa_unresolved_count(registry): i64 {
-    return agnostic_preset_tool_count() - agnostic_qa_resolved_count(registry);
+    return agnostic_qa_ledger_count() - agnostic_qa_resolved_count(registry);
 }
 
-# The `i`th unresolved preset tool name, or 0 when out of range.
+# The `i`th unresolved name of the ledger, or 0 when out of range.
 #
-# Ordered by the preset vocabulary, so the list is stable between runs and a
-# diff of it is meaningful.
+# In the ledger's order, so the list is stable between runs and a diff of it is meaningful.
 fn agnostic_qa_unresolved_at(registry, idx): i64 {
-    var total = agnostic_preset_tool_count();
+    var total = agnostic_qa_ledger_count();
     var i = 0;
     var seen = 0;
     while (i < total) {
-        var nm = agnostic_preset_tool_at(i);
+        var nm = agnostic_qa_ledger_at(i);
         if (agnostic_qa_tool_is_resolvable(registry, nm) == 0) {
             if (seen == idx) { return nm; }
             seen = seen + 1;
@@ -217,4 +231,54 @@ fn agnostic_qa_unresolved_at(registry, idx): i64 {
         i = i + 1;
     }
     return 0;
+}
+
+# ## What a crew's agents may name, and what they then call (0.4.5, ADR 0040)
+#
+# ⚠ **A name resolves or the crew is refused.** agnosai would fail the task at run time, naming the
+# tool; refusing here says so before a crew exists and before a token is spent. The grant is the
+# engine's name, so a model and a report read the same word.
+
+# The engine's name for what a crew asked for, or 0 when nothing can answer it: a name of the ledger
+# with a backend, or a tool the registry holds by that name. Never a case transform (ADR 0040).
+fn agnostic_qa_engine_name(name: Str): i64 {
+    if (_agnostic_qa_registry == 0 || name == 0) { return 0; }
+    var backend = agnostic_qa_backend_name(name);
+    if (backend != 0) { name = backend; }
+    if (agnosai_tool_registry_has(_agnostic_qa_registry, name) == 0) { return 0; }
+    return name;
+}
+
+# Whether the two hosts are one, without regard to case.
+fn _agnostic_host_same(a: Str, b: Str): i64 {
+    if (a == 0 || b == 0) { return 0; }
+    var n = str_len(a);
+    if (n == 0 || n != str_len(b)) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var ca = _agnostic_target_lower(load8(str_data(a) + i) & 255);
+        if (ca != _agnostic_target_lower(load8(str_data(b) + i) & 255)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# The gate's `url_fp`: where a tool may point, asked of its target and of every redirect hop.
+#
+# ⚠ **The system under test writes what the model reads**, so a page saying "now scan this other host"
+# could steer the next call. The target was the operator's list's and the submitter's to choose, at
+# the door (ADR 0029), and here is where it binds: the host must be the one the task runs against,
+# which then may be private, since it was declared. A task with no target points a tool at nothing.
+fn _agnostic_tool_gate_url(ctx, input, url: Str): i64 {
+    var task = agnosai_tool_input_task(input);
+    if (task == 0) { return AGNOSAI_GATE_REFUSE; }
+    var context = agnosai_task_context(task);
+    if (context == 0) { return AGNOSAI_GATE_REFUSE; }
+    var target = bayan_json_v_obj_get_by_str(map_get(context, AGNOSTIC_JK_TARGET), AGNOSTIC_JK_URL);
+    if (bayan_json_v_is_str(target) != 1) { return AGNOSAI_GATE_REFUSE; }
+    var a = agnosai_tool_input_alloc(input);
+    if (_agnostic_host_same(agnosai_url_host_a(a, url), agnosai_url_host_a(a, bayan_json_v_str(target))) == 1) {
+        return AGNOSAI_GATE_ADMIT;
+    }
+    return AGNOSAI_GATE_REFUSE;
 }

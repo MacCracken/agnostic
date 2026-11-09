@@ -155,13 +155,13 @@ stop
 # and checks nothing (ADR 0033).
 GATEWAY_PORT=$((PORT + 1))
 python3 "$(dirname "$0")/fake-gateway.py" "$GATEWAY_PORT" & GATEWAY=$!
-AGNOSTIC_LLM_URL="http://127.0.0.1:$GATEWAY_PORT" start live live
+AGNOSTIC_TARGET_HOSTS=127.0.0.1 AGNOSTIC_LLM_URL="http://127.0.0.1:$GATEWAY_PORT" start live live
 wait_up
 
 # live_crew <what the task says> <rest of the crew>: its document, in $WORK/body, once it has ended.
 live_crew() {
   local shape='"output_schema":{"type":"object","required":["verdict"]}'
-  local body="{\"name\":\"live\",\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\"}],$2}"
+  local body="{\"name\":\"live\",${LIVE_TARGET:-}\"agents\":[{\"key\":\"a\",\"role\":\"r\",\"goal\":\"g\"${LIVE_TOOLS:-}}],$2}"
   body="${body//SHAPE/$shape}"
   body="${body//SAY/$1}"
   expect 202 "a live crew: $1" -X POST -H 'Content-Type: application/json' -d "$body" "$BASE/api/v1/crews" > /dev/null
@@ -200,6 +200,38 @@ live_crew say-prose '"process":"dag","tasks":[{"description":"SAY",SHAPE},{"desc
 grep -q '"status":"failed","task_count"' "$WORK/body" || fail "a DAG went on past a shape: $(head -c 300 "$WORK/body")"
 grep -q '"output":"after"' "$WORK/body" && fail "a dependent task ran on an answer that failed"
 echo "  ok: a task that depends on one that failed its shape does not run"
+
+# ⭐ A tool, through the loop, held to its target and on the record (0.4.5, ADR 0040). A model is what
+# chooses the URL, so the gateway here asks for the one the task description names.
+LIVE_TOOLS=',"tools":["LoadTestingTool"]'
+LIVE_TARGET="\"target\":{\"url\":\"$BASE/health\"},"
+TOOLED='"tasks":[{"description":"SAY"}]'
+live_crew "use-tool load_testing $BASE/health" "$TOOLED"
+grep -q '"tool":"load_testing"' "$WORK/body" || fail "no tool call on the task: $(head -c 400 "$WORK/body")"
+grep -q '"effect":"committed","success":true' "$WORK/body" || fail "the tool did not run: $(head -c 600 "$WORK/body")"
+grep -q '"total_requests"' "$WORK/body" || fail "what the tool measured is not on the task: $(head -c 600 "$WORK/body")"
+echo "  ok: a model called a tool at the crew's target, and what it measured is on the task"
+
+live_crew "use-tool load_testing http://localhost:$PORT/health" "$TOOLED"
+grep -q '"effect":"none","success":false' "$WORK/body" || fail "a call off the target ran: $(head -c 600 "$WORK/body")"
+grep -q 'this call may not reach it' "$WORK/body" || fail "a call off the target does not say why: $(head -c 600 "$WORK/body")"
+echo "  ok: a call to another host never started"
+
+LIVE_TARGET=""
+live_crew "use-tool load_testing $BASE/health" "$TOOLED"
+grep -q '"effect":"none","success":false' "$WORK/body" || fail "a crew with no target pointed a tool: $(head -c 600 "$WORK/body")"
+echo "  ok: a crew with no target points a tool at nothing"
+
+expect 400 "a tool with nothing behind it" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"m","agents":[{"key":"a","role":"r","goal":"g","tools":["RiskScoringTool"]}],"tasks":[{"description":"d"}]}' \
+  "$BASE/api/v1/crews"
+grep -q "tool 'RiskScoringTool' has nothing behind it" "$WORK/body" || fail "the refusal does not name it: $(head -c 300 "$WORK/body")"
+expect 200 "the trail" "$BASE/api/v1/audit/entries"
+grep -q '"tool.call"' "$WORK/body" || fail "a tool call is not on the trail: $(head -c 300 "$WORK/body")"
+grep -q '"tool.result"' "$WORK/body" || fail "a tool result is not on the trail: $(head -c 300 "$WORK/body")"
+grep -q 'effect=committed' "$WORK/body" || fail "the trail does not say what it did: $(head -c 300 "$WORK/body")"
+echo "  ok: every call is on the audit trail, before and after"
+LIVE_TOOLS=""
 stop
 kill "$GATEWAY" 2>/dev/null
 wait "$GATEWAY" 2>/dev/null
@@ -477,7 +509,7 @@ grep -q '"output_valid"' "$WORK/body" && fail "a placeholder answer was judged: 
 echo "  ok: the outcome says what it ran against, and judges no placeholder"
 expect 200 "the tools" -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/tools"
 grep -q '"unresolved":36' "$WORK/body" || fail "the gate's number is not on the wire"
-grep -q '"crews_call_tools":false' "$WORK/body" || fail "the tools route does not say no crew calls them"
+grep -q '"crews_call_tools":true' "$WORK/body" || fail "the tools route does not say a crew calls them"
 
 # 0.4.1: the host's own accelerators, whatever they are here. Bytes a JSON string may not hold raw are
 # what a row overrunning its allocation looks like, as it did on the first real GPU this ran on.

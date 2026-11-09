@@ -1,6 +1,6 @@
 # 0017 — A task carries the hints the engine selects its agent by, checked at the door
 
-**Status**: Accepted
+**Status**: Accepted — amended by [0040](0040-a-crews-agents-call-what-resolves.md): `required_tools` must resolve, and go to the engine by its name
 **Date**: 2026-10-04
 
 ## Context

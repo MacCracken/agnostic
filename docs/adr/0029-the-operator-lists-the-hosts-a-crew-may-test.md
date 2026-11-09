@@ -1,6 +1,6 @@
 # 0029 — A crew's target is checked at the door, and the operator lists the hosts it may name
 
-**Status**: Accepted
+**Status**: Accepted — amended by [0040](0040-a-crews-agents-call-what-resolves.md): the gate now holds a tool to the target
 **Date**: 2026-11-06
 
 ## Context

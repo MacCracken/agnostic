@@ -188,6 +188,148 @@ fn agnostic_crew_scorer_a(a): i64 {
     return agnosai_selection_scorer_to_value_a(a);
 }
 
+# Bytes of `v` appended at `at` in the `cap` bytes at `buf`, cut at the end. Where the next goes.
+fn _agnostic_detail_add(buf, cap, at, v: Str): i64 {
+    if (v == 0) { return at; }
+    var n = str_len(v);
+    if (at + n > cap) { n = cap - at; }
+    memcpy(buf + at, str_data(v), n);
+    return at + n;
+}
+
+var _AGNOSTIC_TOOL_CALL_ACTION = str_from("tool.call");
+var _AGNOSTIC_TOOL_RESULT_ACTION = str_from("tool.result");
+var _AGNOSTIC_TOOL_CREW_KEY = str_from("crew=");
+var _AGNOSTIC_TOOL_TASK_KEY = str_from(" task=");
+var _AGNOSTIC_TOOL_NAME_KEY = str_from(" tool=");
+var _AGNOSTIC_TOOL_EFFECT_KEY = str_from(" effect=");
+
+# ## The journal's writer
+#
+# ⚠ **One thread writes the trail for every task, and each task waits for it.** patra keeps a page
+# slab per thread that writes, and a crew's threads are new each time, so each one left ~18 KB behind
+# for good (measured: 21.7 KB a crew with one tool call against 3.3 KB). The entry is on the waiting
+# task's stack, so this allocates nothing and the wait keeps it write-ahead.
+enum AgnosticJournalWrite {
+    _AGNOSTIC_JW_ACTION  = 0;
+    _AGNOSTIC_JW_DETAILS = 8;
+    _AGNOSTIC_JW_KEPT    = 16;
+    _AGNOSTIC_JW_DONE    = 24;
+    _AGNOSTIC_JW_NEXT    = 32;
+}
+
+var _agnostic_journal_lock = 0;
+var _agnostic_journal_head = 0;
+var _agnostic_journal_tail = 0;
+var _agnostic_journal_word = 0;      # a futex: goes up each time a write is queued
+var _agnostic_journal_started = 0;
+
+# Take the oldest queued write, or 0.
+fn _agnostic_journal_take(): i64 {
+    mutex_lock(_agnostic_journal_lock);
+    var req = _agnostic_journal_head;
+    if (req != 0) {
+        _agnostic_journal_head = load64(req + _AGNOSTIC_JW_NEXT);
+        if (_agnostic_journal_head == 0) { _agnostic_journal_tail = 0; }
+    }
+    mutex_unlock(_agnostic_journal_lock);
+    return req;
+}
+
+# The writer. Reads the word BEFORE the queue, so a write queued between the two reads changes the
+# word and the wait returns at once.
+fn _agnostic_journal_writer(arg): i64 {
+    while (1 == 1) {
+        var seen = atomic_load(&_agnostic_journal_word);
+        var req = _agnostic_journal_take();
+        if (req == 0) {
+            syscall(SYS_FUTEX, &_agnostic_journal_word, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, seen, 0, 0, 0);
+        } else {
+            store64(req + _AGNOSTIC_JW_KEPT, agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC,
+                load64(req + _AGNOSTIC_JW_ACTION), load64(req + _AGNOSTIC_JW_DETAILS)));
+            agnosai_done_word_set(req + _AGNOSTIC_JW_DONE);
+        }
+    }
+    return 0;
+}
+
+# Start the writer. With the signals blocked, as the collector's start is: a thread that did not
+# inherit that mask would take SIGTERM itself and end the process on the spot. With no writer, as in
+# a suite, a task writes the entry itself.
+fn agnostic_journal_start(): i64 {
+    if (_agnostic_journal_started == 1) { return 1; }
+    if (THREADS_CONCURRENT == 0) { return 0; }
+    _agnostic_journal_lock = mutex_new();
+    if (thread_create(&_agnostic_journal_writer, 0) == 0) {
+        sakshi_warn("could not start the tool journal's writer; each task writes its own entries", 75);
+        return 0;
+    }
+    _agnostic_journal_started = 1;
+    return 1;
+}
+
+# Have the writer put this entry on the trail, and wait for it. 1 when it was persisted.
+fn _agnostic_journal_write(action: Str, details: Str): i64 {
+    if (_agnostic_journal_started == 0) {
+        return agnostic_audit_record(SEV_INFO, AGNOSTIC_AUDIT_SRC, action, details);
+    }
+    var req: i64[5];
+    store64(&req + _AGNOSTIC_JW_ACTION, action);
+    store64(&req + _AGNOSTIC_JW_DETAILS, details);
+    store64(&req + _AGNOSTIC_JW_KEPT, 0);
+    store64(&req + _AGNOSTIC_JW_DONE, 0);
+    store64(&req + _AGNOSTIC_JW_NEXT, 0);
+    mutex_lock(_agnostic_journal_lock);
+    if (_agnostic_journal_tail != 0) { store64(_agnostic_journal_tail + _AGNOSTIC_JW_NEXT, &req); }
+    else { _agnostic_journal_head = &req; }
+    _agnostic_journal_tail = &req;
+    mutex_unlock(_agnostic_journal_lock);
+    atomic_fetch_add(&_agnostic_journal_word, 1);
+    syscall(SYS_FUTEX, &_agnostic_journal_word, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0);
+    agnosai_done_word_wait(&req + _AGNOSTIC_JW_DONE);
+    return load64(&req + _AGNOSTIC_JW_KEPT);
+}
+
+# The journal's `record_fp`: every call goes in the audit trail before it runs, and its result after.
+#
+# ⚠ **A write-ahead log, so a call the trail cannot take does not run** (agnosai's ADR 029). A crash
+# leaves an intent with no result, which reads as an unknown effect. No arguments: the trail is kept
+# for good, and the crew's own record holds what the call was given.
+#
+# ⚠ **On the stack, all of it.** This runs for every call of every crew for the life of the server,
+# on a task's thread with no arena of its own, and the global heap never gives back.
+fn _agnostic_tool_journal(ctx, phase, call): i64 {
+    var buf[255];
+    var at = _agnostic_detail_add(&buf, 255, 0, _AGNOSTIC_TOOL_CREW_KEY);
+    at = _agnostic_detail_add(&buf, 255, at, agnosai_tool_call_crew_id(call));
+    at = _agnostic_detail_add(&buf, 255, at, _AGNOSTIC_TOOL_TASK_KEY);
+    at = _agnostic_detail_add(&buf, 255, at, agnosai_task_id(agnosai_tool_call_task(call)));
+    at = _agnostic_detail_add(&buf, 255, at, _AGNOSTIC_TOOL_NAME_KEY);
+    at = _agnostic_detail_add(&buf, 255, at, agnosai_tool_call_name(call));
+    var action = _AGNOSTIC_TOOL_CALL_ACTION;
+    if (phase == AGNOSAI_TOOL_PHASE_RESULT) {
+        action = _AGNOSTIC_TOOL_RESULT_ACTION;
+        at = _agnostic_detail_add(&buf, 255, at, _AGNOSTIC_TOOL_EFFECT_KEY);
+        var name = agnosai_tool_effect_to_wire(agnosai_tool_call_effect(call));
+        var en = strlen(name);
+        memcpy(&buf + at, name, en);
+        at = at + en;
+    }
+    var details[16];
+    store64(&details, &buf);
+    store64(&details + 8, at);
+    var kept = _agnostic_journal_write(action, &details);
+    if (phase == AGNOSAI_TOOL_PHASE_INTENT && kept != 1) { return _AGNOSTIC_TOOL_UNWRITTEN; }
+    return 0;
+}
+
+var _AGNOSTIC_TOOL_UNWRITTEN = str_from("the audit trail could not take it");
+
+# The journal the orchestrator is given at mount.
+fn agnostic_qa_journal(): i64 {
+    return agnosai_tool_journal_new(&_agnostic_tool_journal, 0);
+}
+
 # Stand up the engine. Mount time only, before any worker exists.
 #
 # ⚠ **Registration order is a correctness requirement.** The orchestrator and bus
@@ -214,7 +356,13 @@ fn agnostic_engine_init(cfg): i64 {
     # Made here, on the one thread: it is not safe to create concurrently, and `GET /api/v1/metrics`
     # would otherwise race the first crew to it.
     agnosai_metrics_global();
-    agnostic_qa_catalog_init();
+
+    # A crew's agents call what this registry holds (0.4.5, ADR 0040): every call held to the crew's
+    # target by the registry's gate, and written to the audit trail before it runs.
+    var tools = agnostic_qa_catalog_init();
+    if (tools == 0) { return 0; }
+    agnosai_orchestrator_with_tools(o, tools);
+    agnosai_orchestrator_with_tool_journal(o, agnostic_qa_journal());
 
     # The engine's own audit chain is agnostic's to switch off: libro holds the trail here and
     # nothing reads this one. It cost 9.6 KB per crew, and past 10,000 entries its eviction

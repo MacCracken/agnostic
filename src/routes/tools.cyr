@@ -1,17 +1,13 @@
 # agnostic/routes/tools — `GET /api/v1/tools`: what the presets ask for, and what can answer (0.4.0).
 #
-# The M6 gate, on the wire. The 18 presets name 38 tools, and each is listed with the engine tool
-# behind it, or none: `src/engine/tools.cyr` says why that table is explicit and why a miss is an
+# The M6 ledger, on the wire. The presets once named 38 tools, and each is listed with the engine
+# tool behind it, or none: `src/engine/tools.cyr` says why that table is explicit and why a miss is an
 # error, never a smaller agent. `unresolved` is the number M6 takes to 0.
 #
-# ## ⚠ `resolved` does not mean a crew calls it
+# Since 0.4.5 a crew's agents call what resolves (ADR 0040), so `crews_call_tools` is `true`. A preset
+# names only those, and a name with nothing behind it is refused at the door.
 #
-# agnosai has no tool-calling loop yet (its F1), so **no crew calls any tool**, resolved or not, and
-# an agent's `tools` only steer which agent a task picks. `crews_call_tools` says so on every answer,
-# because a list of tools with two ticks in it reads as two tools that run, and the oracle's whole
-# failure was a tool surface that looked present and did nothing (`ORACLE-AUDIT.md` §3.15).
-#
-# The engine's tools are listed apart from the preset names: agnostic's vocabulary and agnosai's do
+# The engine's tools are listed apart from the ledger's names: agnostic's vocabulary and agnosai's do
 # not line up, and a name in one is not a name in the other.
 
 var AGNOSTIC_JK_RESOLVED     = str_from("resolved");
@@ -20,9 +16,8 @@ var AGNOSTIC_JK_BACKEND      = str_from("backend");
 var AGNOSTIC_JK_ENGINE_TOOLS = str_from("engine_tools");
 var AGNOSTIC_JK_CALL_TOOLS   = str_from("crews_call_tools");
 
-# Whether a crew's agents can call a tool. 0 until agnosai's loop lands; `tests/tools.tcyr` pins it,
-# so turning it on is a decision, made with M6.
-var AGNOSTIC_CREWS_CALL_TOOLS = 0;
+# Whether a crew's agents can call a tool (0.4.5, ADR 0040). `tests/tools.tcyr` pins it.
+var AGNOSTIC_CREWS_CALL_TOOLS = 1;
 
 # The engine's tools as `{name, description}`, by name, in `a`. An empty array before mount.
 fn _agnostic_tools_engine_a(a): i64 {
@@ -48,11 +43,11 @@ fn agnostic_route_tools_a(a): i64 {
     var reg = agnostic_qa_catalog();
     var tools = bayan_json_v_arr_new_a(a);
     if (tools == 0) { return 0; }
-    var total = agnostic_preset_tool_count();
+    var total = agnostic_qa_ledger_count();
     var resolved = 0;
     var i = 0;
     while (i < total) {
-        var name = agnostic_preset_tool_at(i);
+        var name = agnostic_qa_ledger_at(i);
         var o = bayan_json_v_obj_new_a(a);
         if (o == 0) { return 0; }
         bayan_json_v_obj_set_a(a, o, AGNOSTIC_JK_NAME, bayan_json_v_str_new_a(a, name));

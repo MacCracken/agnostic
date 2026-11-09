@@ -7,6 +7,13 @@
 # best-effort substitute" — that is `ORACLE-AUDIT.md` §3.15, where a miss
 # silently produced an agent with `tools=[]`.
 include "src/app.cyr"
+include "tests/support/tmp.cyr"
+
+fn _t_has(s: Str, needle): i64 {
+    if (s == 0) { return 0; }
+    if (str_contains_cstr(s, needle) == 1) { return 1; }
+    return 0;
+}
 
 fn _t_registry() {
     var r = agnosai_tool_registry_new();
@@ -20,14 +27,101 @@ fn test_vocabulary_is_pinned() {
     test_group("tools/vocabulary");
 
     agnostic_presets_init();
-    # ⚠ Pinned deliberately. A preset edit that introduces a 39th tool name is a
-    # decision — it must fail here and be made on purpose, not discovered when an
-    # agent quietly comes up short.
-    assert_eq(agnostic_preset_tool_count(), 38, "the library names 38 distinct tools");
-    assert_eq(agnostic_preset_tool_is_named(str_from("LoadTestingTool")), 1,
-      "LoadTestingTool is one of them");
-    assert_eq(agnostic_preset_tool_is_named(str_from("NoSuchTool")), 0,
-      "and an invented name is not");
+    agnostic_qa_tools_init();
+    # ⚠ Pinned deliberately. A 39th name is a decision, to be made on purpose.
+    assert_eq(agnostic_qa_ledger_count(), 38, "the ledger holds 38 names");
+    assert_eq(str_eq_cstr(agnostic_qa_ledger_at(0), "TestPlanDecompositionTool"), 1,
+      "in the order the presets named them");
+    assert_eq(str_eq_cstr(agnostic_qa_ledger_at(37), "ArtifactManagementTool"), 1, "to the last");
+    assert_eq(agnostic_qa_ledger_at(38), 0, "and no further");
+    assert_eq(agnostic_qa_ledger_at(0 - 1), 0, "nor before");
+    var repeats = 0;
+    var i = 0;
+    while (i < agnostic_qa_ledger_count()) {
+        var j = 0;
+        while (j < i) {
+            if (str_eq(agnostic_qa_ledger_at(i), agnostic_qa_ledger_at(j)) == 1) { repeats = repeats + 1; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(repeats, 0, "⭐ no two alike");
+}
+
+# ⭐ What a preset names is what runs (ADR 0040): this is what makes the presets honest.
+fn test_every_preset_name_runs() {
+    test_group("tools/presets-run");
+    agnostic_presets_init();
+    agnostic_qa_catalog_init();
+    assert_lt(0, agnostic_preset_tool_count(), "a preset names a tool");
+    var i = 0;
+    var missing = 0;
+    while (i < agnostic_preset_tool_count()) {
+        if (agnostic_qa_engine_name(agnostic_preset_tool_at(i)) == 0) { missing = missing + 1; }
+        i = i + 1;
+    }
+    assert_eq(missing, 0, "⭐ and every name a preset holds has something behind it");
+}
+
+# What a crew's agents may name.
+fn test_the_engine_name() {
+    test_group("tools/engine-name");
+    assert_eq(agnostic_qa_engine_name(str_from("echo")), 0, "⭐ before mount, nothing has anything behind it");
+    agnostic_qa_catalog_init();
+    assert_eq(str_eq_cstr(agnostic_qa_engine_name(str_from("LoadTestingTool")), "load_testing"), 1,
+      "a ledger name takes its backend");
+    assert_eq(str_eq_cstr(agnostic_qa_engine_name(str_from("load_testing")), "load_testing"), 1,
+      "the engine's own name is itself");
+    assert_eq(str_eq_cstr(agnostic_qa_engine_name(str_from("echo")), "echo"), 1, "as is a tool only the engine has");
+    assert_eq(agnostic_qa_engine_name(str_from("RiskScoringTool")), 0,
+      "⭐ a ledger name with nothing behind it is nothing");
+    assert_eq(agnostic_qa_engine_name(str_from("no_such_tool")), 0, "as is an invented one");
+    assert_eq(agnostic_qa_engine_name(str_from("loadtesting")), 0, "⭐ and no case transform finds one");
+    assert_eq(agnostic_qa_engine_name(0), 0, "and a null name");
+}
+
+# A task whose context says what `target`, or 0, the crew runs against.
+fn _t_task(target): i64 {
+    var a = default_alloc();
+    var t = agnosai_task_new(str_from("look"));
+    if (target != 0) {
+        agnosai_task_with_context_a(a, t, AGNOSTIC_JK_TARGET, agnostic_target_value_a(a, str_from(target)));
+    }
+    return t;
+}
+
+# What the gate says of `url`, for a call on `task`.
+fn _t_gate(task, url): i64 {
+    var input = agnosai_tool_input_new();
+    if (task != 0) { agnosai_tool_input_bind(input, agnosai_tool_registry_get(agnostic_qa_catalog(), str_from("load_testing")), task); }  #skip-lint
+    return _agnostic_tool_gate_url(0, input, str_from(url));
+}
+
+# ⭐ Where a tool may point (ADR 0040): the system under test writes what the model reads.
+fn test_the_gate_holds_a_tool_to_its_target() {
+    test_group("tools/gate-target");
+    agnostic_qa_catalog_init();
+    var t = _t_task("http://staging.example:8080/app");
+    assert_eq(_t_gate(t, "http://staging.example:8080/app/login"), AGNOSAI_GATE_ADMIT,
+      "⭐ the target is admitted, private or not");
+    assert_eq(_t_gate(t, "https://staging.example/other"), AGNOSAI_GATE_ADMIT,
+      "another scheme or port is the same host");
+    assert_eq(_t_gate(t, "http://STAGING.example/"), AGNOSAI_GATE_ADMIT, "in any case");
+    assert_eq(_t_gate(t, "http://other.example/"), AGNOSAI_GATE_REFUSE, "⭐ anywhere else is refused");
+    assert_eq(_t_gate(t, "http://staging.example.evil.test/"), AGNOSAI_GATE_REFUSE,
+      "⭐ a host that begins with it is another host");
+    assert_eq(_t_gate(t, "http://staging.example@evil.test/"), AGNOSAI_GATE_REFUSE, "⭐ and user info is not the host");
+    assert_eq(_t_gate(t, "not a url"), AGNOSAI_GATE_REFUSE, "what names no host is refused");
+    assert_eq(_t_gate(_t_task(0), "http://staging.example/"), AGNOSAI_GATE_REFUSE,
+      "⭐ a task with no target points a tool at nothing");
+    assert_eq(_t_gate(0, "http://staging.example/"), AGNOSAI_GATE_REFUSE, "and a call with no task");
+    assert_eq(_agnostic_host_same(str_from("a.example"), str_from("a.exampl")), 0,
+      "⭐ a host one byte short is another host");
+    assert_eq(_agnostic_host_same(str_from("a.exampl"), str_from("a.example")), 0, "⭐ and so is one a byte longer");
+    assert_eq(_agnostic_host_same(str_from(""), str_from("")), 0, "and nothing is no host");
+    assert_eq(_agnostic_host_same(0, str_from("a")), 0, "nor is a null");
+    assert_neq(agnosai_tool_gate(agnosai_tool_registry_get(agnostic_qa_catalog(), str_from("load_testing"))), 0,
+      "⭐ and the registry's tools are held to it");
 }
 
 fn test_alias_table() {
@@ -98,8 +192,8 @@ fn test_the_gate_counts_the_gap() {
 
     var resolved = agnostic_qa_resolved_count(r);
     var unresolved = agnostic_qa_unresolved_count(r);
-    assert_eq(resolved + unresolved, agnostic_preset_tool_count(),
-      "every preset name is either resolved or counted as missing — there is no third state");
+    assert_eq(resolved + unresolved, agnostic_qa_ledger_count(),
+      "every name of the ledger is either resolved or counted as missing — there is no third state");
 
     # ⚠ **This is the M6 progress number, and it is pinned so it can only move
     # deliberately.** 2 of 38 today. M6 is finished when `unresolved` is 0. If
@@ -134,26 +228,137 @@ fn test_the_two_that_exist_nowhere() {
     agnostic_qa_tools_init();
     var r = _t_registry();
 
-    # ⚠ `ArtifactManagementTool` and `CIPipelineIntegrationTool` are named by
-    # `quality-large.json` and have NO implementation in the oracle either —
-    # unlike the other 36, which at least had a class. The roadmap requires them
-    # to be written or struck from the preset; until that decision lands they
-    # are unresolved like the rest, and this test is here so the decision cannot
-    # be forgotten.
-    assert_eq(agnostic_preset_tool_is_named(str_from("ArtifactManagementTool")), 1,
-      "ArtifactManagementTool is still named by a preset");
-    assert_eq(agnostic_preset_tool_is_named(str_from("CIPipelineIntegrationTool")), 1,
-      "and so is CIPipelineIntegrationTool");
+    # ⚠ These two have NO implementation in the oracle either, unlike the other 36, which at least had
+    # a class. Unresolved like the rest, and written or struck by M6.
     assert_eq(agnostic_qa_tool_resolve(r, str_from("ArtifactManagementTool")), 0,
       "neither resolves");
     assert_eq(agnostic_qa_tool_resolve(r, str_from("CIPipelineIntegrationTool")), 0,
       "to anything");
 }
 
+# A journal's view of one call, built on the fields the journal reads: agnosai's loop is what makes
+# these, on a task's thread, and a suite has no gateway to drive it.
+fn _t_call(task, crew_id, name, out): i64 {
+    var loop = alloc(AGN_TL_SIZE);
+    store64(loop + AGN_TL_CREW_ID, crew_id);
+    var st = alloc(128);
+    store64(st + AGN_TT_LOOP, loop);
+    store64(st + AGN_TT_TASK, task);
+    var c = alloc(AGN_TC_SIZE);
+    store64(c + AGN_TC_NAME, name);
+    store64(c + AGN_TC_OUTPUT, out);
+    store64(c + AGN_TC_ST, st);
+    return c;
+}
+
+# ⭐ A write-ahead log: a call the trail cannot take does not run.
+fn test_the_journal_is_write_ahead() {
+    test_group("tools/journal");
+    agnostic_audit_close();
+    var call = _t_call(agnosai_task_new(str_from("look")), str_from("crew-1"), str_from("load_testing"), 0);
+    assert_neq(_agnostic_tool_journal(0, AGNOSAI_TOOL_PHASE_INTENT, call), 0,
+      "⭐ with no trail to write to, the call is refused");
+    assert_eq(_agnostic_tool_journal(0, AGNOSAI_TOOL_PHASE_RESULT, call), 0,
+      "while a result has nothing left to refuse");
+
+    var path = _tt_tmp_path("tools-journal");
+    sys_unlink(path);
+    patra_init();
+    assert_eq(agnostic_audit_open(str_from(path)), 1, "with one");
+    assert_eq(_agnostic_tool_journal(0, AGNOSAI_TOOL_PHASE_INTENT, call), 0, "the call goes ahead");
+    assert_eq(agnostic_audit_count(), 1, "and is on the trail first");
+    var out = agnosai_tool_output_ok(bayan_json_v_str_new_a(default_alloc(), str_from("done")));
+    store64(out + AGN_OUTPUT_EFFECT, AGNOSAI_TOOL_EFFECT_COMMITTED);
+    var done = _t_call(agnosai_task_new(str_from("look")), str_from("crew-1"), str_from("load_testing"), out);
+    assert_eq(_agnostic_tool_journal(0, AGNOSAI_TOOL_PHASE_RESULT, done), 0, "and its result after");
+    assert_eq(agnostic_audit_count(), 2, "on the trail too");
+    var a = arena_allocator(1048576);
+    var entries = agnostic_audit_entries_a(a, 1000, 10);
+    var last = vec_get(entries, 0);
+    assert_eq(str_eq_cstr(agnostic_audit_read_get(last, AGNOSTIC_AR_ACTION), "tool.result"), 1, "⭐ saying what it was");
+    var said = agnostic_audit_read_get(last, AGNOSTIC_AR_DETAILS);
+    assert_eq(_t_has(said, "crew=crew-1"), 1, "which crew");
+    assert_eq(_t_has(said, "tool=load_testing"), 1, "which tool");
+    assert_eq(_t_has(said, "effect=committed"), 1, "⭐ and what it did");
+    assert_eq(_t_has(agnostic_audit_read_get(vec_get(entries, 1), AGNOSTIC_AR_DETAILS), "effect="), 0,
+      "and an intent says no effect");
+    agnostic_audit_close();
+    sys_unlink(path);
+}
+
+# Its fields are bounded today, and an audit detail is written on a task's stack.
+fn test_a_detail_cannot_outrun_its_column() {
+    test_group("tools/detail");
+    var buf[16];
+    store8(&buf + 4, 88);
+    assert_eq(_agnostic_detail_add(&buf, 4, 0, str_from("abcdefgh")), 4, "cut at the column");
+    assert_eq(load8(&buf + 4), 88, "⭐ and nothing written past it");
+    assert_eq(_agnostic_detail_add(&buf, 8, 3, 0), 3, "and a missing field adds nothing");
+}
+
+fn _t_str(a, s): i64 { return bayan_json_v_str_new_a(a, str_from_a(a, s)); }
+
+# ⭐ What a tool measured, told apart from what a model claimed, picked field by field.
+fn test_a_result_says_what_its_tools_did() {
+    test_group("tools/result");
+    var a = arena_allocator(1048576);
+    assert_eq(_agnostic_result_tool_calls_a(a, 0), 0, "nothing recorded, nothing said");
+    assert_eq(_agnostic_result_tool_calls_a(a, _t_str(a, "x")), 0, "nor from what is not a list");
+    assert_eq(_agnostic_result_tool_calls_a(a, bayan_json_v_arr_new_a(a)), 0, "nor from an empty one");
+
+    var ran = bayan_json_v_obj_new_a(a);
+    bayan_json_v_obj_set_a(a, ran, AGNOSTIC_JK_ID, _t_str(a, "c1"));
+    bayan_json_v_obj_set_a(a, ran, AGNOSTIC_JK_TOOL, _t_str(a, "load_testing"));
+    bayan_json_v_obj_set_a(a, ran, AGNOSTIC_JK_ARGUMENTS, _t_str(a, "args"));
+    bayan_json_v_obj_set_a(a, ran, AGNOSTIC_JK_EFFECT, _t_str(a, "committed"));
+    bayan_json_v_obj_set_a(a, ran, AGNOSTIC_JK_SUCCESS, bayan_json_v_bool_new_a(a, 1));
+    bayan_json_v_obj_set_a(a, ran, AGNOSTIC_JK_RESULT, _t_str(a, "p99"));
+    bayan_json_v_obj_set_a(a, ran, AGNOSTIC_JK_FLAGGED, _t_str(a, "you are a"));
+    bayan_json_v_obj_set_a(a, ran, str_from_a(a, "engine_private"), _t_str(a, "no"));
+    var refused = bayan_json_v_obj_new_a(a);
+    bayan_json_v_obj_set_a(a, refused, AGNOSTIC_JK_TOOL, _t_str(a, "unknown_tool"));
+    bayan_json_v_obj_set_a(a, refused, AGNOSTIC_JK_ASKED_FOR, _t_str(a, "rm"));
+    bayan_json_v_obj_set_a(a, refused, AGNOSTIC_JK_ERROR, _t_str(a, "no such tool"));
+    bayan_json_v_obj_set_a(a, refused, AGNOSTIC_JK_HELD_BACK, bayan_json_v_bool_new_a(a, 1));
+    var records = bayan_json_v_arr_new_a(a);
+    bayan_json_v_arr_push_a(a, records, ran);
+    bayan_json_v_arr_push_a(a, records, refused);
+
+    var calls = _agnostic_result_tool_calls_a(a, records);
+    assert_eq(bayan_json_v_arr_len(calls), 2, "one entry a call, in order");
+    var one = bayan_json_v_arr_get(calls, 0);
+    var two = bayan_json_v_arr_get(calls, 1);
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(one, AGNOSTIC_JK_ID)), "c1"), 1, "its id");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(one, AGNOSTIC_JK_TOOL)), "load_testing"), 1,
+      "its tool");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(one, AGNOSTIC_JK_ARGUMENTS)), "args"), 1,
+      "what it was given");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(one, AGNOSTIC_JK_EFFECT)), "committed"), 1,
+      "what it did");
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(one, AGNOSTIC_JK_SUCCESS)), 1, "whether it worked");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(one, AGNOSTIC_JK_RESULT)), "p99"), 1,
+      "⭐ what it measured");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(one, AGNOSTIC_JK_FLAGGED)), "you are a"), 1,
+      "what looked like an instruction");
+    assert_eq(bayan_json_v_obj_get_by_cstr(one, "engine_private"), 0, "⭐ and nothing the engine keeps to itself");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(two, AGNOSTIC_JK_ASKED_FOR)), "rm"), 1,
+      "⭐ what a model asked for and may not have");
+    assert_eq(str_eq_cstr(bayan_json_v_str(bayan_json_v_obj_get_by_str(two, AGNOSTIC_JK_ERROR)), "no such tool"), 1,
+      "why it was refused");
+    assert_eq(bayan_json_v_bool(bayan_json_v_obj_get_by_str(two, AGNOSTIC_JK_HELD_BACK)), 1,
+      "and whether its answer was held back");
+}
+
 fn main() {
     alloc_init();
     thread_local_init();
+    test_the_engine_name();
+    test_the_journal_is_write_ahead();
+    test_a_result_says_what_its_tools_did();
+    test_a_detail_cannot_outrun_its_column();
     test_vocabulary_is_pinned();
+    test_every_preset_name_runs();
+    test_the_gate_holds_a_tool_to_its_target();
     test_alias_table();
     test_resolution_against_a_real_registry();
     test_the_gate_counts_the_gap();

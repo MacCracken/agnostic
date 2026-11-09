@@ -33,24 +33,21 @@ sections below; this one only sequences them. One minor line per theme, with pat
 line as each piece lands. Decided 2026-11-05: this replaces "one release", though 1.0.0 is still the
 release that completes M6–M9 (see *Release shape*).
 
-agnostic's lines lean on agnosai's: its 2.3.x carries the tool loop M6 needs, 2.4.x the approvals and
-budgets, 2.5.x the durable crew log, and 2.6.x MCP 2026-07-28 and A2A v1.0.x.
+agnostic's lines lean on agnosai's: its 2.4.x carries the approvals and budgets, 2.5.x the durable crew
+log, and 2.6.x MCP 2026-07-28 and A2A v1.0.x.
 
 ### 0.4.x — the QA tool surface and the crew body (M6)
 
-The tools wait on agnosai 2.3.x: F1, and B33. M6 says "preset-declared intent", and a preset declares
-only a class name and a `focus`, so each tool is designed for agnostic as it is written.
+The tool loop is on and a crew's agents call what resolves
+([ADR 0040](../adr/0040-a-crews-agents-call-what-resolves.md)). M6 says "preset-declared intent", and a
+preset declares only a class name and a `focus`, so each tool is designed for agnostic as it is written.
 
-- [ ] **M6**: every one of the 38 names resolved, written or struck, with a miss an error.
-- [ ] **Hold a tool to the crew's target.** agnosai has the gate since 2.2.4 (its ADR 025): a consumer's
-  `agnosai_tool_gate_new`, asked of every call and every redirect hop, can narrow what a tool reaches and
-  admit a declared private host, and `agnosai_task_result_record_tool_call` keeps what a tool measured on
-  its task. Nothing here sets a gate yet.
-- [ ] **The tool-registry seam** (`handoff.md` §8), decided with F1.
+- [ ] **M6**: every one of the 38 names resolved, written or struck, with a miss an error. A name goes back in
+  its presets when its tool is written.
 - [ ] **The reviewer preset**, once F9 hands a dependent task its dependencies' outputs (agnosai 2.4.x).
 - [ ] **Fleet routes wait for a fleet** (Settled decisions, 2026-11-06).
 - [ ] **Tool upload** (G10), once it has a sandbox.
-- [ ] **The model picker** (M9), on B33.
+- [ ] **The model picker** (M9), on agnosai's model catalog.
 
 ### 0.5.x — MCP, reports and streaming (M7, M8, M9)
 
@@ -144,11 +141,9 @@ not observed behaviour**: port the presets as documents, and treat each tool as 
 implementation against its intent, not as a port of working code. A preset declares only a class name
 and an agent's `focus`. The rest of that intent is in the Python tool classes, the only copy.
 
-- [ ] **The viability gate reaches 0.** The gate is built: `src/engine/tools.cyr` resolves the
-  38-name manifest against the engine's registry, pinned by `tests/tools.tcyr`, and **2 of 38
-  resolve** ([`state.md`](state.md), M6). M6 is done when every name resolves, the two nonexistent
-  tools are written or struck from the presets that name them, and a registry miss is an error,
-  never a smaller agent. Do not close the gap with a case transform (`state.md`, M6).
+- [ ] **The ledger reaches 0.** `src/engine/tools.cyr` holds the 38 names, pinned by `tests/tools.tcyr`, and
+  **2 of 38 resolve** ([`state.md`](state.md), M6). M6 is done when every name resolves, or is struck with its
+  reason. Do not close the gap with a case transform (`state.md`, M6). The browser and device tools wait on yantra.
 - [ ] **A reviewer preset — the QA shape of the most robust multi-agent pattern.** One task does
   the work, and a dependent review task with a clean context and an `output_schema` verdict
   checks it. This is Cognition's single writer plus reviewer, and Claude's adversarial
@@ -165,21 +160,10 @@ and an agent's `focus`. The rest of that intent is in the Python tool classes, t
     forwarded since 0.4.0 ([ADR 0031](../adr/0031-output-schema-takes-what-the-engine-checks.md)).
 - [ ] **What a crew's target still needs** ([ADR 0029](../adr/0029-the-operator-lists-the-hosts-a-crew-may-test.md)
   has the rest):
-  - **A tool call is held to the target** once F1 lets agnostic refuse a call, and a declared private
-    host gets past `agnosai_is_safe_url` the same way. Both are under *Waiting on agnosai*.
   - **A target behind a login** needs a credential that never enters the crew body, the task context or
     the store. Its form is decided with the first tool that needs one.
 
 **Prerequisite:** `yantra` needs `Page.captureScreenshot` on its CDP surface.
-
-**Prerequisite (recorded 2026-10-03): agnosai must run a tool-calling loop.** `execute_task` is
-one chat completion plus the output-schema retry. Nothing in `crew_runner.cyr` or `src/llm/`
-handles a `tool_call`, so a resolved tool is never invoked by the model. That makes the
-viability gate necessary but not sufficient: every name can resolve and still no tool runs.
-This is agnosai **F1**. Settle the tool-registry seam ([`handoff.md`](handoff.md) §8) together
-with it: `agnostic_engine_init` exposes no registry handle, so the gate is not wired into mount.
-What agnostic will hold the loop to is under
-[Waiting on agnosai](#waiting-on-agnosai-release-agnosai-then-re-pin).
 
 ### M7 — MCP surface + A2A
 
@@ -256,8 +240,8 @@ there is no separate result model and no route that writes results. What that ne
   agnostic owns one QA result shape, carried through a task's `output_schema` (0.4.x), so trends work
   across presets. The shape is designed in M8's ADR, for the user's review.
 - [ ] **Measured numbers from tools.** A load test's p99 is a measurement and a model saying "all passed"
-  is a claim, and a report labels which is which, as the swarm views label SIM and LIVE. It needs F1 to
-  keep each tool's result on the task result (*Waiting on agnosai*).
+  is a claim, and a report labels which is which, as the swarm views label SIM and LIVE. A task's
+  `tool_calls` holds what its tools measured since 0.4.5 (ADR 0040).
 - [ ] **Counts in `agnostic_crew_index`,** beside the crew's `target`, so trends read small rows and do
   not parse every outcome under the store lock. Each `ADD COLUMN` rewrites the table once at mount.
 - [ ] **Rendered on request, as HTML, CSV, JSON or PDF.** Outcomes are write-once, so a report can be built
@@ -330,9 +314,8 @@ owed for 1.0.0:
 
 ## Waiting on agnosai (release agnosai, then re-pin)
 
-Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity"), B33 under **B** ("Owed").
+Each of these is filed on agnosai's roadmap, under **F** ("Past parity").
 
-- **F1 — tool loop:** M6's prerequisite.
 - **F2 — hierarchical wired:** agnostic then accepts `hierarchical`, which
   `agnostic_process_from_wire` (`src/engine/request.cyr:149-159`) leaves out today, so it is a 400.
 - **F3 — approvals plus a lifecycle contract with `seq`:** builds on the event and status
@@ -341,41 +324,13 @@ Each of these is filed on agnosai's roadmap: F1–F5 under **F** ("Past parity")
 - **F4 — durable crew log:** turns an `interrupted` crew (ADR 0013) into a resumable one.
 - **F5 — budgets and caps:** brings back an `AGNOSTIC_CREW_MAX_CONCURRENT_TASKS` that is actually
   enforced.
-- **B33 — models from hoosh's catalog (recorded 2026-10-09):** a crew whose agents name no model is
-  sent a model agnosai names itself: `llama3:70b`, or `llama3:405b` for a complex agent. That covers every
-  preset, since none sets `llm_model`, and every agent whose *LLM model* field is left empty in the Library
-  or in Swarm Command's Live tab. A gateway with no `llama*` route answers each such call
-  `404 "no provider for model"`. An id an operator does type loses a leading `openai/`, `anthropic/` and the
-  like, so a vendor-prefixed id such as Groq's `openai/gpt-oss-120b` reaches hoosh renamed. And a response
-  that names no provider is billed by agnosai's guess from the name, which bills `o4-mini` and newer
-  families to Ollama. B33 has agnosai choose and attribute from hoosh 2.8.0's `GET /v1/models/catalog`
-  instead. Re-pin when it ships; M9's model picker builds on it.
 
 **What agnostic will hold them to — harness rules, recorded 2026-10-07.** From a comparison with
 [turnstone](https://github.com/turnstonelabs/turnstone), a self-hosted, tool-using agent harness,
 whose [`PRIMER.md`](https://github.com/turnstonelabs/turnstone/blob/dev/PRIMER.md) states these
 rules ("the model proposes; the gate disposes"). Mirrored the same day in agnosai's roadmap, in
-its F1–F3, F5 and F9 rows; each goes into the ADR of the item it names.
+its F2, F3, F5 and F9 rows; each goes into the ADR of the item it names.
 
-- **F1 — every tool call is journaled before it runs, and its result says what it did:** committed,
-  none (it never started) or unknown (it may have run). A crew a restart interrupts then names its
-  unknown effects instead of implying there were none. ADR 0013's in-flight row is the same rule for
-  a whole crew. turnstone also records `partial` and `rolled_back`.
-- **F1 — a tool's output is data, never instructions.** Check each result for injected
-  instructions before it reaches the model, and never let one change the plan, the agent's grants
-  or its budget. A summary handed downstream (F9) is as untrusted as what it summarised. A QA
-  product needs this more than most: the system under test produces the tools' output, so that
-  output is untrusted by definition. turnstone's output guard is heuristic and only annotates;
-  decide in F1's ADR whether a flagged result is held back.
-- **F1 — the calls a model makes in one turn are approved as a set.** "Read the secret" and "post
-  to the web" each pass alone and leak together. turnstone's pipeline is a template: prepare each
-  call in turn, approve the batch, run it in parallel, then check the results and append them in
-  one step.
-- **F1 — the registry can hold tools from external MCP servers**, through bote's client (see
-  "Upstream"), and each agent sees only the tools granted to it (see "Agent skills" under "Later").
-  turnstone's harness owns its registry, gives each role its own subset (interactive, coordinator,
-  sub-agent) and merges a session's MCP tools in when it starts — a data point for the registry
-  seam (`handoff.md` §8).
 - **F2 — authority only narrows.** A worker holds at most its manager's tools and budget. A need
   beyond them goes up to a human; neither the manager nor the model can grant it.
 - **F3 — a model judge may only tighten.** If approvals gain an LLM judge, it may refuse what the
@@ -443,6 +398,9 @@ to remove.
 
 ### Performance
 
+- [ ] **A burst past the ledger's 1024 crews in flight** reads `unknown` for the crews it pushes out. By design, but a real
+  gateway keeps a crew in flight far longer than a placeholder does, so one burst reaches it (found by load-test step 9).
+
 From the audit's performance review, at 10,000 crews.
 
 - ⛔ **Measured, and not to do:** a transaction around a finished crew's writes (31.5 ms against
@@ -470,6 +428,9 @@ Each is fixed at its source and reaches agnostic by a re-pin. Filings are in eac
 - [ ] → **sigil**: SHA-256 runs in software on a Raspberry Pi 4 at about 2.2 MB/s, against about 330 MB/s with
   SHA-NI on x86_64. Since 0.4.4 a Pi hashes all six pages at each start, about 290 ms of its 530 ms (ADR 0039), and
   every token and audit entry goes through the same path. To file with sigil.
+- [ ] → **patra**: a page slab per thread that writes, and nothing gives it back when a thread ends. A thread that
+  writes once keeps ~18 KB for good, so agnostic's tool journal goes through one writer thread (ADR 0040). To file with
+  patra.
 - [ ] → **patra**: its database and WAL files are created 0644 (`lib/patra.cyr:404`, `:1379`). agnostic
   sets the database to 0600 at mount and uses no transaction, so no WAL exists today.
 - [ ] → **sandhi**, through agnosai: an exporter batch still leaves ~480 B, and an inference call
@@ -528,7 +489,7 @@ None open. The answers are under *Settled decisions*.
   in events and audit. Worth doing once F1–F3 make failures richer.
 - **External coding agents as crew members over ACP.** Claude Code or Codex would be driven as
   structured JSON-RPC peers, not by scraping a PTY. This is a strategic option, not a
-  commitment, and it only makes sense after F1.
+  commitment.
 - **What the API schema leaves out, beyond the freeze** (ADR 0015; `docs/api/README.md`, "Known
   gaps"). What the freeze needs is scheduled under *API schema*. Neither of these can break a
   client, so neither is:
@@ -551,7 +512,7 @@ None open. The answers are under *Settled decisions*.
     (SKILL.md's name and description first, the body when used); and whether the retained `focus`
     maps onto skills — it is free text on all 76 preset agents, and the engine has no slot for it.
   - A `skills` field on the agent model follows the three dispositions: refused by name until the
-    engine acts on it. It needs F1, and belongs with the tool-registry seam (`handoff.md` §8).
+    engine acts on it, as the tool grant is (ADR 0040).
 - **An evaluation harness: incorporate or port [model_testing](https://github.com/MacCracken/model_testing)**
   (recorded 2026-10-07). A Node bench, so far mostly a front end for testing a model with and
   without a harness, with more work needed. It scores the same goal in four modes — no harness,
@@ -563,7 +524,7 @@ None open. The answers are under *Settled decisions*.
   - Why: Swarm Command's simulator models time, tokens and cost, and has no model of answer
     quality ([ADR 0014](../adr/0014-the-estimators-one-agent-baseline-is-its-own-model.md)). This
     would measure quality. turnstone ships the same pair as `turnstone-eval` and a prompt optimizer.
-  - Its tool modes need F1: today no agent calls a tool.
+  - Its tool modes read what a task's `tool_calls` records (ADR 0040).
 
 ## Settled decisions
 
@@ -681,6 +642,9 @@ own section below.
   already settled. The former 34 operations are not the list: five of them are one `run_crew`, and
   others name things agnostic replaced. An MCP tool calls its route's handler at its route's permission,
   and a QA tool call runs as a job, not on a request worker. Details under M7.
+- **2026-11-08 — A preset names only what runs** (ADR 0040). Once a crew's agents call tools, an agent told it holds one
+  it cannot call invents the finding, so the unwritten names came out of the presets and go back as each is written.
+  `GET /api/v1/tools` counts all 38, so M6's number stays what it was.
 - **2026-11-05 — A release records its benchmarks before its tag** (CLAUDE.md, Process step 7). A step
   after the tag waited on someone coming back to it, and 3 of 22 tagged versions had rows. A row now
   lands in the release commit, so its commit column names the parent with `-dirty` and its version

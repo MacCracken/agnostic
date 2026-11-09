@@ -2,7 +2,12 @@
 
 > Refreshed every release. CLAUDE.md is preferences/process/procedures
 > (durable); this file is **state** (volatile).
-> Last refreshed: 2026-11-06, at **0.4.4** — no generated source remains. Every file in the binary is an entry in
+> Last refreshed: 2026-11-08, at **0.4.5** — a crew's agents call tools. **agnosai 2.3.7 and kavach 3.14.9.** agnostic's
+> registry is the orchestrator's, a call is held to its task's target and written to the audit trail before it runs, and a
+> task's result says what its tools did. A preset names only what can run
+> ([ADR 0040](../adr/0040-a-crews-agents-call-what-resolves.md)). Version, Dependencies, Source, the route table, Tests,
+> Preset library and Next were refreshed then.
+> Before that, 2026-11-06, at **0.4.4** — no generated source remains. Every file in the binary is an entry in
 > `cyrius.cyml`'s `[embed]` table, a page's CSP is worked out from its bytes at mount, and
 > `scripts/check-embedded.py` holds the rules the generators held
 > ([ADR 0039](../adr/0039-a-file-in-the-binary-is-an-embed-entry.md)). No route and no dependency moved. Version,
@@ -124,7 +129,7 @@
 
 ## Version
 
-**0.4.4** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
+**0.4.5** — see `CHANGELOG.md`. **1.0.0** is the target cut, not 2.x. The Cyrius
 line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
 
 ## Toolchain
@@ -137,7 +142,7 @@ line is the first SemVer line — the Python line was CalVer (`2026.3.18`).
   byte, and CI's gates passed there. What moved at each earlier release is in `CHANGELOG.md`.
 
 ✅ **No `[deps.patra]` or `[deps.sigil]` hold at this pin, and no pin is off its fold.** 6.7.18 folds
-**sigil 3.13.15**, **patra 1.16.6** and **bayan 1.11.1**. agnosai 2.2.5, kavach 3.14.6 and libro 2.11.3
+**sigil 3.13.15**, **patra 1.16.6** and **bayan 1.11.1**. agnosai 2.3.7, kavach 3.14.9 and libro 2.11.3
 declare that sigil, libro 2.11.3 declares that patra, and ai-hwaccel 2.5.6 declares that bayan. So every
 commit pin the lock records on a folded module names the bytes `lib/` holds.
 
@@ -166,11 +171,11 @@ order, the pin and the tags moving together) are in
 
 | dep | pin | how it arrives |
 |---|---|---|
-| `agnosai` | **2.2.5** | direct, `git` + `tag` + `modules` — pins every dep below |
+| `agnosai` | **2.3.7** | direct, `git` + `tag` + `modules` — pins every dep below |
 | `libro` | **2.11.3** | direct since 0.1.7 — the audit chain `src/engine/audit.cyr` calls; listed AFTER agnosai so agnosai's sigil wins the lock |
-| `bote` / `majra` | **3.8.15** / **2.13.0** | transitive via agnosai 2.2.5. Neither repo calls a bote function |
-| `kavach` / `tyche` | **3.14.6** / **1.2.2** | transitive via agnosai 2.2.5 |
-| `ai-hwaccel` | **2.5.6** | transitive via agnosai 2.2.5 |
+| `bote` / `majra` | **3.8.15** / **2.13.0** | transitive via agnosai 2.3.7. Neither repo calls a bote function |
+| `kavach` / `tyche` | **3.14.9** / **1.2.2** | transitive via agnosai 2.3.7 |
+| `ai-hwaccel` | **2.5.6** | transitive via agnosai 2.3.7 |
 | `sigil` | **3.13.15** (folded) | folded stdlib (`[deps].stdlib`); agnosai and libro declare the same 3.13.15 |
 | `patra` | **1.16.6** (folded) | folded stdlib (`[deps].stdlib`); libro declares the same 1.16.6 |
 
@@ -190,11 +195,11 @@ a process kill with no diagnostic).
 
 **M4 complete; M5 complete; M6 started; M9 seeded (0.1.7) with a plugin platform
 (0.1.8), checked by the server and with a crew surface a UI can build on (0.1.9), and its views over
-the real surface (0.1.10)** — 61 files, 24,267 lines, 1,630 top-level definitions (0.4.4; 62 files, 37,312 and 1,648
-at 0.4.3), all `agnostic_*`-prefixed. None of it is generated since 0.4.4: `[embed]` compiles the presets, the pages,
+the real surface (0.1.10)** — 61 files, 24,580 lines, 1,670 top-level definitions (0.4.5; 61 files, 24,267 and 1,630
+at 0.4.4), all `agnostic_*`-prefixed. None of it is generated since 0.4.4: `[embed]` compiles the presets, the pages,
 the manifests and the permission vocabulary in as they stand (ADR 0039).
 
-**Tests: 42 suites, 4,342 assertions, 0 failed** (`cyrius test`, 0.4.4; 4,300 at 0.4.3), plus
+**Tests: 42 suites, 4,406 assertions, 0 failed** (`cyrius test`, 0.4.5; 4,342 at 0.4.4), plus
 **119 JavaScript tests** (`scripts/check-webgui-js.sh`, Node 20+) — **and the
 same 42 suites natively on aarch64** (Raspberry Pi 4). Their counts match but for `crews_route`, 247 or 248
 from run to run, because two loops assert once per poll. Gates
@@ -219,11 +224,10 @@ everything is `i64` — and **crashes at run time with no output**, which is how
 presents in a suite run. `agnostic_serve_handler`'s first parameter is already
 named `ctx`; do not shadow it.
 
-### M6 — the tool gate, and the number that has to reach 0
+### M6 — the ledger, and the number that has to reach 0
 
-`src/engine/tools.cyr` resolves the preset tool vocabulary against the engine's
-registry. **2 of 38 resolve; 36 do not**, both pinned by `tests/tools.tcyr`. M6 is
-finished when the unresolved count is 0.
+`src/engine/tools.cyr` holds the ledger of 38 names and what backs each. **2 of 38 resolve; 36 do not**, both pinned by
+`tests/tools.tcyr`. M6 is finished when the unresolved count is 0.
 
 ⚠ **Do not "fix" the gap with a case transform.** `LoadTestingTool` →
 `load_testing` works and `RiskScoringTool` → `risk_scoring` resolves to nothing;
@@ -232,14 +236,9 @@ cannot run. The alias table is explicit on purpose, and an entry is a claim that
 the backend does the job — which is why `ComprehensiveSecurityAssessmentTool` is
 NOT aliased onto `security_audit`.
 
-⚠ **NEXT DECISION, and it gates everything else: who owns the tool registry.**
-`agnostic_engine_init` exposes no registry handle — the orchestrator owns one
-internally — so agnostic's QA tools have nowhere to register that the
-orchestrator's agents would read. Settle that before implementing tools, or they
-will be written against the wrong seam. Since 0.4.0 the gate is on the wire
-(`GET /api/v1/tools`), read from a catalogue built at mount
-(`agnostic_qa_catalog_init`). ⚠ That catalogue is not the seam: nothing runs it, and
-`crews_call_tools` says so on every answer.
+**A crew's agents call what resolves** (0.4.5, ADR 0040). The registry is the orchestrator's, a preset names only what
+runs, a name with nothing behind it is a 400, each call is held to its task's target and journaled to the audit trail
+through one writer thread, and a task's `tool_calls` says what they did.
 
 ⚠ **`agnostic_response_json_a` takes the bayan OBJECT, not an encoded `Str`.**
 `_agnostic_serve_send` serialises it. Handing it a `Str` double-encodes the
@@ -295,7 +294,7 @@ refactor of any of it.
 | `src/routes/packages.cyr` | a tenant's definitions as one document, and a preset recommendation (0.4.2, ADRs 0036 and 0037) |
 | `src/engine/team.cyr` | a crew's `team` becoming `agents` at the door (0.4.2, ADR 0037) |
 | `src/engine/recommend.cyr` | which preset a description reads as, from a table of words (0.4.2, ADR 0037) |
-| `src/routes/tools.cyr` | `GET /api/v1/tools`: the M6 gate on the wire (0.4.0) |
+| `src/routes/tools.cyr` | `GET /api/v1/tools`: the M6 ledger on the wire (0.4.0) |
 | `src/engine/gpu.cyr`, `src/routes/gpu.cyr` | this host's accelerators, read once at mount (0.4.1, ADR 0032) |
 | `src/routes/plugins.cyr` | list plugins, switch one on or off (0.1.7) |
 | `src/routes/webgui.cyr` | `/ui` and `/ui/plugins/{id}` — the pages (0.1.7) |
@@ -532,10 +531,11 @@ It is never built or shipped, and it is **not** a specification —
 
 ## Tests
 
-**42 suites, 4,342 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.4, 2026-11-06),
-with `CYRIUS_DCE=1` as CI runs them. `cyrius coverage --exec` reads 98%. 0.4.4's additions, the rules
-mutation-checked (96 mutants, CHANGELOG [0.4.4]): `webgui/csp`, whose fixtures hold the policy to digests Python
-computed, and `webgui/pages`, the bytes in the binary against each file.
+**42 suites, 4,406 assertions, 0 failed** (`cyrius test`, under the 6.7.18 pin, 0.4.5, 2026-11-08),
+with `CYRIUS_DCE=1` as CI runs them. `cyrius coverage --exec` reads 98%. 0.4.5's additions, the rules
+mutation-checked (49 mutants, CHANGELOG [0.4.5]): `tools/gate-target`, `tools/journal`, `tools/result`,
+`tools/engine-name`, `request/tools`, load-test step 9, and the boot probe's real tool call through a gateway.
+At 0.4.4: 42 suites and 4,342 assertions, `webgui/csp` and `webgui/pages` added (96 mutants, CHANGELOG [0.4.4]).
 At 0.4.3: 42 suites and 4,300 assertions. Its additions, the rules mutation-checked (44 mutants, CHANGELOG
 [0.4.3]): 22 JavaScript tests over the Library's versions and packages and the Crews composer, `plugins/rung` on
 the new grants, and `tests/webgui/browser/library.e2e.mjs`, by hand in real Chromium. `crews.e2e.mjs` starts a crew
@@ -804,7 +804,7 @@ one wins does not matter. Upstream, and it announces itself.
 
 ## Preset library
 
-**18 documents, 76 agents, 45 distinct agent keys, 38 distinct tool names.**
+**18 documents, 76 agents, 45 distinct agent keys, 2 distinct tool names.**
 Checked in at `src/presets/*.json` and compiled in by `[embed]` (0.4.4, ADR 0039), so a document
 cannot go stale. `src/engine/presets.cyr` holds the library's order, and `scripts/check-embedded.py`
 refuses a document left out of the table.
@@ -820,9 +820,8 @@ on every call. Measured live: the listing is **4,416 bytes** and the largest
 single document (`quality-large`) is **7,064**, so the default arena has ample
 headroom and was left unchanged.
 
-⚠ **The 38 tool names have never resolved to anything** — `ORACLE-AUDIT.md` §3.15.
-`agnostic_preset_tool_*` pins the union as M6's contract; two of the names
-(`ArtifactManagementTool`, `CIPipelineIntegrationTool`) have no implementation
+⚠ **A preset names only what runs** (0.4.5, ADR 0040): `LoadTestingTool` and `SecurityAssessmentTool` today. The 38 are
+`agnostic_qa_ledger_*`'s; two of them (`ArtifactManagementTool`, `CIPipelineIntegrationTool`) have no implementation
 anywhere and M6 owes a decision on each.
 
 ## Agent definitions
@@ -953,10 +952,9 @@ Dependencies above): patra 1.13.10 stopped `patra_init` stomping the host's log 
 See [`roadmap.md`](roadmap.md), whose *Release plan* sequences 0.2.x to 0.5.x and holds every gap the
 parity review found. `python-port/` is removed once that plan is finished and tagged.
 
-**At 0.4.4:** agnosai 2.3.0 was tagged as this release was finished, with the tool loop M6 needs
-(`agnosai_orchestrator_with_tools`), and agnostic is still on 2.2.5, so moving to it comes next. M6 proper, holding a
-tool to its target, the registry seam, the reviewer preset and the model picker lean on that and on its 2.4.x, which
-is not out. Tool upload waits for a sandbox, and fleet routes for a fleet.
+**At 0.4.5:** M6's next piece is writing the tools, each a row in `agnostic_qa_tools_init` and its name back in the presets,
+and the model picker has agnosai's catalog to read. The reviewer preset waits on agnosai 2.4.x's F9, whose tag is not out.
+Tool upload waits for a sandbox, and fleet routes for a fleet.
 
 The notes below were written for M5 and remain true.
 

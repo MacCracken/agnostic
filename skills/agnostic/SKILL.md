@@ -175,9 +175,10 @@ of 0 or more), `focus`, `allow_delegation` (a boolean).
 
 - `focus` and `allow_delegation` are kept but shape nothing; the 202 names them in `unforwarded`.
 - `complexity` is `low`, `medium` or `high`, lowercase, as on a task; anything else is a **400**.
-- `tools` are names only. The engine does not call tools yet. `GET /api/v1/tools` lists the names the
-  presets use and which have an engine tool behind them, and its `crews_call_tools` says whether any
-  crew calls one, which today none does.
+- `tools` are what the agent can call, and a name with nothing behind it refuses the crew with a **400**
+  naming it. `GET /api/v1/tools` lists the 38 names of the QA ledger and which have an engine tool behind
+  them, the engine's own tools, and `crews_call_tools`. A tool that takes a URL may point only at the host
+  of its task's `target`, so a crew with no target points a tool at nothing.
 - Instead of an agent, an element of `agents` may name a stored definition:
   `{"definition": "<key>"}`, and nothing else beside it. It runs what the definition says when the crew
   is accepted, so a later edit reaches the next crew and not this one. A key nothing is stored under is
@@ -192,7 +193,8 @@ of 0 or more), `focus`, `allow_delegation` (a boolean).
 **Task**: `description` is required. Optional: `expected_output`, `priority` (`background`, `low`,
 `normal`, `high`, `critical`), `risk` (`low`, `medium`, `high`), `dependencies` (indices into
 `tasks`, at most 64, never itself, no cycles, `dag` only; it runs a task after the tasks it depends on).
-Hints for choosing its agent: `required_tools` (an array of tool names, at most 64), `complexity`
+Hints for choosing its agent: `required_tools` (an array of tool names, at most 64, each of which must
+have something behind it), `complexity`
 (`low`, `medium`, `high`), `domain` (compared with each agent's, ignoring case) and `gpu_required`
 (a boolean). `target` (as on the crew) overrides the crew's for this task. `output_schema` holds the
 answer to a shape.

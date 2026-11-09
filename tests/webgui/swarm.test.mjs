@@ -213,25 +213,13 @@ test('a live swarm asks for each task\'s role, so the engine picks that role\'s 
   assert.ok(request.agents.length > 1, 'precondition: more than one role');
   for (const a of request.agents) {
     assert.equal(a.domain, a.key, 'each role agent says what it is: its domain is its role');
-    assert.ok(Array.isArray(a.tools) && a.tools.length, 'and what it can do: the tool kinds its role uses');
-    for (const t of a.tools) assert.ok(s.roles[a.key].tools[t] > 0 && s.tools[t].on, 'only kinds it is given weight for, switched on');
+    assert.ok(!('tools' in a), 'and names no tool: a role\'s kinds are the simulator\'s, not what an agent can call');
   }
-  const byKey = new Map(request.agents.map((a) => [a.key, a]));
   const { plan } = S.specToCrewRequest(s, null);
   request.tasks.forEach((t, i) => {
-    const role = plan.tasks[i].role;
-    assert.equal(t.domain, role, 'each task asks for its role');
-    assert.deepEqual([...t.required_tools], [...byKey.get(role).tools], 'and for what that role uses');
+    assert.equal(t.domain, plan.tasks[i].role, 'each task asks for its role');
+    assert.ok(!('required_tools' in t), 'and for no tool');
   });
-  const planner = byKey.get('planner');
-  if (planner) assert.deepEqual([...planner.tools], ['llm', 'db', 'fs'], 'most-used first, ties in the catalogue order');
-
-  // A tool kind switched off is not named; a role with no kind left asks for none.
-  const off = S.defaultSpec('custom', 1);
-  for (const k of ['llm', 'search', 'exec', 'db', 'fs']) off.tools[k].on = false;
-  const o = S.specToCrewRequest(off, null).request;
-  assert.ok(o.agents.every((a) => !('tools' in a)), 'no tools on, no tools named');
-  assert.ok(o.tasks.every((t) => !('required_tools' in t) && typeof t.domain === 'string'), 'the domain still travels');
 
   // A preset roster carries its own domains, which no swarm role names: no hints.
   const p = S.defaultSpec('custom', 1);

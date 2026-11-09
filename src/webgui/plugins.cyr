@@ -84,7 +84,6 @@ var AGNOSTIC_WEBGUI_HTML = "text/html; charset=utf-8";
 var AGNOSTIC_PLUGIN_ON = str_from("on");
 var AGNOSTIC_PLUGIN_OFF = str_from("off");
 
-var AGNOSTIC_JK_ID      = str_from("id");
 var AGNOSTIC_JK_ENABLED = str_from("enabled");
 var AGNOSTIC_JK_PLUGIN  = str_from("plugin");
 var AGNOSTIC_JK_PLUGINS = str_from("plugins");

@@ -1,6 +1,6 @@
 {
   "name": "quality-standard",
-  "description": "Standard 6-agent quality team \u2014 the original Agnostic quality crew",
+  "description": "Standard 6-agent quality team — the original Agnostic quality crew",
   "domain": "quality",
   "version": "1.0.0",
   "agents": [
@@ -12,10 +12,7 @@
       "backstory": "You are an experienced QA Manager with 15+ years in test strategy and team orchestration. You excel at breaking down complex requirements into actionable test plans and ensuring quality outcomes through intelligent verification.",
       "focus": "Orchestration, test planning, delegation, fuzzy verification",
       "domain": "quality",
-      "tools": [
-        "TestPlanDecompositionTool",
-        "FuzzyVerificationTool"
-      ],
+      "tools": [],
       "complexity": "high",
       "celery_queue": "qa_manager",
       "redis_prefix": "manager",
@@ -29,14 +26,7 @@
       "backstory": "You are a Senior QA Engineer with 12+ years of expertise in advanced testing methodologies. You excel at self-healing automation, complex edge case analysis, model-based testing approaches, and AI-powered autonomous test generation.",
       "focus": "Self-healing UI, model-based testing, edge case analysis, complex scenarios",
       "domain": "quality",
-      "tools": [
-        "SelfHealingTool",
-        "ModelBasedTestingTool",
-        "EdgeCaseAnalysisTool",
-        "AITestGenerationTool",
-        "CodeAnalysisTestGeneratorTool",
-        "AutonomousTestDataGeneratorTool"
-      ],
+      "tools": [],
       "complexity": "high",
       "celery_queue": "senior_qa",
       "redis_prefix": "senior"
@@ -49,18 +39,7 @@
       "backstory": "You are a detail-oriented Junior QA Engineer focused on thorough test execution, regression testing, data generation, and cross-platform testing. You excel at identifying patterns in test failures, creating comprehensive test datasets, and ensuring applications work consistently across web, mobile, and desktop platforms.",
       "focus": "Regression execution, synthetic data generation, test optimization",
       "domain": "quality",
-      "tools": [
-        "RegressionTestingTool",
-        "SyntheticDataGeneratorTool",
-        "TestExecutionOptimizerTool",
-        "VisualRegressionTool",
-        "FlakyTestDetectionTool",
-        "UXUsabilityTestingTool",
-        "LocalizationTestingTool",
-        "MobileAppTestingTool",
-        "DesktopAppTestingTool",
-        "CrossPlatformTestingTool"
-      ],
+      "tools": [],
       "complexity": "medium",
       "celery_queue": "junior_qa",
       "redis_prefix": "junior"
@@ -74,14 +53,7 @@
       "focus": "Reporting, data aggregation, traceability, coverage analysis",
       "domain": "quality",
       "tools": [
-        "DataOrganizationReportingTool",
-        "SecurityAssessmentTool",
-        "PerformanceProfilingTool",
-        "TestTraceabilityTool",
-        "DefectPredictionTool",
-        "QualityTrendAnalysisTool",
-        "RiskScoringTool",
-        "ReleaseReadinessTool"
+        "SecurityAssessmentTool"
       ],
       "complexity": "medium",
       "celery_queue": "qa_analyst",
@@ -95,14 +67,7 @@
       "backstory": "You are a Security & Compliance specialist with 12+ years of experience in cybersecurity, regulatory compliance, and audit preparation. You excel at identifying security vulnerabilities, validating GDPR data protection requirements, ensuring PCI DSS payment security standards, SOC 2 Type II trust service criteria, ISO 27001 information security controls, HIPAA Privacy and Security Rules, and providing actionable remediation guidance.",
       "focus": "OWASP testing, GDPR/PCI DSS compliance, vulnerability scanning",
       "domain": "quality",
-      "tools": [
-        "ComprehensiveSecurityAssessmentTool",
-        "GDPRComplianceTool",
-        "PCIDSSComplianceTool",
-        "SOC2ComplianceTool",
-        "ISO27001ComplianceTool",
-        "HIPAAComplianceTool"
-      ],
+      "tools": [],
       "complexity": "high",
       "celery_queue": "security_compliance",
       "redis_prefix": "security_compliance"
@@ -116,10 +81,7 @@
       "focus": "Performance monitoring, load testing, resilience validation",
       "domain": "quality",
       "tools": [
-        "PerformanceMonitoringTool",
-        "LoadTestingTool",
-        "ResilienceValidationTool",
-        "AdvancedProfilingTool"
+        "LoadTestingTool"
       ],
       "complexity": "high",
       "celery_queue": "performance",

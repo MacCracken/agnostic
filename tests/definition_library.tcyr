@@ -467,7 +467,7 @@ fn test_a_team_becomes_agents() {
     var e = vec_get(ag, 0);
     assert_eq(str_eq_cstr(agnosai_agent_key(e), "qa-manager"), 1, "⭐ a role the library knows takes its agent");
     assert_eq(_t_has(agnosai_agent_backstory(e), "15+ years"), 1, "with what it says");
-    assert_lt(0, vec_len(agnosai_agent_tools(e)), "and its tools");
+    assert_eq(vec_len(agnosai_agent_tools(e)), 0, "⭐ and the library names no tool it cannot run");
     assert_eq(str_eq_cstr(agnosai_agent_complexity(e), "high"), 1, "as the library has it");
 
     var lone = _t_team_agents(a, "{\"members\":[{\"role\":\"Zeppelin Pilot\",\"context\":\"mooring\"}],\"project_context\":\"airship trials\"}", 0); #skip-lint
@@ -489,7 +489,7 @@ fn test_a_team_becomes_agents() {
     assert_eq(str_eq_cstr(agnosai_agent_key(vec_get(dup, 1)), "alpha-scout-1"), 1, "⭐ under keys that differ");
 
     # A tool alone is not a role.
-    var tool = _t_team_agents(a, "{\"members\":[{\"role\":\"Zeppelin Pilot\",\"tools\":[\"FuzzyVerificationTool\"]}]}", 0); #skip-lint
+    var tool = _t_team_agents(a, "{\"members\":[{\"role\":\"Zeppelin Pilot\",\"tools\":[\"LoadTestingTool\"]}]}", 0); #skip-lint
     assert_eq(str_eq_cstr(agnosai_agent_key(vec_get(tool, 0)), "zeppelin-pilot"), 1, "⭐ one shared tool does not make a match"); #skip-lint
     assert_eq(vec_len(agnosai_agent_tools(vec_get(tool, 0))), 1, "and the member keeps the tool it asked for");
 }

@@ -14,7 +14,9 @@
       "backstory": "You are a performance and resilience specialist with deep expertise in system optimization, load testing, chaos engineering, and infrastructure resilience. You ensure systems can handle expected loads and recover gracefully from failures.",
       "focus": "Load testing, latency profiling, stress testing, resilience validation",
       "domain": "quality",
-      "tools": ["PerformanceMonitoringTool", "LoadTestingTool", "ResilienceValidationTool", "AdvancedProfilingTool"],
+      "tools": [
+        "LoadTestingTool"
+      ],
       "complexity": "high",
       "celery_queue": "performance",
       "redis_prefix": "performance",
@@ -28,7 +30,7 @@
       "backstory": "You are a QA Analyst with 10+ years of experience in performance analytics. You transform raw performance data into clear reports with latency percentiles, throughput analysis, and capacity planning recommendations.",
       "focus": "Performance metrics aggregation, latency analysis, capacity reporting",
       "domain": "quality",
-      "tools": ["DataOrganizationReportingTool", "PerformanceProfilingTool", "ReleaseReadinessTool"],
+      "tools": [],
       "complexity": "medium",
       "celery_queue": "qa_analyst",
       "redis_prefix": "analyst"

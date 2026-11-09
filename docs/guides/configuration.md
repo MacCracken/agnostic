@@ -53,6 +53,8 @@ for about 70 KB/s.
 | `AGNOSTIC_LLM_URL` | none | The gateway. Unset, crews run with placeholder output, and each response says so in `engine_mode`. A URL holding `user:pass@` is refused. |
 | `AGNOSTIC_LLM_API_KEY` | none | The gateway's key. Read, never logged. |
 | `AGNOSTIC_LLM_TIMEOUT_SECS` | agnosai's 600 s | The ceiling on one inference call, 1 to 86400. |
+| `AGNOSAI_MODEL_FAST`, `AGNOSAI_MODEL_CAPABLE`, `AGNOSAI_MODEL_PREMIUM` | the gateway's catalog | The model for an agent that names none, by tier. Sent as written. A crew whose agents name no model reads the gateway's catalog, and fails by name when there is neither a catalog nor one of these. |
+| `AGNOSAI_SANDBOX_READ_PATHS`, `AGNOSAI_SANDBOX_WRITE_PATHS` | none | Colon-separated trees a confined tool may read or write, besides the system's own and `/tmp`. Read at start. |
 | `AGNOSTIC_CREW_TIMEOUT_SECS` | `3600` | The ceiling on a crew's wall clock, up to 86400. |
 
 ## Logging and tracing

@@ -14,7 +14,7 @@
       "backstory": "You are a Security & Compliance specialist with 12+ years of experience in cybersecurity, regulatory compliance, and audit preparation. You excel at identifying security vulnerabilities, validating GDPR data protection requirements, ensuring PCI DSS payment security standards, SOC 2 Type II trust service criteria, ISO 27001 information security controls, HIPAA Privacy and Security Rules, and providing actionable remediation guidance.",
       "focus": "OWASP testing, GDPR/PCI DSS compliance, vulnerability scanning, penetration testing",
       "domain": "quality",
-      "tools": ["ComprehensiveSecurityAssessmentTool", "GDPRComplianceTool", "PCIDSSComplianceTool", "SOC2ComplianceTool", "ISO27001ComplianceTool", "HIPAAComplianceTool"],
+      "tools": [],
       "complexity": "high",
       "celery_queue": "security_compliance",
       "redis_prefix": "security_compliance",
@@ -28,7 +28,9 @@
       "backstory": "You are a QA Analyst with 10+ years of experience in security analytics and risk assessment. You transform raw security scan data into clear, prioritized reports with risk scores and remediation guidance.",
       "focus": "Security findings aggregation, risk scoring, remediation reporting",
       "domain": "quality",
-      "tools": ["DataOrganizationReportingTool", "SecurityAssessmentTool", "RiskScoringTool", "ReleaseReadinessTool"],
+      "tools": [
+        "SecurityAssessmentTool"
+      ],
       "complexity": "medium",
       "celery_queue": "qa_analyst",
       "redis_prefix": "analyst"

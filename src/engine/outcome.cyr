@@ -446,6 +446,16 @@ fn _agnostic_task_result_to_value_a(a, r): i64 {
               bayan_json_v_str_new_a(a, bayan_json_v_str(agv)));
         }
     }
+    # What the task's tools did (0.4.5, ADR 0040): what a tool measured, told apart from what a model
+    # said about it.
+    if (meta != 0) {
+        var calls = _agnostic_result_tool_calls_a(a, map_get(meta, AGNOSTIC_JK_TOOL_CALLS));
+        if (calls != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOOL_CALLS, calls); }
+        var dropped = _agnostic_meta_int(meta, AGNOSTIC_JK_TOOL_DROPPED);
+        if (dropped > 0) {
+            bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_TOOL_DROPPED, bayan_json_v_int_new_a(a, dropped));
+        }
+    }
     # What the engine metered for this task (0.1.9) — see `_agnostic_result_usage_a`.
     var usage = _agnostic_result_usage_a(a, r);
     if (usage != 0) { bayan_json_v_obj_set_a(a, obj, AGNOSTIC_JK_USAGE, usage); }
@@ -454,6 +464,44 @@ fn _agnostic_task_result_to_value_a(a, r): i64 {
           bayan_json_v_str_new_a(a, bayan_json_v_str(failure)));
     }
     return obj;
+}
+
+# Copy `key` from the object `from` onto `to`, when it is there.
+fn _agnostic_copy_field_a(a, to, from, key: Str): i64 {
+    var v = bayan_json_v_obj_get_by_str(from, key);
+    if (v != 0) { bayan_json_v_obj_set_a(a, to, key, v); }
+    return 1;
+}
+
+# The engine's `metadata.tool_calls` as agnostic's `tool_calls`, or 0 when the task called none.
+#
+# ⚠ Picked field by field, as `usage` is: the engine's keys are the engine's. `result` is the tool's
+# own answer, so it goes through whole. Each value is the engine's, in the crew's arena, which outlives
+# the encode this is for.
+fn _agnostic_result_tool_calls_a(a, records): i64 {
+    var n = bayan_json_v_arr_len(records);
+    if (n == 0) { return 0; }
+    var arr = bayan_json_v_arr_new_a(a);
+    if (arr == 0) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var from = bayan_json_v_arr_get(records, i);
+        var o = bayan_json_v_obj_new_a(a);
+        if (o == 0) { return 0; }
+        _agnostic_copy_field_a(a, o, from, AGNOSTIC_JK_ID);
+        _agnostic_copy_field_a(a, o, from, AGNOSTIC_JK_TOOL);
+        _agnostic_copy_field_a(a, o, from, AGNOSTIC_JK_ASKED_FOR);
+        _agnostic_copy_field_a(a, o, from, AGNOSTIC_JK_ARGUMENTS);
+        _agnostic_copy_field_a(a, o, from, AGNOSTIC_JK_EFFECT);
+        _agnostic_copy_field_a(a, o, from, AGNOSTIC_JK_SUCCESS);
+        _agnostic_copy_field_a(a, o, from, AGNOSTIC_JK_RESULT);
+        _agnostic_copy_field_a(a, o, from, AGNOSTIC_JK_ERROR);
+        _agnostic_copy_field_a(a, o, from, AGNOSTIC_JK_FLAGGED);
+        _agnostic_copy_field_a(a, o, from, AGNOSTIC_JK_HELD_BACK);
+        bayan_json_v_arr_push_a(a, arr, o);
+        i = i + 1;
+    }
+    return arr;
 }
 
 # An integer bayan value as a count, or -1 when `v` is absent or not an integer. Token

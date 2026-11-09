@@ -4,6 +4,69 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.5] — 2026-11-08
+
+**A crew's agents call tools.** agnosai 2.3.7 has a tool loop, and agnostic now hands it a registry, holds each call to the
+crew's target, writes each call to the audit trail before it runs, and reports on each task what its tools did. A preset
+names only what can run, so the five quality presets are shorter until M6 writes the rest
+([ADR 0040](docs/adr/0040-a-crews-agents-call-what-resolves.md)).
+
+⚠ **Behaviour changes.** A crew or task naming a tool with nothing behind it is now a **400**, naming it. Through 0.4.4 any
+name was accepted, and was words in the prompt. A tool that takes a URL may point only at its task's `target`, so a crew with
+no target points a tool at nothing. A crew whose agents name no model reads the gateway's catalog, and fails by name when
+there is neither a catalog nor an `AGNOSAI_MODEL_*` override.
+
+### Added
+
+- **`tool_calls` on a task's result:** one entry a call, with its tool, arguments, effect, success, and `result` or `error`.
+  What a tool measured is told apart from what a model claimed.
+- **`tool.call` and `tool.result` on the audit trail,** before and after each call. A call the trail cannot take does not
+  start.
+- **Load-test step 9:** 900 crews calling a tool from 16 clients. The boot probe calls a real tool through a gateway.
+
+### Changed
+
+- **agnosai 2.2.5 → 2.3.7 and kavach 3.14.6 → 3.14.9,** through it. libro, bote, majra, ai-hwaccel, tyche, sigil and patra had
+  nothing newer. The Cyrius pin stays 6.7.18.
+- **The `quality-*` presets name only `LoadTestingTool` and `SecurityAssessmentTool`.** The 36 others come back as each is
+  written. `GET /api/v1/tools` still lists all 38 and now answers `crews_call_tools: true`.
+- **`required_tools` go to the engine by the engine's name,** as an agent's `tools` do.
+- **Swarm Command no longer sends its tool kinds.** `llm` and `fs` are the simulator's, and name nothing a crew can call. A
+  role's `domain` decides its agent, as it did. Swarm 0.5.2.
+
+### Performance
+
+- **A tool call costs 1.6 KB a crew, resident:** 3.5 KB with one call against 1.9 KB with none, at 6,000 crews. The journal's
+  one writer thread is what keeps it there: written from each task's own thread, patra's page slab left 21.7 KB.
+- **The x86_64 binary:** 4,431,808 → 4,554,328 B.
+- **`crew_decode_4a_8t` +1.7%,** 52.2 → 53.1 µs: each tool name is resolved at the door.
+- **`tools_route` reads 8.0 µs, from 383 ns,** because the row now measures the real table. Through 0.4.4 it ran before
+  anything had built one, so it measured an empty ledger.
+- **Nothing else moved past noise.** `route_first_health` reads +7.2%, 8 ns, on a path this release does not touch, and is not
+  claimed.
+
+### Verified
+
+- **x86_64, `CYRIUS_DCE=1`:** 42 suites, 4,406 assertions, 0 failed, and 119 JavaScript tests. Coverage 98% against the gate
+  of 95. `check-clean.sh`, `check-symbols.sh`, `check-skill.py` and the schema check pass, and the boot probe and all 9
+  load-test steps, with 7,500 crews through a restart, 20,394 reads of crews about to go, 915 B a crew resident, and 900 crews
+  calling a tool at once.
+- **A real call through a gateway, on a real socket:** the boot probe has a model call `load_testing` at the crew's target and
+  reads what it measured on the task. A call to another host never starts, a crew with no target points a tool at nothing,
+  and both ends of each call are on the audit trail.
+- **A Raspberry Pi 4, natively:** the same 42 suites, 4,405 assertions because `crews_route` asserts once per poll, 0 failed,
+  the boot probe with its real tool call, and load-test steps 1 to 7 and 9, on 107 files compared by hash.
+- **Real Chromium:** the Library 35 of 35, Crews 24 of 24, Users 25 of 25.
+- **An empty dependency cache with no siblings:** `lib sync --full`, `deps`, a clean `git status` and the same SHA-256 as this
+  tree's binary, `8ee1a8170883d110`. The commit pins for agnosai and kavach match their tags on GitHub.
+- **49 mutants, 48 caught:** the door, the gate, the journal, the record and the writer. Four survived the first run: three
+  became assertions and one was a guard written twice, now gone. The one left is the writer queue's lock, held by reading: 900
+  crews from 16 clients never collided on it.
+
+**What this does not show.** No real model called a tool: the gateway is a script that asks for the call. `load_testing` and
+`echo` ran through the loop, and `security_audit` did not. The 1.6 KB a call was measured by hand at 6,000 crews, and no suite
+holds it. Load-test step 8 was not repeated on the Pi, as nothing on a crew's arena path changed.
+
 ## [0.4.4] — 2026-11-06
 
 **No generated source remains.** Every file in the binary is now an entry in `cyrius.cyml`'s `[embed]` table, read as it

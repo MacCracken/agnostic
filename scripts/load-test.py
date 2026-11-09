@@ -23,6 +23,9 @@ Eight steps, the first four of which have lost crews before:
      that crews are given back and their arenas reused under the reads (ADR 0034). A crew must say
      only its own words: a read of a released arena is another crew's output, or a crash. The memory
      the process holds must stop growing, which is audit P2's measurement from outside.
+  9. crews calling a tool through a gateway, from every client at once (ADR 0040): each call must come
+     back on its own crew, and every one goes through the journal's one writer, so a lost wake is a
+     crew that never ends and two entries written at once is a trail that does not verify.
 
 The second burst is there because reading the first takes long enough for the writes to catch up,
 and a stop with nothing outstanding proves nothing. A crew that reads `interrupted` after the
@@ -534,6 +537,90 @@ def step_eight(args, work, bad):
             server.kill()
 
 
+def tooled_crew(n):
+    """Step 9's crew: its tool answers with its own number, so a crossed result cannot pass."""
+    return json.dumps({
+        "name": f"tooled-{n}",
+        "agents": [{"key": "a", "role": "r", "goal": "g", "tools": ["echo"]}],
+        "tasks": [{"description": f"use-tool echo tooled-{n}"}],
+    })
+
+
+def tool_fault(n, text):
+    """What is wrong with crew `n`'s document, or None."""
+    doc = json.loads(text)
+    if doc.get("status") != "completed":
+        return f"tooled-{n} ended {doc.get('status')}"
+    calls = doc["results"][0].get("tool_calls", [])
+    if len(calls) != 1 or calls[0].get("tool") != "echo" or calls[0].get("effect") != "committed":
+        return f"tooled-{n} called {calls}"
+    if calls[0].get("result") != f"tooled-{n}":
+        return f"tooled-{n} was answered {calls[0].get('result')}"
+    return None
+
+
+def step_nine(args, work, bad):
+    gateway_port = args.port + 7
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake-gateway.py")
+    gateway = subprocess.Popen([sys.executable, script, str(gateway_port)])
+    server = start(args.binary, work, args.port, "tools.log", db="tools",
+                   AGNOSTIC_LLM_URL=f"http://127.0.0.1:{gateway_port}")
+    try:
+        # Under the ledger's 1024, as this many are in flight at once: a crew past it while still
+        # running reads `unknown` by design.
+        total = min(args.crews, 900)
+        known, lock, taken = {}, threading.Lock(), [0]
+
+        def client():
+            while True:
+                with lock:
+                    if taken[0] >= total:
+                        return
+                    taken[0] += 1
+                    n = taken[0]
+                status, text = request(args.port, "POST", "/api/v1/crews", tooled_crew(n))
+                if status == 202:
+                    with lock:
+                        known[json.loads(text)["crew_id"]] = n
+                else:
+                    with lock:
+                        bad.append(f"a tooled crew answered {status}: {text[:120]}")
+
+        threads = [threading.Thread(target=client) for _ in range(args.clients)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        faults, deadline = [], time.monotonic() + 120
+        for crew, n in known.items():
+            while True:
+                status, text = request(args.port, "GET", f"/api/v1/crews/{crew}")
+                ended = status == 200 and json.loads(text).get("status") not in ("pending", "running")
+                if ended or time.monotonic() > deadline:
+                    break
+                time.sleep(0.02)
+            fault = tool_fault(n, text) if status == 200 else f"tooled-{n} answered {status}"
+            if fault:
+                faults.append(fault)
+        print(f"{len(known)} crews called a tool at once: {len(faults)} faults")
+        if faults:
+            bad.append(f"tooled crews: {faults[:3]}")
+        status, text = request(args.port, "GET", "/api/v1/audit")
+        verdict = json.loads(text)
+        if status != 200 or not verdict.get("intact"):
+            bad.append(f"the trail after {len(known)} journaled calls: {text[:160]}")
+        server.terminate()
+        code = server.wait(300)
+        if code != 0:
+            bad.append(f"exit {code} after the tooled crews")
+    finally:
+        if server.poll() is None:
+            server.kill()
+        gateway.kill()
+        gateway.wait()
+
+
 def step_seven(args, work, bad):
     hosts = {"AGNOSTIC_TARGET_HOSTS": "sut.example"}
     server = start(args.binary, work, args.port, "aimed.log", db="aimed", **hosts)
@@ -578,7 +665,7 @@ def main():
     parser.add_argument("--crews", type=int, default=6000)
     parser.add_argument("--clients", type=int, default=16)
     parser.add_argument("--port", type=int, default=18732)
-    parser.add_argument("--steps", default="1-8")
+    parser.add_argument("--steps", default="1-9")
     args = parser.parse_args()
     steps = wanted(args.steps)
 
@@ -595,6 +682,8 @@ def main():
             step_seven(args, work, bad)
         if 8 in steps:
             step_eight(args, work, bad)
+        if 9 in steps:
+            step_nine(args, work, bad)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

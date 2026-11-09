@@ -48,7 +48,7 @@ definition in place of an agent, say who it needs by role with `team`, and hold 
 `output_schema`. Every write of an agent definition is a version you can read and roll back to, and
 `POST /api/v1/packages/export` and `/import` move a tenant's definitions as one document.
 `POST /api/v1/preset-recommendations` says which preset fits a description, and
-`GET /api/v1/tools` says which of the presets' tools have an engine tool behind them; no crew calls one yet.
+`GET /api/v1/tools` says which QA tools have an engine tool behind them. A crew's agents call those, held to the crew's target.
 
 Crews belong to the tenant that submitted them, and `GET /api/v1/crews` lists yours; send an
 `Idempotency-Key` header with `POST /api/v1/crews` to make a retry safe
